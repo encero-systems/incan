@@ -5,6 +5,10 @@ description: >
   Runs `rustup toolchain install nightly` with exponential backoff. CI occasionally sees
   "Connection reset by peer" when syncing the nightly channel manifest; retries absorb that flake.
 inputs:
+  toolchain:
+    description: Rustup toolchain channel to install.
+    required: false
+    default: nightly
   components:
     description: Space-separated rustup components (e.g. rustfmt)
     required: false
@@ -15,10 +19,11 @@ runs:
     - name: rustup toolchain install nightly
       shell: bash
       env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
         COMPONENTS: ${{ inputs.components }}
       run: |
         set -euo pipefail
-        ARGS=(toolchain install nightly --profile minimal --allow-downgrade --no-self-update)
+        ARGS=(toolchain install "${TOOLCHAIN}" --profile minimal --allow-downgrade --no-self-update)
         if [ -n "${COMPONENTS}" ]; then
           for c in ${COMPONENTS}; do
             ARGS+=(--component "${c}")

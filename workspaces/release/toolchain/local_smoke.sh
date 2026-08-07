@@ -9,6 +9,9 @@ case "$dist_dir" in
   *) dist_dir="${root}/${dist_dir}" ;;
 esac
 incan_run_bin="${TOOLCHAIN_INCAN_BIN:-${root}/target/release/incan}"
+# A caller that is already isolating generated-project state (notably the parallel Oven compiler suite) remains
+# authoritative.  Ordinary local release smoke keeps the historic task-local fallback.
+generated_cargo_target_dir="${INCAN_GENERATED_CARGO_TARGET_DIR:-${root}/target/incan_generated_shared_target}"
 
 usage() {
   cat <<'USAGE'
@@ -100,13 +103,16 @@ write_assets() {
   require_archive
   require_incan_run_bin
   printf 'Writing toolchain manifest/install assets in %s\n' "$dist_dir"
-  INCAN_REPO_ROOT="$root" \
+    INCAN_REPO_ROOT="$root" \
     INCAN_TOOLCHAIN_DIST_DIR="$dist_dir" \
     INCAN_TOOLCHAIN_SKIP_HOMEBREW=1 \
     INCAN_TOOLCHAIN_GENERATED_AT="$generated_at" \
     INCAN_NO_BANNER=1 \
     CARGO_NET_OFFLINE=true \
-    INCAN_GENERATED_CARGO_TARGET_DIR="${root}/target/incan_generated_shared_target" \
+    INCAN_SOURCE_ROOT="$root" \
+    INCAN_STDLIB="$root/crates/incan_stdlib/stdlib" \
+    INCAN_STDLIB_DIR="$root/crates/incan_stdlib/stdlib" \
+    INCAN_GENERATED_CARGO_TARGET_DIR="$generated_cargo_target_dir" \
     "$incan_run_bin" run "${root}/workspaces/release/toolchain/prepare_assets.incn"
 }
 
@@ -258,7 +264,10 @@ smoke_homebrew() {
     INCAN_TOOLCHAIN_GENERATED_AT="$generated_at" \
     INCAN_NO_BANNER=1 \
     CARGO_NET_OFFLINE=true \
-    INCAN_GENERATED_CARGO_TARGET_DIR="${root}/target/incan_generated_shared_target" \
+    INCAN_SOURCE_ROOT="$root" \
+    INCAN_STDLIB="$root/crates/incan_stdlib/stdlib" \
+    INCAN_STDLIB_DIR="$root/crates/incan_stdlib/stdlib" \
+    INCAN_GENERATED_CARGO_TARGET_DIR="$generated_cargo_target_dir" \
     "$incan_run_bin" run "${root}/workspaces/release/toolchain/prepare_assets.incn"
   ruby -c "${dist_dir}/incan.rb"
   if [ "${TOOLCHAIN_HOMEBREW_AUDIT:-0}" = "1" ]; then

@@ -12,7 +12,7 @@ tags:
 
 # Incan vs Rust
 
-Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than authoring speed. Incan does not replace Rust. The current beta builds through Cargo/rustc, and the longer-lived product boundary is high-level application code that can produce native artifacts and interoperate with the Rust ecosystem.
+Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than authoring speed. Incan does not replace Rust. In the documented Oven Alpha envelope, current beta build, test, and run commands use receipt-bound direct `rustc` rather than Cargo on the consumer path; the longer-lived product boundary is still high-level application code that can produce native artifacts and interoperate with the Rust ecosystem.
 
 Choose Incan when the code is mostly application logic and the Rust version would be more ceremony than signal.
 

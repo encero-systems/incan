@@ -2850,8 +2850,10 @@ fn dependency_source_metadata_from_reexport_target(
 ) -> Option<RustItemMetadata> {
     let (target_crate, target_tail) = target_segments.split_first()?;
     if external_crates.contains(target_crate)
-        && let Some(target_root) = resolve_dependency_manifest_dir(inner, root, target_crate, registry_src_roots)
-            .and_then(|dep_root| non_root_dependency_manifest_dir(root, dep_root))
+        // Re-export edges are resolved from the crate that declares them, not from the original generated root. A
+        // facade can publicly expose its own path dependency even when the generated root only names the facade.
+        && let Some(target_root) = resolve_dependency_manifest_dir(inner, source_root, target_crate, registry_src_roots)
+            .and_then(|dep_root| non_root_dependency_manifest_dir(source_root, dep_root))
     {
         let payload = fs::read_to_string(target_root.join("Cargo.toml")).ok()?;
         let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
@@ -3757,6 +3759,21 @@ fn extract_in_workspace_set(
     timing_enabled: bool,
     policy: ExtractionPolicy,
 ) -> Result<RustItemMetadata, RustMetadataError> {
+    // A marked Oven root is a complete, compiler-authored `rust-project.json` graph. A complete refresh needs the
+    // direct graph's semantic result, but ordinary extraction must first retain the no-Cargo source and generated
+    // `OUT_DIR` routes below. Those routes preserve public re-export spelling and intentionally partial metadata
+    // without asking rust-analyzer to rediscover a Cargo graph.
+    let direct_oven = RustWorkspace::oven_direct_inspection_active(root);
+    if direct_oven && policy == ExtractionPolicy::Complete {
+        return extract_from_workspace_route(
+            inner,
+            root,
+            canonical_path,
+            WorkspaceExtractionRoute::Primary,
+            progress,
+            timing_enabled,
+        );
+    }
     let crate_name = crate_name_for_path(canonical_path);
     let dep_resolve_started = Instant::now();
     let dep_root = resolve_dependency_manifest_dir(inner, root, crate_name, registry_src_roots)
@@ -3771,6 +3788,41 @@ fn extract_in_workspace_set(
     );
     if let Some(dep_root) = dep_root {
         if let Some(reexported_path) = dependency_reexport_alias_candidate(inner, &dep_root, canonical_path) {
+            if policy != ExtractionPolicy::Complete {
+                if !inner.root_dependency_reexport_paths.contains_key(root) {
+                    let paths = load_root_dependency_reexport_paths(inner, root, registry_src_roots);
+                    inner.root_dependency_reexport_paths.insert(root.to_path_buf(), paths);
+                }
+                let preferred_external_paths = inner
+                    .root_dependency_reexport_paths
+                    .get(root)
+                    .cloned()
+                    .unwrap_or_default();
+                let target_segments = reexported_path
+                    .split("::")
+                    .filter(|segment| !segment.is_empty())
+                    .map(generated_source_name)
+                    .collect::<Vec<_>>();
+                let source_path =
+                    dependency_root_source_path(&dep_root).unwrap_or_else(|| dep_root.join("src").join("lib.rs"));
+                let external_crates = load_dependency_crate_names(&dep_root);
+                if let Some(meta) = dependency_source_metadata_from_reexport_target(
+                    inner,
+                    root,
+                    &dep_root,
+                    &source_path,
+                    crate_name,
+                    &[],
+                    &target_segments,
+                    canonical_path,
+                    &external_crates,
+                    &preferred_external_paths,
+                    registry_src_roots,
+                    &mut HashSet::new(),
+                ) {
+                    return Ok(meta);
+                }
+            }
             let alias_started = Instant::now();
             match extract_in_workspace_set(
                 inner,
@@ -3896,6 +3948,18 @@ fn extract_in_workspace_set(
         }
         if policy == ExtractionPolicy::FastOnly {
             return Err(RustMetadataError::PathNotResolved(canonical_path.to_string()));
+        }
+        if direct_oven {
+            // The source and generated fallbacks above are already Cargo-free. If neither can answer a full Oven
+            // request, use only the sealed root `rust-project.json`; never load a dependency Cargo workspace.
+            return extract_from_workspace_route(
+                inner,
+                root,
+                canonical_path,
+                WorkspaceExtractionRoute::Primary,
+                progress,
+                timing_enabled,
+            );
         }
         match extract_from_workspace_route(
             inner,

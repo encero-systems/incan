@@ -879,7 +879,7 @@ fn declaration_matches_project(root: &Path, declaration: &str, project_root: &Pa
         return false;
     };
     let candidate = root.join(relative);
-    fs::canonicalize(&candidate).map_or(candidate, |path| path) == project_root
+    fs::canonicalize(&candidate).unwrap_or(candidate) == project_root
 }
 
 /// Errors raised while parsing or validating the filesystem-backed workspace topology.

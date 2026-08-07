@@ -514,7 +514,12 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "collections",
-        feature: None,
+        // The source-level ordinal map implementation calls the optional runtime helpers in
+        // `incan_stdlib::collections::__private`.  Every generated program that imports
+        // `std.collections` therefore needs the matching `incan_stdlib/ordinal` feature;
+        // without it, a direct-rustc Oven unit can compile a source closure whose runtime
+        // crate has those helpers configured out.
+        feature: Some("ordinal"),
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
@@ -1205,7 +1210,7 @@ mod tests {
             json_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec!["serde"])
         );
-        assert_eq!(collections_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(collections_ns.and_then(|ns| ns.feature), Some("ordinal"));
         assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
         assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(collections_ns.map(|ns| ns.typechecker_only), Some(false));

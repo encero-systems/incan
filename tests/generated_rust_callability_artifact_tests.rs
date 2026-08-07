@@ -20,17 +20,47 @@ fn incan_binary() -> PathBuf {
 }
 
 fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
-    Ok(Command::new(incan_binary())
+    let mut command = Command::new(incan_binary());
+    command
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
-        .env("INCAN_NO_BANNER", "1")
-        .env(
-            "INCAN_GENERATED_CARGO_TARGET_DIR",
-            support::generated_cargo_target_dir(),
-        )
-        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
-        .output()?)
+        .env("INCAN_NO_BANNER", "1");
+    if !support::oven_compiler_suite_is_active() {
+        command
+            .env(
+                "INCAN_GENERATED_CARGO_TARGET_DIR",
+                support::generated_cargo_target_dir(),
+            )
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
+    }
+    if let Some(path) = std::env::var_os("INCAN_TEST_CARGO_GUARD_PATH") {
+        let mut guarded_paths = vec![PathBuf::from(path)];
+        if let Some(inherited) = std::env::var_os("PATH") {
+            guarded_paths.extend(std::env::split_paths(&inherited));
+        }
+        command.env("PATH", std::env::join_paths(guarded_paths)?);
+        if let Some(log) = std::env::var_os("INCAN_TEST_CARGO_GUARD_LOG") {
+            command.env("OVEN_CARGO_GUARD_LOG", log);
+        }
+    }
+    Ok(command.output()?)
+}
+
+fn assert_cargo_guard_was_not_called() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(log) = std::env::var_os("INCAN_TEST_CARGO_GUARD_LOG") else {
+        return Ok(());
+    };
+    let contents = match fs::read_to_string(&log) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    assert!(
+        contents.is_empty(),
+        "normal Incan command launched Cargo despite the Oven guard:\n{contents}"
+    );
+    Ok(())
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -165,16 +195,13 @@ fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<()
         include_str!("fixtures/generated_rust_callability/consumer_owned/src/main.incn"),
     )?;
 
-    let out_dir = owned_consumer.join("out");
-    let build_output = run_incan(
+    let out_dir = owned_consumer.join("target/incan/consumer");
+    let run_output = run_incan(
         &owned_consumer,
-        &[
-            "build",
-            owned_main_path.to_str().ok_or("main path was not valid UTF-8")?,
-            out_dir.to_str().ok_or("out path was not valid UTF-8")?,
-        ],
+        &["run", owned_main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
-    assert_success(&build_output, "consumer incan build for owned callable import");
+    assert_success(&run_output, "consumer incan run for owned callable import");
+    assert_eq!(String::from_utf8_lossy(&run_output.stdout).trim(), "2\n3\n4");
 
     let generated_toml = fs::read_to_string(out_dir.join("Cargo.toml"))?;
     assert!(
@@ -190,6 +217,7 @@ fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<()
             && generated_main.contains("callability::map_owned(vec![1, 2, 3], plus_one)"),
         "expected final generated Rust project to qualify the provider-owned call while importing the callable value, got:\n{generated_main}"
     );
+    assert_cargo_guard_was_not_called()?;
 
     Ok(())
 }

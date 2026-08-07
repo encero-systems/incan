@@ -939,7 +939,7 @@ async fn run_rust_inspect_prewarm_queue(
         match tokio::task::spawn_blocking({
             let manifest_dir = manifest_dir.clone();
             let target_dir = target_dir.clone();
-            move || prewarm_rust_inspect_workspace(&manifest_dir, &target_dir, &batch)
+            move || prewarm_rust_inspect_workspace(&manifest_dir, &target_dir, &batch, false)
         })
         .await
         {
@@ -1028,7 +1028,6 @@ fn prepare_lsp_rust_inspect_workspace(
         modules,
         library_manifest_index,
         provider_plan,
-        generated_cargo_target_dir,
         |cargo_package_name, lock_payload, cargo_features, cargo_flags| {
             resolve_generated_cargo_target(
                 generated_cargo_target_dir,
@@ -1053,13 +1052,11 @@ fn prepare_lsp_rust_inspect_workspace_in_cache_root(
     provider_plan: &ProviderPlan,
     cache_root: &Path,
 ) -> std::result::Result<LspRustInspectContext, String> {
-    let lock_preheat_target = cache_root.join("lock-preheat");
     prepare_lsp_rust_inspect_workspace_with_target_resolver(
         manifest,
         modules,
         library_manifest_index,
         provider_plan,
-        Some(&lock_preheat_target),
         |cargo_package_name, lock_payload, cargo_features, cargo_flags| {
             resolve_generated_cargo_target_in_cache_root(
                 cache_root,
@@ -1081,7 +1078,6 @@ fn prepare_lsp_rust_inspect_workspace_with_target_resolver<F>(
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
     provider_plan: &ProviderPlan,
-    lock_generation_target: Option<&Path>,
     acquire_target: F,
 ) -> std::result::Result<LspRustInspectContext, String>
 where
@@ -1121,8 +1117,6 @@ where
         semantic: None,
         package_features: None,
         sdk_profile_override: None,
-        generated_cargo_target_dir: lock_generation_target,
-        rust_inspect_query_paths: &query_paths,
     })
     .map_err(|error| error.to_string())?;
     let cargo_package_name = lock_resolution.cargo_package_name;

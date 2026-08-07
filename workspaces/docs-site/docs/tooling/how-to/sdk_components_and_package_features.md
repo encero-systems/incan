@@ -106,7 +106,7 @@ incan inspect features . --features json --format json
 incan test --all-features
 ```
 
-`--features`, `--no-default-features`, and `--all-features` select public Incan package features. Cargo features remain on the separate `--cargo-features`, `--cargo-no-default-features`, and `--cargo-all-features` flags.
+`--features`, `--no-default-features`, and `--all-features` select public Incan package features. Cargo-prefixed feature flags remain compatibility inputs on the explicitly supported legacy or resolution surfaces; normal Oven build/run/test commands do not use them to make Cargo prepare a missing closure.
 
 ## Activate an optional Incan dependency
 

@@ -81,11 +81,11 @@ Use `INCAN_SKIP_RUST_INSTALL=1` or `install.sh --skip-rust` only when your envir
 
 ## Builds are slow the first time
 
-The first `incan build`, `incan test`, or generated project run may compile Rust dependencies and can take a few minutes. Later runs should reuse Cargo artifacts unless dependency inputs, profile, target directory, or lock data changed.
+The first `incan build`, `incan test`, or generated project run needs a compatible Loaf supplied by an Oven-enabled toolchain. A miss explains whether to install or reinstall that toolchain or remove caller-owned Rust dependencies outside the documented Alpha envelope. It may name `incan oven legacy-cargo bake-loafs` as the maintainer preparation path, but the normal command never runs the baker or compiles a closure through Cargo automatically.
 
-## Cargo needs internet access for dependencies
+## Preparing a compatibility closure needs its publisher inputs
 
-Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io or your configured proxy/mirror.
+The hidden `legacy_cargo` Loaf baker may need Rust ecosystem inputs that are already available to it. This is not a normal `incan build`, `incan run`, or `incan test` concern.
 
 For restricted or offline environments, run the supported preflight before the build:
 
@@ -93,16 +93,7 @@ For restricted or offline environments, run the supported preflight before the b
 incan tools doctor
 ```
 
-The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later `incan build --frozen` or `incan test --frozen` will succeed.
-
-Run once while online to populate Cargo's cache and generate `incan.lock`, then use:
-
-```bash
-incan build --frozen
-incan test --frozen
-```
-
-Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail. Use `--offline` when you want Cargo to fail instead of using the network without also requiring a lockfile. Use `--locked` when the lockfile must exist and match current dependency inputs.
+The doctor report includes advisory diagnostics for the publisher's local dependency inputs. Normal Oven commands do not accept Cargo offline, lock-enforcement, or feature flags: they select a previously prepared receipt-compatible closure. If an explicit publisher preparation needs networked Cargo inputs, prepare that closure under the publisher's own documented policy before normal developer commands run.
 
 ## macOS: toolchain/linker issues
 

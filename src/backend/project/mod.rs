@@ -1,9 +1,9 @@
-//! Project generator — creates the output Rust project structure
+//! Project generator — creates the output Rust source projection
 //!
 //! Generates:
 //! - `Cargo.toml` with dependencies
 //! - `src/main.rs` or `src/lib.rs`
-//! - Invokes `cargo build`
+//! - Retains `Cargo.toml` only as an inspectable compatibility projection or explicit publisher input
 //!
 //! ## Cargo Dependency Policy
 //!
@@ -16,7 +16,7 @@
 //! - [`plan`] — [`CompilationPlan`], [`Executor`], [`ExecutionResult`] (separating "what" from "doing")
 //! - [`generator`] — [`ProjectGenerator`] struct, setters, and `generate*()` methods
 //! - [`cargo_toml`] — `Cargo.toml` rendering and dependency formatting
-//! - [`runner`] — Build / run logic and result types ([`BuildResult`], [`RunResult`])
+//! - [`runner`] — Cargo-lock projection support for the explicit publisher boundary
 
 pub mod cargo_toml;
 pub mod generator;
@@ -34,4 +34,3 @@ pub(crate) const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_C
 // Re-export public types so `crate::backend::project::ProjectGenerator` (etc.) still works.
 pub use generator::{ProjectGenerator, RunProfile};
 pub use plan::{CargoCommand, CompilationPlan, ExecutionResult, Executor, PlannedDirectory, PlannedFile};
-pub use runner::{BuildResult, RunResult};

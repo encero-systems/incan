@@ -79,7 +79,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Zero-clone starter project flow | Tooling | 0.4 | Use `incan new`, then run project commands from the generated directory. | `incan new hello --yes`<br>`cd hello`<br>`incan run`<br>`incan test`<br>`incan build --release` | `incan new` creates a runnable, testable project with a manifest, entrypoint, starter test, README, `.gitignore`, and release-line toolchain constraint. | Cloning the compiler repository or copying examples manually before a first run. | [Getting started](../../tooling/tutorials/getting_started.md), [Project lifecycle](project_lifecycle.md), [Release 0.4](../../release_notes/0_4.md) |
 | Stable diagnostics commands | Tooling | 0.4 | Use `incan check` or `incan explain`. | `incan check src/main.incn --format json`<br>`incan explain INCAN-T0001` | Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations. | Scraping terminal diagnostics or building tool-specific error-code maps. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Build reports and generated Rust inspection | Tooling | 0.4 | Use `incan build --report json` or `incan inspect rust`. | `incan build src/main.incn --report json`<br>`incan build --lib --report json --report-output build.json`<br>`incan inspect rust src/main.incn --format json` | Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available. | Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
-| Build and test preheat observability | Tooling | 0.4 | Use verbose test output or `INCAN_RUST_INSPECT_TIMING=1` when build/test preheat timing needs to be inspected. | `incan test -v tests`<br>`INCAN_RUST_INSPECT_TIMING=1 incan build --lib`<br>`incan build --lib` | Build and test preheat paths report phase timing, Cargo target reuse, Rust metadata warmed/reused/skipped counts, vocab companion cache reuse, and cache split reasons. | Silent long-running preheat phases or separate probes that do not share the real build/test cache policy. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
+| Build and test Oven observability | Tooling | 0.6 | Use a JSON build report, verbose test output, or `incan oven store inspect --format json` to inspect the documented Oven Alpha envelope. | `incan build --report json`<br>`incan test -v tests`<br>`incan oven store inspect --format json` | Oven Alpha build and test paths report receipt selection, preparation or reuse, and direct-rustc execution timing. Store inspection reports separate logical artifact bytes, physical allocation, reclaimability, and active lease use without reading a generated Cargo target directory. | Silent long-running preparation or inspecting generated Cargo target directories instead of the bounded Oven store. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.6](../../release_notes/0_6.md) |
 | Compiler-backed codegraph inspection | Tooling | 0.4 | Use `incan inspect codegraph`. | `incan inspect codegraph src/main.incn --format jsonl`<br>`incan inspect codegraph src --format jsonl --allow-errors` | Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records. | Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure. | [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Checked API metadata | Tooling | 0.3 | Use `incan tools metadata api` or LSP metadata commands. | `incan tools metadata api src/lib.incn`<br>`incan tools metadata model emit` | Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling. | Scraping source text or generated Rust when tooling needs API contracts. | [Release 0.3](../../release_notes/0_3.md), [Project lifecycle](project_lifecycle.md) |
 | Compiled providers, SDK components, and package features | Libraries | 0.5 | Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags. | `[sdk] profile = "minimal" components = ["stdlib-data"]`<br>`incan build --features json --sdk-profile minimal`<br>`when feature("json"):     pub from json_support import JsonReport`<br>`incan inspect providers --format json` | Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API. | Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics. | [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md), [Conditional compilation](conditional_compilation.md), [Project configuration](../../tooling/reference/project_configuration.md), [Release 0.5](../../release_notes/0_5.md) |
@@ -1242,24 +1242,24 @@ Canonical forms:
 - `incan build --lib --report json --report-output build.json`
 - `incan inspect rust src/main.incn --format json`
 
-### Build and test preheat observability
+### Build and test Oven observability
 
-- **Id:** `BuildTestPreheatObservability`
+- **Id:** `BuildTestOvenObservability`
 - **Category:** `Tooling`
-- **Since:** `0.4`
+- **Since:** `0.6`
 - **RFC:** `RFC 015`
-- **Stability:** `Stable`
-- **Activation:** Use verbose test output or `INCAN_RUST_INSPECT_TIMING=1` when build/test preheat timing needs to be inspected.
-- **Use instead of:** Silent long-running preheat phases or separate probes that do not share the real build/test cache policy.
-- **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md)
+- **Stability:** `Experimental`
+- **Activation:** Use a JSON build report, verbose test output, or `incan oven store inspect --format json` to inspect the documented Oven Alpha envelope.
+- **Use instead of:** Silent long-running preparation or inspecting generated Cargo target directories instead of the bounded Oven store.
+- **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.6](../../release_notes/0_6.md)
 
-Build and test preheat paths report phase timing, Cargo target reuse, Rust metadata warmed/reused/skipped counts, vocab companion cache reuse, and cache split reasons.
+Oven Alpha build and test paths report receipt selection, preparation or reuse, and direct-rustc execution timing. Store inspection reports separate logical artifact bytes, physical allocation, reclaimability, and active lease use without reading a generated Cargo target directory.
 
 Canonical forms:
 
+- `incan build --report json`
 - `incan test -v tests`
-- `INCAN_RUST_INSPECT_TIMING=1 incan build --lib`
-- `incan build --lib`
+- `incan oven store inspect --format json`
 
 ### Compiler-backed codegraph inspection
 

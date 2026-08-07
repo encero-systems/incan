@@ -1,24 +1,16 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
 use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
-#[cfg(feature = "rust_inspect")]
-use crate::cli::commands::common::{
-    collect_rust_inspect_query_paths, ensure_rust_inspect_workspace_with_cargo_package_name,
-    prewarm_rust_inspect_workspace,
-};
 use crate::cli::prelude::ParsedModule;
 use crate::compiled_sdk::CompiledSdkModules;
+use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_reachable_dependencies;
-use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies};
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
     Program, Span, Spanned, Statement, Type,
@@ -27,18 +19,27 @@ use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::logical_module_segments_from_file;
 use crate::frontend::testing_markers::{TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind};
-use crate::frontend::typechecker::TypeCheckInfo;
-use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
-use crate::generated_cache::resolve_generated_cargo_target;
-use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
-use crate::manifest::ProjectManifest;
+use crate::lockfile::CargoFeatureSelection;
+use crate::manifest::DependencySpec;
+use crate::oven::loaf::{OVEN_LOAF_MISS_GUIDANCE, runtime_build_unit_inputs};
+use crate::oven::native_test::{OvenNativeTestRequest, run_native_test_batch};
+use crate::oven::rustc::{
+    OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_test,
+    materialize_declared_rust_libraries_with_selected_path_authority, resolve_active_rustc, rustc_host_target,
+    rustc_identity, trusted_artifact_plan_for_source_evidence,
+};
+use crate::oven::{
+    OvenGeneratedProjectRequest, default_receipt_path, digest_dependency_specs, receipt_generated_project,
+    write_receipt,
+};
 use crate::provider::{FeatureSelection, ProviderPlan};
 use sha2::{Digest, Sha256};
 
 use super::module_graph::collect_source_modules_for_test;
 use super::types::{FixtureScope, TestInfo, TestResult};
+use crate::cli::commands::lock::validate_oven_lock_policy;
 
 /// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
@@ -48,27 +49,49 @@ const INCAN_SESSION_FIXTURE_MOD: &str = "__incan_session_fixtures";
 pub(super) struct TestExecutionOptions {
     pub no_capture: bool,
     pub timeout: Option<Duration>,
-    pub jobs: usize,
     pub verbose: bool,
     pub emit_progress: bool,
 }
 
-const TEST_HARNESS_PREHEAT_FINGERPRINT_FILE: &str = ".incan_preheat_fingerprint";
-const TEST_HARNESS_PREHEAT_LOCK_FILE: &str = ".incan_preheat.lock";
-const TEST_HARNESS_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
+/// Receipt-selected direct-Rustc closure for a nested normal test.
+///
+/// A compiler-suite child receives a parent-leased immutable compiler-data root. It uses that Loaf directly instead
+/// of publishing a duplicate closure into its output-owned store; ordinary tests keep the bounded-store path.
+type OvenTestPlanSelection = crate::cli::commands::build::OvenDirectRustcPlanSelection;
 
-fn parse_isolated_target_env(raw: Option<&str>) -> bool {
-    matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
-}
+/// Validate strict Incan lock policy once before Oven schedules any generated native test harnesses.
+///
+/// `--locked` and `--frozen` remain compiler-owned lock-consistency promises after normal test execution leaves
+/// Cargo. Validation uses the Oven read-only resolver: a missing or stale lock fails before scheduling, and a
+/// normal test command never publishes SDK/provider or dependency artifacts.
+pub(super) fn validate_oven_test_lock_policy(
+    representative_test: &Path,
+    cargo_policy: &CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> crate::cli::CliResult<()> {
+    if !cargo_policy.locked && !cargo_policy.frozen {
+        return Ok(());
+    }
 
-/// Return whether generated test-harness preheat should run for the supplied environment value.
-fn parse_test_preheat_env(raw: Option<&str>) -> bool {
-    !matches!(raw.map(str::trim), Some("0" | "false" | "no" | "off"))
-}
-
-/// Return whether generated test-harness preheat is enabled for this process.
-fn test_preheat_enabled() -> bool {
-    parse_test_preheat_env(std::env::var("INCAN_TEST_PREHEAT").ok().as_deref())
+    let session =
+        common::CompilationSession::discover_for_oven(representative_test, package_features, sdk_profile_override)?;
+    let manifest = session.manifest.clone();
+    let inferred_project_root = common::resolve_project_root(representative_test);
+    let project_root = manifest
+        .as_ref()
+        .map(|manifest| manifest.project_root().to_path_buf())
+        .unwrap_or(inferred_project_root);
+    let cargo_features = CargoFeatureSelection::default().normalized();
+    validate_oven_lock_policy(
+        &project_root,
+        manifest.as_ref(),
+        representative_test,
+        &cargo_features,
+        cargo_policy,
+        package_features,
+        sdk_profile_override,
+    )
 }
 
 /// Collect inline imports required by dependencies of a test source file.
@@ -224,258 +247,6 @@ fn dedupe_import_declarations(ast: &mut Program) {
     }
 
     ast.declarations = declarations;
-}
-
-#[derive(Debug, Clone, Default)]
-struct TopLevelNames {
-    types: HashSet<String>,
-    values: HashSet<String>,
-    imported_types: HashSet<String>,
-    imported_values: HashSet<String>,
-}
-
-#[derive(Debug, Clone)]
-struct TopLevelNameSummary {
-    path: PathBuf,
-    names: TopLevelNames,
-}
-
-/// Collect top-level Rust item names that would collide if multiple Incan files were concatenated.
-fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
-    /// Record a top-level import binding as both a type and value name.
-    fn add_import_binding(name: &str, names: &mut TopLevelNames) {
-        names.imported_types.insert(name.to_string());
-        names.imported_values.insert(name.to_string());
-    }
-
-    /// Add the Rust type/value namespace names contributed by one declaration.
-    fn collect_from_decl(decl: &Declaration, names: &mut TopLevelNames) {
-        match decl {
-            Declaration::Const(decl) => {
-                names.values.insert(decl.name.clone());
-            }
-            Declaration::Static(decl) => {
-                names.values.insert(decl.name.clone());
-            }
-            Declaration::Model(decl) => {
-                names.types.insert(decl.name.clone());
-                names.values.insert(decl.name.clone());
-            }
-            Declaration::Class(decl) => {
-                names.types.insert(decl.name.clone());
-                names.values.insert(decl.name.clone());
-            }
-            Declaration::Trait(decl) => {
-                names.types.insert(decl.name.clone());
-            }
-            Declaration::Alias(decl) => {
-                names.values.insert(decl.name.clone());
-            }
-            Declaration::TypeAlias(decl) => {
-                names.types.insert(decl.name.clone());
-            }
-            Declaration::Newtype(decl) => {
-                names.types.insert(decl.name.clone());
-                names.values.insert(decl.name.clone());
-            }
-            Declaration::Enum(decl) => {
-                names.types.insert(decl.name.clone());
-            }
-            Declaration::Function(decl) => {
-                names.values.insert(decl.name.clone());
-            }
-            Declaration::TestModule(decl) => {
-                for nested in &decl.body {
-                    collect_from_decl(&nested.node, names);
-                }
-            }
-            Declaration::Import(decl) => match &decl.kind {
-                ImportKind::Module(path) => {
-                    let local = decl
-                        .alias
-                        .as_ref()
-                        .or_else(|| path.segments.last())
-                        .map(String::as_str)
-                        .unwrap_or("module");
-                    add_import_binding(local, names);
-                }
-                ImportKind::From { items, .. }
-                | ImportKind::PubFrom { items, .. }
-                | ImportKind::RustFrom { items, .. } => {
-                    for item in items {
-                        add_import_binding(item.alias.as_deref().unwrap_or(&item.name), names);
-                    }
-                }
-                ImportKind::PubLibrary { library, path } => {
-                    let default_name = path.last().unwrap_or(library);
-                    add_import_binding(decl.alias.as_deref().unwrap_or(default_name), names);
-                }
-                ImportKind::Python(pkg) => {
-                    add_import_binding(decl.alias.as_deref().unwrap_or(pkg), names);
-                }
-                ImportKind::RustCrate { crate_name, path, .. } => {
-                    let local = decl
-                        .alias
-                        .as_ref()
-                        .or_else(|| path.last())
-                        .map(String::as_str)
-                        .unwrap_or(crate_name);
-                    add_import_binding(local, names);
-                }
-            },
-            Declaration::Partial(_) | Declaration::VocabBlock(_) | Declaration::Docstring(_) => {}
-        }
-    }
-
-    let mut names = TopLevelNames::default();
-    for decl in &program.declarations {
-        collect_from_decl(&decl.node, &mut names);
-    }
-    names
-}
-
-/// Collect top-level name information for one test source file.
-fn collect_top_level_name_summary(
-    path: &Path,
-    source: &str,
-    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
-    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
-) -> Option<TopLevelNameSummary> {
-    let tokens = lexer::lex(source).ok()?;
-    let ast = parser::parse_with_context_and_surfaces(
-        &tokens,
-        Some(path.to_string_lossy().as_ref()),
-        library_imported_vocab,
-        library_imported_dsl_surfaces,
-    )
-    .ok()?;
-    let names = collect_top_level_decl_names(&ast_with_inline_test_declarations(&ast));
-    Some(TopLevelNameSummary {
-        path: path.to_path_buf(),
-        names,
-    })
-}
-
-/// Collect top-level name summaries for all files in a test batch.
-fn collect_top_level_name_summaries(
-    sources_by_file: &[(PathBuf, String)],
-    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
-    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
-) -> Option<Vec<TopLevelNameSummary>> {
-    sources_by_file
-        .iter()
-        .map(|(path, source)| {
-            collect_top_level_name_summary(path, source, library_imported_vocab, library_imported_dsl_surfaces)
-        })
-        .collect()
-}
-
-/// Return whether top-level names collide across test-batch files.
-fn top_level_summaries_have_collision<'a>(summaries: impl IntoIterator<Item = &'a TopLevelNameSummary>) -> bool {
-    let mut type_owner: HashMap<String, PathBuf> = HashMap::new();
-    let mut value_owner: HashMap<String, PathBuf> = HashMap::new();
-    let mut imported_type_owner: HashMap<String, PathBuf> = HashMap::new();
-    let mut imported_value_owner: HashMap<String, PathBuf> = HashMap::new();
-    for summary in summaries {
-        for name in &summary.names.types {
-            if imported_type_owner
-                .get(name)
-                .is_some_and(|owner| owner != &summary.path)
-            {
-                return true;
-            }
-            if type_owner
-                .insert(name.clone(), summary.path.clone())
-                .is_some_and(|owner| owner != summary.path)
-            {
-                return true;
-            }
-        }
-        for name in &summary.names.values {
-            if imported_value_owner
-                .get(name)
-                .is_some_and(|owner| owner != &summary.path)
-            {
-                return true;
-            }
-            if value_owner
-                .insert(name.clone(), summary.path.clone())
-                .is_some_and(|owner| owner != summary.path)
-            {
-                return true;
-            }
-        }
-        for name in &summary.names.imported_types {
-            if type_owner.get(name).is_some_and(|owner| owner != &summary.path) {
-                return true;
-            }
-            imported_type_owner
-                .entry(name.clone())
-                .or_insert_with(|| summary.path.clone());
-        }
-        for name in &summary.names.imported_values {
-            if value_owner.get(name).is_some_and(|owner| owner != &summary.path) {
-                return true;
-            }
-            imported_value_owner
-                .entry(name.clone())
-                .or_insert_with(|| summary.path.clone());
-        }
-    }
-
-    false
-}
-
-/// Return whether concatenating source files into one worker harness would collide at Rust module scope.
-///
-/// Worker batches can share one process only when their source files can coexist in the generated crate. If two files
-/// define the same model, function, or another top-level Rust item, or when one file imports a name another file
-/// declares, the runner falls back to per-file harnesses.
-fn batch_has_cross_file_top_level_collision(
-    sources_by_file: &[(PathBuf, String)],
-    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
-    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
-) -> bool {
-    if sources_by_file.len() <= 1 {
-        return false;
-    }
-    collect_top_level_name_summaries(sources_by_file, library_imported_vocab, library_imported_dsl_surfaces)
-        .is_some_and(|summaries| top_level_summaries_have_collision(&summaries))
-}
-
-/// Partition files into greedy groups that can still share a generated Rust module scope.
-///
-/// A single duplicate top-level name should not force the whole worker batch back to one Cargo harness per file.
-/// This keeps non-conflicting files together while preserving the existing fallback for files that genuinely cannot be
-/// concatenated safely.
-fn partition_collision_free_file_groups(
-    sources_by_file: &[(PathBuf, String)],
-    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
-    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
-) -> Vec<Vec<PathBuf>> {
-    let Some(summaries) =
-        collect_top_level_name_summaries(sources_by_file, library_imported_vocab, library_imported_dsl_surfaces)
-    else {
-        return vec![sources_by_file.iter().map(|(path, _)| path.clone()).collect()];
-    };
-
-    let mut groups: Vec<Vec<TopLevelNameSummary>> = Vec::new();
-    'source: for summary in summaries {
-        for group in &mut groups {
-            let mut candidate = group.clone();
-            candidate.push(summary.clone());
-            if !top_level_summaries_have_collision(&candidate) {
-                group.push(summary);
-                continue 'source;
-            }
-        }
-        groups.push(vec![summary]);
-    }
-
-    groups
-        .into_iter()
-        .map(|group| group.into_iter().map(|summary| summary.path).collect())
-        .collect()
 }
 
 /// Shift token spans after concatenating test source files.
@@ -866,108 +637,14 @@ fn normalize_runner_assert_statements(ast: &mut Program) {
     }
 }
 
-/// Resolve an explicit Cargo `target/` override for generated test crates.
-///
-/// Set `INCAN_TEST_SHARED_TARGET_DIR` to force all generated test harnesses into a caller-provided target directory.
-/// This is primarily useful for integration tests that create many throwaway project roots but should still reuse the
-/// same compiled harness dependencies.
-///
-/// Set `INCAN_TEST_ISOLATED_TARGET_DIR` to one of `1|true|yes|on` to use `target/incan_test_runner` instead.
-fn generated_test_target_override(project_root: &Path) -> Option<PathBuf> {
-    if let Ok(shared_target_dir) = std::env::var("INCAN_TEST_SHARED_TARGET_DIR") {
-        let shared_target_dir = PathBuf::from(shared_target_dir);
-        if shared_target_dir.is_absolute() {
-            return Some(shared_target_dir);
-        }
-        if let Ok(cwd) = std::env::current_dir() {
-            return Some(cwd.join(shared_target_dir));
-        }
-        return Some(shared_target_dir);
-    }
-
-    let absolute_project_root = if project_root.is_absolute() {
-        project_root.to_path_buf()
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(project_root)
-    } else {
-        project_root.to_path_buf()
-    };
-
-    if parse_isolated_target_env(std::env::var("INCAN_TEST_ISOLATED_TARGET_DIR").ok().as_deref()) {
-        return Some(absolute_project_root.join("target").join("incan_test_runner"));
-    }
-    std::env::var_os(crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-/// Return the package entry path used for lockfile validation.
-fn lock_validation_entry_path(project_root: &Path, manifest: Option<&ProjectManifest>) -> Option<PathBuf> {
-    if let Some(main) = manifest
-        .and_then(|m| m.project.as_ref())
-        .and_then(|project| project.scripts.get("main"))
-    {
-        return Some(project_root.join(main));
-    }
-
-    let lib_entry = project_root.join("src").join("lib.incn");
-    if lib_entry.is_file() {
-        return Some(lib_entry);
-    }
-
-    let main_entry = project_root.join("src").join("main.incn");
-    if main_entry.is_file() {
-        return Some(main_entry);
-    }
-
-    None
-}
-
-/// Shared front-end + dependency work for one test file, reused across parametrized variants and multiple tests in the
-/// same `.incn` file within a single `incan test` session.
-pub(super) struct PreparedTestFile {
-    pub provider_plan: Arc<ProviderPlan>,
-    pub ast: Program,
-    pub fixtures: HashMap<String, FixtureExecutionInfo>,
-    pub module_harnesses: Vec<PreparedModuleHarness>,
-    pub source_modules: Vec<ParsedModule>,
-    pub project_root: PathBuf,
-    pub resolved: ResolvedDependencies,
-    pub project_requirements: ProjectRequirements,
-    pub registry_package_identity: String,
-    pub cargo_package_name: String,
-    pub lock_payload: Option<String>,
-    pub cargo_lock_projection_root: Option<String>,
-    pub clear_cargo_lock: bool,
-    /// Checked lowering inputs supplied by the same session analysis as test diagnostics and semantic facts.
-    pub prechecked_type_info: (TypeCheckInfo, HashMap<Vec<String>, TypeCheckInfo>, StdlibAstCache),
-    #[cfg(feature = "rust_inspect")]
-    pub rust_inspect_manifest_dir: PathBuf,
-    #[cfg(feature = "rust_inspect")]
-    pub rust_inspect_target_dir: PathBuf,
-}
-
-/// Runner harness metadata for one inline source file emitted as its own Rust module.
+/// Runner harness metadata for one source file emitted as its own Rust module.
 pub(super) struct PreparedModuleHarness {
     pub file_path: PathBuf,
     pub module_path: Vec<String>,
     pub fixtures: HashMap<String, FixtureExecutionInfo>,
 }
 
-/// Parsed dependency context for the project lock-validation entry point, shared across test batches in one session.
-struct PreparedLockEntry {
-    modules: Vec<ParsedModule>,
-    inline_imports: Vec<InlineRustImport>,
-    project_requirements: ProjectRequirements,
-}
-
-/// Session-local preparation cache for one `incan test` invocation.
-#[derive(Default)]
-pub(super) struct TestPrepCache {
-    prepared_files: HashMap<String, Arc<PreparedTestFile>>,
-    lock_entries: HashMap<String, Arc<PreparedLockEntry>>,
-}
-
+/// Return the generated function name that contains the post-yield teardown body.
 /// Return the generated function name that contains the post-yield teardown body.
 fn yield_fixture_teardown_name(name: &str) -> String {
     format!("__incan_fixture_teardown_{}", safe_fixture_ident(name))
@@ -1414,150 +1091,10 @@ fn infer_project_root_without_manifest(test_path: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-/// Compute the session-local cache key for dependency, lockfile, and rust-inspect prep.
-#[allow(clippy::too_many_arguments)] // Every independent preparation input must participate in this cache identity.
-fn compute_test_prep_cache_key(
-    test_path: &Path,
-    source: &str,
-    source_modules: &[ParsedModule],
-    manifest: Option<&ProjectManifest>,
-    package_features: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-    cargo: &CargoFeatureSelection,
-    cargo_policy: &CargoPolicy,
-) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"incan_test_prep/1\0");
-    hasher.update(canonical_path_for_cache_key(test_path).to_string_lossy().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(source.as_bytes());
-    hasher.update(b"\0");
-
-    let mut sorted_mods: Vec<&ParsedModule> = source_modules.iter().collect();
-    sorted_mods.sort_by(|a, b| a.file_path.cmp(&b.file_path));
-    for m in sorted_mods {
-        hasher.update(canonical_path_for_cache_key(&m.file_path).to_string_lossy().as_bytes());
-        hasher.update(b"\0");
-        hasher.update(m.source.as_bytes());
-        hasher.update(b"\0|\0");
-    }
-
-    match manifest {
-        Some(m) => {
-            hasher.update(b"manifest\0");
-            hasher.update(m.path().to_string_lossy().as_bytes());
-            hasher.update(b"\0");
-            // Distinguish read errors from an empty manifest file (both would otherwise contribute no bytes).
-            match fs::read_to_string(m.path()) {
-                Ok(body) => {
-                    hasher.update(b"ok\0");
-                    hasher.update(body.as_bytes());
-                }
-                Err(_) => hasher.update(b"err\0"),
-            }
-            hasher.update(b"\0");
-        }
-        None => hasher.update(b"nomanifest\0"),
-    }
-
-    for feature in &package_features.requested {
-        hasher.update(b"incan-feature\0");
-        hasher.update(feature.as_bytes());
-        hasher.update(b"\0");
-    }
-    hasher.update([package_features.no_default_features as u8]);
-    hasher.update([package_features.all_features as u8]);
-    hasher.update(b"sdk-profile\0");
-    if let Some(profile) = sdk_profile_override {
-        hasher.update(profile.as_bytes());
-    }
-    hasher.update(b"\0");
-
-    for f in &cargo.cargo_features {
-        hasher.update(f.as_bytes());
-        hasher.update(b"\0");
-    }
-    hasher.update([cargo.cargo_no_default_features as u8]);
-    hasher.update([cargo.cargo_all_features as u8]);
-    hasher.update([cargo_policy.offline as u8]);
-    hasher.update([cargo_policy.locked as u8]);
-    hasher.update([cargo_policy.frozen as u8]);
-    for arg in &cargo_policy.extra_args {
-        hasher.update(arg.as_bytes());
-        hasher.update(b"\0");
-    }
-
-    format!("v1:{}", hex::encode(hasher.finalize()))
-}
-
-/// Merge stdlib feature flags from previously prepared files with the current file requirements.
+/// Promote project dev dependencies into direct-rustc test-harness dependencies.
 ///
-/// Rust-inspect workspaces are keyed by dependency fingerprint under `target/incan_lock`. If files in a single
-/// `incan test` session require different stdlib features, a non-monotonic feature set can fan out into extra
-/// workspaces. Keeping a session-local feature union avoids that churn.
-fn merge_rust_inspect_stdlib_features<'a>(
-    existing_feature_sets: impl Iterator<Item = &'a [String]>,
-    current_features: &[String],
-) -> Vec<String> {
-    let mut merged: BTreeSet<String> = current_features.iter().cloned().collect();
-    for features in existing_feature_sets {
-        merged.extend(features.iter().cloned());
-    }
-    merged.into_iter().collect()
-}
-
-/// Return a stable session-local cache key for a lock-validation entry path.
-fn lock_entry_cache_key(lock_entry_path: &Path) -> String {
-    fs::canonicalize(lock_entry_path)
-        .unwrap_or_else(|_| lock_entry_path.to_path_buf())
-        .to_string_lossy()
-        .to_string()
-}
-
-/// Prepare the parsed lock-validation entry graph once per test session.
-fn prepare_lock_entry(
-    lock_entry_path: &Path,
-    library_manifest_index: &LibraryManifestIndex,
-    package_features: &FeatureSelection,
-    prep_cache: &mut TestPrepCache,
-) -> Result<Arc<PreparedLockEntry>, String> {
-    let cache_key = lock_entry_cache_key(lock_entry_path);
-    if let Some(hit) = prep_cache.lock_entries.get(&cache_key) {
-        return Ok(Arc::clone(hit));
-    }
-
-    let lock_entry_arg = lock_entry_path.to_string_lossy().to_string();
-    let modules = common::collect_modules_with_feature_selection(&lock_entry_arg, package_features)
-        .map_err(|err| err.message.clone())?;
-    let mut inline_imports = Vec::new();
-    for module in &modules {
-        inline_imports.extend(common::collect_rust_dependency_uses(module, false));
-    }
-    let project_requirements =
-        common::collect_project_requirements(&modules, library_manifest_index).map_err(|err| err.message.clone())?;
-
-    let prepared = Arc::new(PreparedLockEntry {
-        modules,
-        inline_imports,
-        project_requirements,
-    });
-    prep_cache.lock_entries.insert(cache_key, Arc::clone(&prepared));
-    Ok(prepared)
-}
-
-/// Merge requirements collected from the current test batch and the project lock-validation entry.
-fn merge_lock_project_requirements(
-    current: &ProjectRequirements,
-    lock_entry: &ProjectRequirements,
-) -> Result<ProjectRequirements, String> {
-    common::merge_project_requirements(current, lock_entry).map_err(|err| err.message)
-}
-
-/// Promote project dev dependencies into ordinary dependencies for generated test-runner crates.
-///
-/// `incan test` generates a library crate and runs `cargo test` against that crate. Because the generated user/test
-/// code lives under `src/`, anything it imports must be available as a normal dependency, not only under
-/// `[dev-dependencies]`.
+/// Generated user/test code lives in the caller-owned source tree, so every imported dependency belongs in the
+/// explicit Oven build unit rather than in a Cargo-only development-dependency channel.
 fn merge_test_runner_dependencies(
     dependencies: &[crate::manifest::DependencySpec],
     dev_dependencies: &[crate::manifest::DependencySpec],
@@ -1618,6 +1155,23 @@ fn runner_crate_name_for_batch_suffix(batch_suffix: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect::<String>();
     format!("test_runner_{}", normalized)
+}
+
+/// Name the caller-owned native output for one exact test selection.
+///
+/// A single source file can be split into several execution groups (for example, normal and expected-failure
+/// cases). They share the generated-project directory but emit different harness sources. Giving every selection
+/// its own output prevents one group from overwriting another group's receipt-verified native binary, which is
+/// necessary for a subsequent unchanged `incan test` to reuse all of its outputs.
+fn native_test_output_name(runner_crate_name: &str, tests: &[TestInfo]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-oven-native-test-output/v1\0");
+    for (index, test) in tests.iter().enumerate() {
+        hasher.update(libtest_qualified_name(&harness_fn_name(test, index)).as_bytes());
+        hasher.update(b"\0");
+    }
+    let digest = hex::encode(hasher.finalize());
+    format!("{runner_crate_name}-{}-tests", &digest[..16])
 }
 
 /// Normalize a libtest test name by stripping any leading crate/module qualifiers before
@@ -2183,8 +1737,8 @@ fn apply_fixture_teardowns(
     }
 }
 
-/// Append a `#[cfg(test)]` module with one `#[test]` per collected case so `cargo test` runs an entire file in one
-/// shot.
+/// Append a `#[cfg(test)]` module with one `#[test]` per collected case so native libtest runs a compatible batch in
+/// one process.
 ///
 /// The generated harness resets the process cwd to the source project root before each test so fixture paths behave
 /// the same way as ordinary `incan run/build/test` entrypoints rather than inheriting the generated temp crate path.
@@ -2390,7 +1944,7 @@ fn ordered_teardown_fixtures(tests: &[TestInfo], fixtures: &HashMap<String, Fixt
     ordered
 }
 
-/// Parse `cargo test` / libtest lines: `test <name> ... ok|FAILED`.
+/// Parse libtest lines: `test <name> ... ok|FAILED`.
 fn parse_libtest_outcomes(combined: &str) -> HashMap<String, bool> {
     let mut map = HashMap::new();
     let mut pending_name: Option<String> = None;
@@ -2425,7 +1979,7 @@ fn libtest_qualified_name(fn_name: &str) -> String {
     format!("{INCAN_FILE_TEST_MOD}::{fn_name}")
 }
 
-/// Best-effort extraction of failure output for one harness `fn_name` from combined `cargo test` stdout/stderr.
+/// Best-effort extraction of failure output for one harness `fn_name` from combined native-test stdout/stderr.
 ///
 /// Looks for libtest `---- <qualified> stdout ----` sections, then falls back to panic/assertion heuristics or the
 /// full trimmed output.
@@ -2456,7 +2010,7 @@ fn extract_libtest_failure_detail(combined: &str, full_name: &str) -> String {
     combined.trim().to_string()
 }
 
-/// Turn one batched `cargo test` run into per-[`TestInfo`] results.
+/// Turn one batched native-test run into per-[`TestInfo`] results.
 ///
 /// On compile failure, every test shares `compile_message`. Otherwise outcomes come from [`parse_libtest_outcomes`];
 /// wall time is split evenly across tests for display.
@@ -2466,7 +2020,7 @@ fn map_batch_results(
     elapsed: std::time::Duration,
     compile_failed: bool,
     compile_message: &str,
-    manifest_path: &Path,
+    generated_root: &Path,
     crate_name: &str,
 ) -> Vec<(TestInfo, TestResult)> {
     if compile_failed {
@@ -2511,13 +2065,13 @@ fn map_batch_results(
                     elapsed,
                     if combined_output.contains(INCAN_FILE_TEST_MOD) {
                         format!(
-                            "Test runner did not report outcome for `{full}`.\nmanifest=`{}` crate=`{}`\nThis may indicate stale/shared test-runner artifacts.\n{combined_output}",
-                            manifest_path.display(),
+                            "Test runner did not report outcome for `{full}`.\ngenerated-root=`{}` crate=`{}`\nThis may indicate stale caller-owned test output.\n{combined_output}",
+                            generated_root.display(),
                             crate_name,
                         )
                     } else {
                         format!(
-                            "Test runner did not report outcome for `{full}` (see cargo output below)\n{combined_output}"
+                            "Test runner did not report outcome for `{full}` (see native-test output below)\n{combined_output}"
                         )
                     },
                 ),
@@ -2527,368 +2081,40 @@ fn map_batch_results(
         .collect()
 }
 
-/// Run a command and report whether it exceeded the supplied timeout.
-fn run_command_with_timeout(mut command: Command, timeout: Option<Duration>) -> std::io::Result<(Output, bool)> {
-    let Some(timeout) = timeout else {
-        return command.output().map(|output| (output, false));
-    };
-    let start = Instant::now();
-    let mut child = command.spawn()?;
-    loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output().map(|output| (output, false));
-        }
-        if start.elapsed() >= timeout {
-            let _ = child.kill();
-            return child.wait_with_output().map(|output| (output, true));
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HarnessPreheatStatus {
-    Disabled,
-    UpToDate,
-    Ran,
-    ReusedAfterWait,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct HarnessPreheatOutcome {
-    status: HarnessPreheatStatus,
-    elapsed: Duration,
-    waited: Duration,
-}
-
-struct HarnessPreheatRequest<'a> {
-    manifest_path: &'a Path,
-    generated_dir: &'a Path,
-    project_root: &'a Path,
-    shared_target_dir: &'a Path,
-    cargo_flags: &'a [String],
-    include_cargo_lock: bool,
-    jobs: usize,
-    timeout: Option<Duration>,
-    emit_progress: bool,
-}
-
-struct PreheatLockGuard {
-    path: PathBuf,
-}
-
-impl Drop for PreheatLockGuard {
-    /// Remove the cooperative preheat lock file when this writer leaves the critical section.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-/// Return the age after which an abandoned preheat lock may be reclaimed.
-fn stale_preheat_lock_after() -> Duration {
-    std::env::var("INCAN_TEST_PREHEAT_STALE_LOCK_SECS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or_else(|| Duration::from_secs(TEST_HARNESS_PREHEAT_STALE_LOCK_SECS))
-}
-
-/// Return whether the recorded preheat fingerprint matches the generated harness inputs.
-fn preheat_stamp_matches(stamp_path: &Path, fingerprint: &str) -> bool {
-    fs::read_to_string(stamp_path)
-        .map(|existing| existing.trim() == fingerprint)
-        .unwrap_or(false)
-}
-
-/// Try to become the single preheat writer for one generated harness.
-fn try_acquire_preheat_lock(lock_path: &Path) -> io::Result<Option<PreheatLockGuard>> {
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match OpenOptions::new().write(true).create_new(true).open(lock_path) {
-        Ok(mut file) => {
-            let _ = writeln!(file, "pid={}", std::process::id());
-            Ok(Some(PreheatLockGuard {
-                path: lock_path.to_path_buf(),
-            }))
-        }
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
-/// Return whether an existing cooperative preheat lock is old enough to discard.
-fn preheat_lock_is_stale(lock_path: &Path, stale_after: Duration) -> bool {
-    let Ok(metadata) = fs::metadata(lock_path) else {
-        return false;
-    };
-    let Ok(modified) = metadata.modified() else {
-        return false;
-    };
-    SystemTime::now()
-        .duration_since(modified)
-        .is_ok_and(|age| age >= stale_after)
-}
-
-/// Add one generated harness input file to the preheat fingerprint.
-fn hash_preheat_file(hasher: &mut Sha256, base: &Path, path: &Path) -> io::Result<()> {
-    let relative = path.strip_prefix(base).unwrap_or(path);
-    hasher.update(relative.to_string_lossy().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(fs::read(path)?);
-    hasher.update(b"\0");
-    Ok(())
-}
-
-/// Collect generated Rust source files that define one harness fingerprint.
-fn collect_preheat_source_files(root: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
-    if !root.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_preheat_source_files(&path, files)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// Compute the fingerprint that determines whether `cargo test --no-run` must be repeated for a harness.
-fn compute_generated_harness_preheat_fingerprint(
-    generated_dir: &Path,
-    cargo_flags: &[String],
-    shared_target_dir: &Path,
-    include_cargo_lock: bool,
-) -> io::Result<String> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"incan_test_harness_preheat/1\0");
-    hasher.update(shared_target_dir.to_string_lossy().as_bytes());
-    hasher.update(b"\0");
-    for flag in cargo_flags {
-        hasher.update(flag.as_bytes());
-        hasher.update(b"\0");
-    }
-    hash_preheat_file(&mut hasher, generated_dir, &generated_dir.join("Cargo.toml"))?;
-    if include_cargo_lock {
-        let file_name = "Cargo.lock";
-        let path = generated_dir.join(file_name);
-        if path.is_file() {
-            hash_preheat_file(&mut hasher, generated_dir, &path)?;
-        } else {
-            hasher.update(file_name.as_bytes());
-            hasher.update(b":absent\0");
-        }
-    }
-    let mut source_files = Vec::new();
-    collect_preheat_source_files(&generated_dir.join("src"), &mut source_files)?;
-    source_files.sort();
-    for file in source_files {
-        hash_preheat_file(&mut hasher, generated_dir, &file)?;
-    }
-    Ok(format!(
-        "{}{}",
-        TEST_HARNESS_PREHEAT_FINGERPRINT_FILE,
-        hex::encode(hasher.finalize())
-    ))
-}
-
-/// Build the Cargo command used by both harness preheat and actual harness execution.
-fn cargo_test_command(
-    manifest_path: &Path,
-    cargo_flags: &[String],
-    jobs: usize,
-    shared_target_dir: &Path,
-    project_root: &Path,
-    no_run: bool,
-    no_capture: bool,
-) -> Command {
-    let mut command = crate::backend::project::runner::cargo_command();
-    crate::backend::project::runner::sanitize_cargo_environment(&mut command);
-    crate::backend::project::runner::configure_cargo_target(&mut command, shared_target_dir);
-    command.arg("test");
-    command.arg("--lib");
-    if no_run {
-        command.arg("--no-run");
-    }
-    if jobs > 1 {
-        command.arg("--jobs");
-        command.arg(jobs.to_string());
-    }
-    command.arg("--manifest-path");
-    command.arg(manifest_path);
-    for flag in cargo_flags {
-        command.arg(flag);
-    }
-    if !no_run {
-        // Batched per-file execution shares one process across all generated #[test] fns.
-        // Force deterministic single-thread libtest execution to preserve historical
-        // isolation assumptions for tests that use shared global runtime state.
-        command.arg("--");
-        command.arg("--test-threads=1");
-        if no_capture {
-            command.arg("--nocapture");
-        }
-    }
-    // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
-    command.current_dir(project_root);
-    command
-}
-
-/// Run `cargo test --no-run` for one generated harness and return its elapsed time.
-fn run_generated_harness_preheat(request: &HarnessPreheatRequest<'_>) -> Result<Duration, String> {
-    let start = Instant::now();
-    let mut command = cargo_test_command(
-        request.manifest_path,
-        request.cargo_flags,
-        request.jobs,
-        request.shared_target_dir,
-        request.project_root,
-        true,
-        false,
-    );
-    if request.emit_progress && request.timeout.is_none() {
-        command.stdout(Stdio::inherit());
-        command.stderr(Stdio::inherit());
-        let status = command
-            .status()
-            .map_err(|err| format!("failed to run cargo test --no-run: {err}"))?;
-        if !status.success() {
-            return Err(format!(
-                "cargo test --no-run failed with status {status}; cargo output was streamed above"
-            ));
-        }
-        return Ok(start.elapsed());
-    }
-
-    let (output, timed_out) = run_command_with_timeout(command, request.timeout)
-        .map_err(|err| format!("failed to run cargo test --no-run: {err}"))?;
-    if timed_out {
-        let timeout = request
-            .timeout
-            .map(|timeout| format!("{:.3}s", timeout.as_secs_f64()))
-            .unwrap_or_else(|| "configured timeout".to_string());
-        return Err(format!("cargo test --no-run timed out after {timeout}"));
-    }
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cargo test --no-run failed:\n{stdout}\n{stderr}"));
-    }
-    Ok(start.elapsed())
-}
-
-/// Preheat one generated harness if its recorded fingerprint is missing or stale.
-fn preheat_generated_harness_if_needed(request: HarnessPreheatRequest<'_>) -> Result<HarnessPreheatOutcome, String> {
-    let start = Instant::now();
-    if !test_preheat_enabled() {
-        return Ok(HarnessPreheatOutcome {
-            status: HarnessPreheatStatus::Disabled,
-            elapsed: start.elapsed(),
-            waited: Duration::ZERO,
-        });
-    }
-
-    let fingerprint = compute_generated_harness_preheat_fingerprint(
-        request.generated_dir,
-        request.cargo_flags,
-        request.shared_target_dir,
-        request.include_cargo_lock,
-    )
-    .map_err(|err| format!("failed to fingerprint generated test harness: {err}"))?;
-    let stamp_path = request.generated_dir.join(TEST_HARNESS_PREHEAT_FINGERPRINT_FILE);
-    if preheat_stamp_matches(&stamp_path, &fingerprint) {
-        return Ok(HarnessPreheatOutcome {
-            status: HarnessPreheatStatus::UpToDate,
-            elapsed: start.elapsed(),
-            waited: Duration::ZERO,
-        });
-    }
-
-    if request.emit_progress {
-        println!(
-            "preheating generated Rust test harness {}",
-            request.generated_dir.display()
-        );
-        let _ = io::stdout().flush();
-    }
-
-    let lock_path = request.generated_dir.join(TEST_HARNESS_PREHEAT_LOCK_FILE);
-    let stale_after = stale_preheat_lock_after();
-    let wait_start = Instant::now();
-    let mut announced_wait = false;
-    let lock = loop {
-        if preheat_stamp_matches(&stamp_path, &fingerprint) {
-            let waited = wait_start.elapsed();
-            return Ok(HarnessPreheatOutcome {
-                status: HarnessPreheatStatus::ReusedAfterWait,
-                elapsed: start.elapsed(),
-                waited,
-            });
-        }
-
-        match try_acquire_preheat_lock(&lock_path) {
-            Ok(Some(lock)) => break lock,
-            Ok(None) => {
-                if preheat_lock_is_stale(&lock_path, stale_after) {
-                    let _ = fs::remove_file(&lock_path);
-                    continue;
-                }
-                if request.emit_progress && !announced_wait && wait_start.elapsed() >= Duration::from_secs(1) {
-                    println!("waiting for another incan test preheat to finish");
-                    let _ = io::stdout().flush();
-                    announced_wait = true;
-                }
-                thread::sleep(Duration::from_millis(100));
-            }
-            Err(err) => return Err(format!("failed to acquire preheat lock {}: {err}", lock_path.display())),
-        }
-    };
-
-    if preheat_stamp_matches(&stamp_path, &fingerprint) {
-        drop(lock);
-        return Ok(HarnessPreheatOutcome {
-            status: HarnessPreheatStatus::UpToDate,
-            elapsed: start.elapsed(),
-            waited: wait_start.elapsed(),
-        });
-    }
-
-    run_generated_harness_preheat(&request)?;
-    fs::write(&stamp_path, &fingerprint)
-        .map_err(|err| format!("failed to write preheat fingerprint {}: {err}", stamp_path.display()))?;
-    drop(lock);
-
-    Ok(HarnessPreheatOutcome {
-        status: HarnessPreheatStatus::Ran,
-        elapsed: start.elapsed(),
-        waited: wait_start.elapsed(),
-    })
-}
-
-/// Return the stable diagnostic label for a preheat outcome.
-fn preheat_status_label(status: HarnessPreheatStatus) -> &'static str {
-    match status {
-        HarnessPreheatStatus::Disabled => "disabled",
-        HarnessPreheatStatus::UpToDate => "up-to-date",
-        HarnessPreheatStatus::Ran => "ran",
-        HarnessPreheatStatus::ReusedAfterWait => "reused-after-wait",
-    }
-}
-
-/// Run one collected test execution unit with a single generated Cargo/libtest invocation.
-///
-/// Ordinary test files still use the root harness shape. Cross-file inline source batches emit each tested source file
-/// as its own Rust module and inject the harness beside the file-local declarations, so imports and public declarations
-/// from different source files do not share one synthetic Rust scope.
+/// Run one collected test execution unit through the Oven Alpha direct-rustc path.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
-    prep_cache: &mut TestPrepCache,
+    cargo_policy: &CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    cargo_features: &[String],
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    options: TestExecutionOptions,
+) -> Vec<(TestInfo, TestResult)> {
+    run_file_tests_batch_oven(
+        tests,
+        conftest_files_by_file,
+        cargo_policy,
+        package_features,
+        sdk_profile_override,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+        options,
+    )
+}
+
+/// Execute one Oven Alpha test unit without starting Cargo or reading a generated Cargo target directory.
+///
+/// The generated harness and receipt stay under the caller's project. Its source authorizes this one invocation, while
+/// the compatibility identity selects a reusable store-owned closure across test files, workers, and clean worktrees.
+#[allow(clippy::too_many_arguments)]
+fn run_file_tests_batch_oven(
+    tests: &[TestInfo],
+    conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
     cargo_policy: &CargoPolicy,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
@@ -2902,9 +2128,24 @@ pub(super) fn run_file_tests_batch(
     }
 
     let start = Instant::now();
+    let frontend_start = Instant::now();
     let first = &tests[0];
-
-    // ---- Context: load test source, discover manifest, parse and vocab-desugar the test file ----
+    let failure = |message: String| {
+        tests
+            .iter()
+            .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+            .collect::<Vec<_>>()
+    };
+    if !cargo_policy.extra_args.is_empty()
+        || cargo_no_default_features
+        || cargo_all_features
+        || !cargo_features.is_empty()
+    {
+        return failure(
+            "Oven Alpha normal test execution does not accept Cargo passthrough or feature controls; use Incan package features instead"
+                .to_string(),
+        );
+    }
     let mut source_parts = Vec::new();
     let mut batch_parse_sources = Vec::new();
     let mut sources_by_file = Vec::new();
@@ -2914,8 +2155,8 @@ pub(super) fn run_file_tests_batch(
         if !seen_files.insert(test.file_path.clone()) {
             continue;
         }
-        if let Some(conftest_files) = conftest_files_by_file.get(&test.file_path) {
-            for conftest in conftest_files {
+        if let Some(conftests) = conftest_files_by_file.get(&test.file_path) {
+            for conftest in conftests {
                 if !seen_conftests.insert(conftest.clone()) {
                     continue;
                 }
@@ -2924,73 +2165,42 @@ pub(super) fn run_file_tests_batch(
                         source_parts.push(source.clone());
                         batch_parse_sources.push((conftest.clone(), source));
                     }
-                    Err(err) => {
-                        let message = format!("Failed to read conftest {}: {}", conftest.display(), err);
-                        return tests
-                            .iter()
-                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                            .collect();
-                    }
+                    Err(error) => return failure(format!("failed to read conftest {}: {error}", conftest.display())),
                 }
             }
         }
         match fs::read_to_string(&test.file_path) {
             Ok(source) => {
-                sources_by_file.push((test.file_path.clone(), source.clone()));
+                source_parts.push(source.clone());
                 batch_parse_sources.push((test.file_path.clone(), source.clone()));
-                source_parts.push(source);
+                sources_by_file.push((test.file_path.clone(), source));
             }
-            Err(e) => {
-                return tests
-                    .iter()
-                    .map(|t| {
-                        (
-                            t.clone(),
-                            TestResult::Failed(start.elapsed(), format!("Failed to read file: {}", e)),
-                        )
-                    })
-                    .collect();
-            }
+            Err(error) => return failure(format!("failed to read test {}: {error}", test.file_path.display())),
         }
     }
     let source = source_parts.join("\n");
 
-    let compilation_session = match common::CompilationSession::discover_with_selections(
-        &first.file_path,
-        package_features,
-        sdk_profile_override,
-    ) {
-        Ok(session) => session,
-        Err(error) => {
-            return tests
-                .iter()
-                .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                .collect();
-        }
-    };
-    let manifest = compilation_session.manifest.clone();
-    let testing_marker_semantics = match compilation_session.testing_marker_semantics() {
-        Ok(semantics) => semantics,
-        Err(error) => {
-            return tests
-                .iter()
-                .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                .collect();
-        }
-    };
-    let library_manifest_index = compilation_session.library_manifest_index.clone();
+    let session =
+        match common::CompilationSession::discover_for_oven(&first.file_path, package_features, sdk_profile_override) {
+            Ok(session) => session,
+            Err(error) => return failure(error.message),
+        };
+    let manifest = session.manifest.clone();
+    let project_root = absolute_project_root(
+        &manifest
+            .as_ref()
+            .map(|manifest| manifest.project_root().to_path_buf())
+            .unwrap_or_else(|| infer_project_root_without_manifest(&first.file_path)),
+    );
+    let library_manifest_index = session.library_manifest_index.clone();
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
     let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
-
-    // ---- Context: resolve project paths and collect transitive Incan modules for the test ----
-    let project_root = manifest
-        .as_ref()
-        .map(|m| m.project_root().to_path_buf())
-        .unwrap_or_else(|| infer_project_root_without_manifest(&first.file_path));
-    let project_root = absolute_project_root(&project_root);
+    let testing_marker_semantics = match session.testing_marker_semantics() {
+        Ok(semantics) => semantics,
+        Err(error) => return failure(error.message),
+    };
     let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
-
-    let isolated_module_batch = match prepare_isolated_source_module_batch(
+    let isolated_batch = match prepare_isolated_source_module_batch(
         &sources_by_file,
         conftest_files_by_file,
         &project_root,
@@ -2998,77 +2208,28 @@ pub(super) fn run_file_tests_batch(
         &library_manifest_index,
         &library_imported_vocab,
         &library_imported_dsl_surfaces,
-        &compilation_session,
+        &session,
         testing_marker_semantics.as_ref(),
     ) {
         Ok(batch) => batch,
-        Err(message) => {
-            return tests
-                .iter()
-                .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                .collect();
-        }
+        Err(message) => return failure(message),
     };
-
-    let (runner_ast, fixtures, source_modules, module_harnesses) = if let Some(batch) = isolated_module_batch {
+    let (runner_ast, fixtures, source_modules, module_harnesses) = if let Some(batch) = isolated_batch {
         (batch.ast, HashMap::new(), batch.source_modules, batch.harnesses)
     } else {
-        if batch_has_cross_file_top_level_collision(
-            &sources_by_file,
-            Some(&library_imported_vocab),
-            Some(&library_imported_dsl_surfaces),
-        ) {
-            let mut split_results = Vec::new();
-            for file_group in partition_collision_free_file_groups(
-                &sources_by_file,
-                Some(&library_imported_vocab),
-                Some(&library_imported_dsl_surfaces),
-            ) {
-                let file_group = file_group.into_iter().collect::<BTreeSet<_>>();
-                let file_tests = tests
-                    .iter()
-                    .filter(|test| file_group.contains(&test.file_path))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                split_results.extend(run_file_tests_batch(
-                    &file_tests,
-                    conftest_files_by_file,
-                    prep_cache,
-                    cargo_policy,
-                    package_features,
-                    sdk_profile_override,
-                    cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    options,
-                ));
-            }
-            return split_results;
-        }
-
-        let ast = match parse_and_desugar_test_sources(
+        let parsed = match parse_and_desugar_test_sources(
             &batch_parse_sources,
             &library_manifest_index,
             &library_imported_vocab,
             &library_imported_dsl_surfaces,
-            &compilation_session,
+            &session,
         ) {
-            Ok(ast) => ast,
-            Err(message) => {
-                return tests
-                    .iter()
-                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                    .collect();
-            }
+            Ok(parsed) => parsed,
+            Err(message) => return failure(message),
         };
-        let (runner_ast, fixtures) = match prepare_runner_program(&ast, testing_marker_semantics.as_ref()) {
+        let (runner_ast, fixtures) = match prepare_runner_program(&parsed, testing_marker_semantics.as_ref()) {
             Ok(prepared) => prepared,
-            Err(message) => {
-                return tests
-                    .iter()
-                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                    .collect();
-            }
+            Err(message) => return failure(message),
         };
         let source_modules = match collect_source_modules_for_test(
             &runner_ast,
@@ -3076,512 +2237,115 @@ pub(super) fn run_file_tests_batch(
             Some(&library_imported_vocab),
             Some(&library_imported_dsl_surfaces),
             Some(&library_manifest_index),
-            compilation_session.provider_plan.as_ref(),
+            session.provider_plan.as_ref(),
         ) {
-            Ok(m) => m,
-            Err(e) => {
-                return tests
-                    .iter()
-                    .map(|t| {
-                        (
-                            t.clone(),
-                            TestResult::Failed(start.elapsed(), format!("Failed to collect source modules: {}", e)),
-                        )
-                    })
-                    .collect();
-            }
+            Ok(modules) => modules,
+            Err(error) => return failure(format!("failed to collect source modules: {error}")),
         };
         (runner_ast, fixtures, source_modules, Vec::new())
     };
-
-    let cargo_feature_selection = CargoFeatureSelection {
-        cargo_features: cargo_features.to_vec(),
-        cargo_no_default_features,
-        cargo_all_features,
+    let module_for_imports = ParsedModule {
+        name: "test".to_string(),
+        path_segments: vec!["test".to_string()],
+        file_path: first.file_path.clone(),
+        source,
+        ast: runner_ast.clone(),
+    };
+    let source_dependency_modules = source_modules
+        .iter()
+        .map(|module| ParsedModule {
+            name: module.name.clone(),
+            path_segments: module.path_segments.clone(),
+            file_path: module.file_path.clone(),
+            source: module.source.clone(),
+            ast: module.ast.clone(),
+        })
+        .collect::<Vec<_>>();
+    // `std.*` source modules lower through the compiler-owned `incan_stdlib` crate. ProjectGenerator always supplies
+    // that runtime directly, so treating its internal `rust.module("incan_stdlib::...")` markers as user Cargo
+    // imports would create a duplicate, path-unstable dependency. Every other inline Rust import remains part of the
+    // explicit publisher's generated manifest and therefore its Oven build-unit identity.
+    let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules)
+        .into_iter()
+        .filter(|import| import.crate_name != "incan_stdlib")
+        .collect::<Vec<_>>();
+    let mut dependency_modules = Vec::with_capacity(1 + source_dependency_modules.len());
+    dependency_modules.push(module_for_imports.clone());
+    dependency_modules.extend(source_dependency_modules.clone());
+    let mut requirements = match common::collect_project_requirements(&dependency_modules, &library_manifest_index) {
+        Ok(requirements) => requirements,
+        Err(error) => return failure(error.message),
+    };
+    let feature_selection = CargoFeatureSelection::default().normalized();
+    let mut resolved =
+        match resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &feature_selection) {
+            Ok(resolved) => resolved,
+            Err(errors) => {
+                let sources = common::build_source_map(&dependency_modules);
+                return failure(
+                    errors
+                        .iter()
+                        .map(|error| common::format_dependency_error(error, &sources))
+                        .collect::<String>(),
+                );
+            }
+        };
+    let provider_plan = match session.provider_plan_for_modules(&dependency_modules) {
+        Ok(plan) => plan,
+        Err(error) => return failure(error.message),
+    };
+    // A compiled `pub::` package is a caller-owned direct-Rustc artifact. Keep its prior direct output as an explicit
+    // precondition, then replace it below when a compiler-suite consumer selects a different complete Rustc cohort.
+    // The immutable native plan remains responsible only for compiler-owned SDK/runtime inputs; no missing or stale
+    // library authorizes a Cargo path.
+    let mut caller_owned_libraries =
+        match crate::cli::commands::build::oven_caller_owned_libraries(&provider_plan, "debug") {
+            Ok(libraries) => libraries,
+            Err(error) => return failure(error.message),
+        };
+    if let Err(error) = common::extend_requirements_with_provider_plan(&mut requirements, &provider_plan) {
+        return failure(error.message);
     }
-    .normalized();
-
-    // ---- Context: session prep cache — reuse deps / lock / rust-inspect when key matches ----
-    let cache_key = compute_test_prep_cache_key(
-        &first.file_path,
-        &source,
-        &source_modules,
-        manifest.as_ref(),
-        package_features,
-        sdk_profile_override,
-        &cargo_feature_selection,
-        cargo_policy,
-    );
-
-    let prep_start = Instant::now();
-    let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.prepared_files.get(&cache_key) {
-        if options.verbose && options.emit_progress {
-            println!(
-                "test prep phase: cache hit for {} file(s) in {:.2}s",
-                seen_files.len(),
-                prep_start.elapsed().as_secs_f64()
-            );
-        }
-        Arc::clone(hit)
-    } else {
-        // ---- Context: cold prep — inline imports, resolve and merge Cargo deps, lock + rust-inspect workspace ----
-        let module_for_imports = ParsedModule {
-            name: "test".to_string(),
-            path_segments: vec!["test".to_string()],
-            file_path: first.file_path.clone(),
-            source: source.clone(),
-            ast: runner_ast.clone(),
-        };
-        let source_dependency_modules = source_modules
-            .iter()
-            .map(|m| ParsedModule {
-                name: m.name.clone(),
-                path_segments: m.path_segments.clone(),
-                file_path: m.file_path.clone(),
-                source: m.source.clone(),
-                ast: m.ast.clone(),
-            })
-            .collect::<Vec<_>>();
-        let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules);
-
-        let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
-        dependency_modules.push(module_for_imports.clone());
-        dependency_modules.extend(source_dependency_modules.clone());
-
-        let mut project_requirements =
-            match common::collect_project_requirements(&dependency_modules, &library_manifest_index) {
-                Ok(requirements) => requirements,
-                Err(err) => {
-                    return tests
-                        .iter()
-                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
-                        .collect();
-                }
-            };
-
-        let mut resolved =
-            match resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
-                Ok(resolved) => resolved,
-                Err(errors) => {
-                    let mut sources = HashMap::new();
-                    sources.insert(first.file_path.clone(), source.clone());
-                    let mut msg = String::new();
-                    for err in &errors {
-                        msg.push_str(&common::format_dependency_error(err, &sources));
-                    }
-                    return tests
-                        .iter()
-                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
-                        .collect();
-                }
-            };
-        if let Err(err) = common::merge_project_requirement_dependencies(&mut resolved, &project_requirements) {
-            return tests
-                .iter()
-                .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
-                .collect();
-        }
-
-        let mut lock_dependency_modules = dependency_modules.clone();
-        let mut lock_project_requirements = project_requirements.clone();
-        let mut lock_resolved = resolved.clone();
-        // Lock generation fingerprints the project-wide entrypoint, scripts, tests, and provider participation. Use
-        // that same closure for ordinary freshness checks as well as `--locked`/`--frozen`; comparing a lock against
-        // only the current test batch makes valid locks appear stale whenever another entrypoint uses a provider or
-        // Rust dependency that this batch does not.
-        if let Some(lock_entry_path) = lock_validation_entry_path(&project_root, manifest.as_ref()) {
-            let lock_entry =
-                match prepare_lock_entry(&lock_entry_path, &library_manifest_index, package_features, prep_cache) {
-                    Ok(entry) => entry,
-                    Err(message) => {
-                        return tests
-                            .iter()
-                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                            .collect();
-                    }
-                };
-            let mut lock_inline_imports = inline_imports.clone();
-            lock_inline_imports.extend(lock_entry.inline_imports.iter().cloned());
-            lock_dependency_modules.extend(lock_entry.modules.iter().cloned());
-
-            lock_project_requirements =
-                match merge_lock_project_requirements(&project_requirements, &lock_entry.project_requirements) {
-                    Ok(requirements) => requirements,
-                    Err(message) => {
-                        return tests
-                            .iter()
-                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                            .collect();
-                    }
-                };
-            lock_resolved = match resolve_reachable_dependencies(
-                manifest.as_ref(),
-                &lock_inline_imports,
-                true,
-                &cargo_feature_selection,
-            ) {
-                Ok(resolved) => resolved,
-                Err(errors) => {
-                    let sources = common::build_source_map(&lock_dependency_modules);
-                    let mut msg = String::new();
-                    for err in &errors {
-                        msg.push_str(&common::format_dependency_error(err, &sources));
-                    }
-                    return tests
-                        .iter()
-                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
-                        .collect();
-                }
-            };
-            if let Err(err) =
-                common::merge_project_requirement_dependencies(&mut lock_resolved, &lock_project_requirements)
-            {
-                return tests
-                    .iter()
-                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
-                    .collect();
-            }
-        }
-
-        let provider_plan = match compilation_session.provider_plan_for_modules(&lock_dependency_modules) {
-            Ok(plan) => plan,
-            Err(error) => {
-                return tests
-                    .iter()
-                    .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                    .collect();
-            }
-        };
-        if let Err(error) = common::extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan) {
-            return tests
-                .iter()
-                .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                .collect();
-        }
-        if let Err(error) =
-            common::extend_requirements_with_provider_plan(&mut lock_project_requirements, &provider_plan)
-        {
-            return tests
-                .iter()
-                .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                .collect();
-        }
-        if let Err(error) = common::merge_project_requirement_dependencies(&mut resolved, &project_requirements) {
-            return tests
-                .iter()
-                .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                .collect();
-        }
-        if let Err(error) =
-            common::merge_project_requirement_dependencies(&mut lock_resolved, &lock_project_requirements)
-        {
-            return tests
-                .iter()
-                .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                .collect();
-        }
-        let semantic_sdk_paths = common::semantic_sdk_path_dependencies(&lock_project_requirements);
-        let semantic = match semantic_lock_state(
-            &project_root,
-            manifest.as_ref().and_then(ProjectManifest::oven_interop),
-            compilation_session.sdk_inventory.as_deref(),
-            compilation_session.sdk_components.as_ref(),
-            compilation_session.package_feature_plan.as_ref(),
-            &provider_plan,
-            &semantic_sdk_paths,
-        ) {
-            Ok(semantic) => semantic,
-            Err(error) => {
-                return tests
-                    .iter()
-                    .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.clone())))
-                    .collect();
-            }
-        };
-
-        let project_name = manifest
-            .as_ref()
-            .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
-            .or_else(|| {
-                first
-                    .file_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| "incan_test".to_string());
-        let generated_cargo_target_dir = generated_test_target_override(&project_root);
+    if let Err(error) = common::merge_project_requirement_dependencies(&mut resolved, &requirements) {
+        return failure(error.message);
+    }
+    let inline_path_dependencies = oven_test_inline_dependency_specs(&resolved, &inline_imports);
+    let analysis = match session.analyze_modules(
+        &dependency_modules,
         #[cfg(feature = "rust_inspect")]
-        let metadata_query_paths = collect_rust_inspect_query_paths(&lock_dependency_modules);
-        let lock_resolution = match commands::resolve_lock_context(commands::LockResolutionRequest {
-            project_root: &project_root,
-            project_name: &project_name,
-            entry_file: Some(&first.file_path),
-            manifest: manifest.as_ref(),
-            resolved: &lock_resolved,
-            project_requirements: &lock_project_requirements,
-            cargo_features: &cargo_feature_selection,
-            cargo_policy,
-            semantic: Some(&semantic),
-            package_features: Some(package_features),
-            sdk_profile_override,
-            generated_cargo_target_dir: generated_cargo_target_dir.as_deref(),
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_query_paths: &metadata_query_paths,
-        }) {
-            Ok(payload) => payload,
-            Err(err) => {
-                return tests
-                    .iter()
-                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
-                    .collect();
-            }
-        };
-        let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
-        let lock_payload = cargo_lock_inputs.payload;
-        let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
-        let clear_cargo_lock = cargo_lock_inputs.clear_existing;
-        let rust_inspect_cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
-
-        #[cfg(feature = "rust_inspect")]
-        let rust_inspect_managed_target = match resolve_generated_cargo_target(
-            generated_cargo_target_dir.as_deref(),
-            &project_root,
-            &project_root,
-            &lock_resolution.cargo_package_name,
-            "rust-inspect",
-            lock_payload.as_deref(),
-            &cargo_feature_selection,
-            &rust_inspect_cargo_flags,
-        ) {
-            Ok(target) => target,
-            Err(error) => {
-                return tests
-                    .iter()
-                    .map(|test| {
-                        (
-                            test.clone(),
-                            TestResult::Failed(
-                                start.elapsed(),
-                                format!("failed to prepare rust-inspect Cargo cache: {error}"),
-                            ),
-                        )
-                    })
-                    .collect();
-            }
-        };
-        #[cfg(feature = "rust_inspect")]
-        let (rust_inspect_target_dir, _rust_inspect_cache_lease, _rust_inspect_cache_identity) =
-            rust_inspect_managed_target.into_parts();
-
-        #[cfg(feature = "rust_inspect")]
-        let rust_inspect_manifest_dir = {
-            let mut rust_inspect_requirements = lock_resolution.project_requirements.clone();
-            rust_inspect_requirements.stdlib_features = merge_rust_inspect_stdlib_features(
-                prep_cache
-                    .prepared_files
-                    .values()
-                    .map(|prepared| prepared.project_requirements.stdlib_features.as_slice()),
-                &lock_resolution.project_requirements.stdlib_features,
-            );
-            let rust_inspect_manifest_dir = match ensure_rust_inspect_workspace_with_cargo_package_name(
-                &project_root,
-                &project_name,
-                &lock_resolution.cargo_package_name,
-                manifest
-                    .as_ref()
-                    .and_then(|m| m.build.as_ref().and_then(|build| build.rust_edition.clone())),
-                &lock_resolution.resolved,
-                &rust_inspect_requirements,
-                lock_payload.clone(),
-                cargo_lock_projection_root.as_deref(),
-                clear_cargo_lock,
-                &rust_inspect_target_dir,
-                &rust_inspect_cargo_flags,
-            ) {
-                Ok(dir) => dir,
-                Err(err) => {
-                    return tests
-                        .iter()
-                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
-                        .collect();
-                }
-            };
-            if let Err(err) = prewarm_rust_inspect_workspace(
-                &rust_inspect_manifest_dir,
-                &rust_inspect_target_dir,
-                &metadata_query_paths,
-            ) {
-                return tests
-                    .iter()
-                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
-                    .collect();
-            }
-            rust_inspect_manifest_dir
-        };
-
-        let prechecked_type_info = {
-            let mut analysis_modules = source_dependency_modules.clone();
-            analysis_modules.push(module_for_imports.clone());
-            let analysis = match compilation_session.analyze_modules(
-                &analysis_modules,
-                #[cfg(feature = "rust_inspect")]
-                Some(&rust_inspect_manifest_dir),
-            ) {
-                Ok(analysis) => analysis,
-                Err(failure) => {
-                    let message = failure.render_human();
-                    return tests
-                        .iter()
-                        .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                        .collect();
-                }
-            };
-            let Some(main) = analysis
-                .type_info_for_module_path(&module_for_imports.path_segments)
-                .cloned()
-            else {
-                return tests
-                    .iter()
-                    .map(|test| {
-                        (
-                            test.clone(),
-                            TestResult::Failed(
-                                start.elapsed(),
-                                format!("missing session analysis for {}", first.file_path.display()),
-                            ),
-                        )
-                    })
-                    .collect();
-            };
-            let mut dependencies = HashMap::with_capacity(source_modules.len());
-            for module in &source_modules {
-                let Some(type_info) = analysis.type_info_for_module_path(&module.path_segments).cloned() else {
-                    return tests
-                        .iter()
-                        .map(|test| {
-                            (
-                                test.clone(),
-                                TestResult::Failed(
-                                    start.elapsed(),
-                                    format!("missing session analysis for {}", module.file_path.display()),
-                                ),
-                            )
-                        })
-                        .collect();
-                };
-                dependencies.insert(module.path_segments.clone(), type_info);
-            }
-            (main, dependencies, analysis.stdlib_cache().clone())
-        };
-
-        let prepared = PreparedTestFile {
-            provider_plan,
-            ast: runner_ast,
-            fixtures,
-            module_harnesses,
-            source_modules,
-            project_root,
-            resolved: lock_resolution.resolved,
-            project_requirements: lock_resolution.project_requirements,
-            registry_package_identity: project_name,
-            cargo_package_name: lock_resolution.cargo_package_name,
-            cargo_lock_projection_root,
-            clear_cargo_lock,
-            lock_payload,
-            prechecked_type_info,
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_manifest_dir,
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_target_dir,
-        };
-        let arc = Arc::new(prepared);
-        prep_cache.prepared_files.insert(cache_key, Arc::clone(&arc));
-        if options.verbose && options.emit_progress {
-            println!(
-                "test prep phase: cache miss prepared {} source module(s) in {:.2}s",
-                arc.source_modules.len(),
-                prep_start.elapsed().as_secs_f64()
-            );
-        }
-        arc
+        None,
+    ) {
+        Ok(analysis) => analysis,
+        Err(analysis_failure) => return failure(analysis_failure.render_human()),
     };
-
-    // A preparation-cache hit retains the rust-inspect manifest, but not an activity lease. Reacquire the exact
-    // canonical domain for every batch and keep it live through codegen, whose fallback typechecker paths may still
-    // consult Cargo metadata after the shared front-end analysis completed.
-    #[cfg(feature = "rust_inspect")]
-    let _rust_inspect_codegen_lease = {
-        let explicit_target = generated_test_target_override(&prepared.project_root);
-        let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
-        let managed_target = match resolve_generated_cargo_target(
-            explicit_target.as_deref(),
-            &prepared.project_root,
-            &prepared.project_root,
-            &prepared.cargo_package_name,
-            "rust-inspect",
-            prepared.lock_payload.as_deref(),
-            &cargo_feature_selection,
-            &cargo_flags,
-        ) {
-            Ok(target) => target,
-            Err(error) => {
-                return tests
-                    .iter()
-                    .map(|test| {
-                        (
-                            test.clone(),
-                            TestResult::Failed(
-                                start.elapsed(),
-                                format!("failed to reacquire rust-inspect Cargo cache: {error}"),
-                            ),
-                        )
-                    })
-                    .collect();
-            }
-        };
-        let (target_dir, lease, _identity) = managed_target.into_parts();
-        if target_dir != prepared.rust_inspect_target_dir {
-            return tests
-                .iter()
-                .map(|test| {
-                    (
-                        test.clone(),
-                        TestResult::Failed(
-                            start.elapsed(),
-                            "rust-inspect Cargo cache identity changed between test preparation and codegen"
-                                .to_string(),
-                        ),
-                    )
-                })
-                .collect();
-        }
-        lease
+    let Some(main_type_info) = analysis
+        .type_info_for_module_path(&module_for_imports.path_segments)
+        .cloned()
+    else {
+        return failure(format!("missing Oven test analysis for {}", first.file_path.display()));
     };
+    let mut dependency_type_info = HashMap::with_capacity(source_modules.len());
+    for module in &source_modules {
+        let Some(type_info) = analysis.type_info_for_module_path(&module.path_segments).cloned() else {
+            return failure(format!("missing Oven test analysis for {}", module.file_path.display()));
+        };
+        dependency_type_info.insert(module.path_segments.clone(), type_info);
+    }
+    let frontend_elapsed = frontend_start.elapsed();
 
-    // ---- Codegen + unified file harness (library + #[cfg(test)] module) ----
+    let generation_start = Instant::now();
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(false);
-    codegen.set_provider_plan(Arc::clone(&prepared.provider_plan));
-    let (main_type_info, dependency_type_info, stdlib_cache) = &prepared.prechecked_type_info;
-    codegen.set_stdlib_cache(stdlib_cache.clone());
-    codegen.set_prechecked_type_info(main_type_info.clone(), dependency_type_info.clone());
-    codegen.set_registry_package_identity(Some(prepared.registry_package_identity.clone()));
-    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&prepared.provider_plan);
-    #[cfg(feature = "rust_inspect")]
-    {
-        codegen.set_rust_inspect_manifest_dir(prepared.rust_inspect_manifest_dir.clone());
-    }
-
-    // The test harness shares the production compiler boundary: migrated modules use artifact metadata and link the
-    // compiled crate instead of being generated under `__incan_std`.
-    let emitted_source_modules = prepared
-        .source_modules
-        .iter()
-        .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
-        .collect::<Vec<_>>();
-    for module in prepared
-        .source_modules
+    codegen.set_provider_plan(Arc::clone(&provider_plan));
+    codegen.set_stdlib_cache(analysis.stdlib_cache().clone());
+    codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
+    let project_name = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
+        .unwrap_or_else(|| "incan_test".to_string());
+    codegen.set_registry_package_identity(Some(project_name.clone()));
+    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
+    for module in source_modules
         .iter()
         .filter(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments))
     {
@@ -3591,22 +2355,23 @@ pub(super) fn run_file_tests_batch(
             module.path_segments.clone(),
         );
     }
+    let emitted_source_modules = source_modules
+        .iter()
+        .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
+        .collect::<Vec<_>>();
     for module in &emitted_source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
-    let fixtures = prepared.fixtures.clone();
-    if prepared.module_harnesses.is_empty() {
+    if module_harnesses.is_empty() {
         codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
     } else {
         codegen.set_public_typecheck_module_paths(
-            prepared
-                .module_harnesses
+            module_harnesses
                 .iter()
                 .map(|harness| harness.module_path.clone())
                 .collect(),
         );
-        let reachable_by_module = prepared
-            .module_harnesses
+        let reachable_by_module = module_harnesses
             .iter()
             .map(|harness| {
                 let file_tests = tests
@@ -3622,270 +2387,422 @@ pub(super) fn run_file_tests_batch(
             .collect::<HashMap<_, _>>();
         codegen.set_externally_reachable_items_by_module(reachable_by_module);
     }
-
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
-    let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &prepared.project_root);
+    let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &project_root);
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
-    // Generated harness source is project-owned even though compatible Cargo artifacts are shared. Anchoring this
-    // path at the project root prevents path-independent batch identities from making unrelated projects overwrite
-    // the same `Cargo.toml` under the compiler process's working directory.
-    let temp_dir_path = prepared.project_root.join("target/incan_tests").join(&dir_suffix);
-    let manifest_path = temp_dir_path.join("Cargo.toml");
-
-    let explicit_target = generated_test_target_override(&prepared.project_root);
-    let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
-    let managed_target = match resolve_generated_cargo_target(
-        explicit_target.as_deref(),
-        &prepared.project_root,
-        &prepared.project_root,
-        &prepared.cargo_package_name,
-        "test",
-        prepared.lock_payload.as_deref(),
-        &cargo_feature_selection,
-        &cargo_flags,
-    ) {
-        Ok(target) => target,
-        Err(error) => {
-            return tests
-                .iter()
-                .map(|test| {
-                    (
-                        test.clone(),
-                        TestResult::Failed(
-                            start.elapsed(),
-                            format!("failed to prepare generated Cargo cache: {error}"),
-                        ),
-                    )
-                })
-                .collect();
-        }
-    };
-    let (shared_target_dir, managed_target_lease, managed_target_identity) = managed_target.into_parts();
-
-    let mut generator = ProjectGenerator::new(&temp_dir_path, &runner_crate_name, false);
-    generator.set_cargo_target_dir_override(Some(shared_target_dir.clone()));
-    generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
-    generator.set_provider_plan(&prepared.provider_plan);
-    generator.set_sdk_path_dependencies(prepared.project_requirements.sdk_path_dependencies.clone());
-    generator.set_package_name(Some(prepared.cargo_package_name.clone()));
+    let native_output_name = native_test_output_name(&runner_crate_name, tests);
+    let generated_root = project_root.join("target/incan_tests").join(&dir_suffix);
+    let mut generator = ProjectGenerator::new(&generated_root, &runner_crate_name, false);
+    generator.set_provider_plan(&provider_plan);
+    generator.set_sdk_path_dependencies(requirements.sdk_path_dependencies.clone());
+    generator.set_package_name(Some(project_name));
     generator.set_stdlib_features(test_runner_stdlib_features_for_batch(
-        &prepared.project_requirements.stdlib_features,
+        &requirements.stdlib_features,
         tests,
         &fixtures,
-        &prepared.module_harnesses,
+        &module_harnesses,
     ));
-    generator.set_cargo_lock_payload(prepared.lock_payload.clone());
-    generator.set_cargo_lock_projection_root(prepared.cargo_lock_projection_root.clone());
-    generator.set_clear_cargo_lock(prepared.clear_cargo_lock);
-    generator.set_cargo_policy_flags(cargo_flags.clone());
-
-    let gen_err = |msg: String| {
-        tests
-            .iter()
-            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
-            .collect::<Vec<_>>()
-    };
-
     let mut runner_dependencies =
-        match merge_test_runner_dependencies(&prepared.resolved.dependencies, &prepared.resolved.dev_dependencies) {
-            Ok(deps) => deps,
-            Err(message) => return gen_err(message),
-        };
-    runner_dependencies =
-        match merge_test_runner_dependencies(&runner_dependencies, &prepared.project_requirements.dependencies) {
+        match merge_test_runner_dependencies(&resolved.dependencies, &resolved.dev_dependencies) {
             Ok(dependencies) => dependencies,
-            Err(message) => return gen_err(message),
+            Err(message) => return failure(message),
         };
-    runner_dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-    generator.set_include_dev_dependencies(false);
+    runner_dependencies = match merge_test_runner_dependencies(&runner_dependencies, &requirements.dependencies) {
+        Ok(dependencies) => dependencies,
+        Err(message) => return failure(message),
+    };
     generator.set_dependencies(runner_dependencies);
     generator.set_dev_dependencies(Vec::new());
-
-    let generated_changed = if emitted_source_modules.is_empty() {
-        let rust_code = match codegen.try_generate(&prepared.ast) {
-            Ok(code) => code,
-            Err(e) => return gen_err(format!("Code generation error: {}", e)),
+    let generated: Result<(), String> = if emitted_source_modules.is_empty() {
+        let source = match codegen.try_generate(&runner_ast) {
+            Ok(source) => inject_file_test_harness(&source, tests, &project_root, &fixtures),
+            Err(error) => return failure(format!("code generation error: {error}")),
         };
-        let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root, &fixtures);
-        match generator.generate(&rust_code) {
-            Ok(changed) => changed,
-            Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
-        }
+        generator
+            .generate(&source)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     } else {
-        let module_paths: Vec<Vec<String>> = emitted_source_modules.iter().map(|m| m.path_segments.clone()).collect();
-        let (mut main_code, mut rust_modules) =
-            match codegen.try_generate_multi_file_nested(&prepared.ast, &module_paths) {
-                Ok(result) => result,
-                Err(e) => return gen_err(format!("Code generation error: {}", e)),
-            };
-        let session_cache_module = if prepared.module_harnesses.is_empty() {
-            None
-        } else {
-            render_shared_session_fixture_cache_module(&prepared.module_harnesses).map(|module_code| {
-                rust_modules.insert(vec![INCAN_SESSION_FIXTURE_MOD.to_string()], module_code);
-                INCAN_SESSION_FIXTURE_MOD
-            })
-        };
-        if prepared.module_harnesses.is_empty() {
-            main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
-        } else {
-            for harness in &prepared.module_harnesses {
-                let tests_with_indices = tests
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, test)| test.file_path == harness.file_path)
-                    .collect::<Vec<_>>();
-                let file_tests = tests_with_indices
-                    .iter()
-                    .map(|(_, test)| (*test).clone())
-                    .collect::<Vec<_>>();
-                let test_indices = tests_with_indices.iter().map(|(index, _)| *index).collect::<Vec<_>>();
-                let Some(module_code) = rust_modules.get_mut(&harness.module_path) else {
-                    return gen_err(format!(
-                        "generated test harness module `{}` was not emitted",
-                        harness.module_path.join(".")
-                    ));
-                };
-                *module_code = inject_file_test_harness_with_indices(
-                    module_code,
-                    &file_tests,
-                    &test_indices,
-                    &prepared.project_root,
-                    &harness.fixtures,
-                    session_cache_module,
-                );
-            }
-        }
-        match generator.generate_nested(&main_code, &rust_modules) {
-            Ok(changed) => changed,
-            Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
-        }
-    };
-    let generated_changed = match generator.materialize_cargo_lock_projection() {
-        Ok(projected) => generated_changed || projected,
-        Err(error) => return gen_err(format!("Failed to project generated Cargo.lock: {error}")),
-    };
-
-    let generated_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-    let preheat_outcome = match preheat_generated_harness_if_needed(HarnessPreheatRequest {
-        manifest_path: &manifest_path,
-        generated_dir,
-        project_root: &prepared.project_root,
-        shared_target_dir: &shared_target_dir,
-        cargo_flags: &cargo_flags,
-        include_cargo_lock: prepared.lock_payload.is_some(),
-        jobs: options.jobs,
-        timeout: options.timeout,
-        emit_progress: options.emit_progress,
-    }) {
-        Ok(outcome) => outcome,
-        Err(message) => return gen_err(format!("Failed to preheat generated test harness: {message}")),
-    };
-    if options.verbose && options.emit_progress {
-        println!(
-            "preheat phase: {} in {:.2}s (wait {:.2}s, generated changed: {}, target: {})",
-            preheat_status_label(preheat_outcome.status),
-            preheat_outcome.elapsed.as_secs_f64(),
-            preheat_outcome.waited.as_secs_f64(),
-            generated_changed,
-            shared_target_dir.display()
-        );
-    }
-
-    let command = cargo_test_command(
-        &manifest_path,
-        &cargo_flags,
-        options.jobs,
-        &shared_target_dir,
-        &prepared.project_root,
-        false,
-        options.no_capture,
-    );
-
-    if options.verbose && options.emit_progress {
-        println!(
-            "cargo test phase: running generated harness {}",
-            manifest_path.display()
-        );
-        let _ = io::stdout().flush();
-    }
-    let cargo_test_start = Instant::now();
-    let (output, timed_out) = match run_command_with_timeout(command, options.timeout) {
-        Ok(result) => result,
-        Err(e) => {
-            return tests
-                .iter()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        TestResult::Failed(start.elapsed(), format!("Failed to run cargo test: {}", e)),
-                    )
-                })
-                .collect();
-        }
-    };
-    if options.verbose && options.emit_progress {
-        println!(
-            "cargo test phase: completed in {:.2}s",
-            cargo_test_start.elapsed().as_secs_f64()
-        );
-    }
-
-    let elapsed = start.elapsed();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}\n{stderr}");
-    if options.no_capture && !combined.trim().is_empty() {
-        print!("{combined}");
-    }
-
-    if timed_out {
-        let message = match options.timeout {
-            Some(timeout) => format!("test batch timed out after {:.3}s", timeout.as_secs_f64()),
-            None => "test batch timed out".to_string(),
-        };
-        return tests
+        let module_paths = emitted_source_modules
             .iter()
-            .map(|t| (t.clone(), TestResult::Failed(elapsed, message.clone())))
-            .collect();
+            .map(|module| module.path_segments.clone())
+            .collect::<Vec<_>>();
+        codegen
+            .try_generate_multi_file_nested(&runner_ast, &module_paths)
+            .map_err(|error| error.to_string())
+            .and_then(|(mut main, mut modules)| {
+                let session_cache_module = if module_harnesses.is_empty() {
+                    None
+                } else {
+                    render_shared_session_fixture_cache_module(&module_harnesses).map(|module_code| {
+                        modules.insert(vec![INCAN_SESSION_FIXTURE_MOD.to_string()], module_code);
+                        INCAN_SESSION_FIXTURE_MOD
+                    })
+                };
+                if module_harnesses.is_empty() {
+                    main = inject_file_test_harness(&main, tests, &project_root, &fixtures);
+                } else {
+                    for harness in &module_harnesses {
+                        let tests_with_indices = tests
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, test)| test.file_path == harness.file_path)
+                            .collect::<Vec<_>>();
+                        let file_tests = tests_with_indices
+                            .iter()
+                            .map(|(_, test)| (*test).clone())
+                            .collect::<Vec<_>>();
+                        let test_indices = tests_with_indices.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+                        let Some(module_code) = modules.get_mut(&harness.module_path) else {
+                            return Err(format!(
+                                "generated Oven test harness module `{}` was not emitted",
+                                harness.module_path.join(".")
+                            ));
+                        };
+                        *module_code = inject_file_test_harness_with_indices(
+                            module_code,
+                            &file_tests,
+                            &test_indices,
+                            &project_root,
+                            &harness.fixtures,
+                            session_cache_module,
+                        );
+                    }
+                }
+                generator
+                    .generate_nested(&main, &modules)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+    };
+    if let Err(error) = generated {
+        return failure(format!("failed to generate Oven test harness: {error}"));
+    }
+    let generation_elapsed = generation_start.elapsed();
+
+    let receipt_start = Instant::now();
+    let rustc = match resolve_active_rustc() {
+        Ok(rustc) => rustc,
+        Err(error) => return failure(error.to_string()),
+    };
+    let mut receipt_request = OvenGeneratedProjectRequest::new(
+        &project_root,
+        &runner_crate_name,
+        "0.1.0",
+        match rustc_host_target(&rustc) {
+            Ok(target) => target,
+            Err(error) => return failure(error.to_string()),
+        },
+        match rustc_identity(&rustc) {
+            Ok(identity) => identity,
+            Err(error) => return failure(error.to_string()),
+        },
+        "debug",
+        Vec::new(),
+    )
+    .with_generated_source("generated-root", generator.crate_root_path())
+    .with_generated_source_tree("generated-source-tree", generator.output_dir().join("src"));
+    let build_unit_inputs = match oven_test_build_unit_inputs(&provider_plan, &requirements, &resolved) {
+        Ok(inputs) => inputs,
+        Err(error) => return failure(error),
+    };
+    for (name, value) in build_unit_inputs {
+        receipt_request = receipt_request.with_build_unit_input(name, value);
+    }
+    let receipt = match receipt_generated_project(&receipt_request) {
+        Ok(receipt) => receipt,
+        Err(error) => return failure(error.to_string()),
+    };
+    let receipt_path = default_receipt_path(&generated_root);
+    if let Err(error) = write_receipt(&receipt, &receipt_path) {
+        return failure(error.to_string());
+    }
+    let receipt_elapsed = receipt_start.elapsed();
+
+    let selection_start = Instant::now();
+    let store = match commands::oven::open_default_oven_store() {
+        Ok(store) => store,
+        Err(error) => return failure(error.message),
+    };
+    let plan_selection = match crate::cli::commands::build::select_oven_direct_rustc_plan(
+        &store,
+        &receipt,
+        &inline_path_dependencies,
+    ) {
+        Ok(Some(selection)) => selection,
+        Ok(None) => {
+            return failure(format!(
+                "Oven Alpha has no compatible native test provider/dependency unit. Generated harness: {}; receipt: {}. `incan test` will not invoke Cargo; the active toolchain does not ship a compatible Oven Loaf. {}",
+                generated_root.display(),
+                receipt_path.display(),
+                OVEN_LOAF_MISS_GUIDANCE,
+            ));
+        }
+        Err(error) => return failure(error.message),
+    };
+    let selection_elapsed = selection_start.elapsed();
+
+    // Classify caller declarations against the source projection, while retaining full-plan path authority for an
+    // exact compiler-owned dependency. The complete plan may include private compiler helpers whose names overlap
+    // ordinary caller dependencies such as serde_json.
+    let full_artifact_plan = match &plan_selection {
+        OvenTestPlanSelection::Stored(selected) => &selected.artifact_plan,
+        OvenTestPlanSelection::CompilerSuiteNative(native) => &native.artifact_plan,
+    };
+    let artifact_plan = match &plan_selection {
+        OvenTestPlanSelection::Stored(selected) => {
+            trusted_artifact_plan_for_source_evidence(&selected.artifact_plan, &selected.artifacts, "generated-root")
+        }
+        OvenTestPlanSelection::CompilerSuiteNative(native) => {
+            trusted_artifact_plan_for_source_evidence(&native.artifact_plan, &native.artifacts, "generated-root")
+        }
+    };
+    let artifact_plan = match artifact_plan {
+        Ok(plan) => plan,
+        Err(error) => return failure(error.to_string()),
+    };
+    let inline_libraries_to_materialize =
+        crate::cli::commands::build::declared_rust_libraries_missing_from_selected_plan(
+            &inline_path_dependencies,
+            &artifact_plan,
+        );
+
+    let registry_authority = match &plan_selection {
+        OvenTestPlanSelection::Stored(selected) => selected
+            .artifacts
+            .registry_leaf_authority(&selected.artifact_root, &selected.artifact_plan),
+        OvenTestPlanSelection::CompilerSuiteNative(native) => native
+            .artifacts
+            .registry_leaf_authority(&native.artifact_root, &native.artifact_plan),
+    };
+    let selected_path_authority =
+        crate::cli::commands::build::compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
+
+    if crate::cli::commands::build::has_caller_owned_project_libraries(&provider_plan) {
+        let re_materialized = match &plan_selection {
+            OvenTestPlanSelection::Stored(selected) => {
+                match crate::cli::commands::build::rematerialize_caller_owned_libraries(
+                    &provider_plan,
+                    "debug",
+                    &selected.artifacts,
+                    &selected.artifact_root,
+                    &selected.artifact_plan,
+                    &rustc,
+                    &generated_root,
+                    registry_authority.as_ref(),
+                ) {
+                    Ok(libraries) => libraries,
+                    Err(error) => return failure(error.message),
+                }
+            }
+            OvenTestPlanSelection::CompilerSuiteNative(native) => {
+                match crate::cli::commands::build::rematerialize_caller_owned_libraries(
+                    &provider_plan,
+                    "debug",
+                    &native.artifacts,
+                    &native.artifact_root,
+                    &native.artifact_plan,
+                    &rustc,
+                    &generated_root,
+                    registry_authority.as_ref(),
+                ) {
+                    Ok(libraries) => libraries,
+                    Err(error) => return failure(error.message),
+                }
+            }
+        };
+        if let Err(error) = crate::cli::commands::build::replace_caller_owned_package_libraries(
+            &mut caller_owned_libraries,
+            re_materialized,
+        ) {
+            return failure(error.message);
+        }
     }
 
-    let compile_failed = !output.status.success()
-        && (combined.contains("could not compile")
-            || combined.contains("error: could not compile")
-            || combined.contains("error[E")
-            || combined.contains("error: aborting due to"));
-
-    if compile_failed {
-        return map_batch_results(
-            tests,
-            &combined,
-            elapsed,
-            true,
-            &combined,
-            &manifest_path,
-            &runner_crate_name,
+    let inline_libraries = match materialize_declared_rust_libraries_with_selected_path_authority(
+        &generated_root.join("oven").join("inline-rust"),
+        &rustc,
+        &receipt.intent.target,
+        "debug",
+        &inline_libraries_to_materialize,
+        registry_authority.as_ref(),
+        selected_path_authority.as_ref(),
+    ) {
+        Ok(libraries) => libraries,
+        Err(error) => {
+            return failure(format!(
+                "Oven direct-Rustc Rust dependency materialization failed: {error}"
+            ));
+        }
+    };
+    caller_owned_libraries.extend(inline_libraries);
+    caller_owned_libraries.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    if caller_owned_libraries
+        .windows(2)
+        .any(|pair| pair[0].crate_name == pair[1].crate_name)
+    {
+        return failure("Oven Alpha resolved duplicate caller-owned Rust library crate names".to_string());
+    }
+    let bake_start = Instant::now();
+    let bake = match &plan_selection {
+        OvenTestPlanSelection::Stored(selected) => {
+            let mut artifact_plan = match trusted_artifact_plan_for_source_evidence(
+                &selected.artifact_plan,
+                &selected.artifacts,
+                "generated-root",
+            ) {
+                Ok(plan) => plan,
+                Err(error) => return failure(error.to_string()),
+            };
+            if let Err(error) = attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries) {
+                return failure(format!("Oven direct-rustc test compilation failed: {error}"));
+            }
+            bake_trusted_direct_rustc_test(&OvenTrustedDirectRustcTargetRequest {
+                receipt: &receipt,
+                artifacts: &selected.artifacts,
+                artifact_root: &selected.artifact_root,
+                artifact_plan: Some(&artifact_plan),
+                rustc: &rustc,
+                source: &generator.crate_root_path(),
+                output: &generated_root.join("oven/debug").join(&native_output_name),
+                crate_name: &runner_crate_name,
+                edition: "2024",
+                source_evidence_key: "generated-root",
+                features: &receipt.intent.features,
+                prefer_dynamic: false,
+            })
+        }
+        OvenTestPlanSelection::CompilerSuiteNative(native) => {
+            let mut artifact_plan = match trusted_artifact_plan_for_source_evidence(
+                &native.artifact_plan,
+                &native.artifacts,
+                "generated-root",
+            ) {
+                Ok(plan) => plan,
+                Err(error) => return failure(error.to_string()),
+            };
+            if let Err(error) = attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries) {
+                return failure(format!("Oven direct-rustc test compilation failed: {error}"));
+            }
+            bake_trusted_direct_rustc_test(&OvenTrustedDirectRustcTargetRequest {
+                receipt: &receipt,
+                artifacts: &native.artifacts,
+                artifact_root: &native.artifact_root,
+                artifact_plan: Some(&artifact_plan),
+                rustc: &rustc,
+                source: &generator.crate_root_path(),
+                output: &generated_root.join("oven/debug").join(&native_output_name),
+                crate_name: &runner_crate_name,
+                edition: "2024",
+                source_evidence_key: "generated-root",
+                features: &receipt.intent.features,
+                prefer_dynamic: false,
+            })
+        }
+    };
+    let bake = match bake {
+        Ok(bake) => bake,
+        Err(error) => return failure(format!("Oven direct-rustc test compilation failed: {error}")),
+    };
+    let bake_elapsed = bake_start.elapsed();
+    let native_reused = bake.reused;
+    let exact_names = tests
+        .iter()
+        .enumerate()
+        .map(|(index, test)| {
+            let harness_name = libtest_qualified_name(&harness_fn_name(test, index));
+            module_harnesses
+                .iter()
+                .find(|harness| harness.file_path == test.file_path)
+                .map(|harness| format!("{}::{harness_name}", harness.module_path.join("::")))
+                .unwrap_or(harness_name)
+        })
+        .collect::<Vec<_>>();
+    let execute_start = Instant::now();
+    let report = match run_native_test_batch(&OvenNativeTestRequest {
+        executable: bake.output,
+        exact_names,
+        environment: BTreeMap::new(),
+        timeout: options.timeout,
+    }) {
+        Ok(report) => report,
+        Err(error) => return failure(error.to_string()),
+    };
+    let execute_elapsed = execute_start.elapsed();
+    if options.verbose && options.emit_progress {
+        println!(
+            "Oven test phases for {}: front-end {:.2}s, generation {:.2}s, receipt {:.2}s, selection {:.2}s, native {} {:.2}s, execution {:.2}s",
+            first.file_path.display(),
+            frontend_elapsed.as_secs_f64(),
+            generation_elapsed.as_secs_f64(),
+            receipt_elapsed.as_secs_f64(),
+            selection_elapsed.as_secs_f64(),
+            if native_reused { "reuse" } else { "bake" },
+            bake_elapsed.as_secs_f64(),
+            execute_elapsed.as_secs_f64(),
         );
     }
-
-    map_batch_results(tests, &combined, elapsed, false, "", &manifest_path, &runner_crate_name)
+    if options.no_capture && !report.output.trim().is_empty() {
+        print!("{}", report.output);
+    }
+    map_batch_results(
+        tests,
+        &report.output,
+        start.elapsed(),
+        false,
+        "",
+        &generated_root,
+        &runner_crate_name,
+    )
 }
 
-/// Inject a `fn main()` into generated Rust code that calls the test function (legacy single-case `cargo run` path).
+/// Build the portable native-closure identity used by Oven test batches.
+fn oven_test_build_unit_inputs(
+    provider_plan: &ProviderPlan,
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+) -> Result<BTreeMap<String, String>, String> {
+    let records = crate::cli::commands::build::oven_native_provider_records(
+        provider_plan,
+        &common::semantic_sdk_path_dependencies(requirements),
+    )
+    .map_err(|error| error.message)?;
+    let mut dependencies = resolved.dependencies.clone();
+    dependencies.extend(resolved.dev_dependencies.clone());
+    let dependency_digest = digest_dependency_specs(&dependencies).map_err(|error| error.to_string())?;
+    runtime_build_unit_inputs(records, &requirements.stdlib_features, dependency_digest)
+}
+
+/// Select only caller-imported Rust dependencies for the direct path-crate materializer.
 ///
-/// Kept for unit tests only; the runner uses [`inject_file_test_harness`] + `cargo test` per source file (#271).
-#[cfg(test)]
-fn inject_test_main(
-    rust_code: &str,
-    function_name: &str,
-    parametrize: Option<&super::types::ParametrizeCall>,
-) -> String {
-    let call = if let Some(pc) = parametrize {
-        format!("    {}({});", function_name, pc.rust_args())
-    } else {
-        format!("    {}();", function_name)
-    };
-    format!("{}\nfn main() {{\n{}\n}}\n", rust_code, call)
+/// Compiler-owned standard-library/provider imports are satisfied by the selected Loaf. The materializer must
+/// not try to rebuild that sealed closure from the generated test project.
+fn oven_test_inline_dependency_specs(
+    resolved: &ResolvedDependencies,
+    inline_imports: &[crate::dependency_resolver::InlineRustImport],
+) -> Vec<DependencySpec> {
+    let requested = inline_imports
+        .iter()
+        .filter(|import| import.crate_name != "incan_stdlib" && import.crate_name != "std")
+        .map(|import| import.crate_name.replace('-', "_"))
+        .collect::<BTreeSet<_>>();
+    let mut dependencies = resolved
+        .dependencies
+        .iter()
+        .chain(&resolved.dev_dependencies)
+        .filter(|dependency| {
+            let crate_name = dependency.crate_name.replace('-', "_");
+            requested.contains(&crate_name)
+                || dependency
+                    .package
+                    .as_deref()
+                    .is_some_and(|package| requested.contains(&package.replace('-', "_")))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    dependencies.dedup_by(|left, right| left.crate_name == right.crate_name);
+    dependencies
 }
 
 /// Extract an assertion error from stderr.
@@ -3898,86 +2815,162 @@ fn extract_assertion_error(stderr: &str) -> String {
     stderr.to_string()
 }
 
-/// Extract a panic message from stdout.
-fn extract_panic_message(stdout: &str) -> String {
+/// Extract every libtest panic payload from a combined native-test transcript.
+///
+/// Libtest writes the location on its `panicked at` line and the actual payload on subsequent unindented lines.
+/// Keeping only indented lines therefore turns an Incan assertion or fixture teardown failure into an empty report.
+/// A batched harness can contain several failures, so retain every payload rather than assigning later cases the
+/// first failure's location-only header.
+fn extract_panic_message(output: &str) -> String {
+    let mut messages = Vec::new();
+    let mut payload_lines = Vec::new();
     let mut in_panic = false;
-    let mut msg = String::new();
 
-    for line in stdout.lines() {
-        if line.contains("panicked at") {
-            in_panic = true;
-            msg.push_str(line.trim());
-            msg.push('\n');
-        } else if in_panic && line.starts_with("  ") {
-            msg.push_str(line);
-            msg.push('\n');
-        } else if in_panic && line.is_empty() {
-            break;
+    let mut finish_panic = |payload_lines: &mut Vec<String>| {
+        let payload = payload_lines.join("\n");
+        if !payload.is_empty() {
+            messages.push(payload);
         }
+        payload_lines.clear();
+    };
+
+    for line in output.lines() {
+        if line.contains("panicked at") {
+            if in_panic {
+                finish_panic(&mut payload_lines);
+            }
+            in_panic = true;
+            continue;
+        }
+        if !in_panic {
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !payload_lines.is_empty() {
+                finish_panic(&mut payload_lines);
+                in_panic = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with("note:") || trimmed.starts_with("---- ") || trimmed.starts_with("failures:") {
+            finish_panic(&mut payload_lines);
+            in_panic = false;
+            continue;
+        }
+        payload_lines.push(trimmed.to_string());
+    }
+    if in_panic {
+        finish_panic(&mut payload_lines);
     }
 
-    if msg.is_empty() { stdout.to_string() } else { msg }
+    if messages.is_empty() {
+        output.to_string()
+    } else {
+        messages.join("\n")
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::types::ParametrizeCall;
     use super::*;
+    use std::collections::BTreeSet;
     use std::path::Path;
+    use std::sync::Arc;
+
+    use crate::frontend::library_manifest_index::LibraryManifestIndex;
+    use crate::library_manifest::LibraryManifest;
+    use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
 
     #[test]
-    fn isolated_target_dir_stays_under_project_target() {
-        let project_root = Path::new("/tmp/incan_project");
-        let target_dir = project_root.join("target").join("incan_test_runner");
-        assert_eq!(target_dir, PathBuf::from("/tmp/incan_project/target/incan_test_runner"));
+    fn oven_test_seed_compatibility_records_only_used_sdk_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+        let sdk = ProviderRecord {
+            identity: ProviderIdentity {
+                name: "incan_stdlib_testing".to_string(),
+                version: "0.5.0".to_string(),
+                digest: "sha256:sdk-testing".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-testing".to_string(),
+                inventory_path: None,
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "testing".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_testing", "0.5.0"))),
+            artifact: None,
+            implementation_facets: Vec::new(),
+        };
+        let project = ProviderRecord {
+            identity: ProviderIdentity {
+                name: "json_provider".to_string(),
+                version: "0.1.0".to_string(),
+                digest: "sha256:project-json".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::ProjectDependency {
+                dependency_key: "json_provider".to_string(),
+                manifest_path: PathBuf::from("json_provider.incnlib"),
+            },
+            authority: NamespaceAuthority::ProjectDependency {
+                dependency_key: "json_provider".to_string(),
+            },
+            namespace_claims: BTreeSet::from([vec!["pub".to_string(), "json_provider".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("json_provider", "0.1.0"))),
+            artifact: None,
+            implementation_facets: Vec::new(),
+        };
+        let provider_plan = ProviderPlan::new(
+            LibraryManifestIndex::default(),
+            vec![sdk, project],
+            [vec!["std".to_string(), "testing".to_string()]],
+        )?;
+        let inputs = oven_test_build_unit_inputs(
+            &provider_plan,
+            &ProjectRequirements::default(),
+            &ResolvedDependencies {
+                dependencies: Vec::new(),
+                dev_dependencies: Vec::new(),
+            },
+        )?;
+        let records = inputs.get("providers").ok_or("test receipt has no provider records")?;
+
+        assert!(records.contains("incan_stdlib_testing"));
+        assert!(!records.contains("json_provider"));
+        Ok(())
     }
 
     #[test]
-    fn parse_isolated_target_env_requires_truthy_values() {
-        assert!(parse_isolated_target_env(Some("1")));
-        assert!(parse_isolated_target_env(Some("true")));
-        assert!(parse_isolated_target_env(Some(" yes ")));
-        assert!(parse_isolated_target_env(Some("on")));
-        assert!(!parse_isolated_target_env(None));
-        assert!(!parse_isolated_target_env(Some("0")));
-        assert!(!parse_isolated_target_env(Some("false")));
-        assert!(!parse_isolated_target_env(Some("off")));
-        assert!(!parse_isolated_target_env(Some("")));
-    }
+    fn frozen_oven_test_validation_rejects_a_missing_lock_before_scheduling() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let project = tempfile::tempdir()?;
+        let tests = project.path().join("tests");
+        fs::create_dir_all(&tests)?;
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"frozen_oven_test\"\nversion = \"0.1.0\"\n",
+        )?;
+        let test_file = tests.join("test_lock.incn");
+        fs::write(&test_file, "def test_lock() -> None:\n  assert True\n")?;
 
-    #[test]
-    fn parse_test_preheat_env_defaults_to_enabled() {
-        assert!(parse_test_preheat_env(None));
-        assert!(parse_test_preheat_env(Some("1")));
-        assert!(parse_test_preheat_env(Some("true")));
-        assert!(!parse_test_preheat_env(Some("0")));
-        assert!(!parse_test_preheat_env(Some("false")));
-        assert!(!parse_test_preheat_env(Some(" off ")));
-    }
+        let error = match validate_oven_test_lock_policy(
+            &test_file,
+            &CargoPolicy::explicit(false, false, true, Vec::new()),
+            &FeatureSelection::default(),
+            None,
+        ) {
+            Ok(()) => return Err("a frozen Oven test created an incan.lock through Cargo".into()),
+            Err(error) => error,
+        };
 
-    fn command_args(command: &Command) -> Vec<String> {
-        command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect()
-    }
-
-    #[test]
-    fn cargo_test_command_runs_generated_library_tests_without_doctests() {
-        let manifest_path = Path::new("/tmp/generated/Cargo.toml");
-        let shared_target = Path::new("/tmp/generated-target");
-        let project_root = Path::new("/tmp/project");
-
-        let run_command = cargo_test_command(manifest_path, &[], 1, shared_target, project_root, false, false);
-        let run_args = command_args(&run_command);
-        assert!(run_args.contains(&"--lib".to_string()));
-        assert!(run_args.contains(&"--test-threads=1".to_string()));
-
-        let preheat_command = cargo_test_command(manifest_path, &[], 1, shared_target, project_root, true, false);
-        let preheat_args = command_args(&preheat_command);
-        assert!(preheat_args.contains(&"--lib".to_string()));
-        assert!(preheat_args.contains(&"--no-run".to_string()));
-        assert!(!preheat_args.contains(&"--test-threads=1".to_string()));
+        assert!(error.message.contains("incan.lock is missing; run `incan lock`"));
+        Ok(())
     }
 
     fn parsed_module_for_import_context(
@@ -4022,402 +3015,6 @@ mod tests {
         assert!(tokio.is_test_context);
         assert!(!datafusion.is_test_context);
         Ok(())
-    }
-
-    #[test]
-    fn generated_harness_preheat_fingerprint_changes_when_source_changes() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_fingerprint_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&temp_dir);
-        fs::create_dir_all(temp_dir.join("src"))?;
-        fs::write(
-            temp_dir.join("Cargo.toml"),
-            "[package]\nname = \"preheat_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
-
-        let first = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
-        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 2 }\n")?;
-        let second = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
-
-        assert_ne!(first, second);
-        let _ = fs::remove_dir_all(&temp_dir);
-        Ok(())
-    }
-
-    #[test]
-    fn generated_harness_preheat_fingerprint_includes_cargo_flags() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_flags_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&temp_dir);
-        fs::create_dir_all(temp_dir.join("src"))?;
-        fs::write(
-            temp_dir.join("Cargo.toml"),
-            "[package]\nname = \"preheat_flags\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
-
-        let base = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
-        let locked = compute_generated_harness_preheat_fingerprint(
-            &temp_dir,
-            &["--locked".to_string()],
-            &temp_dir.join("target"),
-            false,
-        )?;
-
-        assert_ne!(base, locked);
-        let _ = fs::remove_dir_all(&temp_dir);
-        Ok(())
-    }
-
-    #[test]
-    fn preheat_lock_guard_removes_lock_on_drop() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_lock_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&temp_dir);
-        fs::create_dir_all(&temp_dir)?;
-        let lock_path = temp_dir.join(TEST_HARNESS_PREHEAT_LOCK_FILE);
-
-        let guard = try_acquire_preheat_lock(&lock_path)?
-            .ok_or_else(|| std::io::Error::other("first lock acquisition should win"))?;
-        assert!(lock_path.is_file());
-        assert!(try_acquire_preheat_lock(&lock_path)?.is_none());
-        drop(guard);
-        assert!(!lock_path.exists());
-
-        let _ = fs::remove_dir_all(&temp_dir);
-        Ok(())
-    }
-
-    #[test]
-    fn inject_main_plain_test() {
-        let rust = "fn test_add() { assert_eq!(1 + 1, 2); }";
-        let result = inject_test_main(rust, "test_add", None);
-        assert!(result.contains("fn main()"), "should inject fn main()");
-        assert!(result.contains("test_add();"), "should call test function");
-        assert!(!result.contains("test_add(1"), "plain test has no args");
-    }
-
-    #[test]
-    fn inject_main_parametrized_int_args() {
-        let rust = "fn test_add(x: i64, y: i64, expected: i64) { assert_eq!(x + y, expected); }";
-        let pc = ParametrizeCall {
-            display_id: "test_add[1-2-3]".to_string(),
-            argument_names: vec!["x".to_string(), "y".to_string(), "expected".to_string()],
-            rust_arguments: vec!["1".to_string(), "2".to_string(), "3".to_string()],
-            parameters: vec!["1".to_string(), "2".to_string(), "3".to_string()],
-        };
-        let result = inject_test_main(rust, "test_add", Some(&pc));
-        assert!(result.contains("fn main()"), "should inject fn main()");
-        assert!(result.contains("test_add(1, 2, 3);"), "should call with int args");
-    }
-
-    #[test]
-    fn inject_main_parametrized_string_args() {
-        let rust = "fn test_len(input: String, expected: i64) {}";
-        let pc = ParametrizeCall {
-            display_id: "test_len[hello-5]".to_string(),
-            argument_names: vec!["input".to_string(), "expected".to_string()],
-            rust_arguments: vec!["\"hello\".to_string()".to_string(), "5".to_string()],
-            parameters: vec!["hello".to_string(), "5".to_string()],
-        };
-        let result = inject_test_main(rust, "test_len", Some(&pc));
-        assert!(
-            result.contains("test_len(\"hello\".to_string(), 5);"),
-            "should call with string + int args"
-        );
-    }
-
-    #[test]
-    fn inject_main_parametrized_negative_args() {
-        let rust = "fn test_sub(a: i64, b: i64, expected: i64) {}";
-        let pc = ParametrizeCall {
-            display_id: "test_sub[-1-1-0]".to_string(),
-            argument_names: vec!["a".to_string(), "b".to_string(), "expected".to_string()],
-            rust_arguments: vec!["-1".to_string(), "1".to_string(), "0".to_string()],
-            parameters: vec!["-1".to_string(), "1".to_string(), "0".to_string()],
-        };
-        let result = inject_test_main(rust, "test_sub", Some(&pc));
-        assert!(
-            result.contains("test_sub(-1, 1, 0);"),
-            "should call with negative int args"
-        );
-    }
-
-    #[test]
-    fn cross_file_batch_collision_detects_duplicate_top_level_model_names() {
-        let sources = vec![
-            (
-                PathBuf::from("tests/test_a.incn"),
-                "model Order:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
-            ),
-            (
-                PathBuf::from("tests/test_b.incn"),
-                "model Order:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
-            ),
-        ];
-
-        assert!(batch_has_cross_file_top_level_collision(&sources, None, None));
-    }
-
-    #[test]
-    fn cross_file_batch_collision_allows_distinct_top_level_names() {
-        let sources = vec![
-            (
-                PathBuf::from("tests/test_a.incn"),
-                "model OrderA:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
-            ),
-            (
-                PathBuf::from("tests/test_b.incn"),
-                "model OrderB:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
-            ),
-        ];
-
-        assert!(!batch_has_cross_file_top_level_collision(&sources, None, None));
-    }
-
-    #[test]
-    fn collision_free_partition_keeps_compatible_files_together() {
-        let sources = vec![
-            (
-                PathBuf::from("tests/test_a.incn"),
-                "model Order:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
-            ),
-            (
-                PathBuf::from("tests/test_b.incn"),
-                "model Customer:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
-            ),
-            (
-                PathBuf::from("tests/test_c.incn"),
-                "model Order:\n  id: int\n\ndef test_c() -> None:\n  pass\n".to_string(),
-            ),
-            (
-                PathBuf::from("tests/test_d.incn"),
-                "model Invoice:\n  id: int\n\ndef test_d() -> None:\n  pass\n".to_string(),
-            ),
-        ];
-
-        let groups = partition_collision_free_file_groups(&sources, None, None);
-
-        assert_eq!(
-            groups,
-            vec![
-                vec![
-                    PathBuf::from("tests/test_a.incn"),
-                    PathBuf::from("tests/test_b.incn"),
-                    PathBuf::from("tests/test_d.incn"),
-                ],
-                vec![PathBuf::from("tests/test_c.incn")],
-            ]
-        );
-    }
-
-    #[test]
-    fn prep_cache_key_stable_for_identical_inputs() {
-        let cargo = CargoFeatureSelection {
-            cargo_features: vec!["serde".to_string()],
-            cargo_no_default_features: false,
-            cargo_all_features: false,
-        }
-        .normalized();
-        let mods: Vec<ParsedModule> = Vec::new();
-        let policy = CargoPolicy::default();
-        let k1 = compute_test_prep_cache_key(
-            Path::new("tests/test_x.incn"),
-            "source a",
-            &mods,
-            None,
-            &FeatureSelection::default(),
-            None,
-            &cargo,
-            &policy,
-        );
-        let k2 = compute_test_prep_cache_key(
-            Path::new("tests/test_x.incn"),
-            "source a",
-            &mods,
-            None,
-            &FeatureSelection::default(),
-            None,
-            &cargo,
-            &policy,
-        );
-        assert_eq!(k1, k2);
-        assert!(k1.starts_with("v1:"));
-    }
-
-    #[test]
-    fn prep_cache_key_changes_when_test_source_changes() {
-        let cargo = CargoFeatureSelection::default().normalized();
-        let mods: Vec<ParsedModule> = Vec::new();
-        let policy = CargoPolicy::default();
-        let k1 = compute_test_prep_cache_key(
-            Path::new("t.incn"),
-            "a",
-            &mods,
-            None,
-            &FeatureSelection::default(),
-            None,
-            &cargo,
-            &policy,
-        );
-        let k2 = compute_test_prep_cache_key(
-            Path::new("t.incn"),
-            "b",
-            &mods,
-            None,
-            &FeatureSelection::default(),
-            None,
-            &cargo,
-            &policy,
-        );
-        assert_ne!(k1, k2);
-    }
-
-    #[test]
-    fn prep_cache_key_includes_cargo_policy() {
-        let cargo = CargoFeatureSelection::default().normalized();
-        let mods: Vec<ParsedModule> = Vec::new();
-        let base = CargoPolicy::default();
-        let locked = CargoPolicy::explicit(false, true, false, Vec::new());
-        let offline = CargoPolicy::explicit(true, false, false, Vec::new());
-        let extra = CargoPolicy::explicit(false, false, false, vec!["--timings".to_string()]);
-
-        let features = FeatureSelection::default();
-        let k_base = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &features, None, &cargo, &base);
-        let k_locked =
-            compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &features, None, &cargo, &locked);
-        let k_offline =
-            compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &features, None, &cargo, &offline);
-        let k_extra =
-            compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &features, None, &cargo, &extra);
-
-        assert_ne!(k_base, k_locked);
-        assert_ne!(k_base, k_offline);
-        assert_ne!(k_base, k_extra);
-    }
-
-    #[test]
-    fn prep_cache_key_includes_transient_sdk_profile() {
-        let cargo = CargoFeatureSelection::default().normalized();
-        let mods: Vec<ParsedModule> = Vec::new();
-        let features = FeatureSelection::default();
-        let policy = CargoPolicy::default();
-        let minimal = compute_test_prep_cache_key(
-            Path::new("t.incn"),
-            "x",
-            &mods,
-            None,
-            &features,
-            Some("minimal"),
-            &cargo,
-            &policy,
-        );
-        let full = compute_test_prep_cache_key(
-            Path::new("t.incn"),
-            "x",
-            &mods,
-            None,
-            &features,
-            Some("full"),
-            &cargo,
-            &policy,
-        );
-
-        assert_ne!(minimal, full);
-    }
-
-    #[test]
-    fn merge_rust_inspect_stdlib_features_unions_and_sorts() {
-        let existing = [
-            vec!["json".to_string(), "async".to_string()],
-            vec!["web".to_string(), "async".to_string()],
-        ];
-        let merged = merge_rust_inspect_stdlib_features(
-            existing.iter().map(|set| set.as_slice()),
-            &["serde".to_string(), "json".to_string()],
-        );
-        assert_eq!(
-            merged,
-            vec![
-                "async".to_string(),
-                "json".to_string(),
-                "serde".to_string(),
-                "web".to_string()
-            ]
-        );
-    }
-
-    fn test_requirement_dependency(crate_name: &str, features: &[&str]) -> crate::manifest::DependencySpec {
-        crate::manifest::DependencySpec {
-            crate_name: crate_name.to_string(),
-            version: Some("1".to_string()),
-            features: features.iter().map(|feature| feature.to_string()).collect(),
-            default_features: true,
-            source: crate::manifest::DependencySource::Registry,
-            optional: false,
-            package: None,
-        }
-        .normalized()
-    }
-
-    #[test]
-    fn merge_lock_project_requirements_unions_features_and_dependencies() {
-        let current = ProjectRequirements {
-            stdlib_features: vec!["json".to_string()],
-            dependencies: vec![test_requirement_dependency("serde", &["derive"])],
-            sdk_dependency_rebindings: Vec::new(),
-            sdk_path_dependencies: Vec::new(),
-            sdk_artifact_projections: Vec::new(),
-        };
-        let lock_entry = ProjectRequirements {
-            stdlib_features: vec!["async".to_string(), "json".to_string()],
-            dependencies: vec![
-                test_requirement_dependency("serde", &["derive"]),
-                test_requirement_dependency("tokio", &["macros"]),
-            ],
-            sdk_dependency_rebindings: Vec::new(),
-            sdk_path_dependencies: Vec::new(),
-            sdk_artifact_projections: Vec::new(),
-        };
-
-        let merged = match merge_lock_project_requirements(&current, &lock_entry) {
-            Ok(merged) => merged,
-            Err(err) => panic!("expected requirements to merge: {err}"),
-        };
-
-        assert_eq!(merged.stdlib_features, vec!["async".to_string(), "json".to_string()]);
-        assert_eq!(
-            merged
-                .dependencies
-                .iter()
-                .map(|dep| dep.crate_name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["serde", "tokio"]
-        );
-    }
-
-    #[test]
-    fn merge_lock_project_requirements_rejects_conflicting_dependencies() {
-        let current = ProjectRequirements {
-            stdlib_features: Vec::new(),
-            dependencies: vec![test_requirement_dependency("tokio", &["time"])],
-            sdk_dependency_rebindings: Vec::new(),
-            sdk_path_dependencies: Vec::new(),
-            sdk_artifact_projections: Vec::new(),
-        };
-        let lock_entry = ProjectRequirements {
-            stdlib_features: Vec::new(),
-            dependencies: vec![test_requirement_dependency("tokio", &["macros"])],
-            sdk_dependency_rebindings: Vec::new(),
-            sdk_path_dependencies: Vec::new(),
-            sdk_artifact_projections: Vec::new(),
-        };
-
-        let error = match merge_lock_project_requirements(&current, &lock_entry) {
-            Ok(merged) => panic!("expected conflict, got merged requirements: {merged:?}"),
-            Err(err) => err,
-        };
-
-        assert!(error.contains("tokio"));
-        assert!(error.contains("conflicts"));
     }
 
     #[test]
@@ -4507,9 +3104,59 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
     }
 
     #[test]
+    fn extracts_unindented_libtest_panic_payloads_from_a_batch() {
+        let transcript = r#"
+thread 'test_runner::__incan_file_tests::incan_harness_0_message' panicked at src/lib.rs:17:13:
+AssertionError: custom boom
+
+thread 'test_runner::__incan_file_tests::incan_harness_1_teardown' panicked at src/lib.rs:41:9:
+fixture teardown failed:
+child teardown failed
+parent teardown failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+"#;
+
+        let detail = extract_panic_message(transcript);
+
+        assert!(detail.contains("AssertionError: custom boom"));
+        assert!(detail.contains("fixture teardown failed:"));
+        assert!(detail.contains("child teardown failed"));
+        assert!(detail.contains("parent teardown failed"));
+        assert!(!detail.contains("panicked at"));
+    }
+
+    #[test]
     fn runner_crate_name_is_derived_from_batch_suffix() {
         let name = runner_crate_name_for_batch_suffix("batch_76001490ba86f677");
         assert_eq!(name, "test_runner_76001490ba86f677");
+    }
+
+    #[test]
+    fn native_test_outputs_do_not_alias_distinct_execution_groups() {
+        let normal = TestInfo {
+            file_path: PathBuf::from("tests/test_groups.incn"),
+            function_name: "test_normal".to_string(),
+            is_async: false,
+            markers: vec![],
+            required_fixtures: vec![],
+            parameter_names: vec![],
+            timeout: None,
+            parametrize_call: None,
+        };
+        let expected_failure = TestInfo {
+            function_name: "test_expected_failure".to_string(),
+            ..normal.clone()
+        };
+        let runner = "test_runner_groups";
+
+        assert_ne!(
+            native_test_output_name(runner, std::slice::from_ref(&normal)),
+            native_test_output_name(runner, std::slice::from_ref(&expected_failure)),
+        );
+        assert_eq!(
+            native_test_output_name(runner, &[normal.clone(), expected_failure.clone()]),
+            native_test_output_name(runner, &[normal, expected_failure]),
+        );
     }
 
     #[test]
@@ -4534,42 +3181,6 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
     }
 
     #[test]
-    fn partition_collision_free_file_groups_considers_import_bindings() {
-        let sources = vec![
-            (
-                PathBuf::from("tests/test_imports_col.incn"),
-                "from helpers import col\n\ndef test_imported_col() -> None:\n    assert col() == 1\n".to_string(),
-            ),
-            (
-                PathBuf::from("tests/test_declares_col.incn"),
-                "def col() -> int:\n    return 2\n\ndef test_local_col() -> None:\n    assert col() == 2\n".to_string(),
-            ),
-        ];
-
-        let groups = partition_collision_free_file_groups(&sources, None, None);
-
-        assert_eq!(groups.len(), 2);
-    }
-
-    #[test]
-    fn partition_collision_free_file_groups_allows_repeated_import_bindings() {
-        let sources = vec![
-            (
-                PathBuf::from("tests/test_a.incn"),
-                "from std.testing import assert_eq\n\ndef test_a() -> None:\n    assert_eq(1, 1)\n".to_string(),
-            ),
-            (
-                PathBuf::from("tests/test_b.incn"),
-                "from std.testing import assert_eq\n\ndef test_b() -> None:\n    assert_eq(2, 2)\n".to_string(),
-            ),
-        ];
-
-        let groups = partition_collision_free_file_groups(&sources, None, None);
-
-        assert_eq!(groups.len(), 1);
-    }
-
-    #[test]
     fn nested_pub_import_dedupe_preserves_exact_child_identity_issue948() -> Result<(), String> {
         let source = "from pub::modulelib.hyperquant.index import build\n\
                       from pub::modulelib.hyperquant.search import build\n";
@@ -4584,19 +3195,6 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
             .filter(|declaration| matches!(declaration.node, Declaration::Import(_)))
             .count();
         assert_eq!(imports, 2);
-        Ok(())
-    }
-
-    #[test]
-    fn unaliased_nested_pub_module_binds_the_final_path_segment_issue948() -> Result<(), String> {
-        let source = "import pub::modulelib.hyperquant\n";
-        let tokens = crate::frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = crate::frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-
-        let names = collect_top_level_decl_names(&program);
-
-        assert!(names.imported_values.contains("hyperquant"));
-        assert!(!names.imported_values.contains("modulelib"));
         Ok(())
     }
 

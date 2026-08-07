@@ -29,7 +29,7 @@
 //!   - `decl.rs` - Declarations
 //!   - `lower.rs` - AST to IR lowering
 //!   - `emit.rs` - IR to Rust via syn/quote/prettyplease
-//! - `project/` - Cargo project generation (plan, generator, cargo_toml, runner)
+//! - `project/` - Rust source projection and explicit publisher support (plan, generator, cargo_toml, runner)
 
 // Enforce explicit error handling in project generation code.
 // XXX: codegen modules emit `.unwrap()` as string literals in generated Rust code.

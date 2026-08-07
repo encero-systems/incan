@@ -19,7 +19,7 @@ Incan is built around a simple promise:
 - **Ship native artifacts**
 - **Use Rust crates when you need a Rust boundary**
 
-That means you can keep a high-level surface for most of your code, while still having a real boundary into the Rust ecosystem for performance, libraries, and integration. In the current beta, that path builds through Cargo/rustc; generated Rust is inspectable backend output, not the permanent public semantic contract.
+That means you can keep a high-level surface for most of your code, while still having a real boundary into the Rust ecosystem for performance, libraries, and integration. In the documented Oven Alpha envelope, current beta build, test, and run commands use receipt-bound direct `rustc`, while the hidden `legacy_cargo` Loaf baker is the only Cargo-backed compatibility publisher. Generated Rust is inspectable backend output, not the permanent public semantic contract.
 
 ## Who it’s for
 

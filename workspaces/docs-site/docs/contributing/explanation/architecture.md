@@ -4,7 +4,7 @@ This document describes the internal architecture of the Incan compiler.
 
 ## Compilation Pipeline
 
-This diagram shows the compilation pipeline of the Incan compiler in high level.
+This diagram shows the Incan compiler pipeline at a high level.
 
 ```bash
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -28,10 +28,10 @@ This diagram shows the compilation pipeline of the Incan compiler in high level.
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           PROJECT GENERATION                                │
+│                       GENERATION + OVEN EXECUTION                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│       ProjectGenerator ──► Cargo.toml + src/*.rs ──► cargo build/run        │
+│  ProjectGenerator ──► caller-owned Rust + receipt ──► Loaf plan ──► rustc  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -55,9 +55,11 @@ This diagram shows the compilation pipeline of the Incan compiler in high level.
 | TokenStream      | Rust `TokenStream` from codegen (`proc_macro2` via `quote`/`syn`). This is the final output of the compiler before being formatted to Rust code. |
 | prettyplease     | Formats Rust syntax/TokenStream into human-readable Rust source code.                                                                            |
 | Rust source      | The generated Rust code as text.                                                                                                                 |
-| ProjectGenerator | Writes the generated Rust code into a standalone Cargo project (and can invoke `cargo build/run`).                                               |
-| Cargo project    | Generated Rust project directory (`Cargo.toml`, `src/*`, and build artifacts).                                                                   |
-| Cargo            | Rust’s build system and package manager.                                                                                                         |
+| ProjectGenerator | Writes caller-owned generated Rust and compatibility metadata. Normal build/run/test execution does not delegate to its legacy Cargo runner.     |
+| Oven receipt     | Content-derived request binding source, compiler, SDK/provider, target, profile, features, locks, and other build-relevant evidence.              |
+| Loaf             | Immutable content-addressed directory containing a verified direct-`rustc` plan, artifacts, identity, provenance, digests, and byte accounting.   |
+| Oven store       | Policy-bounded store that selects and leases compatible plans and reports logical, physical, reclaimable, and active-use storage separately.      |
+| Cargo            | Rust’s build system and package manager; Oven Alpha confines it to explicit compatibility publication, compiler development, and repository tools. |
 | CLI              | Command-line entrypoint for compile/build/run/fmt/test workflows.                                                                                |
 | LSP              | IDE server running frontend stages; returns diagnostics/hover/definition via the Language Server Protocol.                                       |
 | Runtime crates   | `incan_stdlib` / `incan_derive` crates used by generated programs (not the compiler).                                                            |
@@ -79,27 +81,29 @@ incan build file.incn
   │
   ├──▶ 3) Backend preparation
   │       - Scan for feature usage (e.g. serde / async / web / helpers)
-  │       - Collect `rust::` crate imports for Cargo dependency injection
+  │       - Collect `rust::` crate imports and receipt-bound dependency requirements
   │
   ├──▶ 4) Code generation
   │       - Lower typed AST → ownership-aware IR
   │       - Emit IR → Rust TokenStream → formatted Rust source
   │       - If imports are present: generate a nested Rust module tree
   │
-  ├──▶ 5) Project generation
-  │       - Write a standalone Cargo project (Cargo.toml + src/*.rs)
+  ├──▶ 5) Generation and receipt
+  │       - Write caller-owned generated Rust and compatibility metadata
+  │       - Record source, compiler, SDK/provider, target, profile, feature, and lock evidence
   │       - Default output dir: target/incan/<project_name>/
   │
-  └──▶ 6) Build
-          - `cargo build --release`
-          - Binary path: target/incan/<project_name>/target/release/<project_name> (project-local published output)
+  └──▶ 6) Oven build
+          - Select and lease a compatible Loaf from the bounded Oven store
+          - Compile the caller-owned root through the verified direct-rustc plan
+          - Binary path: target/incan/<project_name>/oven/release/<project_name>
 ```
 
 Notes:
 
 - **Debugging individual stages**: Use CLI stage flags (`--lex`, `--parse`, `--check`, `--emit-rust`) to inspect intermediate outputs (see [Getting Started](../../tooling/tutorials/getting_started.md)).
 - **Multi-file projects**: Import resolution rules and module layout are described in [Imports & Modules](../../language/explanation/imports_and_modules.md).
-- **Rust interop dependencies**: `rust::` imports trigger Cargo dependency injection with a strict policy (see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
+- **Rust interop dependencies**: `rust::` imports contribute checked dependency requirements. The documented Alpha envelope must already contain compatible sealed artifacts; normal commands do not ask Cargo to resolve a miss (see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
 - **Runtime boundary**: Generated programs depend on `incan_stdlib` and `incan_derive`, but the compiler does not (see `crates/`).
 
 ## Module Layout
@@ -126,22 +130,22 @@ Backend (turns typed AST into Rust code)
         - Emits Rust (TokenStream → formatted Rust source)
         - Applies consistent interop rules (borrows/clones/String conversions)
 
-Project generation (turns Rust code into a runnable Cargo project)
+Project generation and Oven execution
   ├──▶ Planning (pure)
-  │     - Compute dirs/files + chosen cargo action (build/run)
+  │     - Compute caller-owned generated files, receipt inputs, and output intent
   ├──▶ Execution (side effects)
-  │     - Writes files, creates dirs, shells out to cargo
+  │     - Writes generated Rust, selects a compatible Loaf, and invokes direct rustc
   └──▶ Dependency policy
-        - Controlled mapping for `rust::` imports (no silent wildcard deps)
+        - Controlled mapping for `rust::` imports; unsupported closures fail without fallback
 
 CLI (user-facing orchestration)
   ├──▶ Compile actions
-  │     - build/run: Frontend → Backend → Project generation → cargo
+  │     - build/run: Frontend → Backend → generation → receipt → Oven direct rustc
   ├──▶ Developer actions
   │     - lex/parse/check/emit-rust: inspect intermediate stages
   └──▶ Tool actions
         - fmt: format valid syntax
-        - test: discover/run tests (pytest-style)
+        - test: discover Incan tests, build one native harness, and execute verified names through Oven
 
 LSP (IDE-facing orchestration)
   ├──▶ Language server
@@ -383,7 +387,8 @@ ast::Type          ──►  IrType               ──►  (syn Type)
 2. **Backend** borrows `&ast::Program`, produces owned `IrProgram`
 3. **Emitter** borrows `&IrProgram`, produces owned `TokenStream`
 4. **prettyplease** formats `TokenStream` to `String`
-5. **ProjectGenerator** writes files to disk
+5. **ProjectGenerator** writes caller-owned generated files and compatibility metadata
+6. **Oven** selects a receipt-compatible Loaf, retains its lease, and invokes the verified direct-`rustc` plan
 
 ## Entry Points
 

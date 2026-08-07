@@ -30,7 +30,7 @@ review_after: "After Incan 0.5"
 
 --8<-- "_snippets/callouts/whitepaper_status.md"
 
-> **At the time of writing:** Incan generates a Rust project and builds it through Cargo. This paper proposes the future-facing, post-0.5 direction; it does not describe a shipped Cargo-free toolchain.
+> **Current boundary:** supported Alpha envelopes for ordinary `incan build`, `incan test`, and `incan run` select receipt-bound, store-owned direct-`rustc` execution without Cargo on the consumer path. The hidden `legacy_cargo` Loaf baker is the sole Cargo-backed compatibility publisher for those envelopes, never a normal-command fallback. The repository suite exercises the same Oven runner and records both case and root aggregates under a Cargo guard. Oven Alpha is not yet a general Cargo-free toolchain, a cross-platform performance claim, or the full design described here. This paper remains future-facing; see [Oven Alpha](../tooling/explanation/oven_alpha.md) for the implemented boundary.
 
 ## Abstract
 

@@ -1,0 +1,26 @@
+"""Select the compiler-suite runtime and library surfaces and exercise deterministic representatives."""
+
+from std.checksum import crc32
+from std.collections import OrdinalKey
+from std.compression import Codec
+from std.compression.snappy.raw import compress as raw_snappy_compress
+from std.datetime import Date
+from std.encoding import base32, base58, base64, base85, bech32, hex, EncodingError
+from std.fs import Path
+from std.io import BytesIO
+from std.interop import c
+from std.logging import get_logger
+import std.math
+from std.regex import Regex
+from std.result import map as result_map
+from std.telemetry.core import TelemetryValue
+from std.tempfile import TemporaryDirectory
+from std.testing import assert_true
+from std.uuid import UUID
+
+
+def main() -> None:
+    """Verify checksum, encoding, and filesystem behavior from the selected provider closure."""
+    assert_true(Path(".").exists())
+    assert base64.b64encode(b"oven") == "b3Zlbg=="
+    assert crc32.value(b"oven") > 0

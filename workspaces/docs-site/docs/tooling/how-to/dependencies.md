@@ -1,6 +1,8 @@
 # Managing dependencies
 
-This guide covers how to add, configure, and lock Rust crate dependencies in Incan projects.
+This guide covers how to declare and lock Rust crate requirements in Incan projects. In the Oven Alpha envelope,
+normal `build`, `run`, and `test` commands consume only dependencies already sealed in a compatible toolchain Loaf;
+they do not ask Cargo to resolve a new requirement or silently fall back to Cargo.
 
 For the full manifest format, see: [Project configuration reference](../reference/project_configuration.md). For inline import syntax, see: [Rust interop](../../language/how-to/rust_interop.md).
 
@@ -12,14 +14,20 @@ The simplest way to use a Rust crate is with an inline version annotation:
 import rust::my_crate @ "1.0"
 ```
 
-This works in any `.incn` file, no configuration files needed. The compiler adds the dependency to the generated `Cargo.toml` automatically.
+This records a compatibility requirement without needing a project manifest. It succeeds in a normal Oven command
+only when the selected Loaf already authorizes that crate, version, and feature closure. Otherwise Oven reports an
+unsupported envelope and tells you to install a compatible toolchain; it does not resolve the crate during the
+command.
 
-For common crates (serde, tokio, reqwest, etc.), you don't even need a version — the compiler has tested defaults:
+For common crates, the compiler can supply a known requirement when the version is omitted:
 
 ```incan
 import rust::serde_json as json    # Uses known-good default: serde_json 1.0
 import rust::tokio                 # Uses known-good default: tokio 1 with common features
 ```
+
+These defaults define dependency intent; they are not a promise that every published Alpha Loaf contains every
+listed crate. See [Oven Alpha](../explanation/oven_alpha.md#current-alpha-boundary) for the supported envelope.
 
 ## Using `incan.toml` for project dependencies
 
@@ -105,63 +113,26 @@ Or, if your `incan.toml` has `[project.scripts].main` set:
 incan lock
 ```
 
-`incan.lock` embeds the resolved `Cargo.lock` and a fingerprint of your dependency inputs. **Commit it to version control** for reproducible builds.
+`incan.lock` records normalized semantic dependency, feature, provider, and implementation-facet inputs. **Commit it
+to version control** so normal commands can validate that the project still matches the receipt-compatible Loaf
+selection. The lock is not permission for a normal command to resolve missing crates with Cargo.
 
 For compiled SDK providers, the fingerprint identifies checked provider contracts, dependency and feature choices, and authored Incan inputs. Native Rust output and host-derived ABI metadata remain covered by each installed provider artifact's exact integrity digest, but do not make an otherwise equivalent macOS and Linux SDK selection semantically different. User-authored path dependencies remain part of the semantic fingerprint.
 
-### Default build/test behavior
+### Legacy generated-Cargo behavior (pre-Oven Alpha)
 
-If `incan.lock` doesn't exist and you run `incan build` or `incan test` without strict flags, the lock file is created automatically on first build.
+The generated-Cargo cache, preheat controls, Cargo policy flags, and target-directory overrides describe the former
+0.5 execution backend. They are not controls for ordinary Oven Alpha commands. See
+[Generated-build storage model](../explanation/generated_build_storage.md) only when auditing that historical backend
+or the explicit compatibility-publisher boundary.
 
-If `incan.lock` already exists but is stale, default `incan build` and `incan test` warn and leave the file untouched, but do not use its embedded `Cargo.lock` as dependency authority. Run `incan lock` when you intentionally want to refresh the committed lock file. Strict `--locked` and `--frozen` commands reject the stale lock.
+### CI and offline use
 
-For `incan test`, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state. When lock generation sees Rust dependency inputs or stdlib feature requirements, it also preheats those dependencies with `cargo test --no-run` into the generated test target domain before writing `incan.lock`; unchanged relocks reuse a dependency preheat fingerprint, while cold preheats stream Cargo's own progress instead of leaving the terminal silent.
-
-Generated Cargo output from check, build, run, test, library, lock-preheat, Rust-metadata tooling, and LSP paths is shared by default below `$INCAN_HOME/cache/generated-cargo/v1`, or `~/.incan/cache/generated-cargo/v1` when `INCAN_HOME` is unset. The compiler selects a compatibility domain from the Incan version, selected `rustc` command and verbose host/version output, selected Cargo executable and version, Rust/Cargo target and profile environment selectors, profile, canonical Cargo lock payload, Cargo features, and Cargo arguments that can affect compiled artifacts. Execution-only policy such as offline, locked, frozen, timing, verbosity, and color output does not split otherwise compatible domains. Cargo still fingerprints its own remaining compiler and configuration inputs inside that domain. Matching projects and clean worktrees therefore reuse compiled dependency artifacts without moving generated Incan source, published final binaries, or rust-inspect metadata workspaces out of the project. Cargo `--target-dir` and target/build-directory `--config` passthrough are rejected because they could escape the directory protected and reported by Incan; use `--generated-cargo-target-dir` for an explicit caller-owned target.
-
-Before acquiring a domain, Incan prunes least-recently-used idle domains toward a 20 GiB default soft limit. The domain being acquired and every concurrently active domain remain protected, so active domains can temporarily keep total logical usage above that limit. Each domain is measured when its last Cargo lease ends, then the now-idle set is pruned toward the aggregate limit; if its rebuildable output exceeds the separate 20 GiB default safety limit, Incan discards that domain's Cargo target before it can remain as idle cache state. Change the safety limit with `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES` or use an explicit target when another system owns the lifecycle. Inspect logical file bytes with `incan cache inspect`, preview cleanup with `incan cache prune --dry-run`, prune toward the limit with `incan cache prune`, or remove an exact idle identity with `incan cache prune --identity <SHA256>`. Active builds retain a shared lease and are skipped by cleanup.
-
-See [Generated-build storage model](../explanation/generated_build_storage.md) for ownership categories, the reproducible audit method, v0.5 measurements, and the Cargo-owned costs that remain.
-
-For `incan build --lib`, the compiler also preheats the generated lock workspace into the same release-profile Cargo target directory used by the generated library build. This matters for packages with stable but expensive Rust dependency graphs: a warmed lock workspace should make the following library build reuse the dependency artifacts instead of compiling the same graph in a different target/profile domain. Use `--generated-cargo-target-dir <PATH>` or `INCAN_GENERATED_CARGO_TARGET_DIR` only when a caller such as CI needs to own the target lifecycle explicitly. Set `INCAN_GENERATED_CACHE_MAX_BYTES` to change the managed total limit, `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES` to change the managed per-domain safety limit, or `INCAN_GENERATED_CACHE=0` to restore project-local Cargo targets. Cold generated-library preheats print the target/profile domain before invoking Cargo and stream Cargo's progress until the preheat completes. Set `INCAN_LOCK_PREHEAT=0` only when you deliberately want to disable both lock/test dependency preheat and generated-library dependency preheat while debugging.
-
-### Strict mode for CI
-
-Use `--locked` or `--frozen` to enforce that the lock file exists and is up to date. Use `--offline` when Cargo must fail instead of touching the network:
-
-```bash
-# Requires incan.lock to exist and match current deps
-incan build src/main.incn --locked
-
-# Disallow network access during Cargo subprocesses
-incan build src/main.incn --offline
-
-# Same as --offline plus --locked
-incan build src/main.incn --frozen
-```
-
-Before relying on `--frozen` in a restricted or offline environment, run:
-
-```bash
-incan tools doctor
-```
-
-`incan tools doctor` is the supported preflight path for local offline-readiness diagnostics. Its report is advisory, not a guarantee: `--frozen` still asks Cargo to use offline/locked policy, so any crate source that is missing from Cargo's local inputs can still make the build fail.
-
-If the lock file is missing or stale, the command fails with a clear message:
-
-```text
-error: incan.lock is out of date; run `incan lock`
-```
-
-CI can set the same policy with environment variables:
-
-```bash
-INCAN_LOCKED=1 incan build src/main.incn
-INCAN_FROZEN=1 incan test tests/
-```
-
-`INCAN_FROZEN=1` implies both offline and locked policy. Use `--no-offline`, `--no-locked`, or `--no-frozen` to disable matching environment defaults for a single command.
+Normal Oven Alpha `build`, `run`, and `test` do not launch Cargo or access a registry, so Cargo's `--offline`,
+`--locked`, and `--frozen` policies are not normal-command controls. Commit `incan.lock`, install the required
+Oven-enabled toolchain before entering the restricted environment, and let receipt/lock validation fail closed if
+the project no longer matches the sealed Loaf. Maintainer publication can separately constrain the explicit
+`legacy_cargo` baker with Cargo policy; that does not change the consumer contract.
 
 ## Resolution rules
 
@@ -180,31 +151,16 @@ Key rules:
 - If the same crate is imported inline in multiple files, the version must match exactly; features are unioned automatically.
 - Known-good defaults only apply when there is no `incan.toml` entry and no inline annotation.
 
-## Cargo feature flags
+## Rust dependency feature boundary
 
-You can pass Cargo feature flags through the Incan CLI:
+Declare Rust dependency features in the inline import or `[rust-dependencies]` entry before running `incan lock`.
+The resulting requirement participates in semantic lock and receipt identity. A normal Oven command accepts it only
+when a sealed Loaf authorizes the exact dependency/feature closure.
 
-```bash
-# Enable specific features
-incan build src/main.incn --cargo-features fancy_logging,metrics
-
-# Disable default features
-incan build src/main.incn --cargo-no-default-features
-
-# Enable all features
-incan build src/main.incn --cargo-all-features
-```
-
-These flags affect dependency resolution and are included in the lock file fingerprint.
-
-For advanced Cargo-only flags, use `--cargo-args` or put Cargo arguments after `--`:
-
-```bash
-incan build src/main.incn --cargo-args "--timings"
-incan test tests/ -- --timings
-```
-
-`INCAN_CARGO_ARGS` is also supported for simple whitespace-separated CI defaults. Quoting is not parsed inside the environment variable; use the CLI form for arguments containing spaces.
+Cargo feature and argument passthrough options are not accepted by normal Oven Alpha `build`, `run`, or `test`.
+They remain only on explicit compatibility surfaces such as lock preparation and the hidden maintainer baker. If a
+required closure is absent, change the declaration and install or bake a matching Loaf instead of trying to mutate
+Cargo resolution during the consumer command.
 
 ## Common errors and fixes
 
@@ -246,7 +202,8 @@ error: Rust crate `criterion` is dev-only and cannot be imported from production
 error: Rust crate `fancy_logging` is optional but not enabled for this build
 ```
 
-**Fix**: Enable it with `--cargo-features fancy_logging`, or remove the `optional` flag.
+**Fix**: Enable it through the owning manifest or Incan package feature, regenerate `incan.lock`, and use a toolchain
+whose Loaf authorizes the resulting closure. Otherwise remove the optional dependency.
 
 ### Stale lock file
 

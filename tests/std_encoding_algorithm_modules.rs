@@ -8,17 +8,21 @@ fn run_source_case(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let source_path = dir.path().join("main.incn");
     fs::write(&source_path, source)?;
 
-    let output = Command::new(support::incan_binary())
+    let mut command = Command::new(support::incan_binary());
+    command
         .arg("--no-banner")
         .arg("run")
         .arg(&source_path)
-        .env("CARGO_NET_OFFLINE", "true")
-        .env(
-            "INCAN_GENERATED_CARGO_TARGET_DIR",
-            support::generated_cargo_target_dir(),
-        )
-        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
-        .output()?;
+        .env("CARGO_NET_OFFLINE", "true");
+    if !support::oven_compiler_suite_is_active() {
+        command
+            .env(
+                "INCAN_GENERATED_CARGO_TARGET_DIR",
+                support::generated_cargo_target_dir(),
+            )
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
+    }
+    let output = command.output()?;
 
     assert!(
         output.status.success(),

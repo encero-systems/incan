@@ -1575,26 +1575,26 @@ static build_reports_and_rust_inspection: RegistryEntry[CapabilityId, Capability
         references=build_reports_and_rust_inspection_references,
     ),
 )
-const build_test_preheat_observability_forms: FrozenList[str] = ["incan test -v tests", "INCAN_RUST_INSPECT_TIMING=1 incan build --lib", "incan build --lib"]
-const build_test_preheat_observability_references: FrozenList[CapabilityReference] = [CapabilityReference(
+const build_test_oven_observability_forms: FrozenList[str] = ["incan build --report json", "incan test -v tests", "incan oven store inspect --format json"]
+const build_test_oven_observability_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="CLI reference",
     path="../../tooling/reference/cli_reference.md",
-), CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md")]
-static build_test_preheat_observability: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.entry(
-    key=CapabilityId("BuildTestPreheatObservability"),
+), CapabilityReference(label="Release 0.6", path="../../release_notes/0_6.md")]
+static build_test_oven_observability: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.entry(
+    key=CapabilityId("BuildTestOvenObservability"),
     subject=RegistrySubject.current_unit(),
     descriptor=CapabilityDescriptor(
-        id=CapabilityId("BuildTestPreheatObservability"),
-        name="Build and test preheat observability",
+        id=CapabilityId("BuildTestOvenObservability"),
+        name="Build and test Oven observability",
         category=CapabilityCategory.Tooling,
-        since="0.4",
+        since="0.6",
         rfc="RFC 015",
-        stability=CapabilityStability.Stable,
-        activation="Use verbose test output or `INCAN_RUST_INSPECT_TIMING=1` when build/test preheat timing needs to be inspected.",
-        summary="Build and test preheat paths report phase timing, Cargo target reuse, Rust metadata warmed/reused/skipped counts, vocab companion cache reuse, and cache split reasons.",
-        canonical_forms=build_test_preheat_observability_forms,
-        prefer_over="Silent long-running preheat phases or separate probes that do not share the real build/test cache policy.",
-        references=build_test_preheat_observability_references,
+        stability=CapabilityStability.Experimental,
+        activation="Use a JSON build report, verbose test output, or `incan oven store inspect --format json` to inspect the documented Oven Alpha envelope.",
+        summary="Oven Alpha build and test paths report receipt selection, preparation or reuse, and direct-rustc execution timing. Store inspection reports separate logical artifact bytes, physical allocation, reclaimability, and active lease use without reading a generated Cargo target directory.",
+        canonical_forms=build_test_oven_observability_forms,
+        prefer_over="Silent long-running preparation or inspecting generated Cargo target directories instead of the bounded Oven store.",
+        references=build_test_oven_observability_references,
     ),
 )
 const codegraph_inspection_forms: FrozenList[str] = ["incan inspect codegraph src/main.incn --format jsonl", "incan inspect codegraph src --format jsonl --allow-errors"]

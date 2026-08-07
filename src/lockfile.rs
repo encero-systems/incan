@@ -25,9 +25,6 @@ use crate::provider::{
 
 const LOCKFILE_FORMAT_VERSION: u32 = 2;
 const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
-/// Synthetic Cargo package used to resolve one canonical lock across all workspace members.
-pub(crate) const WORKSPACE_LOCK_CARGO_PACKAGE_NAME: &str = "incan_workspace";
-
 #[derive(Debug, thiserror::Error)]
 pub enum LockfileError {
     #[error("failed to read {path}: {source}")]
@@ -71,6 +68,7 @@ pub struct IncanLock {
 }
 
 /// Advisory guards retained for one canonical lockfile publication critical section.
+#[derive(Debug)]
 pub(crate) struct PublicationLock {
     _legacy: Option<File>,
     _active: File,
@@ -263,20 +261,18 @@ pub fn semantic_lock_state(
 ) -> Result<SemanticLockState, String> {
     let interop = locked_oven_interop_targets_from_section(project_root, interop)?;
     let oven = (!interop.is_empty()).then_some(LockedOvenState { interop });
-    let semantic_toolchain_dependencies = semantic_toolchain_dependencies(sdk_path_dependencies)?;
-    let dependency_semantic_digests =
-        provider_dependency_semantic_digests(provider_plan, &semantic_toolchain_dependencies)?;
-    let mut provider_digest_cache = BTreeMap::new();
-    let mut provider_semantic_identities = Vec::new();
-    for provider in provider_plan.records() {
-        let identity = locked_provider_semantic_identity(
-            provider,
-            &dependency_semantic_digests,
-            &semantic_toolchain_dependencies,
-            &mut provider_digest_cache,
-        )?;
-        provider_semantic_identities.push((provider, identity));
-    }
+    let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
+    let provider_semantic_identities = provider_plan
+        .records()
+        .map(|provider| {
+            let key = provider.identity.stable_key();
+            let identity = provider_identity_map
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| format!("semantic provider identity is missing for `{key}`"))?;
+            Ok((provider, identity))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let sdk = match (sdk_inventory, sdk_components) {
         (Some(inventory), Some(components)) => {
             let inventory_digest = semantic_sdk_inventory_digest(inventory, &provider_semantic_identities)?;
@@ -360,6 +356,35 @@ pub fn semantic_lock_state(
         oven,
         workspace_members: Vec::new(),
     })
+}
+
+/// Return each checked provider's path-independent semantic identity keyed by its byte-exact catalog identity.
+///
+/// Provider-plan construction always validates the physical artifact digest before this projection is available.
+/// Consumers may therefore use these values only where an approved relocation must preserve compatibility; they must
+/// never replace the inventory's byte-exact integrity validation or authorize an unrecorded provider.
+pub(crate) fn provider_semantic_identities(
+    provider_plan: &ProviderPlan,
+    sdk_path_dependencies: &[DependencySpec],
+) -> Result<BTreeMap<String, String>, String> {
+    let semantic_toolchain_dependencies = semantic_toolchain_dependencies(sdk_path_dependencies)?;
+    let dependency_semantic_digests =
+        provider_dependency_semantic_digests(provider_plan, &semantic_toolchain_dependencies)?;
+    let mut provider_digest_cache = BTreeMap::new();
+    provider_plan
+        .records()
+        .map(|provider| {
+            Ok((
+                provider.identity.stable_key(),
+                locked_provider_semantic_identity(
+                    provider,
+                    &dependency_semantic_digests,
+                    &semantic_toolchain_dependencies,
+                    &mut provider_digest_cache,
+                )?,
+            ))
+        })
+        .collect()
 }
 
 /// Project a physical provider record into its path-independent semantic lock identity.
@@ -1783,6 +1808,43 @@ mod tests {
             &second_specs,
         );
         assert_ne!(second_fingerprint, changed_fingerprint);
+        Ok(())
+    }
+
+    #[test]
+    fn native_provider_compatibility_identity_allows_only_checked_runtime_relocation() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let first = production_toolchain_semantic_fixture(&temp.path().join("source-checkout-a"))?;
+        let second = production_toolchain_semantic_fixture(&temp.path().join("sealed-suite-runtime"))?;
+
+        let first_identities = provider_semantic_identities(&first.provider_plan, &first.specs)?;
+        let second_identities = provider_semantic_identities(&second.provider_plan, &second.specs)?;
+        assert_ne!(
+            first_identities.keys().collect::<Vec<_>>(),
+            second_identities.keys().collect::<Vec<_>>(),
+            "the fixture must retain distinct byte-exact provider identities after Cargo path relocation"
+        );
+        assert_eq!(
+            first_identities.values().collect::<Vec<_>>(),
+            second_identities.values().collect::<Vec<_>>(),
+            "checked compiler-runtime relocation must retain native compatibility"
+        );
+
+        let relocated_runtime = temp.path().join("sealed-suite-runtime/crates/incan_derive");
+        fs::write(
+            temp.path()
+                .join("sealed-suite-runtime/sdk/components/support-provider/Cargo.toml"),
+            format!(
+                "[package]\nname = \"support_provider\"\nversion = \"0.5.0\"\npublish = false\n\n[dependencies]\nincan_derive = {{ path = \"{}\" }}\n",
+                relocated_runtime.display()
+            ),
+        )?;
+        let tampered = provider_semantic_identities(&second.provider_plan, &second.specs)?;
+        assert_ne!(
+            second_identities.values().collect::<Vec<_>>(),
+            tampered.values().collect::<Vec<_>>(),
+            "native compatibility must still bind the checked provider Cargo contract"
+        );
         Ok(())
     }
 

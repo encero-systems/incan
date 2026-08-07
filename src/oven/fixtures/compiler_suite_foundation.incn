@@ -1,0 +1,46 @@
+"""Select the broad compiler-suite provider and declared-Rust-dependency closure with observable checks."""
+
+from std.async import spawn
+from std.async.channel import Sender
+from std.async.race import RaceArm
+from std.async.sync import Mutex
+from std.async.task import spawn_blocking
+from std.async.time import Duration
+from std.collections import OrdinalKey
+from std.derives.collection import FallibleIterator
+from std.environ import get
+from std.fs import Path
+from std.fs.glob import matches
+from std.fs.locking import FileLock
+from std.fs.path import _as_path
+from std.io import BytesIO
+from std.hash import sha1
+from std.json import JsonValue
+from std.registry import Registry
+from std.serde import json
+from std.serde.json import Serialize
+from std.testing import assert_true
+from std.traits import TryFrom
+from std.traits.callable import Callable1
+from std.traits.convert import Into
+from std.traits.indexing import Index
+from std.web import App, Response
+from std.web.request import Query
+from std.web.routing import GET, route
+import std.async
+from rust::bitflags import bitflags
+from rust::serde_json import Value
+from rust::uuid import Uuid
+
+
+@route("/oven-loaf", methods=[GET])
+async def oven_loaf_route() -> Response:
+    """Provide one checked web-routing surface for the foundation Loaf."""
+    return Response.ok()
+
+
+def main() -> None:
+    """Verify filesystem and external UUID behavior without relying on ambient Cargo state."""
+    assert_true(Path(".").exists())
+    identifier = Uuid.new_v4().to_string()
+    assert_true(len(identifier) > 0)

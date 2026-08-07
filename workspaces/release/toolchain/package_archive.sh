@@ -15,6 +15,8 @@ Environment:
                  Host incan binary used to prepare the platform-neutral SDK provider seed (default: INCAN_BIN)
   INCAN_SDK_PROVIDER_SEED_DIR
                  Prebuilt SDK provider seed override used by packaging tests and controlled release staging
+  INCAN_OVEN_LOAF_DIR
+                 Prebuilt compiler-owned Oven Loafs used by packaging tests and controlled staging
   INCAN_SDK_DISTRIBUTION_PROFILE
                  SDK profile whose component payloads are packaged (default: full)
   TOOLCHAIN_RELEASE    Release name override (default: tag name or v<workspace version>)
@@ -251,10 +253,50 @@ rm -rf "$package_dir/crates/incan_stdlib/stdlib"
 [ ! -d "$package_dir/crates/incan_stdlib/stdlib" ] \
   || fail "provider-owned stdlib source unexpectedly entered the package"
 
+# Ship the typed release envelope through the same explicit baker used by local and CI preparation. The baker owns
+# fixture source, identity, admission, accounting, and atomic publication; this packaging script only stages its output.
+loaf_root="$package_dir/share/incan/oven/loafs"
+if [ -n "${INCAN_OVEN_LOAF_DIR:-}" ]; then
+  [ "${INCAN_OVEN_LOAF_OVERRIDE_TEST_ONLY:-0}" = "1" ] \
+    || fail "INCAN_OVEN_LOAF_DIR is reserved for controlled packaging tests; production archives must invoke the baker"
+  [ -d "$INCAN_OVEN_LOAF_DIR" ] \
+    || fail "Oven Loaf override does not exist: $INCAN_OVEN_LOAF_DIR"
+  mkdir -p "$(dirname "$loaf_root")"
+  cp -R "$INCAN_OVEN_LOAF_DIR" "$loaf_root"
+else
+  cargo_bin="$(command -v cargo)" || fail "could not resolve Cargo for the release-only Loaf publisher"
+  if [ -n "${RUSTC:-}" ]; then
+    rustc_bin="$RUSTC"
+  elif command -v rustup >/dev/null 2>&1; then
+    rustc_bin="$(rustup which rustc)"
+  else
+    rustc_bin="$(command -v rustc)"
+  fi
+  [ -x "$rustc_bin" ] || fail "could not resolve an executable rustc for the release-only Loaf publisher"
+  "$package_dir/bin/incan" oven legacy-cargo bake-loafs \
+    --compiler-root "$package_dir" \
+    --output "$loaf_root" \
+    --envelope release \
+    --sdk-inventory "$sdk_seed_root/sdk-inventory.json" \
+    --cargo "$cargo_bin" \
+    --rustc "$rustc_bin" \
+    --format json >/dev/null \
+    || fail "could not bake the release Oven Loaf envelope"
+fi
+[ -d "$loaf_root" ] || fail "release package is missing Oven Loafs"
+[ "$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')" = "2" ] \
+  || fail "release package must contain one release core and one debug Oven foundation Loaf"
+
+sdk_component_count="$(find "$sdk_seed_root/components" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+sdk_payload_bytes="$(find "$sdk_seed_root" -type f -exec wc -c {} + | awk '$2 != "total" { total += $1 } END { print total + 0 }')"
+loaf_count="$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')"
+loaf_payload_bytes="$(find "$loaf_root" -type f -exec wc -c {} + | awk '$2 != "total" { total += $1 } END { print total + 0 }')"
+loaf_physical_bytes="$(du -sk "$loaf_root" | awk '{ print $1 * 1024 }')"
+
+# The baker has already admitted the complete immutable closure under the central Oven policy. Packaging records both
+# logical and host-physical measurements without redefining that policy.
 tar -C "$package_dir" -czf "$archive" .
 shasum -a 256 "$archive" | awk '{print $1}' > "${archive}.sha256"
-sdk_component_count="$(find "$sdk_seed_root/components" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
-sdk_payload_bytes="$(find "$sdk_seed_root" -type f -exec wc -c {} + | awk '{ total += $1 } END { print total + 0 }')"
 archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
 cat > "${archive}.profile.json" <<PROFILE_EVIDENCE
 {
@@ -264,6 +306,9 @@ cat > "${archive}.profile.json" <<PROFILE_EVIDENCE
   "sdk_profile": "${distribution_profile}",
   "sdk_component_count": ${sdk_component_count},
   "sdk_payload_bytes": ${sdk_payload_bytes},
+  "oven_loaf_count": ${loaf_count},
+  "oven_loaf_logical_bytes": ${loaf_payload_bytes},
+  "oven_loaf_physical_bytes": ${loaf_physical_bytes},
   "archive_bytes": ${archive_bytes}
 }
 PROFILE_EVIDENCE

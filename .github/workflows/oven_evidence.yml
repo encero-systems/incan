@@ -1,0 +1,144 @@
+name: Oven Release Evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ release/** ]
+
+concurrency:
+  group: oven-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  INCAN_NO_BANNER: 1
+
+jobs:
+  compiler-suite:
+    name: Complete Oven Suite (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-stable
+            name: ubuntu-latest, stable
+            runner: ubuntu-latest
+            toolchain: stable
+            benchmark: true
+          - id: macos-stable
+            name: macos-latest, stable
+            runner: macos-latest
+            toolchain: stable
+            benchmark: true
+          - id: linux-msrv
+            name: ubuntu-latest, MSRV 1.93.0
+            runner: ubuntu-latest
+            toolchain: 1.93.0
+            benchmark: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1 --toolchain "${{ matrix.toolchain }}"
+      - name: Restore Cargo sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-oven-evidence-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock') }}
+          restore-keys: |
+            incan-oven-evidence-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked compiler and Loaf publisher sources
+        run: |
+          make fetch-locked-cargo-sources
+          make fetch-oven-loaf-sources
+      - name: Build the compiler used by the baker and suite
+        run: CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
+      - name: Build the release compiler used by normal-command benchmarks
+        if: ${{ matrix.benchmark }}
+        run: CARGO_BUILD_JOBS=2 cargo build --locked --release --bin incan
+      - uses: ./.github/actions/restore-sdk-provider-store
+      - uses: ./.github/actions/install-nightly-toolchain
+        with:
+          toolchain: nightly-2026-03-24
+      - name: Install WASI target for the pinned Loaf baker
+        run: rustup target add wasm32-wasip1 --toolchain nightly-2026-03-24
+      - name: Bake or exactly reuse the complete compiler-suite Loafs
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+          INCAN_TEST_PREWARM_TOOLCHAIN=${{ matrix.toolchain }}
+          INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}
+          INCAN_TEST_SUITE_TOOLCHAIN=${{ matrix.toolchain }}
+          make -s test-prewarm-oven-loafs
+          INCAN_TEST_OVEN_BAKE_FORMAT=json
+          INCAN_TEST_OVEN_BAKE_REPORT="$GITHUB_WORKSPACE/target/oven-baker-result.json"
+      - name: Run all discovered repository tests through Oven
+        uses: ./.github/actions/run-oven-compiler-suite
+        with:
+          lane: ${{ matrix.id }}
+          publisher_toolchain: nightly-2026-03-24
+          consumer_toolchain: ${{ matrix.toolchain }}
+      - name: Bake the release Loafs for normal-command evidence
+        if: ${{ matrix.benchmark }}
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+          INCAN_TEST_PREWARM_TOOLCHAIN=${{ matrix.toolchain }}
+          INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}
+          INCAN_TEST_OVEN_RELEASE_COMPILER_BIN="$GITHUB_WORKSPACE/target/release/incan"
+          make -s test-prewarm-oven-release-loafs
+      - name: Record cold, warm, and clean-worktree normal-command evidence
+        if: ${{ matrix.benchmark }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          clean_worktree="$RUNNER_TEMP/incan-oven-alpha-clean-worktree"
+          git worktree add --detach "$clean_worktree" "$GITHUB_SHA"
+          trap 'git worktree remove --force "$clean_worktree"' EXIT
+          guard="$RUNNER_TEMP/incan-oven-alpha-cargo-guard"
+          mkdir -p "$guard"
+          printf '%s\n' '#!/bin/sh' 'exit 97' > "$guard/cargo"
+          chmod +x "$guard/cargo"
+          bash scripts/bench_oven_alpha.sh \
+            --incan "$GITHUB_WORKSPACE/target/oven-alpha-release-toolchain/bin/incan" \
+            --release-identity "GitHub Actions release compiler for $GITHUB_SHA" \
+            --checkout-revision "$GITHUB_SHA" \
+            --workload build \
+            --source "$GITHUB_WORKSPACE/src/oven/fixtures/release_core.incn" \
+            --clean-worktree-source "$clean_worktree/src/oven/fixtures/release_core.incn" \
+            --incan-home "$RUNNER_TEMP/incan-oven-alpha-benchmark-home" \
+            --output "$GITHUB_WORKSPACE/target/oven-alpha-benchmark" \
+            --cargo-guard-dir "$guard" \
+            --repetitions 2
+          jq . target/oven-alpha-benchmark/report.json
+      - name: Upload complete compiler-suite evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-compiler-suite-${{ matrix.id }}-evidence
+          path: |
+            target/oven-compiler-suite-output/evidence.json
+            target/oven-compiler-suite-output/compiler-suite-report.json
+            target/oven-compiler-suite-output/compiler-suite-stdout.json
+            target/oven-compiler-suite-output/baker-result.json
+            target/oven-compiler-suite-output/raw-disk-usage-kib.tsv
+            target/oven-compiler-suite-output/cargo-guard/invocations.log
+            target/oven-compiler-suite-output/shards/**/*.libtest-output.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload normal-command benchmark evidence
+        if: ${{ always() && matrix.benchmark }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-alpha-${{ matrix.id }}-benchmark
+          path: target/oven-alpha-benchmark
+          if-no-files-found: warn
+          retention-days: 14

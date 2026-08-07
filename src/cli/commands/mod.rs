@@ -28,6 +28,7 @@ pub mod init;
 pub mod interop_plan;
 pub mod lifecycle;
 pub mod lock;
+pub mod oven;
 pub mod provider_inspect;
 pub mod stdlib_loader;
 pub mod tools;
@@ -49,12 +50,16 @@ pub use init::init_project;
 pub use interop_plan::{InteropPlanInspectionFormat, inspect_interop_plan};
 pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use lock::lock_project;
+pub use oven::{
+    OvenCompilerLibtestsRunCommandOptions, OvenImportCommandOptions, OvenLegacyCargoPrepareCommandOptions,
+    OvenLoafBakeCommandOptions, OvenPlanPublishCommandOptions, OvenReceiptInspectCommandOptions, OvenRunCommandOptions,
+    OvenStoreCommandOptions, OvenTestCommandOptions, inspect_oven_receipt, inspect_oven_store, oven_import,
+    oven_legacy_cargo_bake_loafs, oven_legacy_cargo_prepare, oven_publish_direct_rustc_plan, oven_run,
+    oven_run_compiler_libtests, oven_test, prune_oven_store,
+};
 pub use provider_inspect::{ProviderInspectionFormat, inspect_features, inspect_providers};
 pub use tools::{
     ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,
     tools_metadata_model,
 };
 pub use workspace::{WorkspaceInspectFormat, workspace_inspect};
-
-// Crate-internal API (used by test_runner and other CLI modules)
-pub(crate) use lock::{LockResolutionRequest, resolve_lock_context};

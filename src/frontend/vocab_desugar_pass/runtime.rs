@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use sha2::{Digest, Sha256};
 use wasmtime::{Config, Engine, ExternType, Instance, Linker, Module, Store, Val, ValType};
 use wasmtime_wasi::WasiCtxBuilder;
-use wasmtime_wasi::p1::{self, WasiP1Ctx};
+use wasmtime_wasi::preview1::{self, WasiP1Ctx};
 
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 
@@ -289,7 +289,7 @@ fn execute_desugarer_module(
     validate_wasm_runtime_contract(module, &resolved.path, &resolved.entrypoint)?;
 
     let mut linker = Linker::new(engine);
-    p1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|source| VocabDesugarPassError::WasmInstantiate {
+    preview1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|source| VocabDesugarPassError::WasmInstantiate {
         path: resolved.path.clone(),
         source,
     })?;

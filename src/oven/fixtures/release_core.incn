@@ -1,0 +1,6 @@
+"""Minimal core-language build fixture for the release Loaf envelope."""
+
+
+def main() -> None:
+    """Exercise one deterministic core-language assertion without selecting an SDK provider."""
+    assert 2 + 2 == 4

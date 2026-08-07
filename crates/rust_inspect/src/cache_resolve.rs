@@ -3,28 +3,9 @@
 //! These functions map a Rust import crate segment (which may use `_`) back to a concrete Cargo package source
 //! directory (which may use `-`) so extraction can fall back to dependency workspaces when needed.
 
+use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-struct CargoMetadata {
-    packages: Vec<CargoPackage>,
-}
-
-#[derive(Deserialize)]
-struct CargoPackage {
-    name: String,
-    manifest_path: PathBuf,
-    targets: Vec<CargoTarget>,
-}
-
-#[derive(Deserialize)]
-struct CargoTarget {
-    name: String,
-}
 
 #[derive(Deserialize)]
 struct CargoLock {
@@ -47,44 +28,84 @@ pub(crate) fn crate_name_for_path(canonical_path: &str) -> &str {
     canonical_path.split("::").next().unwrap_or(canonical_path)
 }
 
-/// Resolve the manifest directory for a dependency crate reachable from `root` via `cargo metadata`.
+/// Resolve a path dependency directly from the generated manifest.
 ///
-/// Cargo package names may use `-` while Rust import paths use `_`, so lookup normalizes both the package name and
-/// target/lib names before matching.
-fn dependency_manifest_dir_from_cargo_metadata(root: &Path, crate_name: &str) -> Option<PathBuf> {
+/// The compiler writes this manifest itself, so its dependency declarations are already the authoritative input to
+/// the legacy publisher. Reading them here avoids turning a consumer metadata lookup into a `cargo metadata`
+/// subprocess merely to recover a path Cargo was just given. Package aliases use Cargo's `package = "..."` spelling
+/// while Rust imports use underscores, so both dependency keys and declared package names are normalized.
+pub(crate) fn dependency_manifest_dir_from_manifest(root: &Path, crate_name: &str) -> Option<PathBuf> {
     let manifest_path = root.join("Cargo.toml");
-    let cargo = std::env::var_os("CARGO")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "cargo".into());
-    let target_dir = crate::cache::cargo_configured_target_dir(root);
-    let output = Command::new(cargo)
-        .arg("metadata")
-        .arg("--offline")
-        .arg("--manifest-path")
-        .arg(manifest_path.as_os_str())
-        .arg("--format-version")
-        .arg("1")
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_BUILD_BUILD_DIR", &target_dir)
-        .current_dir(root)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let parsed: CargoMetadata = serde_json::from_slice(&output.stdout).ok()?;
+    let manifest = toml::from_str::<toml::Value>(&fs::read_to_string(manifest_path).ok()?).ok()?;
     let normalized = normalize_crate_name(crate_name);
-    parsed
-        .packages
+
+    let direct = ["dependencies", "dev-dependencies", "build-dependencies"]
         .into_iter()
-        .find(|pkg| {
-            normalize_crate_name(pkg.name.as_str()) == normalized
-                || pkg
-                    .targets
-                    .iter()
-                    .any(|target| normalize_crate_name(target.name.as_str()) == normalized)
+        .find_map(|section| dependency_path_in_table(manifest.get(section), normalized.as_str(), root));
+    direct
+        .or_else(|| {
+            manifest
+                .get("target")
+                .and_then(toml::Value::as_table)
+                .and_then(|targets| {
+                    targets.values().find_map(|target| {
+                        ["dependencies", "dev-dependencies", "build-dependencies"]
+                            .into_iter()
+                            .find_map(|section| {
+                                dependency_path_in_table(target.get(section), normalized.as_str(), root)
+                            })
+                    })
+                })
         })
-        .and_then(|pkg| pkg.manifest_path.parent().map(Path::to_path_buf))
+        .or_else(|| {
+            manifest
+                .get("workspace")
+                .and_then(|workspace| workspace.get("dependencies"))
+                .and_then(|dependencies| dependency_path_in_table(Some(dependencies), normalized.as_str(), root))
+        })
+}
+
+/// Resolve one path dependency from a Cargo dependency table without invoking Cargo.
+fn dependency_path_in_table(table: Option<&toml::Value>, normalized_crate_name: &str, root: &Path) -> Option<PathBuf> {
+    let dependencies = table?.as_table()?;
+    dependencies.iter().find_map(|(key, value)| {
+        let declaration = value.as_table()?;
+        let package_name = declaration
+            .get("package")
+            .and_then(toml::Value::as_str)
+            .unwrap_or(key.as_str());
+        let path = declaration.get("path")?.as_str()?;
+        let candidate = root.join(path);
+        let manifest_path = candidate.join("Cargo.toml");
+        if !manifest_path.is_file() {
+            return None;
+        }
+        let manifest_crate_names = fs::read_to_string(manifest_path)
+            .ok()
+            .and_then(|payload| toml::from_str::<toml::Value>(payload.as_str()).ok())
+            .map(|manifest| {
+                [
+                    manifest
+                        .get("package")
+                        .and_then(|package| package.get("name"))
+                        .and_then(toml::Value::as_str),
+                    manifest
+                        .get("lib")
+                        .and_then(|library| library.get("name"))
+                        .and_then(toml::Value::as_str),
+                ]
+                .into_iter()
+                .flatten()
+                .map(normalize_crate_name)
+                .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        (normalize_crate_name(key) == normalized_crate_name
+            || normalize_crate_name(package_name) == normalized_crate_name
+            || manifest_crate_names.iter().any(|name| name == normalized_crate_name))
+        .then(|| candidate.canonicalize().ok())
+        .flatten()
+    })
 }
 
 fn cargo_registry_src_roots() -> Vec<PathBuf> {
@@ -161,12 +182,12 @@ fn dependency_manifest_dir_from_lock(
     dependency_manifest_dir_from_lock_with_search_roots(root, crate_name, search_roots)
 }
 
-/// Resolve the best-known dependency manifest directory for `crate_name` from the generated lock workspace.
+/// Resolve the best-known dependency manifest directory for `crate_name` from compiler-authored workspace inputs.
 pub(crate) fn dependency_manifest_dir_for_crate(
     root: &Path,
     crate_name: &str,
     registry_src_roots: Option<&[PathBuf]>,
 ) -> Option<PathBuf> {
-    dependency_manifest_dir_from_cargo_metadata(root, crate_name)
+    dependency_manifest_dir_from_manifest(root, crate_name)
         .or_else(|| dependency_manifest_dir_from_lock(root, crate_name, registry_src_roots))
 }

@@ -40,6 +40,7 @@ pub mod prelude;
 pub mod test_runner;
 
 use std::env;
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -52,7 +53,9 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::binding_inspect::BindingInspectionFormat;
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
-use commands::common::{CargoPolicy, CargoPolicyCliFlags, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV};
+use commands::common::{
+    CargoPolicy, CargoPolicyCliFlags, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV,
+};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
@@ -195,6 +198,24 @@ pub enum CacheCategory {
     GeneratedCargo,
 }
 
+/// Output encoding for explicit Oven Alpha receipts, plans, storage, test reports, and run reports.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OvenOutputFormat {
+    /// Human-readable command result.
+    Text,
+    /// Stable machine-readable JSON report.
+    Json,
+}
+
+/// Built-in compiler-owned Loaf envelope selected by the hidden baker.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OvenLoafEnvelopeArgument {
+    /// Minimal Loafs shipped in a release toolchain.
+    Release,
+    /// Complete Loaf set used by the repository compiler suite.
+    CompilerSuite,
+}
+
 /// Incan package-feature selection shared by compilation commands.
 ///
 /// These flags select package-owned semantic features. They are intentionally separate from the explicitly prefixed
@@ -239,13 +260,13 @@ impl SdkProfileCliFlags {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Compile to Rust and build executable
+    /// Compile to Rust and build an executable through Oven Alpha direct-rustc
     Build {
-        /// Source file to compile (optional in `--lib` mode)
+        /// Source file to compile
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-        /// Enable library mode precondition checks (`src/lib.incn` required)
-        #[arg(long = "lib")]
+        /// Build the `src/lib.incn` library through Oven Alpha direct-rustc
+        #[arg(long = "lib", hide = true)]
         lib_mode: bool,
         /// Output directory (default: `target/incan/<name>`)
         #[arg(value_name = "OUTPUT_DIR")]
@@ -256,38 +277,38 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date incan.lock and pass --locked to Cargo
-        #[arg(long)]
+        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
-        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"])]
+        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
         no_locked: bool,
-        /// Pass --offline to Cargo subprocesses
-        #[arg(long)]
+        /// Require offline-compatible locked inputs; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         offline: bool,
         /// Disable INCAN_OFFLINE for this invocation
-        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"])]
+        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require up-to-date incan.lock and pass --frozen to Cargo
-        #[arg(long)]
+        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
-        #[arg(long = "no-frozen", conflicts_with = "frozen")]
+        #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Extra arguments forwarded to Cargo after policy and feature flags
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true)]
+        /// Retired Cargo argument surface; normal Oven commands reject it
+        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
         cargo_args: Vec<String>,
-        /// Cargo features to enable (comma-separated)
-        #[arg(long = "cargo-features", value_delimiter = ',')]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
         cargo_features: Vec<String>,
-        /// Disable Cargo default features
-        #[arg(long = "cargo-no-default-features")]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-no-default-features", hide = true)]
         cargo_no_default_features: bool,
-        /// Enable all Cargo features
-        #[arg(long = "cargo-all-features")]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-all-features", hide = true)]
         cargo_all_features: bool,
-        /// Shared Cargo target directory for generated Rust projects
-        #[arg(long = "generated-cargo-target-dir", value_name = "PATH")]
+        /// Retired generated-Cargo target override; normal Oven commands reject it
+        #[arg(long = "generated-cargo-target-dir", value_name = "PATH", hide = true)]
         generated_cargo_target_dir: Option<PathBuf>,
         /// Explicitly request the release build profile. This is the default for `incan build` and exists for
         /// first-contact command symmetry.
@@ -305,8 +326,8 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path; may be repeated
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Extra arguments forwarded to Cargo after `--`
-        #[arg(last = true)]
+        /// Retired Cargo passthrough surface; normal Oven commands reject it
+        #[arg(last = true, hide = true)]
         cargo_passthrough: Vec<String>,
     },
 
@@ -360,37 +381,37 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date incan.lock and pass --locked to Cargo
-        #[arg(long)]
+        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
-        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"])]
+        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
         no_locked: bool,
-        /// Pass --offline to Cargo subprocesses
-        #[arg(long)]
+        /// Require offline-compatible locked inputs; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         offline: bool,
         /// Disable INCAN_OFFLINE for this invocation
-        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"])]
+        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require up-to-date incan.lock and pass --frozen to Cargo
-        #[arg(long)]
+        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
-        #[arg(long = "no-frozen", conflicts_with = "frozen")]
+        #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Extra arguments forwarded to Cargo after policy and feature flags
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true)]
+        /// Retired Cargo argument surface; normal Oven commands reject it
+        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
         cargo_args: Vec<String>,
-        /// Cargo features to enable (comma-separated)
-        #[arg(long = "cargo-features", value_delimiter = ',')]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
         cargo_features: Vec<String>,
-        /// Disable Cargo default features
-        #[arg(long = "cargo-no-default-features")]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-no-default-features", hide = true)]
         cargo_no_default_features: bool,
-        /// Enable all Cargo features
-        #[arg(long = "cargo-all-features")]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-all-features", hide = true)]
         cargo_all_features: bool,
-        /// Build and run with Cargo release profile (optimized, slower cold-start builds)
+        /// Build and run with the optimized Oven release profile
         #[arg(long)]
         release: bool,
         /// Select every member in the active workspace (only valid when it resolves to one member)
@@ -399,8 +420,8 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Extra arguments forwarded to Cargo after `--`
-        #[arg(last = true)]
+        /// Retired Cargo passthrough surface; normal Oven commands reject it
+        #[arg(last = true, hide = true)]
         cargo_passthrough: Vec<String>,
     },
 
@@ -470,6 +491,12 @@ pub enum Command {
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
+    },
+
+    /// Run the explicit Oven Alpha receipt, bounded-store, and native direct-rustc workflow
+    Oven {
+        #[command(subcommand)]
+        command: OvenCommand,
     },
 
     /// Inspect compiler artifacts and semantic projections
@@ -543,35 +570,35 @@ pub enum Command {
         /// Run xfail tests as ordinary tests
         #[arg(long = "run-xfail")]
         run_xfail: bool,
-        /// Require up-to-date incan.lock and pass --locked to Cargo
-        #[arg(long)]
+        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
-        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"])]
+        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
         no_locked: bool,
-        /// Pass --offline to Cargo subprocesses
-        #[arg(long)]
+        /// Require offline-compatible locked inputs; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         offline: bool,
         /// Disable INCAN_OFFLINE for this invocation
-        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"])]
+        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require up-to-date incan.lock and pass --frozen to Cargo
-        #[arg(long)]
+        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
-        #[arg(long = "no-frozen", conflicts_with = "frozen")]
+        #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Extra arguments forwarded to Cargo after policy and feature flags
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true)]
+        /// Retired Cargo argument surface; normal Oven commands reject it
+        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
         cargo_args: Vec<String>,
-        /// Cargo features to enable (comma-separated)
-        #[arg(long = "cargo-features", value_delimiter = ',')]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
         cargo_features: Vec<String>,
-        /// Disable Cargo default features
-        #[arg(long = "cargo-no-default-features")]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-no-default-features", hide = true)]
         cargo_no_default_features: bool,
-        /// Enable all Cargo features
-        #[arg(long = "cargo-all-features")]
+        /// Retired Cargo feature surface; normal Oven commands reject it
+        #[arg(long = "cargo-all-features", hide = true)]
         cargo_all_features: bool,
         /// Select every member in the active workspace
         #[arg(long, conflicts_with = "members")]
@@ -579,8 +606,8 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path; may be repeated
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Extra arguments forwarded to Cargo after `--`
-        #[arg(last = true)]
+        /// Retired Cargo passthrough surface; normal Oven commands reject it
+        #[arg(last = true, hide = true)]
         cargo_passthrough: Vec<String>,
     },
 
@@ -665,6 +692,17 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum InspectCommand {
+    /// Inspect an Oven receipt's reusable build unit, stored-plan selection, and bounded storage evidence
+    Oven {
+        /// Receipt written by normal Oven preparation or explicit import
+        #[arg(long, value_name = "PATH")]
+        receipt: PathBuf,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
     /// Generate and inspect current Rust backend output
     Rust {
         /// Source file or project root to inspect
@@ -893,6 +931,289 @@ pub enum CacheCommand {
     },
 }
 
+/// Explicit Oven Alpha lifecycle commands.
+#[derive(Subcommand, Debug)]
+pub enum OvenCommand {
+    /// Import frozen Cargo declarations as receipt evidence without launching Cargo
+    Import {
+        /// Root of the frozen Cargo package to import
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        /// Explicit target triple recorded in the receipt
+        #[arg(long, value_name = "TRIPLE")]
+        target: String,
+        /// Exact selected Rust toolchain identity recorded in the receipt
+        #[arg(long, value_name = "IDENTITY")]
+        toolchain: String,
+        /// Build profile recorded in the receipt
+        #[arg(long, default_value = "release")]
+        profile: String,
+        /// Explicit feature selected for the build unit; may be repeated
+        #[arg(long = "feature", value_name = "NAME")]
+        features: Vec<String>,
+        /// Generated source evidence expressed as `NAME=PATH`; paths are digested, never persisted
+        #[arg(long = "source", value_name = "NAME=PATH")]
+        source_inputs: Vec<String>,
+        /// Receipt output path; defaults to `.incan/oven/receipt.json` below --project
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+    /// Hidden `legacy_cargo` publisher; never used by normal build, run, or test execution
+    LegacyCargo {
+        #[command(subcommand)]
+        command: OvenLegacyCargoCommand,
+    },
+    /// Compile and run the stored compiler workspace native suite through a direct-rustc plan
+    CompilerLibtests {
+        /// Repository root containing the compiler Cargo package and src/lib.rs
+        #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
+        compiler_root: PathBuf,
+        /// Explicit rustc executable; the active toolchain is used when omitted
+        #[arg(long, value_name = "PATH")]
+        rustc: Option<PathBuf>,
+        /// Root-package feature to include; default Cargo features are always included
+        #[arg(long = "feature", value_name = "NAME")]
+        features: Vec<String>,
+        /// Receipt-bound test source path to execute; may be repeated. Omitting this runs the complete stored suite.
+        #[arg(long = "target", value_name = "SOURCE")]
+        targets: Vec<String>,
+        /// Caller-owned direct-rustc libtest output path
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+    /// Validate and store a receipt-bound direct-rustc artifact plan
+    Plan {
+        #[command(subcommand)]
+        command: OvenPlanCommand,
+    },
+    /// Inspect or prune bounded Oven artifact storage
+    Store {
+        #[command(subcommand)]
+        command: OvenStoreCommand,
+    },
+    /// Compile with a stored direct-rustc plan and run exact native tests only after inventory verification
+    Test {
+        /// Receipt authorizing the generated source and stored plan
+        #[arg(long, value_name = "PATH")]
+        receipt: PathBuf,
+        /// Immutable stored direct-rustc plan identity
+        #[arg(long = "plan", value_name = "SHA256")]
+        plan_identity: String,
+        /// Explicit rustc executable path
+        #[arg(long, value_name = "PATH")]
+        rustc: PathBuf,
+        /// Receipt-authorized generated Rust test source
+        #[arg(long, value_name = "PATH")]
+        source: PathBuf,
+        /// Caller-owned native libtest output path
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+        /// Rust test crate name
+        #[arg(long = "crate-name", value_name = "NAME")]
+        crate_name: String,
+        /// Rust edition for the native test binary
+        #[arg(long, default_value = "2024")]
+        edition: String,
+        /// Named receipt source evidence authorizing --source
+        #[arg(long = "source-evidence", value_name = "NAME")]
+        source_evidence_key: String,
+        /// Exact test name; may be repeated and is verified against native inventory before execution
+        #[arg(long = "exact", value_name = "TEST")]
+        exact_names: Vec<String>,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+    /// Compile and run one stored direct-rustc binary without a Cargo consumer
+    Run {
+        /// Receipt authorizing the generated source and stored plan
+        #[arg(long, value_name = "PATH")]
+        receipt: PathBuf,
+        /// Immutable stored direct-rustc plan identity
+        #[arg(long = "plan", value_name = "SHA256")]
+        plan_identity: String,
+        /// Explicit rustc executable path
+        #[arg(long, value_name = "PATH")]
+        rustc: PathBuf,
+        /// Receipt-authorized generated Rust binary source
+        #[arg(long, value_name = "PATH")]
+        source: PathBuf,
+        /// Caller-owned native binary output path
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+        /// Rust binary crate name
+        #[arg(long = "crate-name", value_name = "NAME")]
+        crate_name: String,
+        /// Rust edition for the native binary
+        #[arg(long, default_value = "2024")]
+        edition: String,
+        /// Named receipt source evidence authorizing --source
+        #[arg(long = "source-evidence", value_name = "NAME")]
+        source_evidence_key: String,
+        /// Arguments forwarded after compilation only to the native binary
+        #[arg(last = true, allow_hyphen_values = true, value_name = "ARG")]
+        arguments: Vec<OsString>,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+}
+
+/// Hidden `legacy_cargo` commands for baking immutable Oven inputs.
+#[derive(Subcommand, Debug)]
+pub enum OvenLegacyCargoCommand {
+    /// Prepare one receipt-bound direct-rustc closure and retain only the bounded Oven result
+    Prepare {
+        /// Generated-project receipt authorizing this preparation
+        #[arg(long, value_name = "PATH")]
+        receipt: PathBuf,
+        /// Caller-owned generated Rust project with Cargo.toml and src/main.rs
+        #[arg(long = "generated-project", value_name = "PATH")]
+        generated_project: PathBuf,
+        /// Explicit Cargo executable used only for this publisher transition
+        #[arg(long, value_name = "PATH")]
+        cargo: PathBuf,
+        /// Explicit Rust compiler required to match the receipt
+        #[arg(long, value_name = "PATH")]
+        rustc: PathBuf,
+        /// Stable compatibility domain for bounded Oven storage
+        #[arg(long, value_name = "NAME")]
+        domain: String,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+    /// Bake or reuse one complete compiler-owned Alpha Loaf envelope
+    #[command(hide = true)]
+    BakeLoafs {
+        /// Compiler checkout or staged toolchain root used for runtime-source identity
+        #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
+        compiler_root: PathBuf,
+        /// Destination directory for immutable `<identity>.loaf` bundles
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+        /// Bounded compiler-suite store baked with the compiler-suite envelope
+        #[arg(long = "suite-store", value_name = "PATH")]
+        suite_store: Option<PathBuf>,
+        /// Built-in release or compiler-suite Loaf envelope
+        #[arg(long, value_enum)]
+        envelope: OvenLoafEnvelopeArgument,
+        /// Exact compiler-owned SDK provider inventory
+        #[arg(long = "sdk-inventory", value_name = "PATH")]
+        sdk_inventory: PathBuf,
+        /// Explicit Cargo executable used only for a genuine Loaf miss
+        #[arg(long, value_name = "PATH")]
+        cargo: PathBuf,
+        /// Explicit Rust compiler recorded by each Loaf receipt
+        #[arg(long, value_name = "PATH")]
+        rustc: PathBuf,
+        /// Aggregate physical Loaf-envelope allowance
+        #[arg(long = "max-physical-bytes", value_name = "BYTES")]
+        max_physical_bytes: Option<u64>,
+        /// Physical allowance for one Loaf compatibility domain
+        #[arg(long = "max-domain-physical-bytes", value_name = "BYTES")]
+        max_domain_physical_bytes: Option<u64>,
+        /// Logical allowance for one Loaf compatibility domain
+        #[arg(long = "max-domain-logical-bytes", value_name = "BYTES")]
+        max_domain_logical_bytes: Option<u64>,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+}
+
+/// Direct-rustc plan publication commands.
+#[derive(Subcommand, Debug)]
+pub enum OvenPlanCommand {
+    /// Validate and retain a direct-rustc artifact manifest under bounded Oven policy
+    Publish {
+        /// Receipt authorizing the plan
+        #[arg(long, value_name = "PATH")]
+        receipt: PathBuf,
+        /// JSON direct-rustc artifact manifest
+        #[arg(long, value_name = "PATH")]
+        manifest: PathBuf,
+        /// Immutable artifact root used to validate the manifest content
+        #[arg(long = "artifact-root", value_name = "PATH")]
+        artifact_root: PathBuf,
+        /// Stable compatibility domain for capacity policy and selection
+        #[arg(long, value_name = "NAME")]
+        domain: String,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+}
+
+/// Bounded Oven store management commands.
+#[derive(Subcommand, Debug)]
+pub enum OvenStoreCommand {
+    /// Report physical allocation separately from logical artifact bytes
+    Inspect {
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+    /// Prune inactive immutable artifacts to the configured physical allocation policy
+    Prune {
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Preview policy-selected removals without changing the Oven store
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+}
+
+/// Shared CLI policy flags for a bounded Oven artifact store.
+#[derive(Args, Debug, Clone)]
+pub struct OvenStoreCliFlags {
+    /// Explicit Oven store root; defaults below INCAN_HOME or the user home directory
+    #[arg(long = "store", value_name = "PATH")]
+    root: Option<PathBuf>,
+    /// Maximum aggregate physical allocation in bytes
+    #[arg(long = "max-physical-bytes", value_name = "BYTES")]
+    max_physical_bytes: Option<u64>,
+    /// Maximum physical allocation for one compatibility domain in bytes
+    #[arg(long = "max-domain-physical-bytes", value_name = "BYTES")]
+    max_domain_physical_bytes: Option<u64>,
+    /// Maximum logical artifact bytes for one compatibility domain in bytes
+    #[arg(long = "max-domain-logical-bytes", value_name = "BYTES")]
+    max_domain_logical_bytes: Option<u64>,
+}
+
+impl From<OvenStoreCliFlags> for commands::OvenStoreCommandOptions {
+    /// Convert command-line bounded store selections into command-owned request data.
+    fn from(value: OvenStoreCliFlags) -> Self {
+        Self {
+            root: value.root,
+            max_physical_bytes: value.max_physical_bytes,
+            max_domain_physical_bytes: value.max_domain_physical_bytes,
+            max_domain_logical_bytes: value.max_domain_logical_bytes,
+        }
+    }
+}
+
 // ============================================================================
 // CLI entry point
 // ============================================================================
@@ -1029,6 +1350,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         ),
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
         Some(Command::Inspect { command }) => match command {
+            InspectCommand::Oven { receipt, store, format } => {
+                commands::inspect_oven_receipt(commands::OvenReceiptInspectCommandOptions {
+                    receipt,
+                    store: store.into(),
+                    format,
+                })
+            }
             InspectCommand::Rust { path, lib_mode, format } => commands::inspect_rust(&path, lib_mode, format),
             InspectCommand::Codegraph {
                 path,
@@ -1263,6 +1591,161 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 matches!(format, CacheOutputFormat::Json),
             ),
         },
+        Some(Command::Oven { command }) => match command {
+            OvenCommand::Import {
+                project,
+                target,
+                toolchain,
+                profile,
+                features,
+                source_inputs,
+                output,
+                format,
+            } => commands::oven_import(commands::OvenImportCommandOptions {
+                project,
+                target,
+                toolchain,
+                profile,
+                features,
+                source_inputs,
+                output,
+                format,
+            }),
+            OvenCommand::LegacyCargo { command } => match command {
+                OvenLegacyCargoCommand::Prepare {
+                    receipt,
+                    generated_project,
+                    cargo,
+                    rustc,
+                    domain,
+                    store,
+                    format,
+                } => commands::oven_legacy_cargo_prepare(commands::OvenLegacyCargoPrepareCommandOptions {
+                    receipt,
+                    generated_project,
+                    cargo,
+                    rustc,
+                    domain,
+                    store: store.into(),
+                    format,
+                }),
+                OvenLegacyCargoCommand::BakeLoafs {
+                    compiler_root,
+                    output,
+                    suite_store,
+                    envelope,
+                    sdk_inventory,
+                    cargo,
+                    rustc,
+                    max_physical_bytes,
+                    max_domain_physical_bytes,
+                    max_domain_logical_bytes,
+                    format,
+                } => commands::oven_legacy_cargo_bake_loafs(commands::OvenLoafBakeCommandOptions {
+                    compiler_root,
+                    output,
+                    suite_store,
+                    envelope,
+                    sdk_inventory,
+                    cargo,
+                    rustc,
+                    max_physical_bytes,
+                    max_domain_physical_bytes,
+                    max_domain_logical_bytes,
+                    format,
+                }),
+            },
+            OvenCommand::CompilerLibtests {
+                compiler_root,
+                rustc,
+                features,
+                targets,
+                output,
+                store,
+                format,
+            } => commands::oven_run_compiler_libtests(commands::OvenCompilerLibtestsRunCommandOptions {
+                compiler_root,
+                rustc,
+                features,
+                targets,
+                output,
+                store: store.into(),
+                format,
+            }),
+            OvenCommand::Plan { command } => match command {
+                OvenPlanCommand::Publish {
+                    receipt,
+                    manifest,
+                    artifact_root,
+                    domain,
+                    store,
+                    format,
+                } => commands::oven_publish_direct_rustc_plan(commands::OvenPlanPublishCommandOptions {
+                    receipt,
+                    manifest,
+                    artifact_root,
+                    domain,
+                    store: store.into(),
+                    format,
+                }),
+            },
+            OvenCommand::Store { command } => match command {
+                OvenStoreCommand::Inspect { store, format } => commands::inspect_oven_store(store.into(), format),
+                OvenStoreCommand::Prune { store, dry_run, format } => {
+                    commands::prune_oven_store(store.into(), dry_run, format)
+                }
+            },
+            OvenCommand::Test {
+                receipt,
+                plan_identity,
+                rustc,
+                source,
+                output,
+                crate_name,
+                edition,
+                source_evidence_key,
+                exact_names,
+                store,
+                format,
+            } => commands::oven_test(commands::OvenTestCommandOptions {
+                receipt,
+                plan_identity,
+                rustc,
+                source,
+                output,
+                crate_name,
+                edition,
+                source_evidence_key,
+                exact_names,
+                store: store.into(),
+                format,
+            }),
+            OvenCommand::Run {
+                receipt,
+                plan_identity,
+                rustc,
+                source,
+                output,
+                crate_name,
+                edition,
+                source_evidence_key,
+                arguments,
+                store,
+                format,
+            } => commands::oven_run(commands::OvenRunCommandOptions {
+                receipt,
+                plan_identity,
+                rustc,
+                source,
+                output,
+                crate_name,
+                edition,
+                source_evidence_key,
+                arguments,
+                store: store.into(),
+                format,
+            }),
+        },
         Some(Command::New {
             name,
             dir,
@@ -1371,9 +1854,9 @@ impl BuildCommandRequest {
     /// Preserve the existing single-project build behavior when workspace discovery is inactive.
     fn run_single(self) -> CliResult<ExitCode> {
         if self.lib_mode {
-            let file_arg = self.file.as_ref().map(|path| path.to_string_lossy().to_string());
-            return commands::build_library(
-                file_arg.as_deref(),
+            let file = self.file.as_ref().map(|path| path.to_string_lossy().to_string());
+            return commands::build::build_library(
+                file.as_deref(),
                 self.output_dir.as_ref(),
                 self.options,
                 self.report_options,
@@ -1391,11 +1874,13 @@ impl BuildCommandRequest {
 
 /// Return whether this build should resolve and fan out an RFC 077 workspace scope.
 ///
-/// Compiler-spawned artifact-only library builds target one dependency project even when that project also owns a
-/// workspace. Letting those children rediscover the default member scope can make the root package request its own
-/// still-missing artifact recursively. Ordinary library and executable builds retain workspace selection semantics.
-fn build_uses_workspace_scope(lib_mode: bool, artifact_only: bool) -> bool {
-    !lib_mode || !artifact_only
+/// Compiler-spawned dependency library builds target one dependency project even when it owns a workspace.
+///
+/// Artifact-only children and Oven direct-rustc children differ in what they emit, but neither may rediscover the
+/// default member scope: that would make a root package also build unrelated workspace members. Ordinary library and
+/// executable builds retain workspace selection semantics.
+fn build_uses_workspace_scope(lib_mode: bool, artifact_only: bool, dependency_preparation: bool) -> bool {
+    !lib_mode || !(artifact_only || dependency_preparation)
 }
 
 /// Fan out builds after resolving the exact RFC 077 member set, producing one aggregate report when JSON is requested.
@@ -1408,7 +1893,9 @@ fn execute_build(
     member_selectors: Vec<String>,
 ) -> CliResult<ExitCode> {
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
-    if !build_uses_workspace_scope(request.lib_mode, artifact_only) {
+    let dependency_preparation =
+        env::var_os(INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV).is_some_and(|value| value == "1");
+    if !build_uses_workspace_scope(request.lib_mode, artifact_only, dependency_preparation) {
         return request.run_single();
     }
 
@@ -2234,10 +2721,132 @@ mod tests {
     }
 
     #[test]
-    fn artifact_only_library_build_bypasses_workspace_scope_issue908() {
-        assert!(!build_uses_workspace_scope(true, true));
-        assert!(build_uses_workspace_scope(true, false));
-        assert!(build_uses_workspace_scope(false, true));
+    fn test_cli_parse_oven_commands() -> Result<(), clap::Error> {
+        let import = parse_cli([
+            "incan",
+            "oven",
+            "import",
+            "--target",
+            "aarch64-apple-darwin",
+            "--toolchain",
+            "rustc 1.96.0",
+            "--source",
+            "generated=target/oven/test.rs",
+        ])?;
+        assert!(matches!(
+            import.command,
+            Some(Command::Oven {
+                command: OvenCommand::Import {
+                    target,
+                    toolchain,
+                    source_inputs,
+                    ..
+                }
+            }) if target == "aarch64-apple-darwin"
+                && toolchain == "rustc 1.96.0"
+                && source_inputs == ["generated=target/oven/test.rs"]
+        ));
+
+        let test = parse_cli([
+            "incan",
+            "oven",
+            "test",
+            "--receipt",
+            "receipt.json",
+            "--plan",
+            "sha256:plan",
+            "--rustc",
+            "rustc",
+            "--source",
+            "generated.rs",
+            "--output",
+            "native-tests",
+            "--crate-name",
+            "native_tests",
+            "--source-evidence",
+            "generated",
+            "--exact",
+            "smoke",
+            "--max-physical-bytes",
+            "1048576",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::Test {
+                    plan_identity,
+                    exact_names,
+                    store,
+                    ..
+                },
+        }) = test.command
+        else {
+            return Err(expected_command("oven test"));
+        };
+        assert_eq!(plan_identity, "sha256:plan");
+        assert_eq!(exact_names, ["smoke"]);
+        assert_eq!(store.max_physical_bytes, Some(1_048_576));
+
+        let store_prune = parse_cli([
+            "incan",
+            "oven",
+            "store",
+            "prune",
+            "--dry-run",
+            "--max-physical-bytes",
+            "1048576",
+        ])?;
+        assert!(matches!(
+            store_prune.command,
+            Some(Command::Oven {
+                command: OvenCommand::Store {
+                    command: OvenStoreCommand::Prune { dry_run: true, store, .. },
+                },
+            }) if store.max_physical_bytes == Some(1_048_576)
+        ));
+
+        let run = parse_cli([
+            "incan",
+            "oven",
+            "run",
+            "--receipt",
+            "receipt.json",
+            "--plan",
+            "sha256:plan",
+            "--rustc",
+            "rustc",
+            "--source",
+            "generated.rs",
+            "--output",
+            "native-run",
+            "--crate-name",
+            "native_run",
+            "--source-evidence",
+            "generated",
+            "--",
+            "--consumer-flag",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::Run {
+                    plan_identity,
+                    arguments,
+                    ..
+                },
+        }) = run.command
+        else {
+            return Err(expected_command("oven run"));
+        };
+        assert_eq!(plan_identity, "sha256:plan");
+        assert_eq!(arguments, [OsString::from("--consumer-flag")]);
+        Ok(())
+    }
+
+    #[test]
+    fn internal_library_preparation_bypasses_workspace_scope_issue908() {
+        assert!(!build_uses_workspace_scope(true, true, false));
+        assert!(!build_uses_workspace_scope(true, false, true));
+        assert!(build_uses_workspace_scope(true, false, false));
+        assert!(build_uses_workspace_scope(false, true, true));
     }
 
     #[test]

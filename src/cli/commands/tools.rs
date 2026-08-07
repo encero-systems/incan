@@ -1409,8 +1409,27 @@ struct CargoCommandInfo {
 }
 
 impl CargoCommandInfo {
-    /// Run only `cargo --version`; this does not resolve packages or access the network.
+    /// Report Cargo as intentionally unavailable while a receipt-bound Oven child is executing.
+    ///
+    /// The compiler-suite scheduler deliberately runs children with no Cargo consumer. A diagnostic command must not
+    /// undermine that boundary merely to discover a version string: a missing Cargo report is the correct result in
+    /// this context, rather than a reason to launch the guarded executable.
+    fn unavailable_for_oven_compiler_suite() -> Self {
+        Self {
+            command: "cargo",
+            available: false,
+            version: None,
+            error: Some(
+                "Cargo is intentionally unavailable in the receipt-bound Oven compiler-suite environment.".to_string(),
+            ),
+        }
+    }
+
+    /// Run only `cargo --version`; this does not resolve packages or access the network outside a sealed Oven child.
     fn collect() -> Self {
+        if env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC").is_some_and(|value| !value.is_empty()) {
+            return Self::unavailable_for_oven_compiler_suite();
+        }
         match Command::new("cargo").arg("--version").output() {
             Ok(output) if output.status.success() => {
                 let version = String::from_utf8(output.stdout)
@@ -1878,6 +1897,18 @@ mod tests {
         assert!(rendered.contains("Fallible iteration and combinators"));
         assert!(rendered.contains("crates/incan_stdlib/stdlib/capabilities.incn"));
         Ok(())
+    }
+
+    #[test]
+    fn oven_compiler_suite_marks_cargo_as_intentionally_unavailable() {
+        let cargo = CargoCommandInfo::unavailable_for_oven_compiler_suite();
+        assert!(!cargo.available);
+        assert_eq!(cargo.command, "cargo");
+        assert_eq!(cargo.version, None);
+        assert_eq!(
+            cargo.error.as_deref(),
+            Some("Cargo is intentionally unavailable in the receipt-bound Oven compiler-suite environment.")
+        );
     }
 
     #[test]

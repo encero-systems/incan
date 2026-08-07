@@ -49,6 +49,12 @@
       "expected_fingerprint": "0xd1080e9767292290"
     },
     {
+      "path": "crates/rust_inspect/src/loader.rs",
+      "category": "rust-inspect Rust edition compatibility for compiler-authored direct projects",
+      "expected_count": 1,
+      "expected_fingerprint": "0x35f272a8fd839ee3"
+    },
+    {
       "path": "src/backend/ir/codegen.rs",
       "category": "codegen facade compatibility and Rust serde fallback",
       "expected_count": 4,
@@ -236,9 +242,9 @@
     },
     {
       "path": "src/cli/commands/common.rs",
-      "category": "project materialization, package entrypoint, provider hashing, dependency, and rust-inspect compatibility",
-      "expected_count": 11,
-      "expected_fingerprint": "0x7a73ac065ea2d3e1"
+      "category": "project materialization, package entrypoint, provider hashing, dependency, rust-inspect compatibility, and generated-state source exclusion",
+      "expected_count": 12,
+      "expected_fingerprint": "0x46df6b6aaca11d73"
     },
     {
       "path": "src/dependency_resolver.rs",

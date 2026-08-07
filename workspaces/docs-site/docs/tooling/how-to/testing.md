@@ -49,7 +49,7 @@ Run tests:
 incan test tests/
 ```
 
-For long suites, use `incan test -v` to see generated-harness planning, preparation-cache hits or misses, preheat timing, and Cargo test phase timing. Ordinary console runs still show the collected test count and any generated-harness preheat that has to run; when a cold preheat invokes Cargo, Cargo's own progress is streamed instead of hidden until the end. Verbose mode is the better troubleshooting view when you need to tell whether time is going into package preparation, Rust metadata prewarm, Cargo preheat, or actual test execution.
+For long suites, use `incan test -v` to see collection, per-test timing, and the Oven front-end/generation/receipt/selection/native/execution phases. Compatible source files are module-isolated but share one native libtest harness; the batch selects one prepared Oven closure, inventories native test names, and runs verified exact tests without a Cargo consumer.
 
 ## Test Discovery
 
@@ -123,7 +123,7 @@ module tests:
         assert_eq(production_value(), 42)
 ```
 
-Inline test modules support the same runner features as conventional test files, including explicit `@test` discovery, fixture injection, parametrization, marker selection, strict marker registries, and timeouts:
+Inline test modules support the same runner features as conventional test files, including explicit `@test` discovery, fixture injection, parametrization, marker selection, and strict marker registries. Oven Alpha rejects `--timeout` rather than silently pretending to enforce it; native timeout enforcement is not yet part of the supported Alpha envelope.
 
 ```incan
 def bounded_discount(percent: int) -> int:
@@ -267,7 +267,7 @@ incan test -k "addition"
 # List collected tests without running them
 incan test --list tests/
 
-# Verbose output (show timing and generated-harness preheat diagnostics)
+# Verbose output (show timing and Oven native-harness phases)
 incan test -v
 
 # Stop on first failure
@@ -284,9 +284,6 @@ incan test --strict-markers tests/
 
 # Enable collection-time feature probes
 incan test --feature new_parser tests/
-
-# Fail long-running generated test batches
-incan test --timeout 5s tests/
 
 # Print passing-test output
 incan test --nocapture tests/
@@ -309,11 +306,11 @@ incan test --jobs 4 tests/
 
 `-k` matches the stable test id shown by `--list`, for example `tests/test_math.incn::test_addition` or `tests/test_math.incn::test_add[1-2-3]`.
 
-When a generated Rust test harness is new or stale, `incan test` preheats it with `cargo test --no-run` before executing the tests. This keeps subsequent runs on the already-built path instead of surprising the next hot test command with a full Cargo compile. If two Incan processes reach the same stale harness at once, one process performs the preheat and the other waits for the fingerprint to be written.
+When a generated Rust test harness is new or its compatibility inputs change, `incan test` writes a new receipt and selects the matching prepared Oven plan. A missing plan fails with its generated harness and receipt path, then explains whether to install an Oven-enabled toolchain or remove caller-owned Rust dependencies outside the documented Alpha envelope. The diagnostic names the hidden baker only for maintainers preparing a toolchain; `incan test` neither runs it automatically nor falls back to Cargo.
 
 `-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`. Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
 
-`--timeout` and `@timeout` apply to generated test batches. They do not configure individual fixtures. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement or external interruption terminates the worker process, remaining fixture teardown is best-effort and may not run.
+`--timeout` and `@timeout` are not yet supported by the Oven Alpha executor. The command fails clearly when either would request timeout enforcement, rather than running without a timeout. Fixtures therefore have no separate per-fixture timeout configuration in this Alpha.
 
 Conditional markers are evaluated during collection:
 
@@ -429,7 +426,7 @@ def resource() -> int:
     cleanup_resource(handle)
 ```
 
-The teardown block runs after the test body for function fixtures, after all tests from the source file for module fixtures, and at the end of the worker batch for session fixtures. Teardown runs after assertion failures, can reference setup locals and fixture parameters, and fails the run if teardown itself fails. Timeout termination can still bypass teardown because the worker process may be killed.
+The teardown block runs after the test body for function fixtures, after all tests from the source file for module fixtures, and at the end of the worker batch for session fixtures. Teardown runs after assertion failures, can reference setup locals and fixture parameters, and fails the run if teardown itself fails.
 
 ### Async Fixtures
 

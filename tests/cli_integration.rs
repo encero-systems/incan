@@ -24,6 +24,49 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
     run_incan_with_env(current_dir, args, &[])
 }
 
+/// Run a CLI command with a Cargo executable that records and rejects any launch.
+#[cfg(unix)]
+fn run_incan_with_failing_cargo_guard(
+    current_dir: &Path,
+    args: &[&str],
+    guard_dir: &Path,
+    marker: &Path,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    run_incan_with_failing_cargo_guard_and_env(current_dir, args, guard_dir, marker, &[])
+}
+
+/// Run a guarded CLI command with explicit child-only environment handoffs.
+#[cfg(unix)]
+fn run_incan_with_failing_cargo_guard_and_env(
+    current_dir: &Path,
+    args: &[&str],
+    guard_dir: &Path,
+    marker: &Path,
+    envs: &[(&str, &Path)],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::create_dir_all(guard_dir)?;
+    let guard = guard_dir.join("cargo");
+    fs::write(
+        &guard,
+        format!("#!/bin/sh\nprintf cargo > \"{}\"\nexit 97\n", marker.display()),
+    )?;
+    let mut permissions = fs::metadata(&guard)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&guard, permissions)?;
+    let mut paths = vec![guard_dir.to_path_buf()];
+    if let Some(inherited) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&inherited));
+    }
+    let mut command = configured_incan_command(current_dir, args);
+    command.env("PATH", std::env::join_paths(paths)?);
+    for (key, value) in envs {
+        command.env(*key, *value);
+    }
+    Ok(command.output()?)
+}
+
 fn run_incan_with_env(
     current_dir: &Path,
     args: &[&str],
@@ -59,12 +102,15 @@ fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
         .env(
             "INCAN_STDLIB_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
-        )
-        .env(
-            "INCAN_GENERATED_CARGO_TARGET_DIR",
-            support::generated_cargo_target_dir(),
-        )
-        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
+        );
+    if !support::oven_compiler_suite_is_active() {
+        command
+            .env(
+                "INCAN_GENERATED_CARGO_TARGET_DIR",
+                support::generated_cargo_target_dir(),
+            )
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
+    }
     command
 }
 
@@ -170,26 +216,7 @@ fn run_incan_with_os_env(
     key: &str,
     value: std::ffi::OsString,
 ) -> Result<Output, Box<dyn std::error::Error>> {
-    Ok(Command::new(incan_binary())
-        .args(args)
-        .current_dir(current_dir)
-        .env("CARGO_NET_OFFLINE", "true")
-        .env("INCAN_NO_BANNER", "1")
-        .env(
-            "INCAN_STDLIB",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
-        )
-        .env(
-            "INCAN_STDLIB_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
-        )
-        .env(
-            "INCAN_GENERATED_CARGO_TARGET_DIR",
-            support::generated_cargo_target_dir(),
-        )
-        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
-        .env(key, value)
-        .output()?)
+    Ok(configured_incan_command(current_dir, args).env(key, value).output()?)
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -285,6 +312,57 @@ fn write_locked_workspace_oven_interop_plan(
         String::new(),
     );
     lock.write(&workspace_root.join("incan.lock"))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn scheduler_nested_build_and_run_fail_closed_when_the_immutable_native_plan_is_absent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source = tmp.path().join("scheduler-miss.incn");
+    fs::write(&source, "def main() -> None:\n    pass\n")?;
+    let scheduler_data_root = tmp.path().join("scheduler-toolchain");
+    fs::create_dir_all(scheduler_data_root.join("share/incan/oven/loafs"))?;
+    let incan_home = tmp.path().join("scheduler-home");
+    let guard_dir = tmp.path().join("cargo-guard");
+    let marker = tmp.path().join("cargo-was-started");
+    let source_arg = source.to_string_lossy().into_owned();
+    let envs = [
+        ("INCAN_INTERNAL_OVEN_LOAF_EXECUTION", Path::new("1")),
+        ("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT", scheduler_data_root.as_path()),
+        ("INCAN_HOME", incan_home.as_path()),
+    ];
+
+    for command in ["build", "run"] {
+        let output = run_incan_with_failing_cargo_guard_and_env(
+            tmp.path(),
+            &[command, source_arg.as_str()],
+            &guard_dir,
+            &marker,
+            &envs,
+        )?;
+        assert_failure(&output, &format!("scheduler nested {command} native-plan miss"));
+        let diagnostics = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            diagnostics.contains("no compatible compiler-suite native provider/dependency unit"),
+            "scheduler nested {command} did not fail closed:\n{diagnostics}"
+        );
+    }
+    assert!(
+        !marker.exists(),
+        "scheduler-native build/run miss launched the guarded Cargo executable"
+    );
+    let entries = incan_home.join("oven/store/v1/entries");
+    assert!(
+        !entries.exists() || fs::read_dir(&entries)?.next().is_none(),
+        "scheduler-native build/run miss materialized a caller-owned store entry at {}",
+        entries.display()
+    );
     Ok(())
 }
 
@@ -747,7 +825,8 @@ fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn
 
 #[cfg(unix)]
 #[test]
-fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<(), Box<dyn std::error::Error>> {
+fn concurrent_normal_checks_reuse_sealed_sdk_inventory_without_mutable_publication()
+-> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "concurrent_sdk_provider_publication", "")?;
     let store = tmp.path().join("provider-store");
@@ -775,27 +854,24 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
     assert_success(&first, "first concurrent SDK provider publication");
     assert_success(&second, "second concurrent SDK provider publication");
 
-    let entries = fs::read_dir(&store)?.collect::<Result<Vec<_>, _>>()?;
     assert!(
-        entries
-            .iter()
-            .all(|entry| !entry.file_name().to_string_lossy().starts_with(".staging-")),
-        "successful concurrent publication must not leave private staging directories"
+        !store.exists(),
+        "normal checks must reuse their sealed SDK inventory instead of publishing a mutable per-fixture provider \
+         store: {}",
+        store.display()
     );
-    let artifact_roots = entries
-        .into_iter()
-        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        artifact_roots.len(),
-        1,
-        "identical concurrent producers must publish and reuse one immutable identity: {artifact_roots:?}"
+    let inventory_path = std::env::var_os("INCAN_SDK_INVENTORY")
+        .map(PathBuf::from)
+        .ok_or("normal Oven check has no sealed SDK inventory")?;
+    assert!(
+        inventory_path.is_file(),
+        "normal Oven SDK inventory is not a regular file: {}",
+        inventory_path.display()
     );
-    let inventory_path = artifact_roots
-        .first()
-        .ok_or("concurrent provider publication did not produce an artifact root")?
-        .join("sdk-inventory.json");
+    let artifact_root = inventory_path
+        .parent()
+        .ok_or("normal Oven SDK inventory has no immutable provider root")?
+        .to_path_buf();
     let inventory = incan::provider::SdkInventory::read_from_path(&inventory_path)?;
     inventory.validate_compiler_version(incan::version::INCAN_VERSION)?;
     assert!(
@@ -813,12 +889,7 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
         .filter_map(|package| package.get("name").and_then(toml::Value::as_str))
         .collect::<std::collections::HashSet<_>>();
     for component_id in inventory.components.keys() {
-        let manifest_path = artifact_roots
-            .first()
-            .ok_or("concurrent provider publication did not produce an artifact root")?
-            .join("components")
-            .join(component_id)
-            .join("Cargo.toml");
+        let manifest_path = artifact_root.join("components").join(component_id).join("Cargo.toml");
         let manifest: toml::Value = toml::from_str(&fs::read_to_string(&manifest_path)?)?;
         let package = manifest.get("package").and_then(toml::Value::as_table).ok_or_else(|| {
             format!(
@@ -1555,12 +1626,11 @@ itoa = "1"
     assert_success(&output, "incan lock from workspace member");
     let root_lock = root.path().join("incan.lock");
     assert!(root_lock.is_file(), "workspace root lock was not written");
-    let lock_contents = fs::read_to_string(&root_lock)?;
-    assert!(
-        lock_contents.contains("itoa"),
-        "inherited member dependency was omitted from root lock"
-    );
     let lock = incan::lockfile::IncanLock::load(&root_lock)?;
+    assert_eq!(
+        lock.cargo_lock_payload, "version = 4\n",
+        "normal Oven lock publication must retain only the inert legacy Cargo payload"
+    );
     let member_roots = lock
         .semantic
         .workspace_members
@@ -1604,23 +1674,22 @@ itoa = "1"
             && !root.path().join("packages/zebra/incan.lock").exists(),
         "workspace members must not receive authoritative lockfiles"
     );
-    for (name, version) in [("alpha", "1.2.3"), ("zebra", "4.5.6")] {
+    for (name, _) in [("alpha", "1.2.3"), ("zebra", "4.5.6")] {
         let build_output = run_incan(&root.path().join("packages").join(name), &["build", "--locked"])?;
         assert_success(
             &build_output,
             &format!("incan build --locked from workspace member {name}"),
         );
-        let generated_manifest = fs::read_to_string(
+        assert!(
             root.path()
                 .join("packages")
                 .join(name)
                 .join("target/incan")
                 .join(name)
-                .join("Cargo.toml"),
-        )?;
-        assert!(
-            generated_manifest.contains(&format!("version = \"{version}\"")),
-            "workspace member {name} did not preserve its authored package version:\n{generated_manifest}"
+                .join("oven/release")
+                .join(name)
+                .is_file(),
+            "workspace member {name} did not emit its caller-owned Oven binary"
         );
     }
     Ok(())
@@ -1653,7 +1722,7 @@ root_lib = { path = "." }
         fs::write(root.join("src/lib.incn"), "pub def answer() -> int:\n  return 42\n")?;
         let artifact = root.join("target/lib");
         fs::create_dir_all(artifact.join("src"))?;
-        for relative in ["Cargo.toml", "Cargo.lock", "root_lib.incnlib", "src/lib.rs"] {
+        for relative in ["Cargo.toml", "root_lib.incnlib", "src/lib.rs"] {
             fs::copy(prebuilt_artifact.join(relative), artifact.join(relative))?;
         }
         let consumer = root.join("consumer");
@@ -1879,7 +1948,10 @@ library = "src/lib.incn"
     let warmup = run_incan(root.path(), &["build", "--lib"])?;
     assert_success(&warmup, "standalone SDK and library artifact warmup");
     fs::remove_dir_all(root.path().join("target/lib"))?;
-    fs::remove_file(root.path().join("incan.lock"))?;
+    // Normal Oven builds deliberately do not synthesize a project lock.  Older
+    // builds may have left one behind, so remove it when present without making
+    // the direct-rustc contract depend on that legacy side effect.
+    let _ = fs::remove_file(root.path().join("incan.lock"));
 
     fs::write(
         root.path().join("incan.toml"),
@@ -1926,14 +1998,6 @@ root_lib = { workspace = true }
         String::from_utf8_lossy(&output.stderr)
     );
     assert_success(&output, "rooted workspace lock with a missing root artifact");
-    let stderr = String::from_utf8(output.stderr)?;
-    assert_eq!(
-        stderr
-            .matches("Preparing missing pub::root_lib dependency artifact")
-            .count(),
-        1,
-        "root dependency preparation should launch exactly one artifact-only child:\n{stderr}"
-    );
     assert!(root.path().join("target/lib/root_lib.incnlib").is_file());
     assert!(root.path().join("incan.lock").is_file());
     Ok(())
@@ -1963,7 +2027,8 @@ library = "src/lib.incn"
     let warmup = run_incan(root.path(), &["build", "--lib"])?;
     assert_success(&warmup, "standalone SDK and library artifact warmup");
     fs::remove_dir_all(root.path().join("target"))?;
-    fs::remove_file(root.path().join("incan.lock"))?;
+    // See issue #908 above: a normal Oven build does not write `incan.lock`.
+    let _ = fs::remove_file(root.path().join("incan.lock"));
 
     fs::write(
         root.path().join("incan.toml"),
@@ -2049,12 +2114,9 @@ regex = "1"
         "second selected rooted library build from the unchanged canonical lock",
     );
 
-    let cargo_toml: toml::Value = toml::from_str(&fs::read_to_string(root.path().join("target/lib/Cargo.toml"))?)?;
-    assert_eq!(cargo_toml["package"]["name"].as_str(), Some("root_lib"));
-    assert_eq!(cargo_toml["lib"]["name"].as_str(), Some("root_lib"));
     assert!(
-        cargo_toml["dependencies"].get("root_lib").is_none(),
-        "the rooted library artifact must not depend on its own generated crate"
+        root.path().join("target/lib/oven/release/libroot_lib.rlib").is_file(),
+        "the selected root must materialize a caller-owned direct-rustc library"
     );
     assert!(root.path().join("target/lib/root_lib.incnlib").is_file());
 
@@ -2064,7 +2126,7 @@ regex = "1"
 }
 
 #[test]
-fn cold_rooted_workspace_lock_publishes_and_strict_library_build_agrees_issue931()
+fn cold_rooted_workspace_lock_uses_bounded_loafs_and_strict_library_build_agrees_issue931()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
@@ -2117,7 +2179,8 @@ hees_ai = { workspace = true }
     let provider_store = support::cold_sdk_provider_store_or(&incan_home.join("cache/providers/sdk-v2"));
     let generated_target = support::generated_cargo_target_dir_or(&incan_home.join("generated-target"));
     let run = |args: &[&str]| -> Result<Output, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_binary())
+        let mut command = Command::new(incan_binary());
+        command
             .args(args)
             .current_dir(root.path())
             .env("CARGO_NET_OFFLINE", "true")
@@ -2129,8 +2192,17 @@ hees_ai = { workspace = true }
             .env("INCAN_TOOLCHAIN_CRATES_DIR", &toolchain_crates)
             .env("INCAN_HOME", &incan_home)
             .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", &provider_store)
-            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
-            .output()?)
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target);
+        if !support::oven_compiler_suite_is_active() {
+            // Exercise an ordinary cold command rather than inheriting the harness's sealed suite inventory. Normal
+            // Oven commands select a compiler-shipped Loaf into their bounded store; they must never revive
+            // the mutable SDK provider publication route. A stored compiler-suite child instead retains its
+            // receipt-injected inventory and has its own sealed-inventory assertion below.
+            command
+                .env_remove("INCAN_SDK_INVENTORY")
+                .env_remove("INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE");
+        }
+        Ok(command.output()?)
     };
 
     assert!(!root.path().join("target").exists());
@@ -2144,7 +2216,31 @@ hees_ai = { workspace = true }
     let parsed = incan::lockfile::IncanLock::load(&lock_path)?;
     assert!(!parsed.deps_fingerprint.is_empty());
     assert!(root.path().join("target/lib/hees_ai.incnlib").is_file());
-    assert!(provider_store.is_dir());
+    if support::oven_compiler_suite_is_active() {
+        assert!(
+            !provider_store.exists(),
+            "sealed compiler-suite execution must not publish a mutable per-fixture provider store: {}",
+            provider_store.display()
+        );
+        let inventory_path = std::env::var_os("INCAN_SDK_INVENTORY")
+            .map(PathBuf::from)
+            .ok_or("compiler-suite workspace lock has no sealed SDK inventory")?;
+        assert!(
+            inventory_path.is_file(),
+            "compiler-suite SDK inventory is not a regular file: {}",
+            inventory_path.display()
+        );
+    } else {
+        assert!(
+            !provider_store.exists(),
+            "normal Oven lock must not publish a mutable SDK provider store: {}",
+            provider_store.display()
+        );
+        assert!(
+            incan_home.join("oven/store/v1").is_dir(),
+            "cold normal Oven lock did not materialize its selected Loaf into the bounded Oven store"
+        );
+    }
 
     let second_lock_output = run(&["lock"])?;
     assert_success(&second_lock_output, "cold rooted workspace lock fixed point");
@@ -2265,106 +2361,61 @@ path = "../vendor/foo-v2"
         "canonical lock for an unreferenced workspace library member",
     );
     let canonical = incan::lockfile::IncanLock::load(&root.path().join("incan.lock"))?;
-    let canonical_cargo: toml::Value = toml::from_str(&canonical.cargo_lock_payload)?;
-    let canonical_packages = canonical_cargo["package"]
-        .as_array()
-        .ok_or("canonical aggregate Cargo lock had no package array")?;
-    assert!(
-        canonical_cargo["package"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .all(|package| package["name"].as_str() != Some("leaf") || package.get("source").is_some()),
-        "the regression requires an unreferenced member absent from the aggregate Cargo lock roots"
-    );
-    let mut canonical_bitflags_versions = canonical_packages
+    let member_roots = canonical
+        .semantic
+        .workspace_members
         .iter()
-        .filter(|package| package["name"].as_str() == Some("bitflags"))
-        .filter_map(|package| package["version"].as_str())
+        .map(|member| member.member_root.as_str())
         .collect::<Vec<_>>();
-    canonical_bitflags_versions.sort_unstable();
-    assert_eq!(
-        canonical_bitflags_versions,
-        vec!["1.3.2", "2.11.0"],
-        "the aggregate lock must contain both aliased sibling resolutions for this regression"
-    );
-    let canonical_foo_versions = canonical_packages
-        .iter()
-        .filter(|package| package["name"].as_str() == Some("foo"))
-        .filter_map(|package| package["version"].as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        canonical_foo_versions,
-        vec!["1.0.0", "2.0.0"],
-        "the aggregate lock must contain both same-name path package identities for this regression"
-    );
+    assert!(member_roots.contains(&"leaf"));
+    assert!(member_roots.contains(&"sibling"));
 
     let _ = fs::remove_dir_all(root.path().join("target"));
     let _ = fs::remove_dir_all(leaf.join("target"));
-    let locked_build = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
+    let locked_build = run_incan(
+        root.path(),
+        &["build", "--lib", "--member", "leaf", "--locked", "--report", "json"],
+    )?;
     assert_success(
         &locked_build,
         "target-free locked build of an unreferenced selected workspace member",
     );
 
-    let generated_lock = fs::read_to_string(leaf.join("target/lib/Cargo.lock"))?;
-    let generated: toml::Value = toml::from_str(&generated_lock)?;
-    let packages = generated["package"]
+    let report = parse_json_stdout(&locked_build)?;
+    let member_report = &report["results"][0]["report"];
+    let rust_dependencies = member_report["dependencies"]["rust"]
         .as_array()
-        .ok_or("generated selected-member Cargo.lock had no package array")?;
-    let selected_root = packages
-        .iter()
-        .find(|package| {
-            package["name"].as_str() == Some("leaf")
-                && package["version"].as_str() == Some("0.2.0")
-                && package.get("source").is_none()
-        })
-        .ok_or("generated selected-member Cargo.lock had no selected root package")?;
-    let selected_root_dependencies = selected_root["dependencies"]
-        .as_array()
-        .ok_or("generated selected-member root had no dependency array")?
-        .iter()
-        .filter_map(toml::Value::as_str)
-        .collect::<Vec<_>>();
-    assert!(selected_root_dependencies.contains(&"bitflags 1.3.2"));
+        .ok_or("selected member report had no Rust dependency array")?;
     assert!(
-        !selected_root_dependencies.contains(&"bitflags 2.11.0"),
-        "the sibling's direct aliased bitflags edge leaked into the selected root package"
-    );
-    assert!(
-        packages
+        rust_dependencies
             .iter()
-            .any(|package| package["name"].as_str() == Some("serde_json"))
+            .any(|dependency| dependency["crate_name"] == "json_alias")
     );
-    assert!(packages.iter().any(|package| {
-        package["name"].as_str() == Some("bitflags") && package["version"].as_str() == Some("1.3.2")
-    }));
-    let selected_foo_versions = packages
-        .iter()
-        .filter(|package| package["name"].as_str() == Some("foo"))
-        .filter_map(|package| package["version"].as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        selected_foo_versions,
-        vec!["1.0.0"],
-        "the sibling's different same-name path package leaked into the selected member Cargo lock"
-    );
-    let generated_manifest: toml::Value = toml::from_str(&fs::read_to_string(leaf.join("target/lib/Cargo.toml"))?)?;
     assert!(
-        generated_manifest["dependencies"].get("new_flags").is_none(),
-        "the sibling's aliased direct requirement leaked into the selected member Cargo manifest"
+        rust_dependencies
+            .iter()
+            .any(|dependency| dependency["crate_name"] == "old_flags")
     );
-    let stdlib_features = generated_manifest["dependencies"]["incan_stdlib"]["features"]
+    assert!(
+        rust_dependencies
+            .iter()
+            .any(|dependency| dependency["crate_name"] == "foo_old")
+    );
+    assert!(
+        rust_dependencies
+            .iter()
+            .all(|dependency| dependency["crate_name"] != "new_flags"),
+        "the sibling's direct Rust dependency leaked into the selected Oven report"
+    );
+    let stdlib_features = member_report["dependencies"]["stdlib_features"]
         .as_array()
-        .ok_or("generated selected-member Cargo.toml had no incan_stdlib features")?
-        .iter()
-        .filter_map(toml::Value::as_str)
-        .collect::<Vec<_>>();
-    assert!(stdlib_features.contains(&"json"));
+        .ok_or("selected member report had no stdlib feature array")?;
+    assert!(stdlib_features.iter().any(|feature| feature == "json"));
     assert!(
-        !stdlib_features.contains(&"regex"),
-        "the sibling entrypoint's provider feature leaked into the selected member Cargo manifest"
+        stdlib_features.iter().all(|feature| feature != "regex"),
+        "the sibling provider requirement leaked into the selected Oven report"
     );
+    assert!(leaf.join("target/lib/oven/release/libleaf.rlib").is_file());
     Ok(())
 }
 
@@ -2405,18 +2456,7 @@ bitflags = "=1.3.2"
         &initial_strict,
         "initial strict selected library build must materialize a valid projection",
     );
-    let generated_lock_path = leaf.join("target/lib/Cargo.lock");
-    let initially_projected = fs::read_to_string(&generated_lock_path)?;
-    assert!(initially_projected.contains("version = \"1.3.2\""));
-    fs::write(
-        &generated_lock_path,
-        format!("{initially_projected}\n# stale-generated-projection\n"),
-    )?;
-
-    let stale = fresh
-        .replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale")
-        .replace("bitflags 1.3.2", "bitflags 9.9.9")
-        .replace("version = \"1.3.2\"", "version = \"9.9.9\"");
+    let stale = fresh.replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale");
     assert_ne!(
         fresh, stale,
         "the regression must corrupt canonical projection authority"
@@ -2428,24 +2468,12 @@ bitflags = "=1.3.2"
         &non_strict,
         "non-strict selected library build with stale canonical lock",
     );
-    assert!(
-        String::from_utf8_lossy(&non_strict.stderr)
-            .contains("continuing without using it as Cargo lock authority or rewriting it"),
-        "non-strict stale build must report the authority downgrade:\n{}",
-        String::from_utf8_lossy(&non_strict.stderr)
-    );
     assert_eq!(
         fs::read_to_string(&lock_path)?,
         stale,
         "a tolerated stale canonical lock must never be rewritten by a selected member build"
     );
-    let generated = fs::read_to_string(&generated_lock_path)?;
-    assert!(generated.contains("version = \"1.3.2\""));
-    assert!(!generated.contains("version = \"9.9.9\""));
-    assert!(
-        !generated.contains("stale-generated-projection"),
-        "the previous generated projection must be cleared before an unlocked stale-authority build"
-    );
+    assert!(leaf.join("target/lib/oven/release/libleaf.rlib").is_file());
 
     let strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
     assert_failure(&strict, "strict selected library build with stale canonical lock");
@@ -4297,10 +4325,11 @@ fn build_report_json_describes_executable_build() -> Result<(), Box<dyn std::err
             .as_str()
             .is_some_and(|path| path.contains("target/incan"))
     );
+    assert!(report["generated"]["manifest_path"].is_null());
     assert!(
-        report["generated"]["manifest_path"]
+        report["generated"]["oven_output_dir"]
             .as_str()
-            .is_some_and(|path| path.ends_with("Cargo.toml"))
+            .is_some_and(|path| path.ends_with("target/incan/main/oven"))
     );
     assert!(report["source_files"].as_array().is_some_and(|files| {
         files.iter().any(|file| {
@@ -4310,7 +4339,10 @@ fn build_report_json_describes_executable_build() -> Result<(), Box<dyn std::err
                     .is_some_and(|segments| segments.as_slice() == [serde_json::json!("main")])
         })
     }));
-    assert_eq!(report["cargo"]["offline"], serde_json::json!(true));
+    assert!(report["cargo"].is_null());
+    assert!(report["oven"]["receipt_identity"].is_string());
+    assert!(report["oven"]["build_unit_identity"].is_string());
+    assert!(report["oven"]["plan_identity"].is_string());
     assert!(report["semantic"]["packages"].as_array().is_some());
     assert!(report["semantic"]["feature_edges"].as_array().is_some());
     assert!(report["semantic"]["providers"].as_array().is_some_and(|providers| {
@@ -4332,7 +4364,7 @@ fn build_report_json_describes_executable_build() -> Result<(), Box<dyn std::err
     assert!(report["notes"].as_array().is_some_and(|notes| {
         notes
             .iter()
-            .any(|note| note.as_str().is_some_and(|text| text.contains("not a stable Rust ABI")))
+            .any(|note| note.as_str().is_some_and(|text| text.contains("direct-rustc plan")))
     }));
 
     Ok(())
@@ -4357,17 +4389,12 @@ version = "0.1.0"
 "#,
     )?;
     let report_path = tmp.path().join("target").join("build-report.json");
-    let generated_target_dir = tmp.path().join("target").join("generated-cargo-target");
     let output = run_incan(
         tmp.path(),
         &[
             "build",
             "--lib",
             "--offline",
-            "--generated-cargo-target-dir",
-            generated_target_dir
-                .to_str()
-                .ok_or("generated target path was not valid UTF-8")?,
             "--report",
             "json",
             "--report-output",
@@ -4387,10 +4414,14 @@ version = "0.1.0"
         report["entrypoint"].as_str().map(|path| path.ends_with("src/lib.incn")),
         Some(true)
     );
-    assert_eq!(
-        report["generated"]["cargo_target_dir"],
-        serde_json::json!(generated_target_dir.to_string_lossy().to_string())
+    assert!(report["generated"]["cargo_target_dir"].is_null());
+    assert!(
+        report["generated"]["oven_output_dir"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("target/lib/oven"))
     );
+    assert!(report["cargo"].is_null());
+    assert!(report["oven"]["plan_identity"].is_string());
     assert!(report["source_files"].as_array().is_some_and(|files| {
         files
             .iter()
@@ -4404,7 +4435,12 @@ version = "0.1.0"
     }));
     assert!(report["artifacts"].as_array().is_some_and(|artifacts| {
         artifacts.iter().any(|artifact| {
-            artifact["kind"] == serde_json::json!("generated_cargo_manifest")
+            artifact["kind"] == serde_json::json!("rust_library_debug") && artifact["exists"] == serde_json::json!(true)
+        })
+    }));
+    assert!(report["artifacts"].as_array().is_some_and(|artifacts| {
+        artifacts.iter().any(|artifact| {
+            artifact["kind"] == serde_json::json!("rust_library_release")
                 && artifact["exists"] == serde_json::json!(true)
         })
     }));
@@ -4415,7 +4451,7 @@ version = "0.1.0"
             .is_some()
     );
     assert!(report["timings_ms"]["library_prepare_total"].as_u64().is_some());
-    assert!(report["timings_ms"]["cargo_build"].as_u64().is_some());
+    assert!(report["timings_ms"]["oven_build"].as_u64().is_some());
     assert!(report["timings_ms"]["total"].as_u64().is_some());
 
     Ok(())
@@ -5148,9 +5184,7 @@ beta = []
         );
         let stderr = String::from_utf8_lossy(&build.stderr);
         assert!(
-            stderr.contains("incan.lock")
-                && stderr.contains("out of date")
-                && stderr.contains("package-feature or SDK-profile"),
+            stderr.contains("incan.lock") && stderr.contains("out of date") && stderr.contains("Run `incan lock`"),
             "locked projection drift should fail as stale lock state:\n{stderr}"
         );
     }
@@ -5622,7 +5656,11 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     );
     assert!(lock.contains("deps-fingerprint = \"sha256:"));
     assert!(lock.contains("[cargo]"));
-    assert!(lock.contains("[[package]]"));
+    let parsed = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    assert_eq!(
+        parsed.cargo_lock_payload, "version = 4\n",
+        "normal `incan lock` records semantic Incan state, not a generated Cargo resolution"
+    );
 
     let second_output = run_incan(
         tmp.path(),
@@ -5631,6 +5669,31 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     assert_success(&second_output, "second incan lock");
     let second_lock = fs::read_to_string(tmp.path().join("incan.lock"))?;
     assert_eq!(lock, second_lock, "relocking unchanged inputs must be deterministic");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn lock_generates_semantic_state_without_starting_cargo() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "cli_guarded_lock_project", "")?;
+    let marker = tmp.path().join("cargo-was-started");
+
+    let output = run_incan_with_failing_cargo_guard(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+        &tmp.path().join("cargo-guard"),
+        &marker,
+    )?;
+
+    assert_success(&output, "Cargo-guarded incan lock");
+    assert!(
+        !marker.exists(),
+        "normal incan lock must not launch Cargo; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lock = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    assert_eq!(lock.cargo_lock_payload, "version = 4\n");
     Ok(())
 }
 
@@ -6109,7 +6172,7 @@ deployment-target = "13.0"
 }
 
 #[test]
-fn canonical_lock_records_exact_registry_resolution_changes() -> Result<(), Box<dyn std::error::Error>> {
+fn semantic_lock_records_registry_dependency_input_changes() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(
         tmp.path(),
@@ -6128,14 +6191,10 @@ bitflags = "=1.3.2"
     assert_success(&first_output, "canonical lock with bitflags 1.3.2");
     let first_bytes = fs::read(tmp.path().join("incan.lock"))?;
     let first = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
-    let first_cargo: toml::Value = toml::from_str(&first.cargo_lock_payload)?;
-    assert!(first_cargo["package"].as_array().into_iter().flatten().any(|package| {
-        package["name"].as_str() == Some("bitflags")
-            && package["version"].as_str() == Some("1.3.2")
-            && package["source"]
-                .as_str()
-                .is_some_and(|source| source.starts_with("registry+"))
-    }));
+    assert_eq!(
+        first.cargo_lock_payload, "version = 4\n",
+        "normal lock generation must not resolve a Cargo package graph"
+    );
 
     let manifest_path = tmp.path().join("incan.toml");
     let first_manifest = fs::read_to_string(&manifest_path)?;
@@ -6144,17 +6203,10 @@ bitflags = "=1.3.2"
     assert_success(&second_output, "canonical lock with bitflags 2.11.0");
     let second_bytes = fs::read(tmp.path().join("incan.lock"))?;
     let second = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
-    let second_cargo: toml::Value = toml::from_str(&second.cargo_lock_payload)?;
-    assert!(second_cargo["package"].as_array().into_iter().flatten().any(|package| {
-        package["name"].as_str() == Some("bitflags")
-            && package["version"].as_str() == Some("2.11.0")
-            && package["source"]
-                .as_str()
-                .is_some_and(|source| source.starts_with("registry+"))
-    }));
+    assert_eq!(second.cargo_lock_payload, "version = 4\n");
     assert_ne!(
-        first.cargo_lock_payload, second.cargo_lock_payload,
-        "the embedded canonical Cargo payload must change with the registry resolution"
+        first.deps_fingerprint, second.deps_fingerprint,
+        "the semantic dependency fingerprint must change with the declared registry input"
     );
     assert_ne!(
         first_bytes, second_bytes,
@@ -6164,7 +6216,7 @@ bitflags = "=1.3.2"
 }
 
 #[test]
-fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+fn lock_records_path_dependency_without_preheating_a_cargo_graph() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");
     fs::create_dir_all(helper_dir.join("src"))?;
@@ -6196,23 +6248,21 @@ def main() -> None:
         &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
 
-    assert_success(&output, "incan lock with dependency preheat");
+    assert_success(&output, "incan lock with a path dependency");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("preheating Cargo dependencies for generated test harnesses"),
-        "lock should explain dependency preheat work, got:\n{stderr}"
+        !stderr.contains("preheating Cargo dependencies"),
+        "normal lock generation must not preheat a Cargo graph, got:\n{stderr}"
     );
     assert!(
-        tmp.path()
-            .join("target/incan_lock/.incan_dependency_preheat_fingerprint")
-            .is_file(),
-        "dependency preheat should write a fingerprint stamp"
+        !tmp.path().join("target/incan_lock/Cargo.toml").exists(),
+        "normal lock generation must not create a generated Cargo workspace"
     );
     Ok(())
 }
 
 #[test]
-fn build_lib_preheats_dependency_graph_for_generated_library_target() -> Result<(), Box<dyn std::error::Error>> {
+fn build_lib_materializes_oven_artifacts_without_a_generated_cargo_preheat() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("library_preheat_helper");
     fs::create_dir_all(helper_dir.join("src"))?;
@@ -6240,25 +6290,28 @@ pub def exported_value() -> int:
     )?;
 
     let first = run_incan(tmp.path(), &["build", "--lib"])?;
-    assert_success(&first, "first incan build --lib with dependency preheat");
-    let first_stderr = String::from_utf8_lossy(&first.stderr);
+    assert_success(&first, "first incan build --lib with Oven direct-rustc materialization");
     assert!(
-        first_stderr.contains("preheating Cargo dependencies for generated library builds"),
-        "build --lib should explain generated-library dependency preheat work, got:\n{first_stderr}"
+        tmp.path()
+            .join("target/lib/oven/debug/libcli_library_preheat_project.rlib")
+            .is_file(),
+        "normal build --lib must materialize a caller-owned direct-rustc debug artifact"
     );
     assert!(
         tmp.path()
-            .join("target/incan_lock/.incan_library_dependency_preheat_fingerprint")
+            .join("target/lib/oven/release/libcli_library_preheat_project.rlib")
             .is_file(),
-        "generated-library dependency preheat should write a fingerprint stamp"
+        "normal build --lib must materialize a caller-owned direct-rustc release artifact"
+    );
+    assert!(
+        !tmp.path().join("target/incan_lock/Cargo.toml").exists(),
+        "normal Oven builds may use the compiler-owned lock directory, but must not create a Cargo workspace there"
     );
 
     let second = run_incan(tmp.path(), &["build", "--lib"])?;
-    assert_success(&second, "second incan build --lib with dependency preheat");
-    let second_stderr = String::from_utf8_lossy(&second.stderr);
-    assert!(
-        second_stderr.contains("generated library dependency preheat: up-to-date"),
-        "second build --lib should report generated-library dependency preheat reuse, got:\n{second_stderr}"
+    assert_success(
+        &second,
+        "second incan build --lib with Oven direct-rustc materialization",
     );
     Ok(())
 }
@@ -6353,7 +6406,7 @@ pub def join_ranges(text: str, start: int, middle: int, end: int) -> str:
 }
 
 #[test]
-fn build_lib_recreates_dependency_preheat_workspace_from_existing_lock() -> Result<(), Box<dyn std::error::Error>> {
+fn build_lib_uses_oven_artifacts_after_an_explicit_lock() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("library_preheat_existing_lock_helper");
     fs::create_dir_all(helper_dir.join("src"))?;
@@ -6391,22 +6444,17 @@ pub def exported_value() -> int:
     let build = run_incan(tmp.path(), &["build", "--lib"])?;
     assert_success(
         &build,
-        "incan build --lib should recreate dependency preheat workspace from committed incan.lock",
-    );
-    let stderr = String::from_utf8_lossy(&build.stderr);
-    assert!(
-        stderr.contains("preheating Cargo dependencies for generated library builds"),
-        "build --lib should preheat after recreating the missing dependency workspace, got:\n{stderr}"
-    );
-    assert!(
-        tmp.path().join("target/incan_lock/Cargo.toml").is_file(),
-        "generated-library dependency preheat should recreate the missing lock workspace"
+        "incan build --lib should use direct-rustc artifacts from committed incan.lock",
     );
     assert!(
         tmp.path()
-            .join("target/incan_lock/.incan_library_dependency_preheat_fingerprint")
+            .join("target/lib/oven/release/libcli_library_preheat_existing_lock_project.rlib")
             .is_file(),
-        "generated-library dependency preheat should write a fingerprint stamp after workspace recreation"
+        "normal Oven build must create the selected release artifact"
+    );
+    assert!(
+        !tmp.path().join("target/incan_lock/Cargo.toml").exists(),
+        "normal Oven builds may use the compiler-owned lock directory, but must not create a Cargo workspace there"
     );
     Ok(())
 }
@@ -6420,7 +6468,7 @@ fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, 
 }
 
 #[test]
-fn build_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<dyn std::error::Error>> {
+fn build_leaves_stale_lockfile_unchanged_by_default() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_default_stale_lock_build_project", "")?;
 
@@ -6437,13 +6485,6 @@ fn build_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<
     )?;
 
     assert_success(&build_output, "incan build with stale lockfile by default");
-    let stderr = String::from_utf8_lossy(&build_output.stderr);
-    assert!(
-        stderr.contains(
-            "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or rewriting it"
-        ),
-        "default build should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
-    );
     assert_eq!(
         fs::read_to_string(tmp.path().join("incan.lock"))?,
         stale_lock,
@@ -7060,7 +7101,7 @@ pub def main() -> None:
 }
 
 #[test]
-fn test_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<dyn std::error::Error>> {
+fn test_leaves_stale_lockfile_unchanged_by_default() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_default_stale_lock_test_project", "")?;
     let tests_dir = tmp.path().join("tests");
@@ -7084,13 +7125,6 @@ def test_smoke() -> None:
     let test_output = run_incan(tmp.path(), &["test"])?;
 
     assert_success(&test_output, "incan test with stale lockfile by default");
-    let stderr = String::from_utf8_lossy(&test_output.stderr);
-    assert!(
-        stderr.contains(
-            "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or rewriting it"
-        ),
-        "default test should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
-    );
     assert_eq!(
         fs::read_to_string(tmp.path().join("incan.lock"))?,
         stale_lock,
@@ -7287,7 +7321,7 @@ edition = "2021"
 }
 
 #[test]
-fn run_generated_lock_is_accepted_by_test_locked() -> Result<(), Box<dyn std::error::Error>> {
+fn explicit_lock_is_accepted_by_test_locked() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let _main_path = write_minimal_project(tmp.path(), "cli_run_then_locked_test", "")?;
     let tests_dir = tmp.path().join("tests");
@@ -7301,11 +7335,11 @@ def test_answer() -> None:
 "#,
     )?;
 
-    let run_output = run_incan(tmp.path(), &["run"])?;
-    assert_success(&run_output, "incan run that generates the project lock");
+    let lock_output = run_incan(tmp.path(), &["lock"])?;
+    assert_success(&lock_output, "explicit incan lock before a strict test");
 
     let test_output = run_incan(tmp.path(), &["test", "--locked"])?;
-    assert_success(&test_output, "incan test --locked after incan run");
+    assert_success(&test_output, "incan test --locked after explicit incan lock");
     Ok(())
 }
 
@@ -11893,7 +11927,7 @@ fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn s
     assert_success(&build_output, "incan build --frozen with existing lockfile");
     let stdout = String::from_utf8_lossy(&build_output.stdout);
     assert!(
-        stdout.contains("Build successful"),
+        stdout.contains("Oven build successful"),
         "frozen build should complete with the existing lockfile, got:\n{stdout}"
     );
     Ok(())

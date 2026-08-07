@@ -1,32 +1,27 @@
-//! Build and run logic for generated Rust projects
+//! Cargo-lock projection support for the explicit publisher boundary.
 //!
-//! Provides [`ProjectGenerator::build`], [`ProjectGenerator::run`], and [`ProjectGenerator::run_with_cwd`] along with
-//! their result types.
+//! Normal Incan execution is receipt-bound Oven direct-`rustc`. Historical generated-project Cargo execution remains
+//! compiled only for isolated unit fixtures; it is not an available product backend.
 
 use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
+use std::fs;
+#[cfg(test)]
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 #[cfg(test)]
-use std::sync::{LazyLock, Mutex};
+use std::process::Stdio;
 
-use super::generator::{ProjectGenerator, RunProfile, cargo_config_identity};
+use super::generator::ProjectGenerator;
+#[cfg(test)]
+use super::generator::{RunProfile, cargo_config_identity};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 
 const CARGO_MANIFEST_FILENAME: &str = "Cargo.toml";
-
-#[cfg(test)]
-static TEST_PROJECTION_CARGO_POLICIES: LazyLock<Mutex<std::collections::BTreeMap<PathBuf, Vec<String>>>> =
-    LazyLock::new(|| Mutex::new(std::collections::BTreeMap::new()));
-
-#[cfg(test)]
-/// Return the Cargo policy flags observed by projection for a generated test project.
-pub(crate) fn test_projection_cargo_policy(output_dir: &Path) -> Option<Vec<String>> {
-    TEST_PROJECTION_CARGO_POLICIES.lock().ok()?.get(output_dir).cloned()
-}
 
 /// Network policy for Cargo-owned lock projection. `--locked` constrains mutation but does not imply offline mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,10 +86,6 @@ impl ProjectGenerator {
         let Some(projection) = self.cargo_lock_projection()? else {
             return Ok(false);
         };
-        #[cfg(test)]
-        if let Ok(mut policies) = TEST_PROJECTION_CARGO_POLICIES.lock() {
-            policies.insert(self.output_dir.clone(), self.cargo_policy_flags.clone());
-        }
         let lock_path = self.output_dir.join("Cargo.lock");
         let seed = fs::read_to_string(&lock_path)?;
         run_cargo_lock_projection(
@@ -124,12 +115,14 @@ impl ProjectGenerator {
         Ok(seed != first)
     }
 
-    /// Whether `incan run` must invoke Cargo before executing the generated binary.
+    /// Whether an isolated Cargo-runner fixture must compile before executing its generated binary.
+    #[cfg(test)]
     fn should_build_before_run(&self, project_changed: bool) -> bool {
         project_changed || !self.run_binary_path().is_file() || !self.run_publication_fingerprint_matches()
     }
 
-    /// Return extra Cargo CLI args required to build with the configured run profile.
+    /// Return extra Cargo CLI args required by an isolated runner fixture.
+    #[cfg(test)]
     fn run_profile_build_args(&self) -> &'static [&'static str] {
         match self.run_profile {
             RunProfile::Debug => &[],
@@ -137,7 +130,8 @@ impl ProjectGenerator {
         }
     }
 
-    /// Return the Cargo target subdirectory that contains binaries for the configured run profile.
+    /// Return the Cargo target subdirectory used by an isolated runner fixture.
+    #[cfg(test)]
     fn run_profile_binary_dir(&self) -> &'static str {
         match self.run_profile {
             RunProfile::Debug => "debug",
@@ -145,7 +139,8 @@ impl ProjectGenerator {
         }
     }
 
-    /// Return a human-readable label for the configured run profile.
+    /// Return a human-readable label for an isolated runner fixture profile.
+    #[cfg(test)]
     fn run_profile_label(&self) -> &'static str {
         match self.run_profile {
             RunProfile::Debug => "debug",
@@ -168,7 +163,8 @@ impl ProjectGenerator {
         Self::resolve_target_dir(target_dir)
     }
 
-    /// Build the project using cargo.
+    /// Build an isolated generated-project fixture using Cargo.
+    #[cfg(test)]
     pub fn build(&self) -> io::Result<BuildResult> {
         self.materialize_cargo_lock_projection()?;
         let _root_artifact_guard = self.acquire_root_artifact_lock()?;
@@ -214,19 +210,18 @@ impl ProjectGenerator {
         Ok(result)
     }
 
-    /// Run the project using cargo.
+    /// Run an isolated generated-project fixture using Cargo.
     ///
-    /// Uses inherited stdio so output streams to terminal in real-time (important for long-running processes like web
-    /// servers).
+    /// Uses inherited stdio so fixture output streams to the terminal in real-time.
     ///
-    /// Note: This is only used by `incan run` during dev. By default `incan run` uses Cargo's debug profile for fast
-    /// iteration and supports `--release` as an opt-in.
-    /// Production deployments run the generated binary directly.
+    /// This test-only helper preserves historical generated-project coverage. `incan run` uses Oven direct-rustc and
+    /// never calls this method in a production compiler build.
+    #[cfg(test)]
     pub fn run(&self) -> io::Result<RunResult> {
         self.run_with_cwd(&self.output_dir, true)
     }
 
-    /// Run the project with a custom working directory.
+    /// Run an isolated generated-project fixture with a custom working directory.
     ///
     /// This builds the generated Rust project, then runs the resulting binary with `cwd` as the working directory.
     /// This keeps runtime-relative paths anchored to the original project root rather than the generated
@@ -234,10 +229,10 @@ impl ProjectGenerator {
     ///
     /// Cargo build output is streamed directly to the terminal so incremental compilation progress remains visible on
     /// slow first runs and long rebuilds.
+    #[cfg(test)]
     pub fn run_with_cwd(&self, cwd: &Path, project_changed: bool) -> io::Result<RunResult> {
         // Generation validates and preserves an existing projection before reporting `project_changed = false`.
-        // Avoid a redundant two-pass Cargo projection in that fast path. A changed/direct run must still materialize
-        // its canonical seed before Cargo is allowed to build it.
+        // The isolated fixture avoids a redundant two-pass projection in that fast path.
         let project_changed = if project_changed {
             self.materialize_cargo_lock_projection()?;
             true
@@ -331,7 +326,8 @@ impl ProjectGenerator {
         })
     }
 
-    /// Atomically copy one Cargo root artifact into project-local generated output.
+    /// Atomically copy one fixture Cargo root artifact into project-local generated output.
+    #[cfg(test)]
     fn publish_cargo_binary(&self, source: &Path, destination: &Path) -> io::Result<()> {
         if source == destination {
             return Ok(());
@@ -352,7 +348,8 @@ impl ProjectGenerator {
         Ok(())
     }
 
-    /// Serialize Cargo root-artifact production and publication for one deterministic target name.
+    /// Serialize fixture Cargo root-artifact production and publication for one deterministic target name.
+    #[cfg(test)]
     fn acquire_root_artifact_lock(&self) -> io::Result<File> {
         let lock_dir = self.cargo_target_dir().join(".incan-root-locks");
         fs::create_dir_all(&lock_dir)?;
@@ -366,7 +363,8 @@ impl ProjectGenerator {
         Ok(lock)
     }
 
-    /// Identity of the exact managed domain/root/profile publication used by the local run binary.
+    /// Identity of the exact fixture Cargo publication used by the local run binary.
+    #[cfg(test)]
     fn run_publication_fingerprint(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(b"incan-run-publication-v1\0");
@@ -409,7 +407,8 @@ impl ProjectGenerator {
         hex::encode(hasher.finalize())
     }
 
-    /// Sidecar that proves a project-local run binary still matches the selected managed domain.
+    /// Sidecar that proves a fixture run binary still matches the selected managed domain.
+    #[cfg(test)]
     fn run_publication_fingerprint_path(&self) -> PathBuf {
         self.run_binary_path()
             .parent()
@@ -417,13 +416,15 @@ impl ProjectGenerator {
             .join(format!(".{}.incan-run-fingerprint", self.name))
     }
 
-    /// Return whether the published run binary still belongs to the selected generated-build domain.
+    /// Return whether the fixture run binary still belongs to the selected generated-build domain.
+    #[cfg(test)]
     fn run_publication_fingerprint_matches(&self) -> bool {
         fs::read_to_string(self.run_publication_fingerprint_path())
             .is_ok_and(|fingerprint| fingerprint.trim() == self.run_publication_fingerprint())
     }
 
-    /// Atomically record the generated-build domain that supplied the published run binary.
+    /// Atomically record the fixture Cargo domain that supplied the published run binary.
+    #[cfg(test)]
     fn write_run_publication_fingerprint(&self) -> io::Result<()> {
         let path = self.run_publication_fingerprint_path();
         let parent = path
@@ -439,12 +440,14 @@ impl ProjectGenerator {
         Ok(())
     }
 
-    /// Get the project-local path to the published build artifact.
+    /// Get the project-local path to an isolated fixture build artifact.
+    #[cfg(test)]
     pub fn binary_path(&self) -> PathBuf {
         self.output_dir.join("target").join("release").join(&self.name)
     }
 
-    /// Get the path to the binary produced for `incan run`.
+    /// Get the path to the binary produced by an isolated runner fixture.
+    #[cfg(test)]
     pub fn run_binary_path(&self) -> PathBuf {
         self.output_dir
             .join("target")
@@ -453,14 +456,16 @@ impl ProjectGenerator {
     }
 }
 
-/// Executable and rendered diagnostics selected from Cargo's JSON message stream.
+/// Executable and rendered diagnostics selected from a fixture Cargo JSON message stream.
+#[cfg(test)]
 #[derive(Default)]
 struct CargoJsonBuildOutput {
     executable: Option<PathBuf>,
     rendered: String,
 }
 
-/// Parse Cargo-owned artifact locations instead of reconstructing profile/target-triple paths.
+/// Parse fixture Cargo artifact locations instead of reconstructing profile/target-triple paths.
+#[cfg(test)]
 fn parse_cargo_json_build_output(stdout: &[u8], expected_target_name: &str) -> CargoJsonBuildOutput {
     let mut parsed = CargoJsonBuildOutput::default();
     for line in stdout.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
@@ -590,7 +595,8 @@ fn record_reconciliation_target(
     )))
 }
 
-/// Result of a cargo build.
+/// Result of an isolated Cargo-runner fixture build.
+#[cfg(test)]
 #[derive(Debug)]
 pub struct BuildResult {
     pub success: bool,
@@ -598,7 +604,8 @@ pub struct BuildResult {
     pub stderr: String,
 }
 
-/// Result of running the built program.
+/// Result of running an isolated Cargo-runner fixture program.
+#[cfg(test)]
 #[derive(Debug)]
 pub struct RunResult {
     pub success: bool,
@@ -610,44 +617,21 @@ pub struct RunResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::project::lock_projection::{CargoLockProjection, CargoLockUpdate};
+    use crate::backend::project::lock_projection::CargoLockUpdate;
     use crate::manifest::{DependencySource, DependencySpec};
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
 
-    fn successful_command(mut command: Command, label: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let output = command.output()?;
-        if output.status.success() {
-            return Ok(());
-        }
-        Err(format!(
-            "{label} failed:\n{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+    /// Render the smallest valid lock payload for the pure root-name projection contract.
+    ///
+    /// The normal Oven path never asks Cargo to generate or reconcile generated-project locks. These tests retain
+    /// coverage for preserving a caller-local projection without treating Cargo's resolver or cache population as
+    /// product behavior.
+    fn minimal_projected_cargo_lock(root_name: &str) -> String {
+        format!(
+            "version = 4\n\n[[package]]\nname = \"{root_name}\"\nversion = \"{}\"\n",
+            crate::version::INCAN_VERSION
         )
-        .into())
-    }
-
-    fn initialize_git_fixture(repository: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let mut init = Command::new("git");
-        init.args(["init", "-q"]).current_dir(repository);
-        successful_command(init, "git init")?;
-        for (key, value) in [("user.email", "incan@example.invalid"), ("user.name", "Incan Test")] {
-            let mut config = Command::new("git");
-            config.args(["config", key, value]).current_dir(repository);
-            successful_command(config, "git config")?;
-        }
-        Ok(())
-    }
-
-    fn commit_git_fixture(repository: &Path, message: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let mut add = Command::new("git");
-        add.args(["add", "."]).current_dir(repository);
-        successful_command(add, "git add")?;
-        let mut commit = Command::new("git");
-        commit.args(["commit", "-q", "-m", message]).current_dir(repository);
-        successful_command(commit, "git commit")?;
-        Ok(())
     }
 
     #[test]
@@ -1027,31 +1011,22 @@ mod tests {
         let mut generator = ProjectGenerator::new(tmp.path(), "issue921_projection_caller", true);
         generator.generate_multi("fn main() {}", &HashMap::new())?;
 
-        let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let mut seed_command = Command::new(cargo);
-        seed_command
-            .arg("generate-lockfile")
-            .arg("--offline")
-            .arg("--manifest-path")
-            .arg(tmp.path().join("Cargo.toml"));
-        successful_command(seed_command, "initial caller lock generation")?;
-        let caller_lock = fs::read_to_string(tmp.path().join("Cargo.lock"))?;
-        let canonical_lock =
-            caller_lock.replacen("name = \"issue921_projection_caller\"", "name = \"incan_workspace\"", 1);
+        let caller_lock = minimal_projected_cargo_lock("issue921_projection_caller");
+        let canonical_lock = minimal_projected_cargo_lock("incan_workspace");
         assert_ne!(caller_lock, canonical_lock, "fixture must rename the canonical root");
-
-        fs::remove_file(tmp.path().join("Cargo.lock"))?;
+        fs::write(tmp.path().join("Cargo.lock"), &caller_lock)?;
         generator.set_cargo_lock_payload(Some(canonical_lock));
         generator.set_cargo_lock_projection_root(Some("incan_workspace".to_string()));
         generator.set_cargo_policy_flags(vec!["--offline".to_string()]);
 
-        assert!(generator.generate_multi("fn main() {}", &HashMap::new())?);
-        assert!(generator.materialize_cargo_lock_projection()?);
-        let first = fs::read(tmp.path().join("Cargo.lock"))?;
-
+        let cargo_toml = fs::read_to_string(tmp.path().join("Cargo.toml"))?;
+        let main = fs::read_to_string(tmp.path().join("src/main.rs"))?;
+        let changed = generator.generate_multi("fn main() {}", &HashMap::new())?;
+        assert_eq!(caller_lock, fs::read_to_string(tmp.path().join("Cargo.lock"))?);
+        assert_eq!(cargo_toml, fs::read_to_string(tmp.path().join("Cargo.toml"))?);
+        assert_eq!(main, fs::read_to_string(tmp.path().join("src/main.rs"))?);
+        assert!(!changed);
         assert!(!generator.generate_multi("fn main() {}", &HashMap::new())?);
-        assert!(!generator.materialize_cargo_lock_projection()?);
-        assert_eq!(first, fs::read(tmp.path().join("Cargo.lock"))?);
         Ok(())
     }
 
@@ -1073,92 +1048,18 @@ mod tests {
         let mut generator = ProjectGenerator::new(&output_dir, "issue921_relative_caller", true);
         generator.generate_multi("fn main() {}", &HashMap::new())?;
 
-        let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let mut seed_command = Command::new(cargo);
-        seed_command
-            .arg("generate-lockfile")
-            .arg("--offline")
-            .arg("--manifest-path")
-            .arg(output_dir.join(CARGO_MANIFEST_FILENAME));
-        successful_command(seed_command, "relative caller lock generation")?;
-        let caller_lock = fs::read_to_string(output_dir.join("Cargo.lock"))?;
-        let canonical_lock =
-            caller_lock.replacen("name = \"issue921_relative_caller\"", "name = \"incan_workspace\"", 1);
+        let caller_lock = minimal_projected_cargo_lock("issue921_relative_caller");
+        let canonical_lock = minimal_projected_cargo_lock("incan_workspace");
         assert_ne!(caller_lock, canonical_lock, "fixture must rename the canonical root");
-
-        fs::remove_file(output_dir.join("Cargo.lock"))?;
+        fs::write(output_dir.join("Cargo.lock"), &caller_lock)?;
         generator.set_cargo_lock_payload(Some(canonical_lock));
         generator.set_cargo_lock_projection_root(Some("incan_workspace".to_string()));
         generator.set_cargo_policy_flags(vec!["--offline".to_string()]);
-        assert!(generator.generate_multi("fn main() {}", &HashMap::new())?);
-        assert!(generator.materialize_cargo_lock_projection()?);
+        assert!(!generator.generate_multi("fn main() {}", &HashMap::new())?);
 
         let projected = fs::read_to_string(output_dir.join("Cargo.lock"))?;
         assert!(projected.contains("name = \"issue921_relative_caller\""));
         assert!(!projected.contains("name = \"incan_workspace\""));
-        Ok(())
-    }
-
-    #[test]
-    fn online_locked_projection_can_populate_a_fresh_cargo_home_issue923() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let dependency = tmp.path().join("dependency");
-        fs::create_dir_all(dependency.join("src"))?;
-        fs::write(
-            dependency.join("Cargo.toml"),
-            "[package]\nname = \"issue923_local_dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-        )?;
-        fs::write(dependency.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n")?;
-        initialize_git_fixture(&dependency)?;
-        commit_git_fixture(&dependency, "fixture")?;
-
-        let dependency_url = format!("file://{}", dependency.display());
-        let manifest = |name: &str| {
-            format!(
-                "[package]\nname = \"{name}\"\nversion = \"{}\"\nedition = \"2024\"\n\n[dependencies]\nissue923_local_dep = {{ git = \"{dependency_url}\" }}\n",
-                crate::version::INCAN_VERSION
-            )
-        };
-        let canonical = tmp.path().join("canonical");
-        fs::create_dir_all(canonical.join("src"))?;
-        fs::write(canonical.join("Cargo.toml"), manifest("incan_workspace"))?;
-        fs::write(canonical.join("src/lib.rs"), "pub fn canonical() {}\n")?;
-        let canonical_home = tmp.path().join("canonical-cargo-home");
-        fs::create_dir_all(&canonical_home)?;
-        let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let mut canonical_command = Command::new(&cargo);
-        canonical_command
-            .arg("generate-lockfile")
-            .arg("--manifest-path")
-            .arg(canonical.join("Cargo.toml"))
-            .env("CARGO_HOME", &canonical_home);
-        successful_command(canonical_command, "canonical lock generation")?;
-        let canonical_payload = fs::read_to_string(canonical.join("Cargo.lock"))?;
-
-        let caller = tmp.path().join("caller");
-        fs::create_dir_all(caller.join("src"))?;
-        fs::write(caller.join("Cargo.toml"), manifest("caller"))?;
-        fs::write(caller.join("src/lib.rs"), "pub fn caller() {}\n")?;
-        fs::write(caller.join("Cargo.lock"), &canonical_payload)?;
-        let projection = CargoLockProjection::new(canonical_payload, "incan_workspace".to_string())?;
-        let fresh_home = tmp.path().join("fresh-cargo-home");
-        fs::create_dir_all(&fresh_home)?;
-
-        run_cargo_lock_projection(
-            &caller,
-            &caller.join("target"),
-            &projection,
-            "caller",
-            crate::version::INCAN_VERSION,
-            CargoLockProjectionNetwork::from_cargo_flags(&["--locked".to_string()]),
-            Some(&fresh_home),
-        )?;
-        let projected = fs::read_to_string(caller.join("Cargo.lock"))?;
-        projection.validate_projected(&projected, "caller", crate::version::INCAN_VERSION)?;
-        assert!(
-            fresh_home.join("git").is_dir(),
-            "fresh Cargo home should receive the git source"
-        );
         Ok(())
     }
 }

@@ -29,6 +29,7 @@ pub mod lsp;
 pub mod manifest;
 pub mod numeric;
 pub mod numeric_adapters;
+pub mod oven;
 pub mod oven_interop;
 pub mod project_lifecycle;
 pub mod provider;

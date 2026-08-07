@@ -118,7 +118,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.graph` | - | - | - |
 | `std.uuid` | - | - | - |
 | `std.regex` | - | `std.regex._core`, `std.regex._replacement`, `std.regex.types`, `std.regex.prelude` | - |
-| `std.collections` | - | - | - |
+| `std.collections` | `ordinal` | - | - |
 | `std.io` | - | - | - |
 | `std.encoding` | - | `std.encoding._shared`, `std.encoding.prelude`, `std.encoding.hex`, `std.encoding.base32`, `std.encoding.base64`, `std.encoding.base85`, `std.encoding.base58`, `std.encoding.bech32` | - |
 | `std.checksum` | - | - | - |

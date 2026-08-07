@@ -29,7 +29,7 @@ use discovery::{
     CollectionEvalContext, discover_test_files_with_selections, discover_tests_and_fixtures_with_context,
     get_autouse_fixtures, parse_duration_literal,
 };
-use execution::{TestExecutionOptions, run_file_tests_batch};
+use execution::{TestExecutionOptions, run_file_tests_batch, validate_oven_test_lock_policy};
 use reporter::{print_test_result, style};
 
 const RED: &str = "1;31";
@@ -684,7 +684,7 @@ fn validate_markers(
     Ok(())
 }
 
-/// Return the timeout marker or run default used for the generated Cargo batch.
+/// Return the timeout marker or run default used for one generated native test batch.
 fn effective_timeout(test: &TestInfo, default_timeout: Option<Duration>) -> Option<Duration> {
     test.timeout.or(default_timeout)
 }
@@ -708,11 +708,10 @@ struct ActiveUnit {
     serial: bool,
 }
 
-/// Run one planned execution unit through the existing generated Cargo harness path.
+/// Run one planned execution unit through the normal Oven native harness path.
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
     unit: &ExecutionUnit,
-    prep_cache: &mut execution::TestPrepCache,
     cargo_policy: &CargoPolicy,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
@@ -722,12 +721,10 @@ fn run_execution_unit(
     no_capture: bool,
     verbose: bool,
     emit_progress: bool,
-    jobs: usize,
 ) -> Vec<(TestInfo, TestResult)> {
     run_file_tests_batch(
         &unit.tests,
         &unit.conftest_files_by_file,
-        prep_cache,
         cargo_policy,
         package_features,
         sdk_profile_override,
@@ -737,7 +734,6 @@ fn run_execution_unit(
         TestExecutionOptions {
             no_capture,
             timeout: unit.timeout,
-            jobs,
             verbose,
             emit_progress,
         },
@@ -763,7 +759,7 @@ fn test_is_serial(test: &TestInfo) -> bool {
     test.markers.iter().any(|marker| matches!(marker, TestMarker::Serial))
 }
 
-/// Return whether a test can share a generated Cargo harness batch with an existing unit.
+/// Return whether a test can share a generated native harness batch with an existing unit.
 fn unit_can_include(
     unit: &ExecutionUnit,
     test: &TestInfo,
@@ -783,7 +779,7 @@ fn unit_can_include(
             .is_some_and(|conftests| conftests == &applicable_conftest_files(&test.file_path, root))
 }
 
-/// Convert collected tests into generated worker-batch Cargo harness execution units.
+/// Convert collected tests into generated worker-batch native harness execution units.
 ///
 /// Conventional test files and inline `module tests:` files both end up here after discovery. `conftest.incn`
 /// inheritance has already been resolved, so units carry the exact conftest chain they need for execution.
@@ -821,7 +817,11 @@ fn build_execution_units(
                 .iter()
                 .any(|marker| matches!(marker, TestMarker::Skip(_)))
             {
-                break;
+                // Skipped tests never enter the native harness. Do not split the surrounding compatible tests into
+                // separate Oven units: that would repeat front-end work and overwrite/rebuild otherwise reusable
+                // caller-owned native outputs for the same source file.
+                idx += 1;
+                continue;
             }
             let provisional = ExecutionUnit {
                 index: units.len(),
@@ -881,7 +881,7 @@ fn merge_execution_unit(target: &mut ExecutionUnit, source: ExecutionUnit) {
 
 /// Coalesce per-file units into a bounded set of worker batches for `--jobs N`.
 ///
-/// Each batch still compiles to one Cargo/libtest harness. Grouping by identical conftest and scheduling profile keeps
+/// Each batch runs through one native libtest harness. Grouping by identical conftest and scheduling profile keeps
 /// session fixtures process-local to a worker while preserving resource and serial constraints at scheduler level.
 fn coalesce_worker_batches(units: Vec<ExecutionUnit>, jobs: usize) -> Vec<ExecutionUnit> {
     let mut batches: Vec<ExecutionUnit> = Vec::new();
@@ -961,12 +961,10 @@ fn run_scheduled_execution_units(
     emit_progress: bool,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
     if jobs <= 1 {
-        let mut prep_cache = execution::TestPrepCache::default();
         let mut completed = Vec::new();
         for unit in &units {
             let results = run_execution_unit(
                 unit,
-                &mut prep_cache,
                 &cargo_policy,
                 &package_features,
                 sdk_profile.as_deref(),
@@ -976,7 +974,6 @@ fn run_scheduled_execution_units(
                 no_capture,
                 verbose,
                 emit_progress,
-                jobs,
             );
             let failed = batch_has_failure(&results);
             completed.push((unit.index, results));
@@ -1021,11 +1018,9 @@ fn run_scheduled_execution_units(
             });
             launched += 1;
             thread::spawn(move || {
-                let mut prep_cache = execution::TestPrepCache::default();
                 let unit_index = unit.index;
                 let results = run_execution_unit(
                     &unit,
-                    &mut prep_cache,
                     &cargo_policy,
                     &package_features,
                     sdk_profile.as_deref(),
@@ -1035,7 +1030,6 @@ fn run_scheduled_execution_units(
                     no_capture,
                     verbose,
                     emit_progress,
-                    jobs,
                 );
                 let _ = sender.send((unit_index, results));
             });
@@ -1106,6 +1100,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             path.display()
         )));
     }
+    validate_oven_test_lock_policy(&test_files[0], &cargo_policy, &package_features, sdk_profile.as_deref())?;
 
     let mut all_tests: Vec<TestInfo> = Vec::new();
     let mut all_fixtures: HashMap<String, FixtureInfo> = HashMap::new();
@@ -1597,6 +1592,27 @@ mod tests {
         assert!(expanded[2].parametrize_call.is_some());
         assert_eq!(expanded[3].function_name, "test_another");
         assert!(expanded[3].parametrize_call.is_none());
+    }
+
+    #[test]
+    fn skipped_tests_do_not_split_a_compatible_oven_execution_unit() {
+        let tests = vec![
+            make_test("test_before", vec![]),
+            make_test("test_skipped", vec![TestMarker::Skip("not ready".to_string())]),
+            make_test("test_after", vec![TestMarker::XFail("known issue".to_string())]),
+        ];
+
+        let units = build_execution_units(&tests, Path::new("."), None, false, 1);
+
+        assert_eq!(units.len(), 1);
+        assert_eq!(
+            units[0]
+                .tests
+                .iter()
+                .map(|test| test.function_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["test_before", "test_after"],
+        );
     }
 
     // ---- centered_banner ----

@@ -190,7 +190,7 @@ pub const BAD: str = S[0:3:0]
 #[test]
 fn fstring_shared_helper() {
     let parts = ["Hello ", "!"];
-    let args = vec![format!("{}", "world")];
+    let args = vec!["world".to_string()];
     assert_eq!(
         incan_core::strings::fstring(&parts, &args),
         incan_stdlib::strings::fstring(&parts, &args)

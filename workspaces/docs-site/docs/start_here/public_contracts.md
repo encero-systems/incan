@@ -19,7 +19,7 @@ This page is a planning target for the 1.0 stabilization pass. It names the cont
 
 ## Generated Rust boundary
 
-The current beta compiler path builds through Cargo/rustc and can expose generated Rust for inspection. That is useful and should remain documented as current backend output.
+For the documented Oven Alpha envelope, current beta `incan build`, `incan test`, and `incan run` select a receipt-bound direct-`rustc` plan from Incan-owned storage rather than invoking Cargo. Generated Rust remains useful, inspectable backend output, while the explicitly named `legacy_cargo` publisher is a temporary preparation boundary rather than a normal-command backend.
 
 For 1.0, generated Rust source should not be the public package compatibility contract. Public compatibility should be based on Incan source, manifests, checked metadata, semantic facts, package metadata, native artifacts, CLI report schemas, and explicit Rust-facing interop contracts.
 

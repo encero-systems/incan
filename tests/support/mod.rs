@@ -12,6 +12,18 @@ pub(crate) fn incan_binary() -> PathBuf {
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan"))
 }
 
+/// Return whether this test binary is executing with the scheduler-owned Oven Loaf closure.
+///
+/// A stored compiler-suite child carries a direct-Rustc executable as well as the Loaf capability. Portable
+/// nextest acceptance archives receive the latter directly from their immutable provider artifact. Both forms have
+/// already received a sealed SDK inventory and must not replace it with the legacy generated-Cargo provider store.
+#[allow(dead_code)]
+pub(crate) fn oven_compiler_suite_is_active() -> bool {
+    std::env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC").is_some_and(|value| !value.is_empty())
+        || (std::env::var_os("INCAN_INTERNAL_OVEN_LOAF_EXECUTION").is_some_and(|value| value == "1")
+            && std::env::var_os("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT").is_some_and(|value| !value.is_empty()))
+}
+
 /// Return the generated Cargo target selected by the outer test harness.
 ///
 /// `make` and CI preheat one task-local target before starting nextest. Subprocess helpers must preserve that

@@ -209,6 +209,10 @@ fn prepare_toolchain_assets(
         .current_dir(repo_root())
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
+        .env("INCAN_HOME", dist.join(".incan-home"))
+        .env("INCAN_SOURCE_ROOT", repo_root())
+        .env("INCAN_STDLIB", repo_root().join("crates/incan_stdlib/stdlib"))
+        .env("INCAN_STDLIB_DIR", repo_root().join("crates/incan_stdlib/stdlib"))
         .env("INCAN_REPO_ROOT", repo_root())
         .env("INCAN_TOOLCHAIN_DIST_DIR", dist)
         .env("INCAN_TOOLCHAIN_GENERATED_AT", generated_at)
@@ -290,31 +294,28 @@ fn write_executable(path: &Path, contents: &str) -> Result<(), Box<dyn std::erro
     make_executable(path)
 }
 
-fn write_fake_bash_recorder(root: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+fn write_fake_bash_arg_printer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let fake_bin = root.join("fake-bin");
     fs::create_dir_all(&fake_bin)?;
-    let log = root.join("bash-args.log");
     write_executable(
         &fake_bin.join("bash"),
         r#"#!/usr/bin/env sh
 set -eu
-: > "$FAKE_BASH_LOG"
 for arg in "$@"; do
-  printf '%s\n' "$arg" >> "$FAKE_BASH_LOG"
+  printf '%s\n' "$arg"
 done
 "#,
     )?;
-    Ok((fake_bin, log))
+    Ok(fake_bin)
 }
 
-fn assert_recorded_arg_pair(log: &Path, name: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let args = fs::read_to_string(log)?;
+fn assert_printed_arg_pair(output: &[u8], name: &str, value: &str) {
+    let args = String::from_utf8_lossy(output);
     let lines = args.lines().collect::<Vec<_>>();
     assert!(
         lines.windows(2).any(|pair| pair == [name, value]),
         "expected recorded args to contain {name} {value}, got:\n{args}"
     );
-    Ok(())
 }
 
 fn write_fixture_toolchain_commands(root: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
@@ -390,6 +391,42 @@ fn write_fixture_sdk_provider_seed(root: &Path, profile: &str) -> Result<PathBuf
     Ok(seed)
 }
 
+/// Supply the archive-layout contract to fixture packagers without asking their shell-placeholder compiler to bake
+/// a real native closure. End-to-end Loaf validation is covered by the compiler-owned Loaf tests instead.
+fn write_fixture_loafs(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let loaf_root = root.join("fixture-oven-loafs");
+    let generation = Path::new("generations/fixture-generation");
+    let mut members = Vec::new();
+    for compatibility_unit in ["base-release", "testing-debug"] {
+        let relative = generation.join(format!("{compatibility_unit}.loaf/loaf.json"));
+        let unit = loaf_root.join(relative.parent().ok_or("fixture Loaf path has no parent")?);
+        fs::create_dir_all(&unit)?;
+        fs::write(
+            unit.join("loaf.json"),
+            format!("{{\"fixture_compatibility_unit\":\"{compatibility_unit}\"}}\n"),
+        )?;
+        members.push(serde_json::json!({
+            "label": compatibility_unit,
+            "profile": if compatibility_unit == "base-release" { "release" } else { "debug" },
+            "action": if compatibility_unit == "base-release" { "build" } else { "run" },
+            "build_unit_identity": format!("sha256:{compatibility_unit}"),
+            "path": relative,
+        }));
+    }
+    fs::write(loaf_root.join(".envelope.lock"), "")?;
+    fs::write(
+        loaf_root.join("envelope.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "envelope": "release",
+            "generation_identity": "sha256:fixture-generation",
+            "evidence": {},
+            "loafs": members,
+        }))?,
+    )?;
+    Ok(loaf_root)
+}
+
 const NPM_PLATFORM_TARGETS: [(&str, &str, &str, &str); 3] = [
     ("x86_64-unknown-linux-gnu", "@incan/toolchain-linux-x64", "linux", "x64"),
     ("x86_64-apple-darwin", "@incan/toolchain-darwin-x64", "darwin", "x64"),
@@ -429,6 +466,23 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// Sum each regular file exactly once for release-profile accounting assertions.
+fn directory_logical_file_bytes(root: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+    let mut total = 0_u64;
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            total = total.saturating_add(directory_logical_file_bytes(&entry.path())?);
+        } else if file_type.is_file() {
+            total = total.saturating_add(fs::metadata(entry.path())?.len());
+        } else {
+            return Err(format!("release fixture contains unsupported path: {}", entry.path().display()).into());
+        }
+    }
+    Ok(total)
+}
+
 fn package_fixture_archive(
     root: &Path,
     target: &str,
@@ -446,6 +500,7 @@ fn package_fixture_archive_with_profile(
     profile: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let seed = write_fixture_sdk_provider_seed(root, profile)?;
+    let loafs = write_fixture_loafs(root)?;
     let output = Command::new("bash")
         .arg(toolchain_package_archive_script())
         .arg(target)
@@ -453,6 +508,8 @@ fn package_fixture_archive_with_profile(
         .env("INCAN_BIN", incan)
         .env("INCAN_LSP_BIN", incan_lsp)
         .env("INCAN_SDK_PROVIDER_SEED_DIR", seed)
+        .env("INCAN_OVEN_LOAF_DIR", loafs)
+        .env("INCAN_OVEN_LOAF_OVERRIDE_TEST_ONLY", "1")
         .env("INCAN_SDK_DISTRIBUTION_PROFILE", profile)
         .current_dir(repo_root())
         .output()?;
@@ -489,6 +546,72 @@ fn profile_evidence_path(archive: &Path) -> PathBuf {
         "{}.profile.json",
         archive.file_name().and_then(|name| name.to_str()).unwrap_or_default()
     ))
+}
+
+/// Validate the support-crate workspace shape without asking the Cargo-free Oven suite to launch Cargo.
+///
+/// The package proof still uses `cargo metadata` in ordinary developer test runs. When Oven runs this integration
+/// target, the archive has already been created by the named publisher boundary, so validate its complete workspace
+/// declaration and every shipped member directly from the immutable extracted files instead.
+fn assert_packaged_support_workspace_without_cargo(extracted: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let crates = extracted.join("crates");
+    let workspace: toml::Value = toml::from_str(&fs::read_to_string(crates.join("Cargo.toml"))?)?;
+    let workspace = workspace
+        .get("workspace")
+        .and_then(toml::Value::as_table)
+        .ok_or("packaged support workspace has no [workspace] table")?;
+    let expected_members = [
+        "incan_core",
+        "incan_derive",
+        "incan_stdlib",
+        "incan_vocab",
+        "incan_web_macros",
+    ];
+    let members = workspace
+        .get("members")
+        .and_then(toml::Value::as_array)
+        .ok_or("packaged support workspace has no workspace member list")?
+        .iter()
+        .map(|member| {
+            member
+                .as_str()
+                .ok_or("packaged support workspace has a non-string member")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(members, expected_members, "packaged support workspace members drifted");
+    assert_eq!(workspace.get("resolver").and_then(toml::Value::as_str), Some("2"));
+    let package = workspace
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or("packaged support workspace has no [workspace.package] table")?;
+    for (field, expected) in [("edition", "2024"), ("rust-version", "1.93"), ("license", "Apache-2.0")] {
+        assert_eq!(
+            package.get(field).and_then(toml::Value::as_str),
+            Some(expected),
+            "packaged support workspace has an invalid {field}"
+        );
+    }
+    assert!(
+        fs::metadata(crates.join("Cargo.lock"))?.len() > 0,
+        "packaged support workspace has an empty Cargo.lock"
+    );
+    for member in expected_members {
+        let manifest: toml::Value = toml::from_str(&fs::read_to_string(crates.join(member).join("Cargo.toml"))?)?;
+        let package = manifest
+            .get("package")
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| format!("packaged support crate {member} has no [package] table"))?;
+        assert_eq!(
+            package.get("name").and_then(toml::Value::as_str),
+            Some(member),
+            "packaged support crate {member} declares the wrong package name"
+        );
+    }
+    Ok(())
+}
+
+fn oven_compiler_suite_is_active() -> bool {
+    std::env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC").is_some()
 }
 
 fn read_profile_evidence(archive: &Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -598,7 +721,27 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     assert_eq!(evidence["sdk_profile"], serde_json::json!("full"));
     assert_eq!(evidence["sdk_component_count"], serde_json::json!(9));
     assert_eq!(evidence["archive_bytes"].as_u64(), Some(fs::metadata(&archive)?.len()));
-    assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
+    let package_root = out_dir
+        .join("dist")
+        .join(format!("incan-{}-x86_64-unknown-linux-gnu", release.trim()));
+    assert_eq!(
+        evidence["sdk_payload_bytes"].as_u64(),
+        Some(directory_logical_file_bytes(&package_root.join("share/incan/sdk"))?)
+    );
+    assert_eq!(evidence["oven_loaf_count"].as_u64(), Some(2));
+    assert_eq!(
+        evidence["oven_loaf_logical_bytes"].as_u64(),
+        Some(directory_logical_file_bytes(
+            &package_root.join("share/incan/oven/loafs"),
+        )?)
+    );
+    assert!(evidence.get("oven_loaf_payload_bytes").is_none());
+    assert!(
+        evidence["oven_loaf_physical_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0)
+    );
+    assert!(evidence.get("oven_loaf_max_bytes").is_none());
 
     let listing = Command::new("tar").arg("-tzf").arg(&archive).output()?;
     assert!(listing.status.success(), "tar listing failed");
@@ -625,6 +768,11 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     );
     assert!(listing.contains("share/incan/sdk/sdk-inventory.json"));
     assert!(listing.contains("share/incan/sdk/Cargo.lock"));
+    for compatibility_unit in ["base-release", "testing-debug"] {
+        assert!(listing.contains(&format!(
+            "share/incan/oven/loafs/generations/fixture-generation/{compatibility_unit}.loaf/loaf.json"
+        )));
+    }
     for component in [
         "stdlib-core",
         "stdlib-system",
@@ -672,15 +820,240 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
         incan::version::INCAN_VERSION,
         incan::version::SDK_PROVIDER_CODEGEN_REVISION,
     )?;
-    let metadata = Command::new("cargo")
-        .args(["metadata", "--no-deps", "--format-version", "1", "--manifest-path"])
-        .arg(extracted.join("crates/Cargo.toml"))
-        .env("CARGO_NET_OFFLINE", "true")
+    if oven_compiler_suite_is_active() {
+        assert_packaged_support_workspace_without_cargo(&extracted)?;
+    } else {
+        let metadata = Command::new("cargo")
+            .args(["metadata", "--no-deps", "--format-version", "1", "--manifest-path"])
+            .arg(extracted.join("crates/Cargo.toml"))
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            metadata.status.success(),
+            "packaged support-crate workspace is invalid:\n{}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn oven_alpha_benchmark_records_a_verified_cargo_guard_verdict() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = ToolchainTestStaging::new()?;
+    let source = tmp.path().join("supported.incn");
+    fs::write(&source, "def main() -> None:\n    pass\n")?;
+    let clean_worktree_source = tmp.path().join("clean-checkout/supported.incn");
+    fs::create_dir_all(
+        clean_worktree_source
+            .parent()
+            .ok_or("clean-worktree fixture source has no parent")?,
+    )?;
+    fs::copy(&source, &clean_worktree_source)?;
+    let incan = tmp.path().join("fixture-incan");
+    write_executable(
+        &incan,
+        "#!/usr/bin/env sh\nif [ \"$1\" = \"oven\" ]; then printf '{}\\n'; elif [ \"$1\" = \"--version\" ]; then printf 'incan fixture\\n'; fi\n",
+    )?;
+    let guard_dir = tmp.path().join("cargo-guard");
+    fs::create_dir_all(&guard_dir)?;
+    write_executable(&guard_dir.join("cargo"), "#!/usr/bin/env sh\nexit 97\n")?;
+    let output_dir = tmp.path().join("benchmark-evidence");
+
+    let output = Command::new("bash")
+        .arg(repo_root().join("scripts/bench_oven_alpha.sh"))
+        .args([
+            "--incan",
+            incan.to_str().ok_or("fixture incan path is not UTF-8")?,
+            "--release-identity",
+            "fixture-release-artifact",
+            "--checkout-revision",
+            "fixture-revision",
+            "--workload",
+            "build",
+            "--source",
+            source.to_str().ok_or("fixture source path is not UTF-8")?,
+            "--incan-home",
+            tmp.path()
+                .join("incan-home")
+                .to_str()
+                .ok_or("fixture home path is not UTF-8")?,
+            "--output",
+            output_dir.to_str().ok_or("fixture output path is not UTF-8")?,
+            "--clean-worktree-source",
+            clean_worktree_source
+                .to_str()
+                .ok_or("fixture clean-worktree source path is not UTF-8")?,
+            "--cargo-guard-dir",
+            guard_dir.to_str().ok_or("fixture guard path is not UTF-8")?,
+            "--repetitions",
+            "1",
+        ])
+        .current_dir(repo_root())
         .output()?;
     assert!(
-        metadata.status.success(),
-        "packaged support-crate workspace is invalid:\n{}",
-        String::from_utf8_lossy(&metadata.stderr)
+        output.status.success(),
+        "guarded benchmark fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_str(&fs::read_to_string(output_dir.join("report.json"))?)?;
+    assert_eq!(report["cargo_guard"]["required"], serde_json::json!(true));
+    assert_eq!(report["cargo_guard"]["probe_exit_code"], serde_json::json!(97));
+    assert_eq!(
+        report["cargo_guard"]["verdict"],
+        serde_json::json!("successful normal stages imply that Cargo was not launched")
+    );
+    assert!(
+        report["timing"]["wall_clock_ms"].as_u64().is_some(),
+        "benchmark report must retain complete wall-clock timing"
+    );
+    assert!(
+        report["timing"]["first_materialization_ms"].as_u64().is_some(),
+        "benchmark report must retain cold materialization timing"
+    );
+    assert!(
+        report["timing"]["warm_repeat_total_ms"].as_u64().is_some(),
+        "benchmark report must retain prepared warm timing"
+    );
+    assert_eq!(
+        report["toolchain"]["release_identity"],
+        serde_json::json!("fixture-release-artifact")
+    );
+    assert_eq!(
+        report["provenance"]["checkout_revision"],
+        serde_json::json!("fixture-revision")
+    );
+    assert_eq!(
+        report["workload"]["source_sha256"],
+        report["workload"]["clean_worktree_source_sha256"]
+    );
+    let storage_junctions = report["storage_junctions"]
+        .as_array()
+        .ok_or("benchmark report is missing storage junctions")?;
+    let junction_names = storage_junctions
+        .iter()
+        .map(|junction| junction["name"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        junction_names,
+        [
+            "initial",
+            "after_first_materialization",
+            "after_warm_repeat_1",
+            "after_clean_worktree_reuse",
+        ]
+    );
+    for junction in storage_junctions {
+        let reports = junction["reports"]
+            .as_object()
+            .ok_or("storage junction is missing report paths")?;
+        for report_path in reports.values().filter_map(serde_json::Value::as_str) {
+            assert!(
+                output_dir.join(report_path).is_file(),
+                "storage junction report is not retained: {report_path}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() -> Result<(), Box<dyn std::error::Error>>
+{
+    let action = fs::read_to_string(repo_root().join(".github/actions/run-oven-compiler-suite/action.yml"))?;
+    for required in [
+        "baker-result.json",
+        "oven compiler-libtests",
+        "cargo-guard",
+        "consumer_toolchain",
+        "rustup which --toolchain \"${{ inputs.consumer_toolchain }}\" rustc",
+        "publisher[0].compiler_suite.store",
+        "suite[0].store",
+        "total_ms",
+        "publisher_ms",
+        "prepared_replay_ms",
+        "raw_after_baker_kib",
+        "raw-disk-usage-kib",
+    ] {
+        assert!(
+            action.contains(required),
+            "compiler-suite action must retain `{required}`"
+        );
+    }
+    assert!(
+        !action.contains("oven legacy-cargo"),
+        "the Cargo-free suite action must consume the baker result rather than own another publisher"
+    );
+    assert!(
+        !action.contains("oven store inspect"),
+        "the suite action must consume product-owned baker/replay store reports instead of reconstructing them"
+    );
+    let makefile = fs::read_to_string(repo_root().join("Makefile"))?;
+    assert!(
+        makefile.contains("test-oven: test-prewarm-oven-loafs")
+            && makefile.contains("oven legacy-cargo bake-loafs")
+            && makefile.contains("--suite-store \"$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)\""),
+        "the local and CI suite prewarm must use the typed Loaf baker"
+    );
+    assert!(
+        makefile.contains("test-prewarm-oven-release-loafs: test-prewarm-sdk")
+            && makefile.contains("--envelope release")
+            && makefile.contains("INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT"),
+        "normal-command evidence must use a staged toolchain with the typed release Loaf envelope"
+    );
+    assert!(
+        makefile.contains("INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24")
+            && makefile.contains("INCAN_TEST_SUITE_TOOLCHAIN ?= stable")
+            && makefile
+                .contains("--cargo \"$$(rustup which --toolchain \"$(INCAN_TEST_PUBLISHER_TOOLCHAIN)\" cargo)\"")
+            && makefile.contains("--rustc \"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
+        "the named publisher Cargo and direct-rustc consumer toolchains must remain separate"
+    );
+    let workflow = fs::read_to_string(repo_root().join(".github/workflows/ci.yml"))?;
+    let evidence_workflow = fs::read_to_string(repo_root().join(".github/workflows/oven_evidence.yml"))?;
+    for required in [
+        "toolchain: 1.93.0",
+        "consumer_toolchain: ${{ matrix.toolchain }}",
+        "INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}",
+        "INCAN_TEST_SUITE_TOOLCHAIN=${{ matrix.toolchain }}",
+        "test-prewarm-oven-release-loafs",
+        "src/oven/fixtures/release_core.incn",
+        "target/oven-alpha-release-toolchain/bin/incan",
+    ] {
+        assert!(
+            evidence_workflow.contains(required),
+            "release evidence CI must retain `{required}`"
+        );
+    }
+    assert!(
+        workflow.contains("cancel-in-progress: true")
+            && workflow.contains("make -s test-oven-release-smoke")
+            && workflow.contains("make test-oven-pr-regressions")
+            && workflow.contains("matrix.id == 'linux-stable'")
+            && !workflow.contains("make test-oven-focused"),
+        "pull-request CI must cancel superseded runs and retain bounded normal-command and process-containment gates"
+    );
+    assert!(
+        evidence_workflow.contains("uses: ./.github/actions/run-oven-compiler-suite"),
+        "complete compiler-suite correctness must remain in explicit release evidence"
+    );
+    assert_eq!(
+        makefile.matches("CARGO_PROFILE_TEST_DEBUG=0 cargo test").count(),
+        5,
+        "focused Oven tests must not pay the cold-link cost of unused test debug information"
+    );
+    assert!(
+        !makefile.contains("CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --features lsp"),
+        "focused Oven tests must not compile the unrelated LSP feature graph"
+    );
+    assert!(
+        !workflow.contains("run-oven-compiler-suite") && !workflow.contains("bench_oven_alpha.sh"),
+        "complete repository-suite and benchmark evidence must not run on every pull-request commit"
+    );
+    assert!(
+        !repo_root().join("scripts/run_oven_compiler_suite.sh").exists(),
+        "product-level compiler-suite orchestration must not live in shell"
     );
     Ok(())
 }
@@ -699,6 +1072,7 @@ fn minimal_sdk_archive_physically_excludes_non_profile_components() -> Result<()
     assert_eq!(evidence["sdk_profile"], serde_json::json!("minimal"));
     assert_eq!(evidence["sdk_component_count"], serde_json::json!(1));
     assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
+    assert_eq!(evidence["oven_loaf_count"].as_u64(), Some(2));
     let listing = Command::new("tar").arg("-tzf").arg(&archive).output()?;
     assert!(listing.status.success(), "minimal archive listing failed");
     let listing = String::from_utf8_lossy(&listing.stdout);
@@ -735,6 +1109,7 @@ fn default_sdk_archive_contains_every_default_profile_component() -> Result<(), 
     assert_eq!(evidence["sdk_profile"], serde_json::json!("default"));
     assert_eq!(evidence["sdk_component_count"], serde_json::json!(9));
     assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
+    assert_eq!(evidence["oven_loaf_count"].as_u64(), Some(2));
     let listing = Command::new("tar").arg("-tzf").arg(&archive).output()?;
     assert!(listing.status.success(), "default archive listing failed");
     let listing = String::from_utf8_lossy(&listing.stdout);
@@ -1327,6 +1702,7 @@ fn homebrew_smoke_preserves_existing_platform_archives() -> Result<(), Box<dyn s
         .env("PATH", path)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
+        .env("INCAN_HOME", tmp.path().join("incan-home"))
         .env("TOOLCHAIN_DIST", &dist)
         .env("TOOLCHAIN_GENERATED_AT", "2026-06-06T00:00:00Z")
         .env("TOOLCHAIN_HOST_TARGET", "x86_64-unknown-linux-gnu")
@@ -1411,7 +1787,7 @@ fn npm_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(),
 #[test]
 fn npm_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = ToolchainTestStaging::new()?;
-    let (fake_bin, log) = write_fake_bash_recorder(tmp.path())?;
+    let fake_bin = write_fake_bash_arg_printer(tmp.path())?;
     let current_path = std::env::var("PATH")?;
     let expected_manifest = "https://github.com/encero-systems/incan/releases/download/v0.4.0/manifest.json";
 
@@ -1420,7 +1796,6 @@ fn npm_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Bo
         .arg("--package-install")
         .arg("--dry-run")
         .env("PATH", format!("{}:{current_path}", fake_bin.display()))
-        .env("FAKE_BASH_LOG", &log)
         .env_remove("INCAN_TOOLCHAIN_MANIFEST")
         .env_remove("INCAN_SKIP_NPM_INSTALL")
         .output()?;
@@ -1431,7 +1806,7 @@ fn npm_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Bo
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_recorded_arg_pair(&log, "--manifest", expected_manifest)?;
+    assert_printed_arg_pair(&output.stdout, "--manifest", expected_manifest);
     Ok(())
 }
 
@@ -1467,7 +1842,7 @@ fn pip_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(),
 #[test]
 fn pip_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = ToolchainTestStaging::new()?;
-    let (fake_bin, log) = write_fake_bash_recorder(tmp.path())?;
+    let fake_bin = write_fake_bash_arg_printer(tmp.path())?;
     let current_path = std::env::var("PATH")?;
     let expected_manifest = "https://github.com/encero-systems/incan/releases/download/v0.4.0/manifest.json";
 
@@ -1476,7 +1851,6 @@ fn pip_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Bo
         .arg("install")
         .arg("--dry-run")
         .env("PATH", format!("{}:{current_path}", fake_bin.display()))
-        .env("FAKE_BASH_LOG", &log)
         .env_remove("INCAN_TOOLCHAIN_MANIFEST")
         .output()?;
 
@@ -1486,7 +1860,7 @@ fn pip_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Bo
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_recorded_arg_pair(&log, "--manifest", expected_manifest)?;
+    assert_printed_arg_pair(&output.stdout, "--manifest", expected_manifest);
     Ok(())
 }
 

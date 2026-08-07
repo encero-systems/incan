@@ -11,8 +11,9 @@
 //! ```
 //!
 //! The macro expands into a `const` assertion that compares the compiler version, baked in as a string literal, against
-//! the stdlib version read from `Cargo.toml` via `env!`. A mismatch becomes a **compile-time error** in the generated
-//! Rust code, surfacing the problem before anything runs.
+//! the stdlib version embedded when this crate was compiled. A mismatch becomes a **compile-time error** in the
+//! generated Rust code, surfacing the problem before anything runs. The expansion deliberately does not require Cargo
+//! environment variables in the consumer, so Oven may invoke `rustc` directly.
 
 /// The version of this stdlib crate, read from `Cargo.toml` at compile time.
 ///
@@ -59,9 +60,7 @@ macro_rules! __incan_stdlib_version_check {
             ) {
                 panic!(concat!(
                     "Incan compiler/std lib version mismatch: compiler ",
-                    $compiler_version,
-                    ", stdlib ",
-                    env!("CARGO_PKG_VERSION")
+                    $compiler_version
                 ));
             }
         };

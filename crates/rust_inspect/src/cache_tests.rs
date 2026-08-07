@@ -1,4 +1,4 @@
-use crate::cache_resolve::dependency_manifest_dir_from_lock_with_search_roots;
+use crate::cache_resolve::{dependency_manifest_dir_from_lock_with_search_roots, dependency_manifest_dir_from_manifest};
 use super::*;
 use incan_core::interop::{RustItemKind, RustTraitAssoc, RustTypeInfo, RustTypeShape, RustVisibility};
 
@@ -129,6 +129,36 @@ name = "foo_bar"
     let resolved = dependency_manifest_dir_from_lock_with_search_roots(&root, "foo_bar", &[registry_src_root])
         .ok_or_else(|| std::io::Error::other("expected Cargo.lock fallback to resolve foo-bar source dir"))?;
     assert_eq!(resolved, dep_dir);
+    Ok(())
+}
+
+/// Compiler-authored generated manifests resolve path dependencies without starting Cargo metadata discovery.
+#[test]
+fn manifest_path_dependency_resolves_renamed_package_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().join("generated_lock");
+    let dependency = tmp.path().join("source-dep");
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(dependency.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+renamed_dep = { package = "source-dep", path = "../source-dep" }
+"#,
+    )?;
+    fs::write(
+        dependency.join("Cargo.toml"),
+        "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    let dependency = dependency.canonicalize()?;
+
+    assert_eq!(dependency_manifest_dir_from_manifest(&root, "renamed_dep"), Some(dependency.clone()));
+    assert_eq!(dependency_manifest_dir_from_manifest(&root, "source_dep"), Some(dependency));
     Ok(())
 }
 

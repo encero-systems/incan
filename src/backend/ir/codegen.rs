@@ -40,6 +40,7 @@ use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::library_manifest::LibraryManifest;
+use crate::oven::loaf::OVEN_LOAF_ENV;
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_core::lang::{rust_keywords, stdlib};
 
@@ -711,7 +712,12 @@ impl<'a> IrCodegen<'a> {
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
         lowering.set_provider_plan(self.provider_plan.clone());
-        lowering.set_sdk_provider_build(env::var_os(SDK_PROVIDER_BUILD_ENV).is_some());
+        // A release seed compiles compiler-owned provider source into its sealed direct-rustc closure. Give that
+        // source the same trusted public-stdlib identity as the SDK publisher; normal Oven consumers never set this
+        // marker and therefore cannot acquire provider-only lowering behavior.
+        lowering.set_sdk_provider_build(
+            env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() || env::var_os(OVEN_LOAF_ENV).is_some(),
+        );
         lowering.set_registry_package_identity(self.registry_package_identity.clone());
     }
 
@@ -2956,16 +2962,74 @@ def main() -> None:
         let generator = ProjectGenerator::new(tmp.path(), "warning_clean_codegen", true);
         generator.generate(&code)?;
 
-        let output = Command::new("cargo")
-            .arg("check")
-            .current_dir(tmp.path())
-            .env("CARGO_NET_OFFLINE", "true")
-            .env("RUSTFLAGS", "-Dwarnings")
-            .output()?;
+        let output = if let Some(rustc) = std::env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC") {
+            let stdlib = std::env::var_os("INCAN_OVEN_COMPILER_SUITE_STDLIB")
+                .ok_or("stored Oven compiler suite did not provide its incan_stdlib artifact")?;
+            let dependency_path_count = std::env::var("INCAN_OVEN_COMPILER_SUITE_DEPENDENCY_PATH_COUNT")
+                .map_err(|_| "stored Oven compiler suite did not provide dependency search-path count")?
+                .parse::<usize>()
+                .map_err(|error| {
+                    format!("stored Oven compiler suite has an invalid dependency search-path count: {error}")
+                })?;
+            let extern_count = std::env::var("INCAN_OVEN_COMPILER_SUITE_EXTERN_COUNT")
+                .map_err(|_| "stored Oven compiler suite did not provide direct-rustc extern count")?
+                .parse::<usize>()
+                .map_err(|error| {
+                    format!("stored Oven compiler suite has an invalid direct-rustc extern count: {error}")
+                })?;
+            let mut command = Command::new(rustc);
+            command
+                .arg("--edition=2024")
+                .arg("--crate-name")
+                .arg("warning_clean_codegen")
+                .arg("--emit=metadata")
+                .arg("--out-dir")
+                .arg(tmp.path().join("oven-warning-check"))
+                .arg("-Dwarnings")
+                .env("CARGO_MANIFEST_DIR", tmp.path())
+                .env("CARGO_PKG_NAME", "warning_clean_codegen")
+                .env("CARGO_PKG_VERSION", "0.1.0");
+            for index in 0..dependency_path_count {
+                let variable = format!("INCAN_OVEN_COMPILER_SUITE_DEPENDENCY_PATH_{index}");
+                let dependency_path = std::env::var_os(&variable).ok_or_else(|| {
+                    format!("stored Oven compiler suite did not provide dependency search path {index}")
+                })?;
+                command.arg("-L").arg(format!(
+                    "dependency={}",
+                    std::path::Path::new(&dependency_path).display()
+                ));
+            }
+            let mut received_stdlib = false;
+            for index in 0..extern_count {
+                let name_variable = format!("INCAN_OVEN_COMPILER_SUITE_EXTERN_{index}_NAME");
+                let path_variable = format!("INCAN_OVEN_COMPILER_SUITE_EXTERN_{index}_PATH");
+                let crate_name = std::env::var(&name_variable).map_err(|_| {
+                    format!("stored Oven compiler suite did not provide direct-rustc extern name {index}")
+                })?;
+                let path = std::env::var_os(&path_variable).ok_or_else(|| {
+                    format!("stored Oven compiler suite did not provide direct-rustc extern path {index}")
+                })?;
+                received_stdlib |= crate_name == "incan_stdlib" && path == stdlib;
+                command
+                    .arg("--extern")
+                    .arg(format!("{crate_name}={}", std::path::Path::new(&path).display()));
+            }
+            if !received_stdlib {
+                return Err("stored Oven compiler suite direct-rustc externs omitted its incan_stdlib artifact".into());
+            }
+            command.arg(generator.crate_root_path()).output()?
+        } else {
+            Command::new("cargo")
+                .arg("check")
+                .current_dir(tmp.path())
+                .env("CARGO_NET_OFFLINE", "true")
+                .env("RUSTFLAGS", "-Dwarnings")
+                .output()?
+        };
 
         assert!(
             output.status.success(),
-            "generated Rust should pass cargo check with -Dwarnings\nstderr:\n{}\nstdout:\n{}",
+            "generated Rust should pass the configured warning check with -Dwarnings\nstderr:\n{}\nstdout:\n{}",
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
         );
@@ -3962,6 +4026,75 @@ pub def forward(value: Thing) -> None:
         assert!(
             code.contains("takes_ref(&value);"),
             "expected borrowed rust free-function arg in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_as_fd_generic_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+
+        let source = r#"
+from rust::demo import File
+from rust::demo import flock
+
+pub def retain(file: File) -> File:
+  flock(file)
+  return file
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::flock".to_string(),
+                    definition_path: Some("demo::flock".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Function(RustFunctionSig {
+                        type_params: Vec::new(),
+                        params: vec![RustParam {
+                            name: Some("fd".to_string()),
+                            type_display: "&impl AsFd".to_string(),
+                        }],
+                        return_type: "()".to_string(),
+                        is_async: false,
+                        is_unsafe: false,
+                    }),
+                },
+            )
+            .map_err(|error| std::io::Error::other(format!("seed rust-inspect function: {error}")))?;
+        tc.check_program(&ast)
+            .map_err(|errors| std::io::Error::other(format!("typecheck failed: {errors:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|error| std::io::Error::other(format!("lowering failed: {error:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|error| std::io::Error::other(format!("emit failed: {error:?}")))?;
+
+        assert!(
+            code.contains("flock(&file);"),
+            "expected an AsFd generic argument to borrow the retained file; got:\n{code}"
+        );
+        assert!(
+            code.contains("return file;"),
+            "the retained file must remain available after the AsFd call; got:\n{code}"
         );
         Ok(())
     }

@@ -1,0 +1,6 @@
+"""Minimal test-command fixture for the release Loaf envelope."""
+
+
+def test_release_core() -> None:
+    """Exercise one deterministic core-language assertion without Cargo."""
+    assert 2 + 2 == 4

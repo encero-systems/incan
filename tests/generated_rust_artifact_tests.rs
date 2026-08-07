@@ -25,17 +25,21 @@ fn incan_binary() -> PathBuf {
 }
 
 fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
-    Ok(Command::new(incan_binary())
+    let mut command = Command::new(incan_binary());
+    command
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
-        .env("INCAN_NO_BANNER", "1")
-        .env(
-            "INCAN_GENERATED_CARGO_TARGET_DIR",
-            support::generated_cargo_target_dir(),
-        )
-        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
-        .output()?)
+        .env("INCAN_NO_BANNER", "1");
+    if !support::oven_compiler_suite_is_active() {
+        command
+            .env(
+                "INCAN_GENERATED_CARGO_TARGET_DIR",
+                support::generated_cargo_target_dir(),
+            )
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
+    }
+    Ok(command.output()?)
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -70,6 +74,16 @@ fn assert_required_files(root: &Path, fixture: &str) -> Result<(), Box<dyn std::
         assert!(path.is_file(), "expected generated artifact file `{}`", path.display());
     }
     Ok(())
+}
+
+/// Normal Oven output is a direct-rustc artifact, not a generated Cargo workspace.
+fn assert_no_cargo_lock(root: &Path) {
+    let lock = root.join("Cargo.lock");
+    assert!(
+        !lock.exists(),
+        "normal Oven output must not reconstruct Cargo state at `{}`",
+        lock.display()
+    );
 }
 
 fn assert_contains_fragments(path: &Path, fixture: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -146,13 +160,14 @@ license-files = ["LICENSE"]
     assert_success(&output, "incan build application artifact");
 
     assert_required_files(&out_dir, "app_required_files.txt")?;
+    assert_no_cargo_lock(&out_dir);
     assert_contains_fragments(&out_dir.join("src").join("main.rs"), "app_main_rs.fragments")?;
 
     let cargo_toml = read_cargo_toml(&out_dir.join("Cargo.toml"))?;
     let package = toml_table_at(&cargo_toml, "package")?;
     assert_eq!(toml_string_at(package, "name")?, "artifact_app_baseline");
     assert_eq!(toml_string_at(package, "version")?, "2.3.4");
-    assert_eq!(toml_string_at(package, "edition")?, "2021");
+    assert_eq!(toml_string_at(package, "edition")?, "2024");
     assert_eq!(toml_string_at(package, "license")?, "Apache-2.0");
     assert!(
         package.get("license-file").is_none(),
@@ -229,6 +244,7 @@ license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 
     let artifact_root = project_root.join("target").join("lib");
     assert_required_files(&artifact_root, "library_required_files.txt")?;
+    assert_no_cargo_lock(&artifact_root);
     assert_contains_fragments(&artifact_root.join("src").join("lib.rs"), "library_lib_rs.fragments")?;
     assert_contains_fragments(
         &artifact_root.join("src").join("widgets.rs"),
@@ -300,6 +316,7 @@ license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
     assert_success(&consumer_build, "incan build pub dependency consumer artifact");
 
     assert_required_files(&out_dir, "consumer_required_files.txt")?;
+    assert_no_cargo_lock(&out_dir);
     assert_contains_fragments(&out_dir.join("src").join("main.rs"), "consumer_main_rs.fragments")?;
 
     let generated_toml = fs::read_to_string(out_dir.join("Cargo.toml"))?;

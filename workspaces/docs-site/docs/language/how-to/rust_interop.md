@@ -1,6 +1,6 @@
 # Rust Interoperability
 
-Incan exposes a Rust interop boundary for crates and Rust types. In the current beta, Incan builds through Cargo/rustc, so `rust::` imports can connect Incan source to Rust crates while keeping the application surface in Incan.
+Incan exposes a Rust interop boundary for crates and Rust types. In the documented Oven Alpha envelope, current beta normal commands consume receipt-bound direct-`rustc` plans; `rust::` imports can therefore connect supported sealed Rust dependencies while keeping the application surface in Incan. Unsupported dependency shapes fail explicitly rather than making Cargo a normal-command fallback.
 
 ## Importing Rust Crates
 
@@ -164,13 +164,17 @@ The inline form assumes `device`, `config`, and `report_stream_error` were prepa
 
 ## Dependency Management
 
-When you use `import rust::crate_name`, Incan automatically adds the dependency to your generated `Cargo.toml`. Dependencies are resolved using a three-tier precedence system:
+When you use `import rust::crate_name`, Incan records a Rust compatibility requirement. The requirement source uses
+this three-tier precedence system:
 
 1. **`incan.toml`** (highest priority): If the crate is configured in your project manifest, that spec is used.
 2. **Inline annotations**: If you write `import rust::foo @ "1.0"`, that version is used.
 3. **Known-good defaults**: For common crates (see table below), the compiler provides tested defaults.
 
-If none of these apply, the compiler emits an error asking you to specify a version.
+If none of these apply, the compiler emits an error asking you to specify a version. In Oven Alpha, selecting a
+requirement is separate from resolving it: normal `build`, `run`, and `test` require a compatible sealed Loaf and
+never ask Cargo to resolve a missing crate. An unsupported crate, version, feature set, build script, or procedural
+macro shape fails with explicit envelope guidance.
 
 For the bigger picture, see: [Projects today](../../tooling/explanation/projects_today.md).
 
@@ -248,7 +252,8 @@ The following crates have pre-configured versions with appropriate features. The
 | bytes      | 1.0     | -                                   |
 | itertools  | 0.12    | -                                   |
 
-You can override any of these via `incan.toml` or inline `@ "version"` annotations.
+You can override any of these requirements via `incan.toml` or inline `@ "version"` annotations. The installed
+Oven-enabled toolchain must still contain a Loaf that authorizes the chosen closure.
 
 ### Using unknown crates
 

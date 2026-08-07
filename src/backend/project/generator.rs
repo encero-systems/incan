@@ -1,11 +1,11 @@
-//! ProjectGenerator: high-level API that builds compilation plans and executes them
+//! ProjectGenerator: high-level API that renders compiler-owned Rust source projections
 //!
-//! This is the primary struct for generating runnable Rust projects from Incan code.
+//! This is the primary struct for generating inspectable Rust projections from Incan code.
 //! Its responsibilities are split across sibling modules:
 //!
 //! - **This module** — struct definition, setters, and `generate*()` methods
 //! - [`super::cargo_toml`] — `Cargo.toml` rendering (`generate_cargo_toml`, `format_dependency_spec`)
-//! - [`super::runner`] — `build()`, `run()`, `run_with_cwd()` and result types
+//! - [`super::runner`] — Cargo-lock projection support for the explicit publisher boundary
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -498,7 +498,7 @@ impl ProjectGenerator {
     }
 
     /// Release a managed target lease once compiler-owned Cargo work and local publication are complete.
-    #[cfg(feature = "cli")]
+    #[cfg(all(feature = "cli", test))]
     pub(super) fn finish_generated_cache_lease(&self) -> io::Result<()> {
         let lease = self
             .generated_cache_lease
@@ -512,12 +512,13 @@ impl ProjectGenerator {
     }
 
     /// Keep non-CLI library builds independent from cache-management implementation details.
-    #[cfg(not(feature = "cli"))]
+    #[cfg(all(not(feature = "cli"), test))]
     pub(super) fn finish_generated_cache_lease(&self) -> io::Result<()> {
         Ok(())
     }
 
     /// Return the managed compatibility identity, when the CLI selected one.
+    #[cfg(test)]
     pub(super) fn generated_cache_identity(&self) -> Option<&str> {
         #[cfg(feature = "cli")]
         {
@@ -1215,9 +1216,10 @@ impl ProjectGenerator {
                 .map(|projection| artifact_metadata_identity(&projection.artifact))
                 .collect(),
         );
-        hasher.update([u8::from(self.clear_cargo_lock), u8::from(self.include_dev_dependencies)]);
-        hasher.update(b"\0lock\0");
-        hasher.update(self.cargo_lock_payload.as_deref().unwrap_or_default().as_bytes());
+        // The shared-root identity covers emitted Rust and manifest inputs. A valid caller-local lock projection is
+        // external authority, not generated source: changing only that authority must not rewrite Cargo.toml with a
+        // different target name or invalidate a direct-Rustc Oven consumer.
+        hasher.update([u8::from(self.include_dev_dependencies)]);
         for (path, source) in sources {
             hasher.update(path.as_bytes());
             hasher.update(b"\0");
@@ -1800,6 +1802,58 @@ mod tests {
     use std::collections::HashMap;
     use std::process::Command;
 
+    /// Compile one small rebinding fixture with direct Rustc rather than making the generated Cargo graph the test
+    /// executor. The frozen Oven suite has no Cargo consumer, and the relevant invariant is that the rebound source
+    /// graph links from its declared artifact roots.
+    fn compile_rebound_fixture_with_rustc(
+        source: &Path,
+        crate_name: &str,
+        crate_type: &str,
+        output: &Path,
+        externs: &[(&str, &Path)],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let rustc = std::env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC")
+            .or_else(|| std::env::var_os("RUSTC"))
+            .unwrap_or_else(|| "rustc".into());
+        let mut command = Command::new(rustc);
+        command
+            .arg("--edition")
+            .arg("2024")
+            .arg("--crate-name")
+            .arg(crate_name)
+            .arg("--crate-type")
+            .arg(crate_type)
+            .arg(source)
+            .arg("-o")
+            .arg(output)
+            .env_remove("CARGO")
+            .env_remove("CARGO_MANIFEST_DIR")
+            .env_remove("CARGO_MANIFEST_PATH");
+        for (name, artifact) in externs {
+            let parent = artifact.parent().ok_or_else(|| {
+                format!(
+                    "direct Rustc fixture artifact for `{name}` has no dependency search directory: {}",
+                    artifact.display()
+                )
+            })?;
+            command
+                .arg("-L")
+                .arg(format!("dependency={}", parent.display()))
+                .arg("--extern")
+                .arg(format!("{name}={}", artifact.display()));
+        }
+        let result = command.output()?;
+        if result.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "direct Rustc fixture compilation for `{crate_name}` failed:\n{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into())
+    }
+
     #[test]
     fn generated_consumer_rebinds_absent_private_sdk_cache_root_issue911() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
@@ -2133,19 +2187,83 @@ mod tests {
         );
         assert!(!absent_sdk_core.exists());
         assert!(!absent_sdk_testing.exists());
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let output = Command::new(cargo)
-            .arg("check")
-            .arg("--offline")
-            .arg("--manifest-path")
-            .arg(generated.join("Cargo.toml"))
-            .env("CARGO_TARGET_DIR", workspace.path().join("cargo-target"))
-            .output()?;
-        if !output.status.success() {
+        let direct = workspace.path().join("oven-direct-rustc");
+        fs::create_dir_all(&direct)?;
+        let codecs = direct.join("libincan_issue911_codecs.rlib");
+        let core = direct.join("libincan_issue911_core.rlib");
+        let testing = direct.join("libincan_issue911_testing.rlib");
+        let external = direct.join("libincan_issue911_external.rlib");
+        let support = direct.join("libincan_issue911_support.rlib");
+        let root = direct.join("libroot_lib.rlib");
+        let consumer = direct.join("issue911_consumer");
+        compile_rebound_fixture_with_rustc(
+            &active_sdk_artifact.join("src/lib.rs"),
+            "incan_issue911_codecs",
+            "lib",
+            &codecs,
+            &[],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &active_sdk_core.join("src/lib.rs"),
+            "incan_issue911_core",
+            "lib",
+            &core,
+            &[],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &active_sdk_testing.join("src/lib.rs"),
+            "incan_issue911_testing",
+            "lib",
+            &testing,
+            &[],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &frozen_external.join("src/lib.rs"),
+            "incan_issue911_external",
+            "lib",
+            &external,
+            &[],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &projected_root.join("support/src/lib.rs"),
+            "incan_issue911_support",
+            "lib",
+            &support,
+            &[],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &projected_root.join("src/lib.rs"),
+            "root_lib",
+            "lib",
+            &root,
+            &[
+                ("incan_issue911_codecs", codecs.as_path()),
+                ("incan_issue911_core", core.as_path()),
+                ("incan_issue911_testing", testing.as_path()),
+                ("incan_issue911_external", external.as_path()),
+                ("incan_issue911_support", support.as_path()),
+            ],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &generated.join("src/main.rs"),
+            "issue911_consumer",
+            "bin",
+            &consumer,
+            &[
+                ("root_lib", root.as_path()),
+                ("incan_issue911_codecs", codecs.as_path()),
+                ("incan_issue911_core", core.as_path()),
+                ("incan_issue911_testing", testing.as_path()),
+                ("incan_issue911_external", external.as_path()),
+                ("incan_issue911_support", support.as_path()),
+            ],
+        )?;
+        let execution = Command::new(&consumer).output()?;
+        if !execution.status.success() {
             return Err(format!(
-                "rebound generated Cargo graph failed:\n{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                "rebound direct-Rustc consumer failed:\n{}{}",
+                String::from_utf8_lossy(&execution.stdout),
+                String::from_utf8_lossy(&execution.stderr)
             )
             .into());
         }
@@ -2286,19 +2404,61 @@ mod tests {
         assert!(child_shadow.join(".incan-sdk-rebound-ready").is_file());
         assert!(!absent_sdk_artifact.exists());
 
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let output = Command::new(cargo)
-            .arg("check")
-            .arg("--offline")
-            .arg("--manifest-path")
-            .arg(generated.join("Cargo.toml"))
-            .env("CARGO_TARGET_DIR", workspace.path().join("cargo-target"))
-            .output()?;
-        if !output.status.success() {
+        let rebound_child_cargo = fs::read_to_string(child_shadow.join("Cargo.toml"))?.parse::<DocumentMut>()?;
+        let runtime_relative = rebound_child_cargo
+            .get("dependencies")
+            .and_then(Item::as_table_like)
+            .and_then(|dependencies| dependencies.get("incan_issue911_runtime"))
+            .and_then(Item::as_table_like)
+            .and_then(|dependency| dependency.get("path"))
+            .and_then(Item::as_str)
+            .ok_or("nested rebound child has no runtime path dependency")?;
+        let runtime_shadow = child_shadow.join(runtime_relative);
+
+        let direct = workspace.path().join("oven-direct-rustc");
+        fs::create_dir_all(&direct)?;
+        let runtime = direct.join("libincan_issue911_runtime.rlib");
+        let child = direct.join("libissue911_child.rlib");
+        let root = direct.join("libissue911_root.rlib");
+        let consumer = direct.join("issue911_nested_consumer");
+        compile_rebound_fixture_with_rustc(
+            &runtime_shadow.join("src/lib.rs"),
+            "incan_issue911_runtime",
+            "lib",
+            &runtime,
+            &[],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &child_shadow.join("src/lib.rs"),
+            "issue911_child",
+            "lib",
+            &child,
+            &[("incan_issue911_runtime", runtime.as_path())],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &root_shadow.join("src/lib.rs"),
+            "issue911_root",
+            "lib",
+            &root,
+            &[("issue911_child", child.as_path())],
+        )?;
+        compile_rebound_fixture_with_rustc(
+            &generated.join("src/main.rs"),
+            "issue911_nested_consumer",
+            "bin",
+            &consumer,
+            &[
+                ("issue911_root", root.as_path()),
+                ("issue911_child", child.as_path()),
+                ("incan_issue911_runtime", runtime.as_path()),
+            ],
+        )?;
+        let execution = Command::new(&consumer).output()?;
+        if !execution.status.success() {
             return Err(format!(
-                "nested rebound Cargo graph failed:\n{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                "nested rebound direct-Rustc consumer failed:\n{}{}",
+                String::from_utf8_lossy(&execution.stdout),
+                String::from_utf8_lossy(&execution.stderr)
             )
             .into());
         }

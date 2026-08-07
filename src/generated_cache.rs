@@ -18,6 +18,13 @@ use crate::backend::project::generator::{GENERATED_CARGO_TARGET_DIR_ENV, cargo_c
 use crate::backend::project::runner::cargo_executable;
 use crate::lockfile::CargoFeatureSelection;
 
+/// Marker exported by a receipt-bound compiler-suite child. Its presence means that Cargo is not an execution
+/// capability and must not be probed while deriving a compatibility identity.
+const OVEN_COMPILER_SUITE_RUSTC_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_RUSTC";
+const OVEN_SEALED_CARGO_COMMAND_IDENTITY: &str = "oven-sealed-no-cargo";
+const OVEN_SEALED_CARGO_VERSION_IDENTITY: &str = "not-consulted";
+const OVEN_SEALED_CARGO_CONFIG_IDENTITY: &str = "not-consulted";
+
 pub(crate) const GENERATED_CACHE_MAX_BYTES_ENV: &str = "INCAN_GENERATED_CACHE_MAX_BYTES";
 pub(crate) const GENERATED_CACHE_MAX_ENTRY_BYTES_ENV: &str = "INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES";
 pub(crate) const GENERATED_CACHE_ENABLED_ENV: &str = "INCAN_GENERATED_CACHE";
@@ -78,6 +85,7 @@ impl Drop for GeneratedCacheLease {
 
 impl GeneratedCacheLease {
     /// Finish one compiler-owned Cargo operation before user code may continue outside the cache lease.
+    #[cfg(test)]
     pub(crate) fn finish(mut self) -> io::Result<()> {
         self.release_activity_lock();
         let result = self
@@ -249,6 +257,7 @@ pub(crate) fn resolve_generated_cargo_target(
 /// This is kept test-only so production callers cannot accidentally bypass `INCAN_HOME`, opt-out, explicit-target,
 /// or configured size-limit policy while proving higher-level lease ownership deterministically.
 #[cfg(all(test, feature = "rust_inspect"))]
+#[allow(dead_code)] // The LSP-only resolver is exercised by feature-gated integration fixtures.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_generated_cargo_target_in_cache_root(
     cache_root: &Path,
@@ -376,10 +385,17 @@ fn absolute_project_root(project_root: &Path) -> PathBuf {
     resolve_path(project_root)
 }
 
-/// Query the Rust backend command and selectors inherited by Cargo subprocesses.
+/// Query the Rust backend identity for legacy generated-project paths.
+///
+/// A receipt-bound Oven child deliberately has no Cargo consumer. In that environment the Rustc identity remains
+/// authoritative, while the Cargo portions are explicit non-process sentinels so cache keys cannot accidentally
+/// describe a Cargo probe that the consumer never performed.
 pub(crate) fn rust_backend_identity(cargo_working_dir: &Path) -> io::Result<String> {
     let command_working_dir = nearest_existing_directory(cargo_working_dir);
-    let rustc = env::var_os("RUSTC")
+    let oven_suite_rustc = env::var_os(OVEN_COMPILER_SUITE_RUSTC_ENV).filter(|value| !value.is_empty());
+    let rustc = oven_suite_rustc
+        .clone()
+        .or_else(|| env::var_os("RUSTC").filter(|value| !value.is_empty()))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "rustc".into());
     let output = Command::new(&rustc)
@@ -399,6 +415,13 @@ pub(crate) fn rust_backend_identity(cargo_working_dir: &Path) -> io::Result<Stri
             format!("{} -vV returned invalid UTF-8: {error}", rustc.to_string_lossy()),
         )
     })?;
+    if oven_suite_rustc.is_some() {
+        return Ok(format_oven_sealed_backend_identity(
+            &rustc.to_string_lossy(),
+            verbose_version.trim(),
+            rust_backend_identity_selectors(),
+        ));
+    }
     let cargo = cargo_executable();
     let cargo_output = Command::new(&cargo)
         .arg("-vV")
@@ -425,6 +448,22 @@ pub(crate) fn rust_backend_identity(cargo_working_dir: &Path) -> io::Result<Stri
         cargo_verbose_version.trim(),
         &cargo_config_identity(cargo_working_dir),
     ))
+}
+
+/// Format the explicit no-Cargo identity used by receipt-bound Oven consumers.
+fn format_oven_sealed_backend_identity(
+    rustc_command: &str,
+    rustc_verbose_version: &str,
+    selectors: impl IntoIterator<Item = (String, String)>,
+) -> String {
+    format_complete_backend_identity(
+        rustc_command,
+        rustc_verbose_version,
+        selectors,
+        OVEN_SEALED_CARGO_COMMAND_IDENTITY,
+        OVEN_SEALED_CARGO_VERSION_IDENTITY,
+        OVEN_SEALED_CARGO_CONFIG_IDENTITY,
+    )
 }
 
 /// Format the complete Rust/Cargo/config contract used by compatibility identity hashing.
@@ -1153,6 +1192,19 @@ mod tests {
         assert!(identity.contains("cargo_command=/toolchains/nightly/bin/cargo"));
         assert!(identity.contains("cargo 1.99.0"));
         assert!(identity.contains("cargo_config_identity=config-sha256"));
+    }
+
+    #[test]
+    fn sealed_oven_backend_identity_records_that_cargo_was_not_consulted() {
+        let identity = format_oven_sealed_backend_identity(
+            "/toolchains/nightly/bin/rustc",
+            "rustc 1.99.0\nhost: aarch64-apple-darwin",
+            [("RUSTFLAGS".to_string(), "-Cdebuginfo=0".to_string())],
+        );
+        assert!(identity.contains("rustc_command=/toolchains/nightly/bin/rustc"));
+        assert!(identity.contains("cargo_command=oven-sealed-no-cargo"));
+        assert!(identity.contains("cargo_verbose_version=\nnot-consulted"));
+        assert!(identity.contains("cargo_config_identity=not-consulted"));
     }
 
     #[test]

@@ -1,5 +1,4 @@
 Cargo.toml
-Cargo.lock
 src/lib.rs
 src/widgets.rs
 artifact_widgets_core.incnlib

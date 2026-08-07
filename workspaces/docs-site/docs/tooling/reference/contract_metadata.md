@@ -117,7 +117,9 @@ Projection is intentionally lossy. It preserves logical type name, field order, 
 
 ## Artifact Inspection
 
-`incan build --lib` embeds publishable model bundles and checked API metadata into the `.incnlib` manifest under `contract_metadata`. Tooling can inspect a built artifact without requiring the original source checkout:
+`incan build --lib` embeds publishable model bundles and checked API metadata into the `.incnlib` manifest under
+`contract_metadata` through its receipt-selected direct-`rustc` library path. Tooling can inspect a built artifact
+without requiring the original source checkout:
 
 ```bash
 incan build --lib

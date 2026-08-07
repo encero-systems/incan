@@ -20,6 +20,7 @@ Commands:
 - `explain` - Explain a stable diagnostic code
 - `build` - Compile to Rust and build an executable
 - `cache` - Inspect and prune Incan-managed generated-build storage
+- `oven` - Run the explicit Oven Alpha receipt, bounded-store, and native direct-rustc workflow
 - `inspect` - Inspect compiler artifacts such as generated Rust output
 - `run` - Compile and run a program
 - `fmt` - Format Incan source files
@@ -56,7 +57,7 @@ Compilation, locking, and semantic inspection commands share these Incan-owned o
 - `--all-features`: Select every public feature declared by the root package.
 - `--sdk-profile <PROFILE>`: Replace the project's base SDK profile for this invocation while preserving explicit component additions and exclusions from `[sdk]`.
 
-They are supported by `build`, `check`, `run`, `test`, and `lock`, plus the `inspect codegraph`, `inspect providers`, `inspect features`, and `inspect bindings` projections. The package-feature flags do not forward names to Cargo. Backend pass-through remains explicitly prefixed as `--cargo-features`, `--cargo-no-default-features`, and `--cargo-all-features` where supported.
+They are supported by `build`, `check`, `run`, `test`, and `lock`, plus the `inspect codegraph`, `inspect providers`, `inspect features`, and `inspect bindings` projections. The package-feature flags do not forward names to Cargo. Cargo-prefixed feature flags remain compatibility inputs only where explicitly documented; normal Oven build/run/test commands do not use them to publish a missing closure.
 
 `incan test --feature <NAME>` is a separate test-runner option for `std.testing.feature("NAME")` collection probes. Use plural `--features` for public package features.
 
@@ -155,72 +156,45 @@ incan explain INCAN-T0001 --format json
 Usage:
 
 ```text
-incan build [OPTIONS] [FILE] [OUTPUT_DIR] [-- <CARGO_PASSTHROUGH>...]
-incan build --lib [OPTIONS] [OUTPUT_DIR]
+incan build [OPTIONS] [FILE] [OUTPUT_DIR]
 ```
 
 Behavior:
 
 - Default mode compiles a source file into an executable.
-- `--lib` builds the current project as a library. In this mode, `src/lib.incn` is required and `FILE` is optional.
 - Prints the generated Rust project path (default example): `target/incan/<name>/`
-- Builds the generated Rust project and prints the binary path. Generated source and the published final binary stay under the default project `target/incan/` tree, or under the positional caller-selected `OUTPUT_DIR`. Rebuildable Cargo dependency and intermediate output uses the managed cache described below unless an explicit generated Cargo target is selected.
-- In `--lib` mode, also emits a library artifact under `target/lib/` (including `<name>.incnlib`).
+- Builds the generated Rust project with a receipt-selected, store-owned direct-`rustc` closure and prints the binary path. Generated source and the published final binary stay under the default project `target/incan/` tree, or under the positional caller-selected `OUTPUT_DIR`.
+- `--lib` builds a project library from `src/lib.incn`, emits its checked `.incnlib` manifest, and publishes
+  caller-owned debug and release `rlib` outputs through the receipt-selected direct-`rustc` plan. It never restores a
+  Cargo backend.
 
 Dependency flags:
 
 - `--features`, `--no-default-features`, `--all-features`: Select public Incan package features for this build.
 - `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this build.
-- `--offline`: Pass `--offline` to Cargo subprocesses so dependency resolution/fetching fails instead of using the network.
-- `--locked`: Require `incan.lock` to exist and be up to date. Also passes `--locked` to Cargo.
-- `--frozen`: Like `--locked`, plus passes `--frozen` to Cargo (offline + locked).
-- `--no-offline`, `--no-locked`, `--no-frozen`: Disable matching environment defaults for this invocation.
-- `--cargo-args <ARG>...`: Forward additional arguments to Cargo after policy and feature flags. Arguments after `--` are also treated as Cargo arguments.
-- `--cargo-features <FEATURES>`: Enable specific Cargo features (comma-separated).
-- `--cargo-no-default-features`: Disable default Cargo features.
-- `--cargo-all-features`: Enable all Cargo features.
-- `--release`: Explicitly request the release Cargo profile. This is the default for `incan build`, and the flag exists so first-contact flows can spell out that they are producing an optimized build.
-- `--generated-cargo-target-dir <PATH>`: Override the managed cache and use this Cargo target directory for generated Rust projects. This remains useful when CI owns the cache lifecycle explicitly.
+- `--release`: Explicitly request the release profile. This is the default for `incan build`.
 - `--report json`: Emit a versioned machine-readable build report.
 - `--report-output <PATH>`: Write the build report to a file instead of stdout.
 - `--workspace`: Build every selected workspace member.
 - `--member <NAME_OR_PATH>`: Build one or more selected workspace members.
 
-Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and leaves it untouched, but does not use its embedded `Cargo.lock` as build authority; run `incan lock` to refresh the committed lockfile intentionally. `--locked` and `--frozen` continue to reject stale locks.
+Normal build, run, and test select an immutable direct-`rustc` plan from `$INCAN_HOME/oven/store/v1`, or `~/.incan/oven/store/v1` when `INCAN_HOME` is unset. The plan selection key includes target, toolchain, profile, Incan runtime, dependency, feature, and provider inputs. The receipt remains source-strict, so a source change regenerates the caller-owned source and receipt while a compatible project can reuse the stored native closure. `incan inspect oven --receipt PATH --format json` reports the receipt/build-unit identities, selection hit or miss with reason, and physical/logical/reclaimable/lease-protected storage.
 
-Generated Cargo output from check, build, run, test, library, lock-preheat, Rust-metadata tooling, and LSP paths is shared by default below `$INCAN_HOME/cache/generated-cargo/v1`, or `~/.incan/cache/generated-cargo/v1` when `INCAN_HOME` is unset. Compatibility domains include the Incan compiler version, selected `rustc` command and verbose host/version output, selected Cargo executable and version, Rust/Cargo target and profile environment selectors, Cargo profile, canonical Cargo lock payload, Cargo feature selection, and Cargo arguments that can affect compiled artifacts. Execution-only offline, lock-enforcement, timing, verbosity, and presentation flags do not split otherwise compatible domains. Cargo fingerprints its remaining compiler and configuration inputs within each domain. This lets matching projects and worktrees reuse dependency artifacts without sharing generated Incan source or project-local rust-inspect metadata workspaces. Active domains hold advisory read leases. Before a domain is acquired, automatic least-recently-used pruning removes idle domains toward a 20 GiB default soft limit; active domains may temporarily keep usage above that limit. Each completed lease measures its domain and prunes the now-idle set toward the aggregate limit. If one domain's retained logical size exceeds the 20 GiB default safety bound, configurable with `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES`, Incan discards only that domain's rebuildable Cargo target. Cargo's target and build directories are both forced below the lifecycle-owned target root. Cargo `--target-dir` and target/build-directory `--config` passthrough are rejected in managed mode; use `--generated-cargo-target-dir` when the caller must own the target directory.
-
-For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles. Vocab companion metadata and packaged desugarer artifacts are cached by companion input fingerprint; with an explicit `--generated-cargo-target-dir`, that cache lives alongside the caller-managed target.
-
-Build reports use `schema_version: 1` and describe the successful build rather than restating terminal prose. They include the compiler version, build mode, profile, project identity, entrypoint or library root, source-file breadcrumbs, generated Rust project paths, emitted artifacts, Rust and Incan dependency summaries, Cargo policy flags, interop summary, coarse timings, and notes. Library reports include phase timings for source loading, dependency resolution, lock payload resolution, Rust metadata prewarm, typechecking, API validation, export resolution, manifest metadata, vocab metadata, Rust generation, dependency preheat, Cargo build, and total wall time. A multi-member `--report json` invocation emits one `incan.workspace.build.v1` aggregate with member-scoped nested reports. When `--report json` writes to stdout, human progress moves to stderr so tooling can parse stdout directly; when `--report-output <PATH>` is supplied, the report is written to that file and ordinary progress remains human-facing.
+Build reports use `schema_version: 1` and describe the successful Oven build rather than restating terminal prose. They include source and generated paths, emitted artifacts, dependency and provider summaries, `oven.receipt_identity`, `oven.build_unit_identity`, `oven.plan_identity`, prepare/build/total elapsed time, and a note that no normal Cargo consumer ran.
 
 Environment defaults:
 
-- `INCAN_OFFLINE=1`, `INCAN_LOCKED=1`, and `INCAN_FROZEN=1` behave like their matching flags.
-- `INCAN_FROZEN=1` implies offline and locked mode.
-- CLI flags take precedence over these defaults. Use the `--no-*` forms to disable a policy default set by the environment.
-- `INCAN_CARGO_ARGS="..."` is split on whitespace and used when no Cargo args were supplied on the CLI.
-- `INCAN_LOCK_PREHEAT=0` disables dependency preheat for lock/test and generated-library build paths.
-- `INCAN_GENERATED_CARGO_TARGET_DIR=<PATH>` is the environment form of `--generated-cargo-target-dir`; the explicit CLI flag wins when both are set.
-- `INCAN_GENERATED_CACHE=0` disables the default managed cache and restores project-local Cargo targets.
-- `INCAN_GENERATED_CACHE_MAX_BYTES=<BYTES>` changes the managed cache limit from its 20 GiB default.
-- `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES=<BYTES>` changes the per-domain managed safety bound from its 20 GiB default.
-- `INCAN_VOCAB_COMPANION_CACHE_DIR=<PATH>` overrides the vocab companion cache location when a package needs to keep that cache separate from the generated Cargo target.
+- `INCAN_OVEN_MAX_PHYSICAL_BYTES=<BYTES>` changes the Oven aggregate physical allocation limit.
+- `INCAN_OVEN_MAX_DOMAIN_PHYSICAL_BYTES=<BYTES>` and `INCAN_OVEN_MAX_DOMAIN_LOGICAL_BYTES=<BYTES>` change the one-domain admission limits.
 
 Examples:
 
 ```bash
 incan build examples/simple/hello.incn
-incan build src/main.incn --offline
-incan build src/main.incn --locked
-incan build src/main.incn --frozen
-incan build src/main.incn --features json,http --sdk-profile minimal
-incan build src/main.incn --cargo-features fancy_logging
-incan build src/main.incn -- --timings
-incan build --lib
-incan build --release
 incan build src/main.incn --report json
-incan build --lib --report json --report-output target/build-report.json
+incan build src/main.incn --features json,http --sdk-profile minimal
+incan build --release
+incan build src/main.incn --report json --report-output target/build-report.json
 ```
 
 ### `incan cache`
@@ -234,6 +208,44 @@ incan cache prune --identity SHA256 [--identity SHA256 ...] [--dry-run] [--forma
 ```
 
 `inspect` reports the cache root, configured soft limit, recursive logical file bytes, full compatibility identities, profiles, last-use timestamps, and active-use state. `prune` removes least-recently-used idle domains toward the configured or command-local limit. Repeating `--identity` instead selects exact domains and cannot be combined with `--max-bytes`. Cleanup never removes a domain with an active build lease; use `--dry-run` to preview the removable domains and logical bytes. JSON reports include numeric `schema_version: 1`; `removed_logical_bytes` is the captured logical size of successfully removed domains, and all byte fields can differ from filesystem allocation or APFS clone accounting.
+
+### `incan oven` (Alpha)
+
+Usage:
+
+```text
+incan oven import --target TRIPLE --toolchain IDENTITY [--project PATH] [--profile PROFILE]
+                  [--feature NAME ...] [--source NAME=PATH ...] [--output PATH] [--format text|json]
+incan oven plan publish --receipt PATH --manifest PATH --artifact-root PATH --domain NAME
+                         [--store PATH] [--max-physical-bytes BYTES]
+                         [--max-domain-physical-bytes BYTES] [--max-domain-logical-bytes BYTES]
+                         [--format text|json]
+incan oven store inspect|prune [--store PATH] [--max-physical-bytes BYTES]
+                               [--max-domain-physical-bytes BYTES] [--max-domain-logical-bytes BYTES]
+                               [--format text|json]
+incan inspect oven --receipt PATH [--store PATH] [--max-physical-bytes BYTES]
+                   [--max-domain-physical-bytes BYTES] [--max-domain-logical-bytes BYTES]
+                   [--format text|json]
+incan oven test --receipt PATH --plan SHA256 --rustc PATH --source PATH
+                --output PATH --crate-name NAME --source-evidence NAME --exact TEST [--exact TEST ...]
+                [--edition 2021|2024] [--store PATH] [--max-physical-bytes BYTES]
+                [--max-domain-physical-bytes BYTES] [--max-domain-logical-bytes BYTES]
+                [--format text|json]
+incan oven run --receipt PATH --plan SHA256 --rustc PATH --source PATH
+               --output PATH --crate-name NAME --source-evidence NAME
+               [--edition 2021|2024] [--store PATH] [--max-physical-bytes BYTES]
+               [--max-domain-physical-bytes BYTES] [--max-domain-logical-bytes BYTES]
+               [--format text|json] [-- ARG ...]
+incan oven legacy-cargo bake-loafs --compiler-root PATH --output PATH
+               [--suite-store PATH] --envelope release|compiler-suite --sdk-inventory PATH
+               --cargo PATH --rustc PATH [--max-physical-bytes BYTES]
+               [--max-domain-physical-bytes BYTES] [--max-domain-logical-bytes BYTES]
+               [--format text|json]
+```
+
+Oven is the Alpha normal consumer backend for `incan build`, `incan test`, and `incan run`; the `incan oven` commands expose its receipt and maintenance boundary. `import` reads frozen Cargo declarations only as compatibility evidence and does not run Cargo. The explicitly named, hidden `legacy-cargo` baker is the sole Cargo-backed compatibility publisher for supported Oven Alpha envelopes, never a normal-command fallback. `bake-loafs` creates or exactly reuses a typed release or compiler-suite envelope of content-addressed `<identity>.loaf/` directories. With `--suite-store`, the compiler-suite bake also prepares or reuses the bounded receipt-compatible suite store in the same invocation. Each `loaf.json` binds the direct-`rustc` plan, declared artifacts, compatibility, provenance, digests, and byte accounting. The explicit publisher Cargo may differ from the consumer `rustc`; the latter defines the Loaf toolchain identity. `plan publish` validates a publisher-provided direct-rustc manifest and copies its declared regular-file closure into one immutable policy-bounded entry. `test` selects that stored plan and closure with an active lease, inventories the produced native libtest binary, and rejects every `--exact` name absent from that inventory before test execution. `run` compiles and executes one caller-owned binary from the same stored closure, retains the entry lease through process completion, and forwards arguments only after `--` to that binary.
+
+The default Oven store is `$INCAN_HOME/oven/store/v1`, or `~/.incan/oven/store/v1` when `INCAN_HOME` is unset. Its everyday-developer policy retains at most 3 GiB of aggregate physical allocation, with a 1 GiB physical and 768 MiB logical allowance per compatibility domain. The aggregate allowance includes the previous committed Loaf generation while a replacement is staged, so an interrupted update does not require deleting the last valid generation. Physical allocation and logical artifact bytes—plan bytes plus copied manifest-declared files—are distinct report fields. `incan oven store inspect` also reports reclaimable and lease-protected physical allocation; `incan inspect oven --receipt PATH` adds the receipt/build-unit identity plus a `hit`, `miss`, or `ambiguous` selection reason. Environment overrides use whole-byte values: `INCAN_OVEN_MAX_PHYSICAL_BYTES`, `INCAN_OVEN_MAX_DOMAIN_PHYSICAL_BYTES`, and `INCAN_OVEN_MAX_DOMAIN_LOGICAL_BYTES`. Publication is fail-closed when a single domain exceeds its allowance or active leases prevent safe reclamation. Larger compiler-suite or publisher budgets must be explicit rather than silently expanding the normal store. See [Oven Alpha](../explanation/oven_alpha.md) for the compatibility envelope, artifact-plan schema boundary, and exclusions.
 
 ### `incan inspect rust`
 
@@ -388,7 +400,7 @@ incan inspect bindings . --format json --features sqlite --sdk-profile minimal
 Usage:
 
 ```text
-incan run [OPTIONS] [FILE] [-- <CARGO_PASSTHROUGH>...]
+incan run [OPTIONS] [FILE] [-- <PROGRAM_ARG>...]
 ```
 
 Run a file:
@@ -413,8 +425,8 @@ If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest
 
 Dependency flags (same as `build`):
 
-- `--features`, `--no-default-features`, `--all-features`, `--sdk-profile`, `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
-- `--release`: Build and run with Cargo's release profile.
+- `--features`, `--no-default-features`, `--all-features`, and `--sdk-profile` select the Incan/package compatibility inputs.
+- `--release`: Build and run with the Oven release profile.
 - `--workspace`, `--member <NAME_OR_PATH>`: Select a scope that must resolve to exactly one member. Inline `-c` code cannot select a member.
 
 ### `incan fmt`
@@ -453,13 +465,13 @@ Test runner flags:
 | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `-k <KEYWORD>`                   | Filter tests by stable test id substring                                                                 |
 | `-m <EXPR>` / `--markers <EXPR>` | Filter tests by marker expression (`and`, `or`, `not`, parentheses)                                      |
-| `-v`                             | Verbose output, including per-test timing and generated-harness preheat diagnostics                       |
+| `-v`                             | Verbose output, including per-test timing                                                                    |
 | `-x`                             | Stop on first failure                                                                                    |
 | `--slow`                         | Include slow tests (marked `@slow`)                                                                      |
 | `--strict-markers`               | Reject unknown marker names during collection unless registered in `TEST_MARKERS`                        |
-| `-j <N>` / `--jobs <N>`          | Run up to `N` generated worker batches concurrently (single-threaded libtest execution per batch)        |
+| `-j <N>` / `--jobs <N>`          | Run up to `N` Oven native-test batches concurrently (single-threaded libtest execution per batch)          |
 | `--feature <NAME>`               | Enable collection-time `std.testing.feature("NAME")` probe for `skipif` / `xfailif`                      |
-| `--timeout <DURATION>`           | Fail a test batch exceeding a duration (e.g., `250ms`, `5s`, `2m`)                                       |
+| `--timeout <DURATION>`           | Rejected by Oven Alpha until native timeout enforcement is implemented                                    |
 | `--nocapture`                    | Print child test output even for passing tests                                                           |
 | `--fail-on-empty`                | Return exit code 1 if no tests are collected                                                             |
 | `--list`                         | List collected tests after filters without executing them                                                |
@@ -474,13 +486,11 @@ Test runner flags:
 
 Dependency flags (same as `build`):
 
-- `--features`, `--no-default-features`, `--all-features`, `--sdk-profile`, `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--features`, `--no-default-features`, `--all-features`, and `--sdk-profile` select the Incan/package compatibility inputs.
 
-Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and leaves it untouched, but does not use its embedded `Cargo.lock` as test authority; run `incan lock` to refresh the committed lockfile intentionally. `--locked` and `--frozen` continue to reject stale locks.
+Oven Alpha rejects `--timeout` and `@timeout("duration")` rather than silently running without enforcement. Native timeout enforcement, including its fixture-teardown contract, remains outside the supported Alpha envelope.
 
-Timeouts apply to generated test batches. `--timeout` sets the default batch timeout and `@timeout("duration")` from `std.testing` can override the batch containing one test. Fixtures, including async fixtures, do not have separate per-fixture timeout configuration. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement terminates a worker process, remaining teardown is best-effort.
-
-Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed and streams Cargo's progress for cold preheats; `-v` also shows generated-harness planning, preparation-cache hits or misses, preheat timing, Cargo target directory, and Cargo test phase timing. Lock generation also preheats non-trivial dependency graphs into the same generated test target domain before writing `incan.lock`, so the next harness run can reuse dependency artifacts instead of discovering a cold Cargo graph on the hot path. Rust metadata prewarm reports newly warmed, reused, and skipped items; with `INCAN_RUST_INSPECT_TIMING=1`, compiler timing logs also explain whether metadata came from process state, disk cache, or a cache miss such as an absent cache file, format change, or workspace fingerprint change.
+Each batch generates a caller-owned test harness and receipt, selects exactly one prepared direct-`rustc` plan from the bounded Oven store, compiles the harness, inventories native libtest names, and then runs only verified exact names. A missing compatible plan fails as an unsupported Oven-native provider/dependency envelope; `incan test` never runs Cargo, reads a generated Cargo target directory, or tells the user to prepare Cargo state.
 
 Examples:
 
@@ -511,9 +521,6 @@ incan test -m "smoke and not slow" tests/
 
 # Validate marker names in CI
 incan test --strict-markers tests/
-
-# Enforce a default timeout
-incan test --timeout 5s tests/
 
 # Show passing-test output
 incan test --nocapture tests/
@@ -840,10 +847,10 @@ See: [Checked contract metadata](contract_metadata.md) for bundle schema, materi
 Build outputs:
 
 - **Generated Rust project**: `target/incan/<name>/`
-- **Built binary**: `target/incan/<name>/target/release/<name>`
+- **Built binary**: `target/incan/<name>/oven/release/<name>`
 - **Built library artifact (`--lib`)**: `target/lib/<name>.incnlib` plus the generated library crate output
 
-Cleaning generated source and the project-local published binary (only while no Incan or Cargo command is using it):
+Cleaning generated source and the project-local published binary (only while no Incan command is using it):
 
 ```bash
 rm -rf target/incan/

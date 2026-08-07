@@ -79,9 +79,16 @@ pub struct BuildReportProject {
 #[derive(Debug, Clone, Serialize)]
 pub struct GeneratedRustProjectReport {
     pub project_path: String,
-    pub manifest_path: String,
+    /// Generated Cargo manifest used by the explicit legacy backend only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_path: Option<String>,
     pub crate_root: String,
-    pub cargo_target_dir: String,
+    /// Legacy generated-Cargo target location, present only for the explicit legacy backend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cargo_target_dir: Option<String>,
+    /// Caller-owned direct-rustc output location for Oven Alpha normal commands.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oven_output_dir: Option<String>,
 }
 
 /// Source module that contributed to generated output.
@@ -218,6 +225,17 @@ pub struct BuildProviderReport {
     pub manifest_path: Option<String>,
 }
 
+/// Receipt and selected native closure recorded by an Oven Alpha normal build.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildOvenReport {
+    /// Complete source receipt that authorized this generated output.
+    pub receipt_identity: String,
+    /// Portable compiler/runtime/provider/dependency identity used to select a reusable native plan.
+    pub build_unit_identity: String,
+    /// Exact immutable direct-rustc plan selected from the bounded Oven store.
+    pub plan_identity: String,
+}
+
 /// Versioned build report.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildReport {
@@ -234,7 +252,12 @@ pub struct BuildReport {
     pub artifacts: Vec<BuildArtifactReport>,
     pub dependencies: BuildDependencyReport,
     pub semantic: BuildSemanticReport,
-    pub cargo: BuildCargoReport,
+    /// Cargo policy evidence is present only for an explicit legacy backend report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cargo: Option<BuildCargoReport>,
+    /// Oven selection evidence is present for normal executable builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oven: Option<BuildOvenReport>,
     pub interop: BuildInteropReport,
     pub timings_ms: BTreeMap<String, u64>,
     pub notes: Vec<String>,
@@ -273,7 +296,8 @@ pub struct BuildReportDraft {
     pub artifacts: Vec<BuildArtifactReport>,
     pub dependencies: BuildDependencyReport,
     pub semantic: BuildSemanticReport,
-    pub cargo: BuildCargoReport,
+    pub cargo: Option<BuildCargoReport>,
+    pub oven: Option<BuildOvenReport>,
     pub interop: BuildInteropReport,
     pub notes: Vec<String>,
 }
@@ -296,6 +320,7 @@ impl BuildReportDraft {
             dependencies: self.dependencies,
             semantic: self.semantic,
             cargo: self.cargo,
+            oven: self.oven,
             interop: self.interop,
             timings_ms,
             notes: self.notes,
@@ -494,9 +519,25 @@ pub(crate) fn generated_project_report(
 ) -> GeneratedRustProjectReport {
     GeneratedRustProjectReport {
         project_path: path_string(project_path),
-        manifest_path: path_string(&project_path.join("Cargo.toml")),
+        manifest_path: Some(path_string(&project_path.join("Cargo.toml"))),
         crate_root: path_string(crate_root),
-        cargo_target_dir: path_string(cargo_target_dir),
+        cargo_target_dir: Some(path_string(cargo_target_dir)),
+        oven_output_dir: None,
+    }
+}
+
+/// Build the generated-project report for an Oven Alpha direct-rustc consumer.
+pub(crate) fn oven_generated_project_report(
+    project_path: &Path,
+    crate_root: &Path,
+    oven_output_dir: &Path,
+) -> GeneratedRustProjectReport {
+    GeneratedRustProjectReport {
+        project_path: path_string(project_path),
+        manifest_path: None,
+        crate_root: path_string(crate_root),
+        cargo_target_dir: None,
+        oven_output_dir: Some(path_string(oven_output_dir)),
     }
 }
 

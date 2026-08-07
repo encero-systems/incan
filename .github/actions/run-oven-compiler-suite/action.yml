@@ -1,0 +1,75 @@
+name: Run bounded Oven compiler suite
+description: Execute a prepared receipt-bound compiler suite without a Cargo test harness.
+inputs:
+  lane:
+    description: Stable compatibility-domain suffix for this platform and toolchain lane.
+    required: true
+  publisher_toolchain:
+    description: Evidence label for the toolchain used by the earlier named baker; this action does not invoke it.
+    required: false
+    default: nightly-2026-03-24
+  consumer_toolchain:
+    description: Rustup toolchain whose rustc identities, compiles, and replays the Oven suite.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Execute the prepared receipt-bound Oven compiler suite
+      shell: bash
+      run: |
+        set -euo pipefail
+        rustc_path="$(rustup which --toolchain "${{ inputs.consumer_toolchain }}" rustc)"
+        output="$GITHUB_WORKSPACE/target/oven-compiler-suite-output"
+        store="$GITHUB_WORKSPACE/target/oven-compiler-suite-store"
+        provider_root="$(cat "$GITHUB_WORKSPACE/target/incan_test_sdk_provider_path")"
+        mkdir -p "$output/cargo-guard" "$store" "$RUNNER_TEMP/incan_oven_tmp"
+        test -s "$GITHUB_WORKSPACE/target/oven-baker-result.json"
+        cp "$GITHUB_WORKSPACE/target/oven-baker-result.json" "$output/baker-result.json"
+        read -r raw_after_baker_kib _ < <(du -sk "$store")
+        cat > "$output/cargo-guard/cargo" <<'EOF'
+        #!/bin/sh
+        printf '%s\n' "unexpected Cargo invocation: $*" >> "$CARGO_GUARD_LOG"
+        exit 97
+        EOF
+        chmod +x "$output/cargo-guard/cargo"
+        : > "$output/cargo-guard/invocations.log"
+        replay_started="$(python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)')"
+        PATH="$output/cargo-guard:$PATH" CARGO_GUARD_LOG="$output/cargo-guard/invocations.log" \
+          TMPDIR="$RUNNER_TEMP/incan_oven_tmp" CARGO_NET_OFFLINE=true \
+          INCAN_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib" \
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib" \
+          INCAN_TOOLCHAIN_CRATES_DIR="$GITHUB_WORKSPACE/crates" \
+          INCAN_SDK_INVENTORY="$provider_root/sdk-inventory.json" \
+          INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_path" \
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store" \
+          INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$GITHUB_WORKSPACE/target" \
+          INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target" \
+          "$GITHUB_WORKSPACE/target/debug/incan" oven compiler-libtests \
+            --compiler-root "$GITHUB_WORKSPACE" --rustc "$rustc_path" --feature lsp --output "$output" \
+            --store "$store" --format json \
+            > "$output/compiler-suite-stdout.json"
+        replay_finished="$(python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)')"
+        test ! -s "$output/cargo-guard/invocations.log"
+        read -r raw_final_kib _ < <(du -sk "$store")
+        du -sk "$store" "$output" > "$output/raw-disk-usage-kib.tsv"
+        jq -n \
+          --slurpfile publisher "$output/baker-result.json" \
+          --slurpfile suite "$output/compiler-suite-report.json" \
+          --arg lane "${{ inputs.lane }}" \
+          --arg publisher_toolchain "${{ inputs.publisher_toolchain }}" \
+          --arg consumer_toolchain "${{ inputs.consumer_toolchain }}" \
+          --argjson replay_ms "$((replay_finished - replay_started))" \
+          --argjson raw_after_baker_kib "$raw_after_baker_kib" \
+          --argjson raw_final_kib "$raw_final_kib" \
+          '{schema_version: 2, lane: $lane,
+            toolchains: {publisher_cargo: $publisher_toolchain, consumer_rustc: $consumer_toolchain},
+            publisher: $publisher[0], suite: $suite[0],
+            timing: {total_ms: (($publisher[0].elapsed_ms // 0) + $replay_ms), publisher_ms: ($publisher[0].elapsed_ms // 0), prepared_replay_ms: $replay_ms},
+            storage: {
+              after_baker: ($publisher[0].compiler_suite.store + {raw_disk_kib: $raw_after_baker_kib}),
+              after_replay: ($suite[0].store + {raw_disk_kib: $raw_final_kib})
+            },
+            cargo_guard: {invocation_count: 0, verified: true}}' > "$output/evidence.json"
+        jq '{lane, toolchains, timing, cargo_guard, suite: (.suite | {success, native_test_case_totals, native_test_roots, failures}), storage}' "$output/evidence.json"
+        df -h "$GITHUB_WORKSPACE"

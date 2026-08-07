@@ -37,10 +37,14 @@ fn compiler_does_not_depend_on_stdlib_in_main_dependencies() {
 }
 
 #[test]
-fn std_collections_namespace_stays_source_stdlib_only() {
+fn std_collections_namespace_declares_its_runtime_feature_without_extra_crates() {
     let ns = stdlib::find_namespace("collections").expect("std.collections should be registered");
 
-    assert_eq!(ns.feature, None, "std.collections must not activate a Cargo feature");
+    assert_eq!(
+        ns.feature,
+        Some("ordinal"),
+        "std.collections needs the incan_stdlib/ordinal runtime helpers used by its Incan source"
+    );
     assert!(
         ns.extra_crate_deps.is_empty(),
         "std.collections must not add Rust crate dependencies"
