@@ -2780,6 +2780,7 @@ fn select_most_specific_compatible_loaf(mut candidates: Vec<CompatibleLoaf>) -> 
 /// A registry-free caller has no catalog predicate to prove, so it must not materialize every compatible immutable
 /// closure merely to evaluate an empty conjunction. The final caller always materializes the chosen Loaf below,
 /// preserving complete receipt, catalog, and trusted-path validation before Rustc receives any artifact path.
+#[cfg(test)]
 fn select_compatible_loaf_with_registry_requirement(
     candidates: Vec<CompatibleLoaf>,
     registry_dependencies: &[&DependencySpec],
