@@ -5227,7 +5227,8 @@ mod tests {
     };
     use crate::oven::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
-        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, acquire_exclusive_loaf_generation_lock,
+        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction,
+        acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
     };
     use crate::oven::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
     use crate::oven::native_test::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming};
@@ -5332,13 +5333,12 @@ mod tests {
                 .unwrap_or(&generation_identity),
         );
         let mut members = Vec::new();
-        for (label, profile, action) in [
-            ("core-release", "release", "build"),
-            ("foundation-debug", "debug", "run"),
-            ("interop-debug", "debug", "run"),
-            ("interop-release", "release", "build"),
-        ] {
-            let build_unit_identity = digest_bytes(label.as_bytes());
+        for specification in loaf_envelope_specifications(OvenLoafEnvelope::Release) {
+            let action = match specification.action {
+                OvenLoafFixtureAction::Build => "build",
+                OvenLoafFixtureAction::Run => "run",
+            };
+            let build_unit_identity = digest_bytes(specification.label.as_bytes());
             let loaf = OvenLoaf {
                 schema_version: OVEN_LOAF_SCHEMA_VERSION,
                 build_unit_identity: build_unit_identity.clone(),
@@ -5351,7 +5351,7 @@ mod tests {
                     intent: OvenBuildIntent {
                         target: "fixture-target".to_string(),
                         toolchain: "rustc fixture".to_string(),
-                        profile: profile.to_string(),
+                        profile: specification.profile.to_string(),
                         features: Vec::new(),
                     },
                     dependency_search_paths: Vec::new(),
@@ -5374,10 +5374,10 @@ mod tests {
             fs::create_dir_all(&directory)?;
             fs::write(directory.join("loaf.json"), serde_json::to_vec_pretty(&loaf)?)?;
             members.push(OvenLoafEnvelopeMember {
-                label: label.to_string(),
-                profile: profile.to_string(),
+                label: specification.label.to_string(),
+                profile: specification.profile.to_string(),
                 action: action.to_string(),
-                role: OvenLoafMemberRole::CompiledClosure,
+                role: specification.role,
                 build_unit_identity,
                 loaf_identity,
                 plan_identity: digest_bytes(&serde_json::to_vec(&loaf.plan)?),
@@ -5408,7 +5408,10 @@ mod tests {
         .ok_or("matching complete envelope manifest was not reused")?;
 
         assert_eq!(report.action, "reused");
-        assert_eq!(report.reused_count, 4);
+        assert_eq!(
+            report.reused_count,
+            loaf_envelope_specifications(OvenLoafEnvelope::Release).len()
+        );
         assert_eq!(report.prepared_count, 0);
         assert!(!report.cargo_process_started);
         let json = serde_json::to_value(&report)?;
