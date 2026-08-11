@@ -2054,7 +2054,19 @@ regex = "1"
         "from pub::root_lib import answer\nfrom rust::regex import Regex\n\n\ndef main() -> None:\n  println(answer())\n",
     )?;
 
-    let (lock_output, timed_out) = run_incan_with_timeout(root.path(), &["lock"], std::time::Duration::from_secs(60))?;
+    // This fixture deliberately prepares a missing library while the Oven suite is also compiling independent roots.
+    // Keep the watchdog tight on ordinary developer hosts, but give constrained hosted runners enough headroom that
+    // scheduler contention is not misreported as a rooted-workspace correctness failure.
+    let artifact_preparation_timeout = std::thread::available_parallelism()
+        .map(|parallelism| {
+            if parallelism.get() <= 4 {
+                std::time::Duration::from_secs(3 * 60)
+            } else {
+                std::time::Duration::from_secs(90)
+            }
+        })
+        .unwrap_or_else(|_| std::time::Duration::from_secs(3 * 60));
+    let (lock_output, timed_out) = run_incan_with_timeout(root.path(), &["lock"], artifact_preparation_timeout)?;
     assert!(
         !timed_out,
         "rooted workspace lock exceeded its bounded artifact-preparation window\nstdout:\n{}\nstderr:\n{}",
