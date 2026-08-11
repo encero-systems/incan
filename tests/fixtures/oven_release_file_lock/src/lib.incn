@@ -1,0 +1,8 @@
+"""Release-envelope regression for the `std.fs.locking.FileLock` Rust-inspection source authority."""
+
+from std.fs.locking import FileLock
+
+
+pub def preserve_lock(lock: FileLock) -> FileLock:
+    """Return the owned lock guard without widening its Rust source authority."""
+    return lock

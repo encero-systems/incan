@@ -39,7 +39,7 @@ use crate::manifest::{DependencySpec, ProjectManifest};
 #[cfg(feature = "rust_inspect")]
 use crate::oven::legacy_cargo::OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV;
 #[cfg(feature = "rust_inspect")]
-use crate::oven::loaf::{OvenLoafSelection, OvenToolchainLoaf, resolve_toolchain_loaf_for_registry_sources};
+use crate::oven::loaf::{OvenToolchainLoaf, resolve_toolchain_loaf_for_registry_sources};
 #[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH;
 #[cfg(feature = "rust_inspect")]
@@ -439,7 +439,6 @@ pub(crate) fn prepare_rust_inspect_workspace(
             })?;
             let selected = resolve_toolchain_loaf_for_registry_sources(
                 &receipt,
-                OvenLoafSelection::CompilerOwnedProviderSuperset,
                 authority_request.registry_dependencies,
             )
             .map_err(|error| CliError::failure(error.to_string()))?

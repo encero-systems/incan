@@ -98,7 +98,7 @@ An exact, complete envelope match returns `reused` without launching Cargo or re
 
 The built-in Alpha envelopes are typed in Oven:
 
-- `release` contains the foundations shipped with a release toolchain;
+- `release` contains feature-unified direct-`rustc` closures whose checked registry-source authority is selected independently for the standard-library Rust facades they support;
 - `compiler-suite` contains the debug and release foundations used to run Incan's repository tests through Oven.
 
 Their source programs are checked Incan fixtures. Make and CI compose the CLI; they do not define identity, bundle contents, admission policy, or fixture source. For the compiler-suite envelope, the same baker call also prepares or reuses the bounded receipt-compatible suite store selected by the Cargo-guarded replay.
@@ -115,14 +115,14 @@ incan test
 
 Each command selects a receipt-compatible Loaf and stored direct-`rustc` plan. A changed compiler, target, SDK, feature selection, lock, or relevant source changes the identity. An unchanged clean checkout can select the same Loaf because Git status and shell-script revisions are not compatibility inputs.
 
-For a dependency-free Incan library, an explicit preparation step makes first-use store materialization visible before a build:
+For a supported Incan library, an explicit preparation step makes first-use store materialization visible before a build:
 
 ```bash
 incan oven bake --project . --format json
 incan build --lib
 ```
 
-`oven bake` records debug and release receipts, then reports `materialized` or `reused` for each selected plan. It only copies a receipt-compatible Loaf already shipped by the active toolchain through Oven's bounded, atomic, lease-aware store; it does not compile a final `rlib`, resolve a Rust graph, or launch Cargo. Generated Rust remains project-owned. Normal `build`, `run`, and `test` may also perform this controlled first materialization for a shipped compatible Loaf, but never an uncontrolled cold compatibility bake.
+`oven bake` records debug and release receipts, then reports `materialized` or `reused` for each selected plan. It only copies a receipt-compatible Loaf already shipped by the active toolchain through Oven's bounded, atomic, lease-aware store; it does not compile a final `rlib`, resolve a Rust graph, or launch Cargo. Registry-source authority for supported standard-library facades is selected independently from linkable closure selection, so source inspection never joins artifacts from different feature graphs. Generated Rust remains project-owned. Normal `build`, `run`, and `test` may also perform this controlled first materialization for a shipped compatible Loaf, but never an uncontrolled cold compatibility bake.
 
 If no compatible Loaf exists, the command stops without invoking Cargo. For a library, first try `incan oven bake --project <library-root>`; if the active toolchain has no compatible shipped Loaf, install or reinstall an Oven-enabled toolchain for the target, or remove caller-owned Rust dependencies outside the documented Alpha envelope. `bake-loafs` remains only the maintainer path for preparing a toolchain; neither normal commands nor `oven bake` run that baker automatically.
 

@@ -7,6 +7,10 @@ use std::time::{Duration, Instant};
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
 use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
+#[cfg(feature = "rust_inspect")]
+use crate::cli::commands::lock::{
+    OvenRustInspectSourceAuthorityRequest, RustInspectWorkspaceRequest, prepare_rust_inspect_workspace,
+};
 use crate::cli::prelude::ParsedModule;
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::ResolvedDependencies;
@@ -2303,10 +2307,82 @@ fn run_file_tests_batch_oven(
         return failure(error.message);
     }
     let inline_path_dependencies = oven_test_inline_dependency_specs(&resolved, &inline_imports);
+    let project_name = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
+        .unwrap_or_else(|| "incan_test".to_string());
+    let project_version = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.version.clone()))
+        .unwrap_or_else(|| "0.1.0".to_string());
+    let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
+    let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &project_root);
+    let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
+    let rustc = match resolve_active_rustc() {
+        Ok(rustc) => rustc,
+        Err(error) => return failure(error.to_string()),
+    };
+    let rustc_target = match rustc_host_target(&rustc) {
+        Ok(target) => target,
+        Err(error) => return failure(error.to_string()),
+    };
+    let rustc_toolchain = match rustc_identity(&rustc) {
+        Ok(identity) => identity,
+        Err(error) => return failure(error.to_string()),
+    };
+    let mut build_unit_inputs = match oven_test_build_unit_inputs(&provider_plan, &requirements, &resolved) {
+        Ok(inputs) => inputs,
+        Err(error) => return failure(error),
+    };
+    if let Err(error) = crate::cli::commands::build::append_oven_interop_execution_build_inputs(
+        &mut build_unit_inputs,
+        manifest.as_ref(),
+        &rustc_target,
+    ) {
+        return failure(error.message);
+    }
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_manifest_dir = {
+        let metadata_query_paths = common::collect_rust_inspect_query_paths(&dependency_modules);
+        match prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            cargo_package_name: project_name.as_str(),
+            rust_edition: None,
+            resolved: &resolved,
+            project_requirements: &requirements,
+            lock_payload: None,
+            cargo_lock_projection_root: None,
+            clear_cargo_lock: false,
+            cargo_policy_flags: Vec::new(),
+            cargo_target_dir: &project_root
+                .join("target/incan_tests")
+                .join(&dir_suffix)
+                .join("oven/rust-inspect"),
+            rust_inspect_query_paths: &metadata_query_paths,
+            prepare_when_empty: false,
+            direct_oven_inspection: true,
+            force_direct_prewarm: false,
+            oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
+                project_version: &project_version,
+                target: &rustc_target,
+                toolchain: &rustc_toolchain,
+                profile: "debug",
+                features: &feature_selection.cargo_features,
+                build_unit_inputs: &build_unit_inputs,
+                registry_dependencies: &resolved.dependencies,
+            }),
+        }) {
+            Ok(workspace) => workspace,
+            Err(error) => return failure(error.message),
+        }
+    };
     let analysis = match session.analyze_modules(
         &dependency_modules,
         #[cfg(feature = "rust_inspect")]
-        None,
+        rust_inspect_manifest_dir
+            .as_ref()
+            .map(|workspace| workspace.manifest_dir()),
     ) {
         Ok(analysis) => analysis,
         Err(analysis_failure) => return failure(analysis_failure.render_human()),
@@ -2328,14 +2404,13 @@ fn run_file_tests_batch_oven(
 
     let generation_start = Instant::now();
     let mut codegen = IrCodegen::new();
-    codegen.set_preserve_dependency_public_items(false);
+    #[cfg(feature = "rust_inspect")]
+    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+        codegen.set_rust_inspect_manifest_dir(workspace.manifest_dir().to_path_buf());
+    }
     codegen.set_provider_plan(Arc::clone(&provider_plan));
     codegen.set_stdlib_cache(analysis.stdlib_cache().clone());
     codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
-    let project_name = manifest
-        .as_ref()
-        .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
-        .unwrap_or_else(|| "incan_test".to_string());
     codegen.set_registry_package_identity(Some(project_name.clone()));
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     for module in source_modules
@@ -2352,6 +2427,11 @@ fn run_file_tests_batch_oven(
         .iter()
         .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
         .collect::<Vec<_>>();
+    // A test runner normally compiles against provider crates, where root reachability safely prunes unused public
+    // declarations. When a provider falls back to source emission, its public protocols can still construct sibling
+    // public adapter models that the test root does not name directly. Retain that implementation closure whenever
+    // such a source module is emitted; otherwise generated `std.io` methods can reference omitted iterator adapters.
+    codegen.set_preserve_dependency_public_items(!emitted_source_modules.is_empty());
     for module in &emitted_source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
@@ -2380,9 +2460,6 @@ fn run_file_tests_batch_oven(
             .collect::<HashMap<_, _>>();
         codegen.set_externally_reachable_items_by_module(reachable_by_module);
     }
-    let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
-    let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &project_root);
-    let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
     let native_output_name = native_test_output_name(&runner_crate_name, tests);
     let generated_root = project_root.join("target/incan_tests").join(&dir_suffix);
     let mut generator = ProjectGenerator::new(&generated_root, &runner_crate_name, false);
@@ -2474,34 +2551,12 @@ fn run_file_tests_batch_oven(
     let generation_elapsed = generation_start.elapsed();
 
     let receipt_start = Instant::now();
-    let rustc = match resolve_active_rustc() {
-        Ok(rustc) => rustc,
-        Err(error) => return failure(error.to_string()),
-    };
-    let rustc_target = match rustc_host_target(&rustc) {
-        Ok(target) => target,
-        Err(error) => return failure(error.to_string()),
-    };
-    let mut build_unit_inputs = match oven_test_build_unit_inputs(&provider_plan, &requirements, &resolved) {
-        Ok(inputs) => inputs,
-        Err(error) => return failure(error),
-    };
-    if let Err(error) = crate::cli::commands::build::append_oven_interop_execution_build_inputs(
-        &mut build_unit_inputs,
-        manifest.as_ref(),
-        &rustc_target,
-    ) {
-        return failure(error.message);
-    }
     let mut receipt_request = OvenGeneratedProjectRequest::new(
         &project_root,
         &runner_crate_name,
         "0.1.0",
         rustc_target,
-        match rustc_identity(&rustc) {
-            Ok(identity) => identity,
-            Err(error) => return failure(error.to_string()),
-        },
+        rustc_toolchain,
         "debug",
         Vec::new(),
     )

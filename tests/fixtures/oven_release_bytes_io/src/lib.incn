@@ -1,0 +1,8 @@
+"""Release-envelope regression for the `std.io.BytesIO` Rust-inspection source authority."""
+
+from std.io import BytesIO
+
+
+pub def oven_bytes() -> bytes:
+    """Construct and read the public standard-library byte buffer."""
+    return BytesIO(b"oven").getvalue()

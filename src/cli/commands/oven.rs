@@ -46,8 +46,8 @@ use crate::oven::legacy_cargo::{
 };
 use crate::oven::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafBakerContext,
-    OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafPreparation,
-    acquire_exclusive_loaf_generation_lock, commit_loaf_generation, loaf_directory_byte_counts,
+    OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole,
+    OvenLoafPreparation, acquire_exclusive_loaf_generation_lock, commit_loaf_generation, loaf_directory_byte_counts,
     loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes,
     prepare_loaf_from_generated_project, retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
 };
@@ -776,6 +776,7 @@ struct OvenLoafBakeEntryReport {
     label: String,
     profile: String,
     action: String,
+    role: OvenLoafMemberRole,
     result: OvenLoafPreparation,
 }
 
@@ -868,7 +869,9 @@ fn loaf_envelope_evidence(
                 },
                 "source": specification.source,
                 "manifest": specification.manifest,
-                "seals_envelope_inspection_sources": specification.seals_envelope_inspection_sources,
+                "inspection_manifest": specification.inspection_manifest,
+                "role": specification.role,
+                "retain_complete_registry_leaves": specification.retain_complete_registry_leaves,
             })
         })
         .collect::<Vec<_>>();
@@ -941,6 +944,7 @@ fn reuse_complete_loaf_envelope(
         if entry.label != specification.label
             || entry.profile != specification.profile
             || entry.action != expected_action
+            || entry.role != specification.role
         {
             return Err(CliError::failure(
                 "Loaf envelope manifest does not match its checked specification".to_string(),
@@ -960,6 +964,7 @@ fn reuse_complete_loaf_envelope(
             label: entry.label.clone(),
             profile: entry.profile.clone(),
             action: entry.action.clone(),
+            role: entry.role,
             result,
         });
     }
@@ -1217,9 +1222,12 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     })?;
     let compiler_lock = loaf_compiler_lock_path(&options.compiler_root)?;
     for specification in loaf_envelope_specifications(envelope) {
-        let inspection_packages = specification.inspection_packages().map_err(CliError::failure)?;
-        let inspection_sources: &[OvenLegacyCargoInspectionSource] = if specification.seals_envelope_inspection_sources
-        {
+        let inspection_packages = if specification.role.provides_source_authority() {
+            specification.inspection_packages().map_err(CliError::failure)?
+        } else {
+            Vec::new()
+        };
+        let inspection_sources: &[OvenLegacyCargoInspectionSource] = if specification.role.provides_source_authority() {
             &envelope_inspection_sources
         } else {
             &[]
@@ -1304,7 +1312,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 rustc: &options.rustc,
                 inspection_packages: &inspection_packages,
                 inspection_sources,
-                retain_complete_registry_leaves: specification.seals_envelope_inspection_sources,
+                retain_complete_registry_leaves: specification.retain_complete_registry_leaves,
                 limits,
             },
             receipt,
@@ -1345,6 +1353,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 OvenLoafFixtureAction::Run => "run",
             }
             .to_string(),
+            role: specification.role,
             result,
         });
     }
@@ -1375,6 +1384,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                     label: entry.label.clone(),
                     profile: entry.profile.clone(),
                     action: entry.action.clone(),
+                    role: entry.role,
                     build_unit_identity: entry.result.build_unit_identity.clone(),
                     loaf_identity: entry.result.loaf_identity.clone(),
                     plan_identity: entry.result.plan_identity.clone(),
@@ -5217,7 +5227,7 @@ mod tests {
     };
     use crate::oven::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
-        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, acquire_exclusive_loaf_generation_lock,
+        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, acquire_exclusive_loaf_generation_lock,
     };
     use crate::oven::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
     use crate::oven::native_test::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming};
@@ -5367,6 +5377,7 @@ mod tests {
                 label: label.to_string(),
                 profile: profile.to_string(),
                 action: action.to_string(),
+                role: OvenLoafMemberRole::CompiledClosure,
                 build_unit_identity,
                 loaf_identity,
                 plan_identity: digest_bytes(&serde_json::to_vec(&loaf.plan)?),

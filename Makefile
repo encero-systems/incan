@@ -403,48 +403,40 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 			> "$$smoke_root/cargo-guard/cargo"; \
 		chmod +x "$$smoke_root/cargo-guard/cargo"; \
 		: > "$$smoke_root/cargo-guard/invocations.log"; \
-		library_project="$$smoke_root/oven-project-bake"; \
-		cp -R "$(CURDIR)/tests/fixtures/oven_project_bake" "$$library_project"; \
-		PATH="$$smoke_root/cargo-guard:$$PATH" \
+		run_incan() { \
+			PATH="$$smoke_root/cargo-guard:$$PATH" \
 			INCAN_OVEN_CARGO_GUARD_LOG="$$smoke_root/cargo-guard/invocations.log" \
 			INCAN_HOME="$$smoke_root/incan-home" INCAN_NO_BANNER=1 \
+			RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" \
+			"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$@"; \
+		}; \
+		run_project_incan() { \
 			INCAN_SOURCE_ROOT="$(CURDIR)" \
 			INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
 			INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
 			INCAN_TOOLCHAIN_CRATES_DIR="$(CURDIR)/crates" \
-			RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" \
-			"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" oven bake --project "$$library_project" --format json > "$$smoke_root/oven-bake-first.json"; \
-		test "$$(grep -Fc '"action": "materialized"' "$$smoke_root/oven-bake-first.json")" -eq 2; \
-		PATH="$$smoke_root/cargo-guard:$$PATH" \
-			INCAN_OVEN_CARGO_GUARD_LOG="$$smoke_root/cargo-guard/invocations.log" \
-			INCAN_HOME="$$smoke_root/incan-home" INCAN_NO_BANNER=1 \
-			INCAN_SOURCE_ROOT="$(CURDIR)" \
-			INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
-			INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
-			INCAN_TOOLCHAIN_CRATES_DIR="$(CURDIR)/crates" \
-			RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" \
-			"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" oven bake --project "$$library_project" --format json > "$$smoke_root/oven-bake-second.json"; \
-		test "$$(grep -Fc '"action": "reused"' "$$smoke_root/oven-bake-second.json")" -eq 2; \
+			run_incan "$$@"; \
+		}; \
+		for fixture in oven_project_bake oven_release_bytes_io oven_release_file_lock; do \
+			library_project="$$smoke_root/$$fixture"; \
+			cp -R "$(CURDIR)/tests/fixtures/$$fixture" "$$library_project"; \
+			run_project_incan oven bake --project "$$library_project" --format json > "$$smoke_root/$$fixture-bake-first.json"; \
+			test "$$(grep -Fc '"action": "materialized"' "$$smoke_root/$$fixture-bake-first.json")" -eq 2; \
+			run_project_incan oven bake --project "$$library_project" --format json > "$$smoke_root/$$fixture-bake-second.json"; \
+			test "$$(grep -Fc '"action": "reused"' "$$smoke_root/$$fixture-bake-second.json")" -eq 2; \
+			(cd "$$library_project" && run_project_incan build --lib); \
+			case "$$fixture" in \
+				oven_release_bytes_io) test_source="src/test_bytes_io.incn" ;; \
+				oven_release_file_lock) test_source="src/test_file_lock.incn" ;; \
+				*) test_source="" ;; \
+			esac; \
+			if [ -n "$$test_source" ]; then (cd "$$library_project" && run_project_incan test "$$test_source"); fi; \
+		done; \
 		for command in build run test; do \
 			source="$(CURDIR)/src/oven/fixtures/release_core.incn"; \
 			if [ "$$command" = test ]; then source="$(CURDIR)/src/oven/fixtures/test_release_core.incn"; fi; \
-			PATH="$$smoke_root/cargo-guard:$$PATH" \
-				INCAN_OVEN_CARGO_GUARD_LOG="$$smoke_root/cargo-guard/invocations.log" \
-				INCAN_HOME="$$smoke_root/incan-home" INCAN_NO_BANNER=1 \
-				RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" \
-				"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$command" "$$source" >/dev/null; \
+			run_incan "$$command" "$$source"; \
 		done; \
-		(cd "$$library_project" && PATH="$$smoke_root/cargo-guard:$$PATH" \
-			INCAN_OVEN_CARGO_GUARD_LOG="$$smoke_root/cargo-guard/invocations.log" \
-			INCAN_HOME="$$smoke_root/incan-home" INCAN_NO_BANNER=1 \
-			INCAN_SOURCE_ROOT="$(CURDIR)" \
-			INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
-			INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
-			INCAN_TOOLCHAIN_CRATES_DIR="$(CURDIR)/crates" \
-			RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" \
-			"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" build --lib >/dev/null); \
-		test -f "$$library_project/target/lib/oven/debug/liboven_project_bake.rlib"; \
-		test -f "$$library_project/target/lib/oven/release/liboven_project_bake.rlib"; \
 		test ! -s "$$smoke_root/cargo-guard/invocations.log"
 
 .PHONY: test-rust-inspect  ## test - Run focused rust-inspect regression tests

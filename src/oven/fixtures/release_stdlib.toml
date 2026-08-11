@@ -1,0 +1,31 @@
+[project]
+name = "oven_release_stdlib"
+version = "0.1.0"
+
+# The release-version stdlib closure seals every registry-backed facade once per supported profile. It is both the
+# compatible direct-rustc closure and its source-inspection authority; a separate source-only bake would duplicate
+# this same Cargo resolution and compilation work.
+[rust-dependencies]
+axum = "0.8"
+blake2 = "0.10"
+blake3 = "1"
+byteorder = "1"
+bzip2 = "0.6"
+crc32fast = "1"
+encoding_rs = "0.8"
+flate2 = "1"
+inventory = "0.3"
+libm = "0.2"
+md5 = { package = "md-5", version = "0.10" }
+rand = "0.8"
+regex = "1"
+rustix = { version = "1.1", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+sha1 = "0.10"
+sha2 = "0.10"
+sha3 = "0.10"
+snap = "1"
+tempfile = "3"
+xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
+xz2 = "0.1"
+zstd = "0.13"

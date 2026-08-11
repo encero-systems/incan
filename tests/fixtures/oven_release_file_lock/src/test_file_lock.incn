@@ -1,0 +1,12 @@
+"""Test regression for the `std.fs.locking.FileLock` release-Loaf authority."""
+
+from std.fs.locking import try_exclusive
+from std.testing import assert_true
+
+
+def test_file_lock_facade_runs_from_a_sealed_release_loaf() -> None:
+    """Acquire the facade's local advisory lock without requiring a physical-device integration test."""
+    match try_exclusive("oven-release-file-lock"):
+        Ok(Some(_)) => assert_true(true)
+        Ok(None) => assert_true(false, "the disposable fixture lock must not be contended")
+        Err(error) => assert_true(false, error)

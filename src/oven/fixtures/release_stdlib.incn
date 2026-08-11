@@ -1,0 +1,27 @@
+"""Exercise the complete registry-backed standard-library release closure."""
+
+from std.async import spawn
+from std.checksum import crc32
+from std.collections import OrdinalKey
+from std.compression import Codec
+from std.compression.snappy.raw import compress as raw_snappy_compress
+from std.datetime import Date
+from std.encoding import EncodingError, base32, base58, base64, base85, bech32, hex
+from std.fs import Path
+from std.fs.locking import FileLock
+from std.hash import sha1
+from std.io import BytesIO
+from std.json import JsonValue
+from std.math import PI
+from std.regex import Regex
+from std.tempfile import TemporaryDirectory
+from std.testing import assert_true
+from std.uuid import UUID
+from std.web import App, Response
+
+
+def main() -> None:
+    """Keep the checked stdlib closure observable without opening physical-device boundaries."""
+    assert_true(Path(".").exists())
+    assert base64.b64encode(b"oven") == "b3Zlbg=="
+    assert crc32.value(b"oven") > 0

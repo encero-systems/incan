@@ -594,6 +594,7 @@ impl RustWorkspace {
             lock: Option<&OvenProjectLock>,
             authority: &OvenInspectionSourceAuthority,
             selected_features: &[String],
+            allow_unlocked_registry_dependencies: bool,
         ) -> Result<OvenProjectCrate, RustMetadataError> {
             let manifest_path = manifest_dir.join("Cargo.toml");
             let manifest = toml::from_str::<toml::Value>(&fs::read_to_string(&manifest_path)?).map_err(|error| {
@@ -711,11 +712,13 @@ impl RustWorkspace {
                             is_local_path: true,
                             features: declaration.features,
                         });
-                    } else if let Some((source_dir, features)) = registry_source_for_requirement(
-                        authority,
-                        &declaration.package,
-                        declaration.version.as_deref(),
-                    )? {
+                    } else if allow_unlocked_registry_dependencies
+                        && let Some((source_dir, features)) = registry_source_for_requirement(
+                            authority,
+                            &declaration.package,
+                            declaration.version.as_deref(),
+                        )?
+                    {
                         dependencies.push(OvenProjectDependency {
                             name: declaration.name,
                             source_dir,
@@ -761,8 +764,13 @@ impl RustWorkspace {
                     if self.feature_selections.get(&manifest_dir) == Some(&unified_features) {
                         return Ok(index);
                     }
-                    let direct_crate =
-                        crate_from_manifest(&manifest_dir, self.lock, self.authority, &unified_features)?;
+                    let direct_crate = crate_from_manifest(
+                        &manifest_dir,
+                        self.lock,
+                        self.authority,
+                        &unified_features,
+                        self.lock.is_some() || dependency_depth > 0,
+                    )?;
                     let dependencies = direct_crate.dependencies.clone();
                     self.crates[index] = direct_crate;
                     self.feature_selections.insert(manifest_dir, unified_features);
@@ -781,7 +789,13 @@ impl RustWorkspace {
                 self.indices.insert(manifest_dir.clone(), index);
                 self.feature_selections
                     .insert(manifest_dir.clone(), unified_features.clone());
-                let direct_crate = crate_from_manifest(&manifest_dir, self.lock, self.authority, &unified_features)?;
+                let direct_crate = crate_from_manifest(
+                    &manifest_dir,
+                    self.lock,
+                    self.authority,
+                    &unified_features,
+                    self.lock.is_some() || dependency_depth > 0,
+                )?;
                 let dependencies = direct_crate.dependencies.clone();
                 self.crates.push(direct_crate);
                 for dependency in dependencies {
@@ -812,7 +826,8 @@ impl RustWorkspace {
             manifest_dir,
             &[],
             // An exact lock plus sealed source authority identifies the complete runtime closure. An unlocked explicit
-            // baker fixture may inspect only its directly authorized registry edges.
+            // baker fixture may inspect its direct registry roots but must not infer an unpinned transitive registry
+            // graph from broad Cargo requirements in those roots.
             if lock.is_some() { usize::MAX } else { 1 },
         )?;
         let crates = graph
@@ -1148,6 +1163,55 @@ mod tests {
             loaded.crate_by_name("demo").is_some(),
             "rust-analyzer must expose the sealed registry crate without asking Cargo to build the graph"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn unlocked_baker_authority_does_not_infer_a_transitive_registry_version() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = tempdir()?;
+        let sealed = tempdir()?;
+        fs::create_dir_all(workspace.path().join("src"))?;
+        fs::write(
+            workspace.path().join("Cargo.toml"),
+            "[package]\nname = \"oven-unlocked-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\ndirect = \"1\"\n",
+        )?;
+        fs::write(workspace.path().join("src/main.rs"), "fn main() {}\n")?;
+
+        let mut authority = Vec::new();
+        for (name, version, dependencies) in [
+            ("direct", "1.0.0", "\n[dependencies]\ngetrandom = \">=0.3, <0.5\"\n"),
+            ("getrandom", "0.3.0", ""),
+            ("getrandom", "0.4.0", ""),
+        ] {
+            let package = sealed.path().join(format!("{name}-{version}"));
+            fs::create_dir_all(package.join("src"))?;
+            fs::write(
+                package.join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\nedition = \"2021\"\n{dependencies}"),
+            )?;
+            fs::write(package.join("src/lib.rs"), format!("pub fn {name}_api() {{}}\n"))?;
+            authority.push(OvenInspectionRegistrySource {
+                package: name.to_string(),
+                version: version.to_string(),
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: format!("{name}-{version}-checksum"),
+                features: Vec::new(),
+                source_digest: digest_oven_source_tree(&package)?,
+                source_root: package,
+            });
+        }
+        write_oven_inspection_source_authority(workspace.path(), authority)?;
+
+        let payload = RustWorkspace::oven_project_json_payload(workspace.path())?;
+        let graph: serde_json::Value = serde_json::from_slice(&payload)?;
+        let crates = graph["crates"].as_array().ok_or("direct Oven graph omitted crates")?;
+        assert_eq!(
+            crates.len(),
+            2,
+            "the root and its one directly authorized registry source must be present"
+        );
+        assert_eq!(crates[1]["display_name"], "direct");
         Ok(())
     }
 

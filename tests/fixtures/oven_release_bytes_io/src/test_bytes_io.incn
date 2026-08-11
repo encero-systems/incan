@@ -1,0 +1,10 @@
+"""Runtime regression for the `std.io.BytesIO` release-Loaf authority."""
+
+from std.io import BytesIO
+from std.testing import assert_eq
+
+
+def test_bytes_io_facade_is_available_from_a_sealed_release_loaf() -> None:
+    """Keep source inspection on the checked `byteorder` authority instead of ambient Cargo sources."""
+    buffer = BytesIO(b"oven")
+    assert_eq(buffer.getvalue(), b"oven")

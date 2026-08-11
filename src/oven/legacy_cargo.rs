@@ -7062,7 +7062,7 @@ mod tests {
     };
     use crate::oven::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelopeManifest,
-        OvenLoafEnvelopeMember,
+        OvenLoafEnvelopeMember, OvenLoafMemberRole,
     };
     use crate::oven::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactManifest, OvenRustcSupportingArtifact,
@@ -8248,6 +8248,7 @@ checksum = "selected"
                 label: name.to_string(),
                 profile: profile.to_string(),
                 action: "run".to_string(),
+                role: OvenLoafMemberRole::CompiledClosure,
                 build_unit_identity: format!("sha256:{name}"),
                 loaf_identity,
                 plan_identity: crate::oven::digest_bytes(&serde_json::to_vec(&loaf.plan)?),
@@ -8317,6 +8318,7 @@ checksum = "selected"
                 label: "fixture".to_string(),
                 profile: "debug".to_string(),
                 action: "run".to_string(),
+                role: OvenLoafMemberRole::CompiledClosure,
                 build_unit_identity: "sha256:fixture".to_string(),
                 loaf_identity,
                 plan_identity: crate::oven::digest_bytes(&serde_json::to_vec(&loaf.plan)?),

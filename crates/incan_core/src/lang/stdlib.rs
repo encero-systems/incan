@@ -464,7 +464,18 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "fs",
         feature: None,
-        extra_crate_deps: &[],
+        extra_crate_deps: &[
+            StdlibExtraCrateDep {
+                crate_name: "encoding_rs",
+                source: StdlibExtraCrateSource::Version("0.8"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "rustix",
+                source: StdlibExtraCrateSource::Version("1.1"),
+                features: &["fs"],
+            },
+        ],
         submodules: &["path", "file", "locking", "metadata", "glob", "prelude"],
         typechecker_only: false,
     },
@@ -645,7 +656,11 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "tempfile",
         feature: None,
-        extra_crate_deps: &[],
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "tempfile",
+            source: StdlibExtraCrateSource::Version("3"),
+            features: &[],
+        }],
         submodules: &[],
         typechecker_only: false,
     },
@@ -1178,8 +1193,16 @@ mod tests {
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
         assert_eq!(fs_ns.and_then(|ns| ns.feature), None);
+        assert_eq!(
+            fs_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
+            Some(vec!["encoding_rs", "rustix"])
+        );
         assert_eq!(tempfile_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(tempfile_ns.and_then(|ns| ns.feature), None);
+        assert_eq!(
+            tempfile_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
+            Some(vec!["tempfile"])
+        );
         assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
         assert_eq!(
             math_ns
