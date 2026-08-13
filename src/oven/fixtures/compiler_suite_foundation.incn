@@ -1,33 +1,89 @@
-"""Select the broad compiler-suite provider and declared-Rust-dependency closure with observable checks."""
+"""Select one complete standard-provider closure for compiler-suite execution."""
 
-from std.async import spawn
-from std.async.channel import Sender
-from std.async.race import RaceArm
-from std.async.sync import Mutex
-from std.async.task import spawn_blocking
-from std.async.time import Duration
-from std.collections import OrdinalKey
-from std.derives.collection import FallibleIterator
-from std.environ import get
-from std.fs import Path
-from std.fs.glob import matches
-from std.fs.locking import FileLock
-from std.fs.path import _as_path
-from std.io import BytesIO
-from std.hash import sha1
-from std.json import JsonValue
-from std.registry import Registry
-from std.serde import json
-from std.serde.json import Serialize
-from std.testing import assert_true
-from std.traits import TryFrom
-from std.traits.callable import Callable1
-from std.traits.convert import Into
-from std.traits.indexing import Index
-from std.web import App, Response
-from std.web.request import Query
-from std.web.routing import GET, route
 import std.async
+import std.async.channel
+import std.async.race
+import std.async.sync
+import std.async.task
+import std.async.time
+import std.capabilities
+import std.checksum
+import std.collections
+import std.compression
+import std.compression._auto
+import std.compression._core as compression_core
+import std.compression.bz2
+import std.compression.deflate
+import std.compression.gzip
+import std.compression.lzma
+import std.compression.snappy
+import std.compression.snappy.raw
+import std.compression.zlib
+import std.compression.zstd
+import std.datetime
+import std.datetime.civil
+import std.datetime.civil.intervals
+import std.datetime.civil.naive
+import std.datetime.civil.offset
+import std.datetime.error
+import std.datetime.runtime
+import std.derives.collection
+import std.derives.comparison
+import std.derives.copying
+import std.derives.string
+import std.encoding
+import std.encoding._shared
+import std.encoding.base32
+import std.encoding.base58
+import std.encoding.base64
+import std.encoding.base85
+import std.encoding.bech32
+import std.encoding.hex
+import std.environ
+import std.fs.file
+import std.fs
+import std.fs.glob
+import std.fs.locking
+import std.fs.metadata
+import std.fs.path
+import std.graph
+import std.hash
+import std.hash._core as hash_core
+import std.hash._streaming
+from std.interop import c
+import std.io
+import std.json
+import std.logging
+import std.math
+import std.prelude
+import std.reflection
+import std.regex
+import std.regex._core as regex_core
+import std.regex._replacement
+import std.regex.types
+import std.registry
+import std.result
+import std.serde.json as serde_json_module
+import std.serde
+import std.telemetry
+import std.telemetry.core
+import std.tempfile
+import std.testing
+import std.this
+import std.traits.callable
+import std.traits.convert
+import std.traits.error as traits_error
+import std.traits.indexing
+import std.traits.ops
+import std.traits
+import std.uuid
+import std.web.app
+import std.web
+import std.web.macros
+import std.web.request
+import std.web.response
+import std.web.routing
+from std.web import route
 from rust::bitflags import bitflags
 from rust::rand import Rng, thread_rng
 from rust::semver import Version
@@ -35,19 +91,18 @@ from rust::serde_json import Value
 from rust::uuid import Uuid
 
 
-@route("/oven-loaf", methods=[GET])
-async def oven_loaf_route() -> Response:
-    """Provide one checked web-routing surface for the foundation Loaf."""
-    return Response.ok()
+@route("/oven-loaf-provider")
+async def oven_loaf_provider_route() -> str:
+    """Require the web proc-macro artifact in the sealed compiler-suite closure."""
+    return "oven"
 
 
 def main() -> None:
-    """Verify filesystem and declared Rust interop without relying on ambient Cargo state."""
-    assert_true(Path(".").exists())
+    """Keep direct Rust leaves reachable without making a scenario-shaped closure."""
     version = Version.new(1, 2, 3).to_string()
-    assert_true(version == "1.2.3")
+    assert version == "1.2.3"
     identifier = Uuid.new_v4().to_string()
-    assert_true(len(identifier) > 0)
+    assert len(identifier) > 0
     mut generator = thread_rng()
     roll = generator.gen_range(1..2)
-    assert_true(roll == 1)
+    assert roll == 1

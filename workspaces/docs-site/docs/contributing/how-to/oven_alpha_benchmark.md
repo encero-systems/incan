@@ -1,14 +1,24 @@
 # Oven Alpha benchmark protocol
 
-Use this protocol to measure the DX-recovery lane: a compiler-shipped Loaf's first materialization into an empty developer store, then repeated normal Oven `build`, `run`, or `test` commands. It is separate from generated-program runtime benchmarks. The measured normal commands and prepared compiler-suite replay run with Cargo guarded out; only an explicitly separated cold `legacy_cargo` Loaf bake may use Cargo.
+Use this protocol to measure the DX-recovery lane: explicit release-envelope preparation into an empty developer
+environment, then repeated normal Oven `build`, `run`, or `test` commands. It is separate from generated-program
+runtime benchmarks. The measured normal commands and prepared compiler-suite replay run with Cargo guarded out; only
+an explicit `incan oven bake` miss or the separately named compiler-suite publisher may use Cargo.
 
-The harness is deliberately strict. It starts with an empty `INCAN_HOME`, records the first normal command (which materializes a verified compiler-shipped Loaf and produces the caller-owned output), then records unchanged normal-command repeats. The first command is not labelled warm. A required failing `cargo` executable is probed to confirm that it exits with status 97, then prepended to `PATH`; a successful normal stage therefore proves that it did not launch Cargo.
+The harness is deliberately strict. It starts with an empty `INCAN_HOME`, records an explicit `incan oven bake` where
+the workload needs preparation, records the first normal command, then records unchanged normal-command repeats.
+The first command is not labelled warm. A required failing `cargo` executable is probed to confirm that it exits with
+status 97, then prepended to `PATH`; a successful normal stage therefore proves that it did not launch Cargo.
 
 ## Reference-machine requirements
 
 Run the same supported workload on one documented macOS machine and one documented Linux machine. Record the checkout revision, release archive/artifact identity, `incan --version`, OS/architecture, exact source fixture and digest, profile, storage limits, and whether the store started empty. Keep the generated `report.json` and per-phase logs with the release evidence. The harness requires an archive or CI-artifact identity rather than silently treating an arbitrary local binary as a comparable measurement.
 
-The documented Alpha envelope is intentionally finite. At present the release archive ships four Loafs: a release core closure; a debug foundation closure for `std.testing`, `std.fs`, and `std.json` (which may satisfy a narrower compatible debug-core request); and debug and release closures for the checked `std.interop` capability. An unsupported provider/dependency closure must fail explicitly; do not turn the benchmark into a manual `legacy_cargo` publication to make it pass.
+The documented Alpha envelope is intentionally finite. The release archive ships one complete standard-library Loaf
+family with two profile variants: debug and release. Each immutable variant contains the checked full
+standard-library/provider closure, its direct-`rustc` plan, sealed registry-source authority, provenance, digests,
+and byte accounting. An unsupported provider/dependency closure must fail explicitly or be prepared through the
+public `incan oven bake` boundary; do not invoke its hidden publisher directly to make a benchmark pass.
 
 ## Run a guarded test workload
 

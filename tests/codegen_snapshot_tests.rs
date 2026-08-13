@@ -404,7 +404,7 @@ fn generate_rust_with_vocab_wasm_desugaring(source: &str) -> String {
 }
 
 /// Generate Rust from source desugared through a helper-backed vocab WASM artifact.
-fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> String {
+fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str, keyword_names: &[&str]) -> String {
     use incan::frontend::library_manifest_index::{
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
@@ -543,12 +543,15 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
             activation: incan_vocab::KeywordActivation::OnImport {
                 namespace: "query.dsl".to_string(),
             },
-            keywords: vec![incan_vocab::KeywordSpec {
-                name: "where".to_string(),
-                surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
-                compound_tokens: Vec::new(),
-                placement: incan_vocab::KeywordPlacement::TopLevel,
-            }],
+            keywords: keyword_names
+                .iter()
+                .map(|name| incan_vocab::KeywordSpec {
+                    name: (*name).to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                })
+                .collect(),
             valid_decorators: Vec::new(),
         }],
         dsl_surfaces: Vec::new(),
@@ -661,8 +664,21 @@ fn test_vocab_block_desugaring_codegen() {
 #[test]
 fn test_vocab_helper_backed_desugaring_codegen() {
     let source = "import pub::query\n\ndef main() -> None:\n  where true:\n    pass\n";
-    let rust_code = generate_rust_with_helper_backed_vocab_wasm_desugaring(source);
+    let rust_code = generate_rust_with_helper_backed_vocab_wasm_desugaring(source, &["where"]);
     insta::assert_snapshot!("vocab_helper_backed_desugaring", rust_code);
+}
+
+#[test]
+fn test_equivalent_helper_backed_keywords_codegen_identically() {
+    let where_source = "import pub::query\n\ndef main() -> None:\n  where true:\n    pass\n";
+    let screen_source = "import pub::query\n\ndef main() -> None:\n  screen true:\n    pass\n";
+
+    let where_rust = generate_rust_with_helper_backed_vocab_wasm_desugaring(where_source, &["where", "screen"]);
+    let screen_rust = generate_rust_with_helper_backed_vocab_wasm_desugaring(screen_source, &["where", "screen"]);
+    assert_eq!(
+        where_rust, screen_rust,
+        "equivalent helper-backed keywords must generate identical Rust"
+    );
 }
 
 #[test]

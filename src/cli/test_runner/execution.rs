@@ -1059,8 +1059,9 @@ fn absolute_project_root(path: &Path) -> PathBuf {
 ///
 /// Prefer conventional package anchors like `tests/` or `src/` so a file such as
 /// `/repo/tests/test_cwd.incn` resolves its runtime cwd to `/repo`, not `/repo/tests`.
-/// If no conventional anchor is present, fall back to the caller cwd when the test
-/// file lives underneath it; otherwise use the test file's parent directory.
+/// An unanchored file owns its containing directory: inheriting an enclosing caller
+/// cwd would turn implementation paths such as `target/ci-nonroot/tmp` into Rust
+/// module segments, where `ci-nonroot` is not a valid identifier.
 fn infer_project_root_without_manifest(test_path: &Path) -> PathBuf {
     let absolute_test_path = if test_path.is_absolute() {
         test_path.to_path_buf()
@@ -1079,13 +1080,6 @@ fn infer_project_root_without_manifest(test_path: &Path) -> PathBuf {
             && let Some(parent) = ancestor.parent()
         {
             return parent.to_path_buf();
-        }
-    }
-
-    if let Ok(cwd) = std::env::current_dir() {
-        let cwd = fs::canonicalize(&cwd).unwrap_or(cwd);
-        if absolute_test_path.starts_with(&cwd) {
-            return cwd;
         }
     }
 
@@ -2603,13 +2597,13 @@ fn run_file_tests_batch_oven(
     // ordinary caller dependencies such as serde_json.
     let full_artifact_plan = match &plan_selection {
         OvenTestPlanSelection::Stored(selected) => &selected.artifact_plan,
-        OvenTestPlanSelection::CompilerSuiteNative(native) => &native.artifact_plan,
+        OvenTestPlanSelection::ToolchainLoaf(native) => &native.artifact_plan,
     };
     let artifact_plan = match &plan_selection {
         OvenTestPlanSelection::Stored(selected) => {
             trusted_artifact_plan_for_source_evidence(&selected.artifact_plan, &selected.artifacts, "generated-root")
         }
-        OvenTestPlanSelection::CompilerSuiteNative(native) => {
+        OvenTestPlanSelection::ToolchainLoaf(native) => {
             trusted_artifact_plan_for_source_evidence(&native.artifact_plan, &native.artifacts, "generated-root")
         }
     };
@@ -2627,7 +2621,7 @@ fn run_file_tests_batch_oven(
         OvenTestPlanSelection::Stored(selected) => selected
             .artifacts
             .registry_leaf_authority(&selected.artifact_root, &selected.artifact_plan),
-        OvenTestPlanSelection::CompilerSuiteNative(native) => native
+        OvenTestPlanSelection::ToolchainLoaf(native) => native
             .artifacts
             .registry_leaf_authority(&native.artifact_root, &native.artifact_plan),
     };
@@ -2651,7 +2645,7 @@ fn run_file_tests_batch_oven(
                     Err(error) => return failure(error.message),
                 }
             }
-            OvenTestPlanSelection::CompilerSuiteNative(native) => {
+            OvenTestPlanSelection::ToolchainLoaf(native) => {
                 match crate::cli::commands::build::rematerialize_caller_owned_libraries(
                     &provider_plan,
                     "debug",
@@ -2728,7 +2722,7 @@ fn run_file_tests_batch_oven(
                 prefer_dynamic: false,
             })
         }
-        OvenTestPlanSelection::CompilerSuiteNative(native) => {
+        OvenTestPlanSelection::ToolchainLoaf(native) => {
             let mut artifact_plan = match trusted_artifact_plan_for_source_evidence(
                 &native.artifact_plan,
                 &native.artifacts,
@@ -3288,6 +3282,23 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
         assert_ne!(flat, nested);
         assert!(flat.starts_with("a_b_"));
         assert!(nested.starts_with("a_b_"));
+    }
+
+    #[test]
+    fn manifestless_test_below_target_directory_owns_its_parent_root() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let test_file = workspace.path().join("target/ci-nonroot/tmp/fixture/test_a.incn");
+        let parent = test_file.parent().ok_or("test fixture should have a parent")?;
+        fs::create_dir_all(parent)?;
+        fs::write(&test_file, "def test_a() -> None:\n    pass\n")?;
+        let expected_root = fs::canonicalize(parent)?;
+
+        assert_eq!(
+            infer_project_root_without_manifest(&test_file),
+            expected_root,
+            "a manifest-less fixture below a caller target directory must not inherit that caller as its project root"
+        );
+        Ok(())
     }
 
     #[test]

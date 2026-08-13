@@ -126,7 +126,7 @@ pub struct OvenCompilerSuiteRequest {
     toolchain: String,
     profile: String,
     features: Vec<String>,
-    loaf_envelope_identity: Option<String>,
+    loaf_compatibility_identity: Option<String>,
 }
 
 impl OvenGeneratedProjectRequest {
@@ -206,18 +206,18 @@ impl OvenCompilerSuiteRequest {
             toolchain: toolchain.into(),
             profile: profile.into(),
             features,
-            loaf_envelope_identity: None,
+            loaf_compatibility_identity: None,
         }
     }
 
-    /// Bind the compiler self-suite to the exact committed Loaf generation its nested commands consume.
+    /// Bind the compiler self-suite to the compatible committed Loaf member set its nested commands consume.
     ///
-    /// This is a reusable build-unit input rather than source evidence: changing the compiler-suite Loaf envelope
-    /// invalidates the stored suite and its compiler-data partitions, while ordinary Rust source edits can continue
-    /// to reuse the same expensive dependency foundation.
+    /// This reusable build-unit input changes when a sealed member closure or direct-Rustc plan changes. It excludes
+    /// envelope publication evidence, so an otherwise irrelevant compiler executable rebuild does not invalidate the
+    /// lock/toolchain-bound compiler-suite foundation.
     #[must_use]
-    pub fn with_loaf_envelope_identity(mut self, identity: impl Into<String>) -> Self {
-        self.loaf_envelope_identity = Some(identity.into());
+    pub fn with_loaf_compatibility_identity(mut self, identity: impl Into<String>) -> Self {
+        self.loaf_compatibility_identity = Some(identity.into());
         self
     }
 }
@@ -553,8 +553,8 @@ pub fn receipt_native_compiler_suite(request: &OvenCompilerSuiteRequest) -> Resu
     build_unit_inputs.insert("compiler-cargo-manifest".to_string(), cargo_manifest_digest.clone());
     build_unit_inputs.insert("compiler-cargo-lock".to_string(), cargo_lock_digest.clone());
     build_unit_inputs.insert("compiler-suite-plan".to_string(), compiler_plan_digest);
-    if let Some(identity) = &request.loaf_envelope_identity {
-        build_unit_inputs.insert("compiler-loaf-envelope".to_string(), identity.clone());
+    if let Some(identity) = &request.loaf_compatibility_identity {
+        build_unit_inputs.insert("compiler-loaf-compatibility".to_string(), identity.clone());
     }
     let mut supplemental_digests = BTreeMap::from([
         (
@@ -1427,15 +1427,15 @@ mod tests {
         let topology_changed = receipt_native_compiler_suite(&request())?;
         assert_ne!(changed.build_unit_identity, topology_changed.build_unit_identity);
 
-        let first_loaf_generation = receipt_native_compiler_suite(
-            &request().with_loaf_envelope_identity(digest_bytes(b"compiler-suite-generation-one")),
+        let first_loaf_compatibility = receipt_native_compiler_suite(
+            &request().with_loaf_compatibility_identity(digest_bytes(b"compiler-suite-members-one")),
         )?;
-        let next_loaf_generation = receipt_native_compiler_suite(
-            &request().with_loaf_envelope_identity(digest_bytes(b"compiler-suite-generation-two")),
+        let next_loaf_compatibility = receipt_native_compiler_suite(
+            &request().with_loaf_compatibility_identity(digest_bytes(b"compiler-suite-members-two")),
         )?;
         assert_ne!(
-            first_loaf_generation.build_unit_identity, next_loaf_generation.build_unit_identity,
-            "a new committed Loaf generation must invalidate the suite and its toolchain-data partitions"
+            first_loaf_compatibility.build_unit_identity, next_loaf_compatibility.build_unit_identity,
+            "a changed compatible Loaf member set must invalidate the suite and its toolchain-data partitions"
         );
         Ok(())
     }

@@ -594,6 +594,40 @@ fn marker_expr_matches(test: &TestInfo, tokens: &[MarkerToken]) -> Result<bool, 
     MarkerExprParser::parse(tokens, &marker_names(test))
 }
 
+/// Retain collected tests selected by the CLI's keyword, slow-test, and marker rules.
+///
+/// This is deliberately pure: collection and execution remain responsible for their
+/// own I/O, while selection rules can be covered without rebuilding a generated test
+/// project for every boolean marker combination.
+fn filter_collected_tests(
+    tests: Vec<TestInfo>,
+    filter: Option<&str>,
+    include_slow: bool,
+    marker_tokens: Option<&[MarkerToken]>,
+    stable_id_root: &Path,
+) -> Vec<TestInfo> {
+    tests
+        .into_iter()
+        .filter(|test| {
+            if let Some(keyword) = filter
+                && !stable_test_id(test, stable_id_root).contains(keyword)
+            {
+                return false;
+            }
+            if !include_slow && test.markers.contains(&TestMarker::Slow) {
+                return false;
+            }
+            if let Some(tokens) = marker_tokens {
+                match marker_expr_matches(test, tokens) {
+                    Ok(true) => {}
+                    Ok(false) | Err(_) => return false,
+                }
+            }
+            true
+        })
+        .collect()
+}
+
 /// Return `conftest.incn` files that apply to a conventional test file.
 fn applicable_conftest_files(test_file: &Path, root: &Path) -> Vec<PathBuf> {
     if !test_file
@@ -1221,26 +1255,13 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         .map_or_else(BTreeSet::new, |tokens| marker_expr_names(tokens));
     validate_markers(&all_tests, &known_markers, strict_markers, &marker_expr_names).map_err(CliError::failure)?;
 
-    let mut filtered_tests: Vec<TestInfo> = all_tests
-        .into_iter()
-        .filter(|t| {
-            if let Some(keyword) = filter
-                && !stable_test_id(t, &stable_id_root).contains(keyword)
-            {
-                return false;
-            }
-            if !include_slow && t.markers.contains(&TestMarker::Slow) {
-                return false;
-            }
-            if let Some(tokens) = marker_tokens.as_ref() {
-                match marker_expr_matches(t, tokens) {
-                    Ok(true) => {}
-                    Ok(false) | Err(_) => return false,
-                }
-            }
-            true
-        })
-        .collect();
+    let mut filtered_tests = filter_collected_tests(
+        all_tests,
+        filter,
+        include_slow,
+        marker_tokens.as_deref(),
+        &stable_id_root,
+    );
 
     if filtered_tests.is_empty() {
         eprintln!("No tests collected");
@@ -1592,6 +1613,104 @@ mod tests {
         assert!(expanded[2].parametrize_call.is_some());
         assert_eq!(expanded[3].function_name, "test_another");
         assert!(expanded[3].parametrize_call.is_none());
+    }
+
+    #[test]
+    fn filtered_collection_keeps_keyword_slow_and_marker_selection_independent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tests = vec![
+            make_test("test_api", vec![TestMarker::Mark("api".to_string())]),
+            make_test(
+                "test_api_slow",
+                vec![TestMarker::Mark("api".to_string()), TestMarker::Slow],
+            ),
+            make_test("test_db", vec![TestMarker::Mark("db".to_string())]),
+        ];
+        let root = Path::new(".");
+
+        let default_selection = filter_collected_tests(tests.clone(), None, false, None, root);
+        assert_eq!(
+            default_selection
+                .iter()
+                .map(|test| test.function_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["test_api", "test_db"],
+            "default collection must exclude only slow tests"
+        );
+
+        let keyword_selection = filter_collected_tests(tests.clone(), Some("test_api_slow"), true, None, root);
+        assert_eq!(
+            keyword_selection
+                .iter()
+                .map(|test| test.function_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["test_api_slow"],
+            "keyword selection must remain independent of slow-test selection"
+        );
+
+        let tokens = tokenize_marker_expr("api and not slow")?;
+        let marker_selection = filter_collected_tests(tests, None, true, Some(&tokens), root);
+        assert_eq!(
+            marker_selection
+                .iter()
+                .map(|test| test.function_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["test_api"],
+            "marker selection must retain the non-slow API case only"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn marker_expression_parser_and_strict_validation_cover_collection_errors() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let api_test = make_test("test_api", vec![TestMarker::Mark("api".to_string())]);
+        let tokens = tokenize_marker_expr("api and not slow")?;
+        assert!(marker_expr_matches(&api_test, &tokens)?);
+
+        let known_markers = std::collections::BTreeSet::from(["api".to_string()]);
+        validate_markers(&[api_test], &known_markers, true, &marker_expr_names(&tokens))?;
+
+        let unknown_tokens = tokenize_marker_expr("missing")?;
+        let Err(error) = validate_markers(&[], &known_markers, true, &marker_expr_names(&unknown_tokens)) else {
+            return Err("strict marker validation accepted an unknown marker".into());
+        };
+        assert!(error.contains("unknown marker `missing`"));
+
+        let malformed_tokens = tokenize_marker_expr("api and (")?;
+        let Err(error) = MarkerExprParser::parse(&malformed_tokens, &std::collections::BTreeSet::new()) else {
+            return Err("marker parser accepted an unclosed expression".into());
+        };
+        assert!(error.contains("expected marker name or parenthesized expression"));
+        Ok(())
+    }
+
+    #[test]
+    fn stable_test_ids_are_root_relative_for_file_and_directory_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let conventional_path = project.path().join("test_runner_surface.incn");
+        std::fs::write(&conventional_path, "def test_beta() -> None:\n    pass\n")?;
+        let mut conventional = make_test("test_beta", vec![]);
+        conventional.file_path = conventional_path.clone();
+        assert_eq!(
+            stable_test_id(&conventional, &stable_id_root(&conventional_path)),
+            "test_runner_surface.incn::test_beta"
+        );
+
+        let inline_path = project.path().join("src/main.incn");
+        let inline_parent = inline_path.parent().ok_or("inline source path has no parent")?;
+        std::fs::create_dir_all(inline_parent)?;
+        std::fs::write(
+            &inline_path,
+            "module tests:\n    def decorated_inline_case() -> None:\n        pass\n",
+        )?;
+        let mut inline = make_test("decorated_inline_case", vec![TestMarker::Test]);
+        inline.file_path = inline_path;
+        assert_eq!(
+            stable_test_id(&inline, &stable_id_root(project.path())),
+            "src/main.incn::decorated_inline_case"
+        );
+        Ok(())
     }
 
     #[test]

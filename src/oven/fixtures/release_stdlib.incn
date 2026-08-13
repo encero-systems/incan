@@ -1,27 +1,97 @@
-"""Exercise the complete registry-backed standard-library release closure."""
+"""Select the full release-version standard-provider closure once per profile."""
 
-from std.async import spawn
-from std.checksum import crc32
-from std.collections import OrdinalKey
-from std.compression import Codec
-from std.compression.snappy.raw import compress as raw_snappy_compress
-from std.datetime import Date
-from std.encoding import EncodingError, base32, base58, base64, base85, bech32, hex
-from std.fs import Path
-from std.fs.locking import FileLock
-from std.hash import sha1
-from std.io import BytesIO
-from std.json import JsonValue
-from std.math import PI
-from std.regex import Regex
-from std.tempfile import TemporaryDirectory
-from std.testing import assert_true
-from std.uuid import UUID
-from std.web import App, Response
+import std.async
+import std.async.channel
+import std.async.race
+import std.async.sync
+import std.async.task
+import std.async.time
+import std.capabilities
+import std.checksum
+import std.collections
+import std.compression
+import std.compression._auto
+import std.compression._core as compression_core
+import std.compression.bz2
+import std.compression.deflate
+import std.compression.gzip
+import std.compression.lzma
+import std.compression.snappy
+import std.compression.snappy.raw
+import std.compression.zlib
+import std.compression.zstd
+import std.datetime
+import std.datetime.civil
+import std.datetime.civil.intervals
+import std.datetime.civil.naive
+import std.datetime.civil.offset
+import std.datetime.error
+import std.datetime.runtime
+import std.derives.collection
+import std.derives.comparison
+import std.derives.copying
+import std.derives.string
+import std.encoding
+import std.encoding._shared
+import std.encoding.base32
+import std.encoding.base58
+import std.encoding.base64
+import std.encoding.base85
+import std.encoding.bech32
+import std.encoding.hex
+import std.environ
+import std.fs.file
+import std.fs
+import std.fs.glob
+import std.fs.locking
+import std.fs.metadata
+import std.fs.path
+import std.graph
+import std.hash
+import std.hash._core as hash_core
+import std.hash._streaming
+from std.interop import c
+import std.io
+import std.json
+import std.logging
+import std.math
+import std.prelude
+import std.reflection
+import std.regex
+import std.regex._core as regex_core
+import std.regex._replacement
+import std.regex.types
+import std.registry
+import std.result
+import std.serde.json as serde_json_module
+import std.serde
+import std.telemetry
+import std.telemetry.core
+import std.tempfile
+import std.testing
+import std.this
+import std.traits.callable
+import std.traits.convert
+import std.traits.error as traits_error
+import std.traits.indexing
+import std.traits.ops
+import std.traits
+import std.uuid
+import std.web.app
+import std.web
+import std.web.macros
+import std.web.request
+import std.web.response
+import std.web.routing
+from std.web import route
+
+
+@route("/oven-loaf-provider")
+async def oven_loaf_provider_route() -> str:
+    """Require the web proc-macro artifact in the sealed release closure."""
+    return "oven"
 
 
 def main() -> None:
-    """Keep the checked stdlib closure observable without opening physical-device boundaries."""
-    assert_true(Path(".").exists())
-    assert base64.b64encode(b"oven") == "b3Zlbg=="
-    assert crc32.value(b"oven") > 0
+    """The imports above, rather than a downstream scenario, define this closure."""
+    assert 2 + 2 == 4

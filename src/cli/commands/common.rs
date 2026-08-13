@@ -8,7 +8,7 @@ use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, LazyLock, Mutex};
 
 #[cfg(feature = "rust_inspect")]
@@ -361,23 +361,32 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
 
 /// Derive the immutable provider-store identity from every input that can change generated Rust or its dependency
 /// closure. The identity is content based, so a stale provider set is never accepted because a directory exists.
+///
+/// Development binaries are rebuilt when test-only Rust changes, and their raw bytes are not a stable description of
+/// compiler behavior. A checkout therefore contributes its compiler source closure; an installed toolchain, which has
+/// no source closure to inspect, falls back to the executable digest.
 fn sdk_provider_store_identity(
-    source_root: &Path,
+    stdlib_root: &Path,
     executable: &Path,
     workspace_lock: Option<&Path>,
     distribution_profile: &str,
 ) -> CliResult<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-provider-store-v2\0");
-    hash_sdk_provider_source_tree(source_root, source_root, &mut hasher)?;
+    hasher.update(b"incan-sdk-provider-store-v3\0");
+    hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
     hasher.update(b"compiler-version\0");
     hasher.update(crate::version::INCAN_VERSION.as_bytes());
     hasher.update(b"distribution-profile\0");
     hasher.update(distribution_profile.as_bytes());
 
-    hasher.update(b"compiler-executable-content\0");
     let executable = fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
-    hasher.update(sdk_provider_compiler_digest(&executable)?);
+    if let Some(checkout_root) = sdk_provider_compiler_checkout_root(stdlib_root) {
+        hasher.update(b"compiler-source-closure\0");
+        hash_sdk_provider_compiler_source_tree(&checkout_root, &checkout_root, &mut hasher)?;
+    } else {
+        hasher.update(b"compiler-executable-content\0");
+        hasher.update(sdk_provider_compiler_digest(&executable)?);
+    }
 
     hasher.update(b"workspace-lock\0");
     if let Some(workspace_lock) = workspace_lock {
@@ -389,6 +398,108 @@ fn sdk_provider_store_identity(
         })?);
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// Resolve the source checkout that owns a discovered SDK tree, if this is a development layout.
+fn sdk_provider_compiler_checkout_root(stdlib_root: &Path) -> Option<PathBuf> {
+    let explicit = env::var_os("INCAN_SOURCE_ROOT")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    explicit
+        .into_iter()
+        .chain(stdlib_root.ancestors().map(Path::to_path_buf))
+        .find(|candidate| is_sdk_provider_compiler_checkout(candidate, stdlib_root))
+}
+
+/// Check the exact source layout before treating a directory tree as compiler authority.
+fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bool {
+    if !candidate.join("Cargo.toml").is_file() || !candidate.join("src").is_dir() {
+        return false;
+    }
+    let expected_stdlib_root = candidate.join("crates/incan_stdlib/stdlib");
+    fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
+}
+
+/// Hash only compiler-authoritative checkout inputs, excluding generated output and test-only trees.
+fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
+    let mut entries = fs::read_dir(current)
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to read compiler source directory {}: {error}",
+                current.display()
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to enumerate compiler source directory {}: {error}",
+                current.display()
+            ))
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let relative = path.strip_prefix(root).map_err(|error| {
+            CliError::failure(format!(
+                "failed to make compiler source path {} relative: {error}",
+                path.display()
+            ))
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            CliError::failure(format!(
+                "failed to inspect compiler source path {}: {error}",
+                path.display()
+            ))
+        })?;
+        if file_type.is_dir()
+            && relative.components().any(|component| {
+                matches!(
+                    component.as_os_str().to_str(),
+                    Some(
+                        ".agents"
+                            | ".git"
+                            | ".incan"
+                            | "benches"
+                            | "docs"
+                            | "examples"
+                            | "target"
+                            | "tests"
+                            | "workspaces"
+                    )
+                )
+            })
+        {
+            continue;
+        }
+
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update([0]);
+        if file_type.is_dir() {
+            hasher.update(b"directory\0");
+            hash_sdk_provider_compiler_source_tree(root, &path, hasher)?;
+        } else if file_type.is_file() {
+            hasher.update(b"file\0");
+            let bytes = fs::read(&path).map_err(|error| {
+                CliError::failure(format!(
+                    "failed to read compiler source file {}: {error}",
+                    path.display()
+                ))
+            })?;
+            hasher.update(bytes);
+        } else if file_type.is_symlink() {
+            hasher.update(b"symlink\0");
+            let target = fs::read_link(&path).map_err(|error| {
+                CliError::failure(format!(
+                    "failed to read compiler source symlink {}: {error}",
+                    path.display()
+                ))
+            })?;
+            hasher.update(target.to_string_lossy().as_bytes());
+        }
+        hasher.update([0xff]);
+    }
+    Ok(())
 }
 
 /// Hash the running compiler once per process with BLAKE3's optimized implementation, independent of its path.
@@ -2261,6 +2372,9 @@ fn prepare_library_dependency_artifact(
         LibraryDependencyPreparation::LegacyManifestOnly => "metadata artifact",
         LibraryDependencyPreparation::OvenDirectRustc => "Oven direct-rustc library",
     };
+    // A parent `--report json` reserves stdout for exactly one machine-readable document. The internal compiler
+    // child inherits no report options, so route its progress through stderr before it can corrupt the parent's
+    // aggregate report. The normal human command retains the existing concise progress line below.
     eprintln!(
         "Preparing missing pub::{dependency_key} {preparation_label} with `incan build --lib` in {}",
         dependency_root.display()
@@ -2273,7 +2387,8 @@ fn prepare_library_dependency_artifact(
         .current_dir(dependency_root)
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-        .env(INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV, "1");
+        .env(INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV, "1")
+        .stdout(Stdio::null());
     match preparation {
         LibraryDependencyPreparation::LegacyManifestOnly => {
             command.env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
@@ -4878,6 +4993,67 @@ mod tests {
         assert_ne!(
             lock_changed, minimal,
             "distribution profiles must not share provider-store identities"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_provider_store_identity_ignores_rebuilt_development_executable_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let checkout = temp_dir.path().join("checkout");
+        let stdlib_root = checkout.join("crates/incan_stdlib/stdlib");
+        fs::create_dir_all(checkout.join("src"))?;
+        fs::create_dir_all(stdlib_root.join("components"))?;
+        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        fs::write(checkout.join("Cargo.lock"), "first lock closure")?;
+        fs::write(checkout.join("src/compiler.rs"), "pub fn compile() {}\n")?;
+        fs::write(
+            stdlib_root.join("components/core.incn"),
+            "pub def core() -> int:\n  return 1\n",
+        )?;
+        let executable = checkout.join("target/debug/incan");
+        fs::create_dir_all(executable.parent().ok_or("compiler executable had no parent")?)?;
+        fs::write(&executable, "first development compiler bytes")?;
+
+        let initial =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        let rebuilt_executable = checkout.join("target/rebuilt/incan");
+        fs::create_dir_all(
+            rebuilt_executable
+                .parent()
+                .ok_or("rebuilt compiler executable had no parent")?,
+        )?;
+        fs::write(&rebuilt_executable, "rebuilt development compiler bytes")?;
+        let rebuilt_executable = sdk_provider_store_identity(
+            &stdlib_root,
+            &rebuilt_executable,
+            Some(&checkout.join("Cargo.lock")),
+            "full",
+        )?;
+        assert_eq!(
+            initial, rebuilt_executable,
+            "a rebuilt development executable with unchanged compiler source must reuse SDK providers"
+        );
+
+        fs::create_dir_all(checkout.join("tests"))?;
+        fs::write(checkout.join("tests/only_test.rs"), "#[test]\nfn regression() {}\n")?;
+        let changed_test =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, changed_test,
+            "test-only source must not republish SDK providers"
+        );
+
+        fs::write(
+            checkout.join("src/compiler.rs"),
+            "pub fn compile() { let changed = true; }\n",
+        )?;
+        let changed_source =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            initial, changed_source,
+            "a compiler source change must still invalidate SDK provider artifacts"
         );
         Ok(())
     }

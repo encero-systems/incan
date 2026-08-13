@@ -8,7 +8,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use incan::oven::legacy_cargo::{
-    OvenLegacyCargoError, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, prepare_direct_rustc_plan,
+    OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoPrepareRequest,
+    OvenLegacyCargoPublicationKind, prepare_direct_rustc_plan,
 };
 use incan::oven::native_test::run_native_test_batch_all_in_directory_with_timeout;
 use incan::oven::store::{OvenStore, OvenStoreLimits};
@@ -98,6 +99,7 @@ fn legacy_cargo_capacity_abort_terminates_descendants() -> Result<(), Box<dyn st
         source_evidence_key: "generated-root".to_string(),
         compile_environment: BTreeMap::new(),
         inspection_packages: None,
+        direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
         compact_debug_info: false,
     });
 
@@ -165,15 +167,33 @@ fn read_pid(path: &Path) -> Result<u32, Box<dyn std::error::Error>> {
 
 fn assert_process_stopped(pid: u32) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..100 {
-        let status = Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
-        if !status.success() {
+        if !process_is_running(pid)? {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     Err(format!("supervised descendant process {pid} remained alive").into())
+}
+
+/// Return whether a descendant can still execute or retain the supervisor's resources.
+///
+/// Linux keeps a killed child visible to `kill -0` until init reaps it. That zombie cannot retain a pipe or consume
+/// capacity, so it is evidence of successful process-tree termination rather than a live escaped descendant.
+fn process_is_running(pid: u32) -> Result<bool, Box<dyn std::error::Error>> {
+    let status = Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if !status.success() {
+        return Ok(false);
+    }
+    #[cfg(target_os = "linux")]
+    if fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .is_some_and(|(_, after)| after.trim_start().starts_with('Z'))
+    }) {
+        return Ok(false);
+    }
+    Ok(true)
 }

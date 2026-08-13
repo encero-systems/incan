@@ -1019,6 +1019,19 @@ mod tests {
     }
 
     #[test]
+    fn host_target_is_available_only_for_supported_abi_verifiers() {
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        assert_eq!(CAbiTarget::host(), Some(CAbiTarget::LinuxX86_64));
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(CAbiTarget::host(), Some(CAbiTarget::MacosArm64));
+        #[cfg(not(any(
+            all(target_os = "linux", target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )))]
+        assert_eq!(CAbiTarget::host(), None);
+    }
+
+    #[test]
     fn verifier_applies_declared_target_definitions() -> Result<(), Box<dyn std::error::Error>> {
         let Some(target) = CAbiTarget::host() else {
             return Ok(());

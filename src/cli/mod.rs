@@ -948,9 +948,9 @@ pub enum CacheCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
-    /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan library project
+    /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
-        /// Library project root containing incan.toml and src/lib.incn
+        /// Project root containing incan.toml and src/lib.incn and/or src/main.incn
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Output format
@@ -1008,7 +1008,10 @@ pub enum OvenCommand {
         /// Receipt-bound test source path to execute; may be repeated. Omitting this runs the complete stored suite.
         #[arg(long = "target", value_name = "SOURCE")]
         targets: Vec<String>,
-        /// Explicit Cargo for roots whose tests exercise legacy Cargo interoperability
+        /// One exact test in a single receipt-bound target, for a narrow Oven diagnostic run
+        #[arg(long = "exact", value_name = "TEST")]
+        exact_names: Vec<String>,
+        /// Explicit Cargo for roots whose tests exercise Cargo compatibility
         #[arg(long = "fixture-cargo", value_name = "PATH", hide = true)]
         fixture_cargo: Option<PathBuf>,
         /// Caller-owned direct-rustc libtest output path
@@ -1811,6 +1814,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 rustc,
                 features,
                 targets,
+                exact_names,
                 fixture_cargo,
                 output,
                 store,
@@ -1820,6 +1824,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 rustc,
                 features,
                 targets,
+                exact_names,
                 fixture_cargo,
                 output,
                 store: store.into(),
@@ -1973,6 +1978,24 @@ fn resolve_workspace_command_scope(
     select_workspace: bool,
     member_selectors: &[String],
 ) -> CliResult<Option<ResolvedWorkspaceScope>> {
+    resolve_workspace_command_scope_with_library_build_order(select_workspace, member_selectors, false)
+}
+
+/// Resolve a workspace scope for a library build, retaining provider-before-consumer execution order from the
+/// compiler-owned workspace graph.
+fn resolve_workspace_library_build_scope(
+    select_workspace: bool,
+    member_selectors: &[String],
+) -> CliResult<Option<ResolvedWorkspaceScope>> {
+    resolve_workspace_command_scope_with_library_build_order(select_workspace, member_selectors, true)
+}
+
+/// Resolve the active RFC 077 scope once, optionally applying its library-specific execution order.
+fn resolve_workspace_command_scope_with_library_build_order(
+    select_workspace: bool,
+    member_selectors: &[String],
+    library_build_order: bool,
+) -> CliResult<Option<ResolvedWorkspaceScope>> {
     let current_dir = env::current_dir()
         .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?;
     let workspace = WorkspaceGraph::discover(&current_dir).map_err(|error| CliError::failure(error.to_string()))?;
@@ -1984,14 +2007,16 @@ fn resolve_workspace_command_scope(
         }
         return Ok(None);
     };
-    let selection = workspace
-        .resolve_scope(WorkspaceScopeRequest::new(
-            &current_dir,
-            select_workspace,
-            member_selectors,
-        ))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    Ok(Some(selection.to_owned_scope()))
+    let request = WorkspaceScopeRequest::new(&current_dir, select_workspace, member_selectors);
+    let scope = if library_build_order {
+        workspace.resolve_library_build_scope(request)
+    } else {
+        workspace
+            .resolve_scope(request)
+            .map(|selection| selection.to_owned_scope())
+    }
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(Some(scope))
 }
 
 /// Owned build inputs that can be applied once per compiler-selected workspace member.
@@ -2052,7 +2077,12 @@ fn execute_build(
         return request.run_single();
     }
 
-    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+    let scope = if request.lib_mode {
+        resolve_workspace_library_build_scope(select_workspace, &member_selectors)?
+    } else {
+        resolve_workspace_command_scope(select_workspace, &member_selectors)?
+    };
+    let Some(scope) = scope else {
         return request.run_single();
     };
     if !scope.is_single_member() && request.output_dir.is_some() {
@@ -2893,6 +2923,29 @@ mod tests {
         assert_eq!(project, PathBuf::from("examples/library"));
         assert_eq!(format, OvenOutputFormat::Json);
 
+        let compiler_suite = parse_cli([
+            "incan",
+            "oven",
+            "compiler-libtests",
+            "--target",
+            "tests/integration_tests.rs",
+            "--exact",
+            "rfc031_pub_import_integration_tests::compiled_parent_fields_lower_into_consumer_subclasses_issue885",
+        ])?;
+        let Some(Command::Oven {
+            command: OvenCommand::CompilerLibtests {
+                targets, exact_names, ..
+            },
+        }) = compiler_suite.command
+        else {
+            return Err(expected_command("oven compiler-libtests"));
+        };
+        assert_eq!(targets, ["tests/integration_tests.rs"]);
+        assert_eq!(
+            exact_names,
+            ["rfc031_pub_import_integration_tests::compiled_parent_fields_lower_into_consumer_subclasses_issue885"]
+        );
+
         let import = parse_cli([
             "incan",
             "oven",
@@ -3292,6 +3345,16 @@ mod tests {
         assert!(verbose);
         assert!(stop_on_fail);
         assert_eq!(filter.as_deref(), Some("unit"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_test_collection_features() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "test", "tests/", "--feature", "known_bug", "--feature", "beta"])?;
+        let Some(Command::Test { test_features, .. }) = cli.command else {
+            return Err(expected_command("test"));
+        };
+        assert_eq!(test_features, ["known_bug", "beta"]);
         Ok(())
     }
 

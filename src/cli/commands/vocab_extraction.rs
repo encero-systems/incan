@@ -759,14 +759,16 @@ fn oven_compiler_suite_rustc_context() -> CliResult<Option<OvenVocabDirectRustcC
     }))
 }
 
-/// Derive the vocabulary-helper capability from an already materialized normal Oven plan.
+/// Derive the vocabulary-helper capability from the selected Loaf's sealed compiler-owned auxiliary closure.
 ///
 /// The caller retains the matching store lease for the complete extraction. This deliberately accepts only the
-/// compiler-owned helper roots baked into the selected immutable closure, so a normal library build cannot use an
-/// arbitrary companion dependency or recover by invoking Cargo.
+/// compiler-owned helper roots baked beside the complete standard-library program closure, so a normal library
+/// build cannot use an arbitrary companion dependency or recover by invoking Cargo. The host helper closure is kept
+/// separate from normal program externs: `incan_vocab` and its own `serde_json` can therefore never shadow the
+/// standard library's declared `serde_json` artifact.
 pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
     rustc: &Path,
-    plan: &OvenRustcArtifactPlan,
+    _plan: &OvenRustcArtifactPlan,
     artifacts: &OvenRustcArtifactManifest,
     artifact_root: &Path,
 ) -> CliResult<OvenVocabDirectRustcContext> {
@@ -775,41 +777,6 @@ pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
             "selected Oven vocabulary Rust compiler is invalid: {}",
             rustc.display()
         )));
-    }
-    for path in &plan.dependency_search_paths {
-        if !path.is_absolute() || !path.is_dir() {
-            return Err(CliError::failure(format!(
-                "selected Oven vocabulary dependency search path is invalid: {}",
-                path.display()
-            )));
-        }
-    }
-    let mut externs = BTreeMap::new();
-    for (crate_name, path) in &plan.externs {
-        if crate_name.is_empty()
-            || !crate_name
-                .chars()
-                .all(|character| character == '_' || character.is_ascii_alphanumeric())
-            || !path.is_absolute()
-            || !path.is_file()
-        {
-            return Err(CliError::failure(format!(
-                "selected Oven vocabulary extern `{crate_name}` is invalid: {}",
-                path.display()
-            )));
-        }
-        if externs.insert(crate_name.clone(), path.clone()).is_some() {
-            return Err(CliError::failure(format!(
-                "selected Oven vocabulary closure repeats direct-Rustc extern `{crate_name}`"
-            )));
-        }
-    }
-    for required in ["incan_vocab", "serde_json"] {
-        if !externs.contains_key(required) {
-            return Err(CliError::failure(format!(
-                "selected Oven vocabulary closure lacks required `{required}`; normal library builds will not invoke Cargo"
-            )));
-        }
     }
     let mut auxiliary_targets = BTreeMap::new();
     for auxiliary in &artifacts.vocab_auxiliary_targets {
@@ -833,10 +800,16 @@ pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
             )));
         }
     }
+    let host_target = artifacts.intent.target.clone();
+    let host = auxiliary_targets.remove(&host_target).ok_or_else(|| {
+        CliError::failure(format!(
+            "selected Oven vocabulary closure lacks the required host target `{host_target}`; normal library builds will not invoke Cargo"
+        ))
+    })?;
     Ok(OvenVocabDirectRustcContext {
         rustc: rustc.to_path_buf(),
-        dependency_search_paths: plan.dependency_search_paths.clone(),
-        externs,
+        dependency_search_paths: host.dependency_search_paths,
+        externs: host.externs,
         auxiliary_targets,
     })
 }
@@ -866,10 +839,12 @@ fn oven_vocab_auxiliary_target_context(
             )));
         }
     }
-    if !externs.contains_key("incan_vocab") {
-        return Err(CliError::failure(format!(
-            "selected Oven vocabulary auxiliary target `{target}` lacks required `incan_vocab`"
-        )));
+    for required in ["incan_vocab", "serde_json"] {
+        if !externs.contains_key(required) {
+            return Err(CliError::failure(format!(
+                "selected Oven vocabulary auxiliary target `{target}` lacks required `{required}`"
+            )));
+        }
     }
     Ok(OvenVocabAuxiliaryTargetContext {
         dependency_search_paths: plan.dependency_search_paths,

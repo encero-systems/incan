@@ -45,13 +45,31 @@ pub(crate) fn terminate_process_group(child: &mut Child) -> io::Result<ExitStatu
 }
 
 #[cfg(all(test, unix))]
-/// Return whether a process still accepts a signal-zero existence probe.
-pub(crate) fn process_exists(pid: u32) -> io::Result<bool> {
-    Ok(Command::new("/bin/kill")
+/// Return whether a process is still running rather than an unreaped zombie.
+///
+/// Terminating a process group necessarily reaps the direct child, but its descendants become children of the host
+/// reaper. A normal host init reaps those immediately; a test container may run a non-reaping PID 1, leaving an
+/// inert zombie that still answers `kill -0`. Capacity containment cares about executable descendants and their disk
+/// activity, so a zombie is correctly considered stopped.
+pub(crate) fn process_is_running(pid: u32) -> io::Result<bool> {
+    let exists = Command::new("/bin/kill")
         .args(["-0", &pid.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()?
-        .success())
+        .success();
+    if !exists {
+        return Ok(false);
+    }
+
+    let status = Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()?;
+    if !status.status.success() {
+        return Ok(false);
+    }
+    Ok(!String::from_utf8_lossy(&status.stdout).trim_start().starts_with('Z'))
 }

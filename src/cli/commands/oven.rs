@@ -3,7 +3,7 @@
 //! Normal build, run, and test consumers never wrap, probe, or launch Cargo. Frozen Cargo declarations are
 //! compatibility input to `oven import`; only the hidden, explicitly named `oven legacy-cargo` baker may materialize
 //! missing compatibility inputs with Cargo. The compiler self-suite uses the same sealed direct-rustc executor and
-//! may grant a logged Cargo proxy only to roots whose tests explicitly verify legacy Cargo interoperability.
+//! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -40,9 +40,10 @@ use crate::oven::legacy_cargo::{
     OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
     OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteToolchainDataPayload,
     OvenCompilerTestSuiteToolchainDataReference, OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
-    OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest,
-    OvenLegacyCargoPublicationKind, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
-    prepare_compiler_test_suite, prepare_direct_rustc_plan, stage_locked_loaf_fixture,
+    OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource,
+    OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, legacy_cargo_inspection_sources,
+    legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite, prepare_direct_rustc_plan,
+    stage_locked_loaf_fixture,
 };
 use crate::oven::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafBakerContext,
@@ -53,7 +54,9 @@ use crate::oven::loaf::{
 };
 use crate::oven::native_test::{
     OvenNativeTestCaseCounts, OvenNativeTestCaseTiming, OvenNativeTestCommandTiming, OvenNativeTestRequest,
-    run_native_test_batch_all_in_directory_with_timeout, run_native_tests,
+    run_native_test_batch_all_in_directory_with_timeout,
+    run_native_test_batch_all_in_directory_with_timeout_and_threads, run_native_test_exact_in_directory_with_timeout,
+    run_native_tests,
 };
 use crate::oven::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenStoredDirectRustcRunRequest,
@@ -78,6 +81,7 @@ use crate::oven::{
 use crate::oven_interop::{CapabilityRequirement, LockedInteropTarget};
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{OvenInspectionRegistrySource, write_oven_inspection_source_authority};
+use crate::version::INCAN_VERSION;
 
 /// Environment override for aggregate physical allocation policy.
 pub const OVEN_MAX_PHYSICAL_BYTES_ENV: &str = "INCAN_OVEN_MAX_PHYSICAL_BYTES";
@@ -304,7 +308,13 @@ pub struct OvenCompilerLibtestsRunCommandOptions {
     /// not a second suite definition: every requested path must match one indexed source root in the receipt-bound
     /// payload.
     pub targets: Vec<String>,
-    /// Explicit Cargo executable for the two roots whose tests verify legacy Cargo interoperability.
+    /// One exact test selected from one receipt-bound target for a diagnostic Oven run.
+    ///
+    /// Exact selection is deliberately narrow: it preserves the stored target's ordinary direct-rustc build,
+    /// receipt, environment, working directory, and timeout supervisor while avoiding a second complete-root replay
+    /// merely to attribute one known expensive case.
+    pub exact_names: Vec<String>,
+    /// Explicit Cargo executable for the two roots whose tests verify Cargo compatibility.
     ///
     /// The suite creates a logged proxy and grants it only through its package-qualified capability registry. It is
     /// never available to normal Incan commands or used as an Oven execution fallback.
@@ -374,24 +384,31 @@ pub struct OvenRunCommandOptions {
     pub format: OvenOutputFormat,
 }
 
-/// Explicitly materialize or reuse sealed toolchain Loafs for one supported Incan library project.
+/// Explicitly select or bake sealed Loafs for the conventional targets in one supported Incan project.
 ///
-/// Unlike the hidden `legacy_cargo` publisher, this command only consumes the active toolchain's already sealed
-/// release envelope. It records project receipt evidence and delegates admission, atomic publication, and leases to
-/// the normal Oven store selector; Cargo is neither discovered nor launched.
+/// This is Oven's explicit project publication boundary. It records one generated-project receipt per present
+/// library or executable profile, reuses a selected closure when available, and otherwise delegates one bounded
+/// compatibility publication to the normal Oven store. Normal build, run, and test remain consumers: they neither
+/// discover nor launch Cargo.
 pub fn oven_bake_project(project: PathBuf, format: OvenOutputFormat) -> CliResult<ExitCode> {
-    let report = super::build::bake_oven_library_project(&project)?;
+    let report = super::build::bake_oven_project_targets(&project)?;
     match format {
         OvenOutputFormat::Text => {
             for profile in &report.profiles {
                 let verb = match profile.action {
                     "reused" => "Reused",
-                    "materialized" => "Materialized",
-                    "compiler_suite_native" => "Selected",
+                    "toolchain_loaf" => "Selected",
+                    "baked" => "Baked",
                     _ => "Prepared",
                 };
+                let detail = match profile.action {
+                    "baked" => "through the bounded compatibility baker.",
+                    "toolchain_loaf" => "from the active full-stdlib Loaf without invoking Cargo.",
+                    _ => "without invoking Cargo.",
+                };
                 println!(
-                    "{verb} Oven {profile} plan {} for {} without Cargo.",
+                    "{verb} Oven {} {profile} plan {} for {} {detail}",
+                    profile.project_target,
                     profile.plan_identity,
                     report.project.display(),
                     profile = profile.profile,
@@ -493,6 +510,7 @@ pub fn oven_legacy_cargo_prepare(options: OvenLegacyCargoPrepareCommandOptions) 
         source_evidence_key: "generated-root".to_string(),
         compile_environment: std::collections::BTreeMap::new(),
         inspection_packages: None,
+        direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
         compact_debug_info: false,
     })
     .map_err(oven_error)?;
@@ -816,6 +834,11 @@ struct OvenCompilerSuiteBakeReport {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 struct OvenLoafEnvelopeEvidence {
+    incan_release_version: String,
+    /// Report-only provenance for the executable that performed this baker invocation.
+    ///
+    /// This must not participate in release-family compatibility: rebuilding the same Incan release locally must
+    /// not cause every complete standard-library Loaf to be republished.
     compiler_executable_digest: String,
     sdk_inventory_digest: String,
     rustc_identity: String,
@@ -831,18 +854,28 @@ fn loaf_envelope_name(envelope: OvenLoafEnvelope) -> &'static str {
     }
 }
 
-/// Convert typed envelope evidence into the canonical string map persisted by `envelope.json`.
-fn loaf_envelope_evidence_map(evidence: &OvenLoafEnvelopeEvidence) -> CliResult<BTreeMap<String, String>> {
-    serde_json::to_value(evidence)
-        .map_err(|error| CliError::failure(format!("could not encode Loaf envelope evidence: {error}")))?
-        .as_object()
-        .ok_or_else(|| CliError::failure("Loaf envelope evidence is not an object".to_string()))?
-        .iter()
-        .map(|(key, value)| Ok((key.clone(), value.as_str().unwrap_or_default().to_string())))
-        .collect()
+/// Return the release-family compatibility evidence committed into `envelope.json`.
+///
+/// The family is selected by the Incan release plus immutable SDK, Rust toolchain, lock, and checked-fixture
+/// contracts. The baker executable digest remains report provenance only, so a development rebuild of the same
+/// release does not invalidate a complete standard-library Loaf family.
+fn loaf_envelope_compatibility_map(evidence: &OvenLoafEnvelopeEvidence) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (
+            "incan_release_version".to_string(),
+            evidence.incan_release_version.clone(),
+        ),
+        (
+            "sdk_inventory_digest".to_string(),
+            evidence.sdk_inventory_digest.clone(),
+        ),
+        ("rustc_identity".to_string(), evidence.rustc_identity.clone()),
+        ("lock_digest".to_string(), evidence.lock_digest.clone()),
+        ("fixture_digest".to_string(), evidence.fixture_digest.clone()),
+    ])
 }
 
-/// Digest every compiler, SDK, Rust toolchain, lock, and checked-fixture input that can change a built-in envelope.
+/// Gather release-family compatibility evidence and baker provenance for a built-in envelope.
 fn loaf_envelope_evidence(
     envelope: OvenLoafEnvelope,
     compiler_root: &Path,
@@ -872,11 +905,13 @@ fn loaf_envelope_evidence(
                 "inspection_manifest": specification.inspection_manifest,
                 "role": specification.role,
                 "retain_complete_registry_leaves": specification.retain_complete_registry_leaves,
+                "retain_checked_direct_dependencies": specification.retain_checked_direct_dependencies,
             })
         })
         .collect::<Vec<_>>();
     let inspection_packages = loaf_envelope_inspection_packages(envelope).map_err(CliError::failure)?;
     Ok(OvenLoafEnvelopeEvidence {
+        incan_release_version: INCAN_VERSION.to_string(),
         compiler_executable_digest: read_digest(compiler_executable, "compiler executable")?,
         sdk_inventory_digest: read_digest(sdk_inventory, "SDK inventory")?,
         rustc_identity: rustc_identity(rustc).map_err(oven_error)?,
@@ -924,7 +959,7 @@ fn reuse_complete_loaf_envelope(
             manifest_path.display()
         ))
     })?;
-    let expected_evidence = loaf_envelope_evidence_map(evidence)?;
+    let expected_evidence = loaf_envelope_compatibility_map(evidence);
     if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION
         || manifest.envelope != loaf_envelope_name(envelope)
         || manifest.evidence != expected_evidence
@@ -1153,8 +1188,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // publisher's exclusive lock here would make the parent wait for a child that is waiting for the parent. The
     // staged generation is private and has no publication authority, so release exclusivity until the atomic commit.
     drop(publication_lock);
+    let compatibility_evidence = loaf_envelope_compatibility_map(&evidence);
     let generation_identity = digest_bytes(
-        &serde_json::to_vec(&(loaf_envelope_name(envelope), &evidence))
+        &serde_json::to_vec(&(loaf_envelope_name(envelope), &compatibility_evidence))
             .map_err(|error| CliError::failure(format!("could not encode Loaf generation identity: {error}")))?,
     );
     let generation_name = generation_identity
@@ -1232,7 +1268,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         } else {
             &[]
         };
-        let project_root = scratch.path().join("fixtures").join(specification.label);
+        let project_root = scratch
+            .path()
+            .join("fixtures")
+            .join(specification.label)
+            .join(specification.profile);
         fs::create_dir_all(&project_root).map_err(|error| {
             CliError::failure(format!(
                 "could not create checked Loaf fixture {}: {error}",
@@ -1313,6 +1353,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 inspection_packages: &inspection_packages,
                 inspection_sources,
                 retain_complete_registry_leaves: specification.retain_complete_registry_leaves,
+                retain_checked_direct_dependencies: specification.retain_checked_direct_dependencies,
                 limits,
             },
             receipt,
@@ -1371,7 +1412,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
         envelope: loaf_envelope_name(envelope).to_string(),
         generation_identity: generation_identity.clone(),
-        evidence: loaf_envelope_evidence_map(&evidence)?,
+        evidence: compatibility_evidence,
         loafs: pending
             .iter()
             .map(|entry| {
@@ -1532,6 +1573,7 @@ fn finish_loaf_bake(
         source_evidence_key: "compiler-libtest-root".to_string(),
         compile_environment: BTreeMap::new(),
         inspection_packages: Some(Vec::new()),
+        direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
         compact_debug_info: false,
     })
     .map_err(oven_error)?;
@@ -1619,7 +1661,7 @@ fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOutputFormat)
     match format {
         OvenOutputFormat::Text => {
             println!(
-                "{} {} Oven Loafs ({} logical, {} physical; Cargo baker {}).",
+                "{} complete standard-library Loaf family ({} profile variants; {} logical, {} physical; Cargo baker {}).",
                 if report.action == "reused" {
                     "Reused"
                 } else {
@@ -1636,7 +1678,7 @@ fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOutputFormat)
             );
             if let Some(suite) = &report.compiler_suite {
                 println!(
-                    "Compiler suite: {} ({} logical, {} physical).",
+                    "Compiler-suite standard-library family: {} ({} logical, {} physical).",
                     if suite.prepare.cargo_version == "not-run-existing-suite" {
                         "reused"
                     } else {
@@ -1695,14 +1737,15 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             suite.schema_version
         )));
     }
-    if suite.schema_version == 8 && !options.targets.is_empty() {
+    if suite.schema_version == 8 && (!options.targets.is_empty() || !options.exact_names.is_empty()) {
         return Err(CliError::failure(
-            "stored schema-8 compiler suites do not support target selection; republish an indexed Oven suite"
+            "stored schema-8 compiler suites do not support target or exact-test selection; republish an indexed Oven suite"
                 .to_string(),
         ));
     }
     let selected_shard_references =
         compiler_suite_selected_shard_references(&suite.shard_references, &options.targets)?;
+    let exact_test_name = compiler_suite_exact_test_selection(&options.exact_names, selected_shard_references.len())?;
     // Indexed schemas acquire every shard and foundation lease before their first child starts. Keeping both values
     // alive through the complete command prevents policy pruning from removing a later root or its foundation while
     // an earlier compiler test executes.
@@ -2083,7 +2126,12 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             }
             let target_preparation_elapsed_ms = target_preparation_started.elapsed().as_millis();
             let root_execution_started = Instant::now();
-            let suite_report = run_prepared_compiler_suite_children(prepared_children, &receipt, &rustc)?;
+            let suite_report = run_prepared_compiler_suite_children(
+                prepared_children,
+                &receipt,
+                &rustc,
+                exact_test_name.as_deref(),
+            )?;
             Ok((
                 suite_report,
                 shard_executions.len(),
@@ -2174,7 +2222,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             return Ok(ExitCode::FAILURE);
         }
         return Err(CliError::failure(format!(
-            "compiler workspace native tests failed after Oven direct-Rustc harness execution: {} passed, {} failed, {} ignored across {} reported libtest root(s): {} green, {} failing, with {} root(s) lacking a terminal libtest summary. The explicit legacy-interoperability fixture launched Cargo {} time(s).\n{}",
+            "compiler workspace native tests failed after Oven direct-Rustc harness execution: {} passed, {} failed, {} ignored across {} reported libtest root(s): {} green, {} failing, with {} root(s) lacking a terminal libtest summary. The explicit compatibility fixture launched Cargo {} time(s).\n{}",
             native_test_case_totals.passed,
             native_test_case_totals.failed,
             native_test_case_totals.ignored,
@@ -2188,7 +2236,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
     }
     match options.format {
         OvenOutputFormat::Text => println!(
-            "Oven executed {} compiler workspace native test(s): {} passed, {} failed, {} ignored across {} reported root(s): {} green and {} failing, plus {} doctest target(s), through its stored direct-Rustc target plan. The explicit legacy-interoperability fixture launched Cargo {} time(s) (receipt {}).",
+            "Oven executed {} compiler workspace native test(s): {} passed, {} failed, {} ignored across {} reported root(s): {} green and {} failing, plus {} doctest target(s), through its stored direct-Rustc target plan. The explicit compatibility fixture launched Cargo {} time(s) (receipt {}).",
             suite_report.native_test_count,
             native_test_case_totals.passed,
             native_test_case_totals.failed,
@@ -2670,7 +2718,7 @@ fn bake_planned_compiler_suite_binaries(
     Ok(outputs)
 }
 
-/// Suite-owned proxy for the explicit Cargo capability used by legacy-interoperability tests.
+/// Suite-owned proxy for the explicit Cargo capability used by compatibility tests.
 struct CompilerSuiteFixtureCargoProxy {
     executable: PathBuf,
     real: PathBuf,
@@ -2782,7 +2830,7 @@ fn prepare_compiler_suite_fixture_cargo_proxy(
     _cargo: &Path,
 ) -> CliResult<CompilerSuiteFixtureCargoProxy> {
     Err(CliError::failure(
-        "the compiler-suite legacy Cargo fixture proxy is supported only on Unix hosts".to_string(),
+        "the compiler-suite compatibility Cargo fixture proxy is supported only on Unix hosts".to_string(),
     ))
 }
 
@@ -2892,7 +2940,7 @@ fn apply_compiler_suite_target_capabilities(
     if capabilities.legacy_cargo_fixture {
         let fixture_cargo = fixture_cargo.ok_or_else(|| {
             CliError::failure(format!(
-                "compiler-suite root `{}` exercises legacy Cargo interoperability and requires explicit --fixture-cargo",
+                "compiler-suite root `{}` exercises Cargo compatibility and requires explicit --fixture-cargo",
                 target.source_relative_path
             ))
         })?;
@@ -2926,6 +2974,7 @@ fn run_prepared_compiler_suite_children(
     children: Vec<PreparedCompilerSuiteChild<'_>>,
     receipt: &OvenReceipt,
     rustc: &Path,
+    exact_test_name: Option<&str>,
 ) -> CliResult<CompilerSuiteChildrenReport> {
     let child_count = children.len();
     if child_count == 0 {
@@ -2936,6 +2985,8 @@ fn run_prepared_compiler_suite_children(
         child_count,
     ));
     let worker_count = compiler_suite_parallel_jobs(child_count);
+    let logical_cores = thread::available_parallelism().map(usize::from).unwrap_or(1);
+    let libtest_threads = compiler_suite_libtest_threads(logical_cores, worker_count);
     let panicked = thread::scope(|scope| {
         let workers = (0..worker_count)
             .map(|_| {
@@ -2954,7 +3005,8 @@ fn run_prepared_compiler_suite_children(
                             return;
                         };
                         let result =
-                            run_prepared_compiler_suite_child(child, receipt, rustc).map_err(|error| error.to_string());
+                            run_prepared_compiler_suite_child(child, receipt, rustc, libtest_threads, exact_test_name)
+                                .map_err(|error| error.to_string());
                         if let Ok(mut results) = results.lock() {
                             results.push(result);
                         }
@@ -3007,6 +3059,8 @@ fn run_prepared_compiler_suite_child(
     child: PreparedCompilerSuiteChild<'_>,
     receipt: &OvenReceipt,
     rustc: &Path,
+    libtest_threads: usize,
+    exact_test_name: Option<&str>,
 ) -> CliResult<CompilerSuiteChildrenReport> {
     let mut artifacts = child.closure.manifest_for_target(child.target, child.intent.clone());
     for (name, value) in &child.binary_compile_environment {
@@ -3047,12 +3101,22 @@ fn run_prepared_compiler_suite_child(
             let direct_rustc_bake_elapsed_ms = bake_started.elapsed().as_millis();
             let working_directory =
                 compiler_suite_target_working_directory(child.compiler_root, &child.source, child.target)?;
-            let report = run_native_test_batch_all_in_directory_with_timeout(
-                &bake.output,
-                &child.environment,
-                Some(&working_directory),
-                Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
-            )
+            let report = match exact_test_name {
+                Some(exact_test_name) => run_native_test_exact_in_directory_with_timeout(
+                    &bake.output,
+                    exact_test_name,
+                    &child.environment,
+                    Some(&working_directory),
+                    Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                ),
+                None => run_native_test_batch_all_in_directory_with_timeout_and_threads(
+                    &bake.output,
+                    &child.environment,
+                    Some(&working_directory),
+                    Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                    libtest_threads,
+                ),
+            }
             .map_err(oven_error)?;
             let failures = if report.success {
                 Vec::new()
@@ -3067,7 +3131,15 @@ fn run_prepared_compiler_suite_child(
                 )]
             };
             Ok(CompilerSuiteChildrenReport {
-                native_test_count: report.inventory.names.len(),
+                native_test_count: if exact_test_name.is_some() {
+                    report
+                        .case_counts
+                        .as_ref()
+                        .map(|counts| counts.passed + counts.failed + counts.ignored)
+                        .unwrap_or(0)
+                } else {
+                    report.inventory.names.len()
+                },
                 doctest_targets: 0,
                 failed: failures,
                 native_test_roots: vec![CompilerSuiteNativeTestRootReport {
@@ -3130,15 +3202,17 @@ fn run_prepared_compiler_suite_child(
 
 /// Derive a root-worker count that leaves capacity for each root's libtest and nested Incan children.
 ///
-/// Each direct-Rustc root can itself run a test harness with internal parallelism and launch normal Incan commands.
-/// Running one outer worker per CPU therefore oversubscribes constrained CI hosts despite being technically bounded.
-/// Reserve headroom while still scaling with the host: one core runs one worker, 2--3 cores run two, 4--7 run three,
-/// and larger hosts run four. An explicit operator override remains available for measured release-machine tuning.
+/// Each direct-Rustc root is a substantial libtest binary that can run test cases in parallel and launch normal Incan
+/// commands. On a constrained host, prefer that useful inner concurrency over making several large roots serial:
+/// one core runs one root, 2--3 cores run one root with two libtest threads, and wider hosts add roots only when the
+/// resulting root-worker and libtest-thread product remains within the host budget. An explicit operator override
+/// remains available for measured release-machine tuning.
 fn compiler_suite_auto_parallel_jobs(logical_cores: usize) -> usize {
     match logical_cores {
         0 | 1 => 1,
-        2..=3 => 2,
-        4..=7 => 3,
+        2..=3 => 1,
+        4..=5 => 2,
+        6..=7 => 3,
         _ => 4,
     }
 }
@@ -3154,6 +3228,17 @@ fn compiler_suite_parallel_jobs(child_count: usize) -> usize {
         .unwrap_or_else(|| compiler_suite_auto_parallel_jobs(detected))
         .min(child_count)
         .max(1)
+}
+
+/// Divide the detected host capacity among the concurrently scheduled libtest roots.
+///
+/// Root workers mainly wait for their libtest child, while that child can launch nested normal Incan commands. Keep
+/// the aggregate libtest fan-out at or below the host count, and cap each root at two workers so a large machine
+/// cannot recreate a wide nested-command burst merely because libtest observed many CPUs.
+fn compiler_suite_libtest_threads(logical_cores: usize, root_workers: usize) -> usize {
+    let logical_cores = logical_cores.max(1);
+    let root_workers = root_workers.max(1);
+    (logical_cores / root_workers).clamp(1, 2)
 }
 
 /// Split the host budget between bounded root workers and the libtest threads inside each root.
@@ -3781,6 +3866,37 @@ fn compiler_suite_selected_shard_references(
         .filter(|reference| requested.contains(&reference.target.source_relative_path))
         .cloned()
         .collect())
+}
+
+/// Validate the deliberately narrow compiler-suite exact-test diagnostic selection.
+///
+/// A full suite remains the correctness gate. Exact execution exists only to attribute one known case without
+/// needlessly rewalking a complete expensive root, so it must name exactly one receipt-bound target and one exact
+/// inventory name. This does not create a separate suite definition or relax ordinary coverage.
+fn compiler_suite_exact_test_selection(
+    requested: &[String],
+    selected_target_count: usize,
+) -> CliResult<Option<String>> {
+    match requested {
+        [] => Ok(None),
+        [name] => {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err(CliError::failure(
+                    "Oven compiler-suite exact-test selection cannot be empty".to_string(),
+                ));
+            }
+            if selected_target_count != 1 {
+                return Err(CliError::failure(
+                    "Oven compiler-suite --exact requires exactly one receipt-bound --target".to_string(),
+                ));
+            }
+            Ok(Some(name.to_string()))
+        }
+        _ => Err(CliError::failure(
+            "Oven compiler-suite --exact accepts exactly one test name".to_string(),
+        )),
+    }
 }
 
 /// Resolve every shard named by a schema-9 compiler-suite index before baking the compiler CLI or starting a child.
@@ -4675,9 +4791,10 @@ fn compiler_libtests_receipt(
     let mut request =
         OvenCompilerSuiteRequest::new(compiler_root, target, toolchain, OVEN_COMPILER_TEST_PROFILE, features);
     if let Some(loaf_root) = loaf_root {
-        let envelope_identity =
-            crate::oven::loaf::committed_loaf_envelope_identity(loaf_root, "compiler-suite").map_err(oven_error)?;
-        request = request.with_loaf_envelope_identity(envelope_identity);
+        let compatibility_identity =
+            crate::oven::loaf::committed_loaf_envelope_compatibility_identity(loaf_root, "compiler-suite")
+                .map_err(oven_error)?;
+        request = request.with_loaf_compatibility_identity(compatibility_identity);
     }
     let receipt = receipt_native_compiler_suite(&request).map_err(oven_error)?;
     Ok((receipt, compiler_root.join(COMPILER_LIBTEST_RECEIPT_RELATIVE_PATH)))
@@ -5209,16 +5326,17 @@ mod tests {
         attach_compiler_suite_target_workspace_libraries, bake_planned_compiler_suite_binaries,
         bake_planned_compiler_suite_workspace_libraries, compiler_suite_auto_parallel_jobs,
         compiler_suite_child_state_root, compiler_suite_cli_output, compiler_suite_completion_failures,
-        compiler_suite_directory, compiler_suite_environment, compiler_suite_environment_path, compiler_suite_file,
+        compiler_suite_directory, compiler_suite_environment, compiler_suite_environment_path,
+        compiler_suite_exact_test_selection, compiler_suite_file, compiler_suite_libtest_threads,
         compiler_suite_remove_generated_rust_closure, compiler_suite_selected_shard_references,
         compiler_suite_workspace_library_dependency_closure, default_rustup_home, default_store_root,
         loaf_envelope_default_limits, loaf_envelope_evidence, native_test_failure_summary, oven_import,
-        oven_legacy_cargo_bake_loafs, oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path,
-        prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults, reuse_complete_loaf_envelope,
+        oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
+        resolve_limits_with_environment_and_defaults, reuse_complete_loaf_envelope,
         run_compiler_suite_children_with_leases_retained, run_prepared_compiler_suite_children,
         select_compiler_suite_shards, write_compiler_suite_report, write_native_test_failure_transcript,
     };
-    use crate::cli::{ExitCode, OvenLoafEnvelopeArgument, OvenOutputFormat};
+    use crate::cli::{OvenLoafEnvelopeArgument, OvenOutputFormat};
     use crate::oven::legacy_cargo::{
         OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1, OvenCompilerTestSuiteArtifactClosure,
         OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
@@ -5227,7 +5345,7 @@ mod tests {
     };
     use crate::oven::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
-        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction,
+        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole,
         acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
     };
     use crate::oven::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
@@ -5298,8 +5416,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn complete_envelope_manifest_reuses_verified_loafs_without_preparation() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn complete_envelope_reuses_changed_compiler_executable_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
         let output = tempfile::tempdir()?;
         let scratch = tempfile::tempdir()?;
         let compiler_root = tempfile::tempdir()?;
@@ -5318,11 +5435,21 @@ mod tests {
             ),
         )?;
         write_executable(&rustc, "#!/bin/sh\nprintf 'rustc fixture\\n'\n")?;
-        let current_executable = std::env::current_exe()?;
-        let evidence = loaf_envelope_evidence(
+        let compiler_one = tools.path().join("incan-one");
+        let compiler_two = tools.path().join("incan-two");
+        write_executable(&compiler_one, "#!/bin/sh\nprintf 'incan one\\n'\n")?;
+        write_executable(&compiler_two, "#!/bin/sh\nprintf 'incan two\\n'\n")?;
+        let first_evidence = loaf_envelope_evidence(
             OvenLoafEnvelope::Release,
             compiler_root.path(),
-            &current_executable,
+            &compiler_one,
+            &sdk_inventory,
+            &rustc,
+        )?;
+        let second_evidence = loaf_envelope_evidence(
+            OvenLoafEnvelope::Release,
+            compiler_root.path(),
+            &compiler_two,
             &sdk_inventory,
             &rustc,
         )?;
@@ -5338,7 +5465,8 @@ mod tests {
                 OvenLoafFixtureAction::Build => "build",
                 OvenLoafFixtureAction::Run => "run",
             };
-            let build_unit_identity = digest_bytes(specification.label.as_bytes());
+            let build_unit_identity =
+                digest_bytes(format!("{}:{}", specification.label, specification.profile).as_bytes());
             let loaf = OvenLoaf {
                 schema_version: OVEN_LOAF_SCHEMA_VERSION,
                 build_unit_identity: build_unit_identity.clone(),
@@ -5392,7 +5520,7 @@ mod tests {
                 schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
                 envelope: "release".to_string(),
                 generation_identity,
-                evidence: super::loaf_envelope_evidence_map(&evidence)?,
+                evidence: super::loaf_envelope_compatibility_map(&first_evidence),
                 loafs: members,
             })?,
         )?;
@@ -5401,54 +5529,29 @@ mod tests {
             output.path(),
             scratch.path(),
             OvenLoafEnvelope::Release,
-            &evidence,
+            &second_evidence,
             OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             Instant::now(),
         )?
-        .ok_or("matching complete envelope manifest was not reused")?;
+        .ok_or("matching release compatibility must reuse the committed envelope")?;
 
-        assert_eq!(report.action, "reused");
+        assert_eq!(
+            report.action, "reused",
+            "executable bytes are provenance, not release compatibility"
+        );
         assert_eq!(
             report.reused_count,
-            loaf_envelope_specifications(OvenLoafEnvelope::Release).len()
+            loaf_envelope_specifications(OvenLoafEnvelope::Release).len(),
+            "a compatible release envelope must reuse every complete stdlib profile variant"
         );
-        assert_eq!(report.prepared_count, 0);
-        assert!(!report.cargo_process_started);
-        let json = serde_json::to_value(&report)?;
-        for field in [
-            "logical_bytes",
-            "physical_bytes",
-            "owned_physical_bytes",
-            "raw_disk_bytes",
-            "reclaimable_physical_bytes",
-            "active_lease_physical_bytes",
-            "transient_peak_physical_bytes",
-            "max_physical_bytes",
-            "max_domain_physical_bytes",
-            "max_domain_logical_bytes",
-        ] {
-            assert!(
-                json.get(field).and_then(serde_json::Value::as_u64).is_some(),
-                "missing numeric JSON field {field}"
-            );
-        }
-        assert!(report.raw_disk_bytes >= report.owned_physical_bytes);
-
-        let exit = oven_legacy_cargo_bake_loafs(OvenLoafBakeCommandOptions {
-            compiler_root: compiler_root.path().to_path_buf(),
-            output: output.path().to_path_buf(),
-            suite_store: None,
-            envelope: OvenLoafEnvelopeArgument::Release,
-            sdk_inventory,
-            cargo,
-            rustc,
-            max_physical_bytes: Some(1024 * 1024),
-            max_domain_physical_bytes: Some(1024 * 1024),
-            max_domain_logical_bytes: Some(1024 * 1024),
-            format: OvenOutputFormat::Json,
-        })?;
-        assert_eq!(exit, ExitCode::SUCCESS);
-        assert!(!cargo_marker.exists(), "exact public-path reuse must not start Cargo");
+        assert_ne!(
+            first_evidence.compiler_executable_digest, second_evidence.compiler_executable_digest,
+            "the regression requires distinct compiler executable provenance"
+        );
+        assert!(
+            !cargo_marker.exists(),
+            "reuse rejection itself must not start the explicit publisher"
+        );
         Ok(())
     }
 
@@ -5618,6 +5721,89 @@ mod tests {
                 .as_ref()
                 .map(|suite| suite.prepare.cargo_version.as_str()),
             Some("not-run-existing-suite")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_suite_receipt_reuses_member_compatible_envelope_across_generation_evidence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let compiler_root = tempfile::tempdir()?;
+        fs::create_dir_all(compiler_root.path().join("src"))?;
+        fs::write(
+            compiler_root.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[features]\ndefault = []\nlsp = []\n",
+        )?;
+        fs::write(compiler_root.path().join("Cargo.lock"), "version = 4\n")?;
+        fs::write(compiler_root.path().join("src/lib.rs"), "pub fn fixture() {}\n")?;
+        fs::write(compiler_root.path().join("src/main.rs"), "fn main() {}\n")?;
+        let rustc = resolve_active_rustc()?;
+        let member = OvenLoafEnvelopeMember {
+            label: "foundation-debug".to_string(),
+            profile: "debug".to_string(),
+            action: "run".to_string(),
+            role: OvenLoafMemberRole::CompiledClosure,
+            build_unit_identity: digest_bytes(b"foundation-build-unit"),
+            loaf_identity: digest_bytes(b"foundation-loaf"),
+            plan_identity: digest_bytes(b"foundation-plan"),
+            logical_bytes: 1,
+            physical_bytes: 1,
+            path: PathBuf::from("generations/current/foundation.loaf/loaf.json"),
+        };
+        let write_envelope = |root: &Path,
+                              generation: &str,
+                              compiler_evidence: &str,
+                              member: OvenLoafEnvelopeMember|
+         -> Result<(), Box<dyn std::error::Error>> {
+            fs::write(
+                root.join("envelope.json"),
+                serde_json::to_vec(&OvenLoafEnvelopeManifest {
+                    schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+                    envelope: "compiler-suite".to_string(),
+                    generation_identity: digest_bytes(generation.as_bytes()),
+                    evidence: BTreeMap::from([(
+                        "compiler_executable_digest".to_string(),
+                        digest_bytes(compiler_evidence.as_bytes()),
+                    )]),
+                    loafs: vec![member],
+                })?,
+            )?;
+            Ok(())
+        };
+        let first_loafs = tempfile::tempdir()?;
+        let second_loafs = tempfile::tempdir()?;
+        let third_loafs = tempfile::tempdir()?;
+        write_envelope(first_loafs.path(), "generation-one", "compiler-one", member.clone())?;
+        write_envelope(second_loafs.path(), "generation-two", "compiler-two", member.clone())?;
+        let mut changed_member = member;
+        changed_member.plan_identity = digest_bytes(b"changed-plan");
+        write_envelope(third_loafs.path(), "generation-three", "compiler-three", changed_member)?;
+
+        let (first, _) = super::compiler_libtests_receipt(
+            compiler_root.path(),
+            &rustc,
+            &["lsp".to_string()],
+            Some(first_loafs.path()),
+        )?;
+        let (second, _) = super::compiler_libtests_receipt(
+            compiler_root.path(),
+            &rustc,
+            &["lsp".to_string()],
+            Some(second_loafs.path()),
+        )?;
+        let (third, _) = super::compiler_libtests_receipt(
+            compiler_root.path(),
+            &rustc,
+            &["lsp".to_string()],
+            Some(third_loafs.path()),
+        )?;
+        assert_eq!(
+            first.build_unit_identity, second.build_unit_identity,
+            "changed envelope evidence must not rebuild an unchanged suite foundation"
+        );
+        assert_ne!(
+            first.build_unit_identity, third.build_unit_identity,
+            "a changed sealed member plan must rebuild the suite foundation"
         );
         Ok(())
     }
@@ -5987,6 +6173,19 @@ mod tests {
         assert_eq!(compiler_suite_selected_shard_references(&references, &[])?, references);
         assert!(compiler_suite_selected_shard_references(&references, &["tests/missing.rs".to_string()]).is_err());
         assert!(compiler_suite_selected_shard_references(&references, &[" ".to_string()]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_suite_exact_selection_requires_one_target_and_one_name() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            compiler_suite_exact_test_selection(&[" selected::case ".to_string()], 1)?,
+            Some("selected::case".to_string())
+        );
+        assert_eq!(compiler_suite_exact_test_selection(&[], 0)?, None);
+        assert!(compiler_suite_exact_test_selection(&["selected::case".to_string()], 0).is_err());
+        assert!(compiler_suite_exact_test_selection(&[" ".to_string()], 1).is_err());
+        assert!(compiler_suite_exact_test_selection(&["first".to_string(), "second".to_string()], 1).is_err());
         Ok(())
     }
 
@@ -6405,12 +6604,26 @@ mod tests {
     fn compiler_suite_worker_budget_is_hardware_aware_and_bounded() {
         assert_eq!(compiler_suite_auto_parallel_jobs(0), 1);
         assert_eq!(compiler_suite_auto_parallel_jobs(1), 1);
-        assert_eq!(compiler_suite_auto_parallel_jobs(2), 2);
-        assert_eq!(compiler_suite_auto_parallel_jobs(3), 2);
-        assert_eq!(compiler_suite_auto_parallel_jobs(4), 3);
+        assert_eq!(compiler_suite_auto_parallel_jobs(2), 1);
+        assert_eq!(compiler_suite_auto_parallel_jobs(3), 1);
+        assert_eq!(compiler_suite_auto_parallel_jobs(4), 2);
+        assert_eq!(compiler_suite_auto_parallel_jobs(5), 2);
+        assert_eq!(compiler_suite_auto_parallel_jobs(6), 3);
         assert_eq!(compiler_suite_auto_parallel_jobs(7), 3);
         assert_eq!(compiler_suite_auto_parallel_jobs(8), 4);
         assert_eq!(compiler_suite_auto_parallel_jobs(64), 4);
+    }
+
+    #[test]
+    fn compiler_suite_libtest_budget_does_not_oversubscribe_root_workers() {
+        assert_eq!(compiler_suite_libtest_threads(0, 0), 1);
+        assert_eq!(compiler_suite_libtest_threads(1, 1), 1);
+        assert_eq!(compiler_suite_libtest_threads(2, 1), 2);
+        assert_eq!(compiler_suite_libtest_threads(3, 1), 2);
+        assert_eq!(compiler_suite_libtest_threads(4, 2), 2);
+        assert_eq!(compiler_suite_libtest_threads(6, 3), 2);
+        assert_eq!(compiler_suite_libtest_threads(8, 4), 2);
+        assert_eq!(compiler_suite_libtest_threads(64, 4), 2);
     }
 
     #[test]
@@ -6889,7 +7102,7 @@ fn planned_suite_child_uses_sdk_inventory() -> Result<(), String> {
             compiler_suite_child_state_root(output.path(), &sibling),
             "distinct parallel roots must not share mutable state"
         );
-        let report = run_prepared_compiler_suite_children(vec![prepared_child], &receipt, &rustc)?;
+        let report = run_prepared_compiler_suite_children(vec![prepared_child], &receipt, &rustc, None)?;
 
         assert_eq!(report.native_test_count, 1);
         assert_eq!(report.doctest_targets, 0);

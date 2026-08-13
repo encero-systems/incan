@@ -20,7 +20,8 @@ use super::{OvenBuildIntent, OvenReceipt, digest_bytes};
 pub const OVEN_STORE_SCHEMA_VERSION: u32 = 4;
 const ENTRIES_DIRECTORY: &str = "entries";
 const STAGING_DIRECTORY: &str = "staging";
-const MANIFEST_FILE: &str = "artifact.json";
+const ARTIFACT_MANIFEST_FILE: &str = "artifact.json";
+const LOAF_MANIFEST_FILE: &str = "loaf.json";
 const PAYLOAD_FILE: &str = "payload";
 const MATERIALIZED_DIRECTORY: &str = "artifacts";
 const ACCESS_FILE: &str = "last-used";
@@ -237,6 +238,18 @@ pub struct OvenStorePruneReport {
     pub skipped_active_entries: Vec<String>,
 }
 
+/// Capacity reserved for one serialized compatibility-baker staging run.
+///
+/// The publisher lock prevents another compatibility baker from consuming this allowance concurrently. Active
+/// immutable entries remain leased and therefore reduce, rather than invalidate, the remaining staging budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OvenLegacyCargoPublisherReservation {
+    /// Applied inactive-entry reclamation preceding this serialized publication.
+    pub(crate) prune_report: OvenStorePruneReport,
+    /// Maximum measured physical allocation allowed below the private publisher staging root.
+    pub(crate) transient_limit_bytes: u64,
+}
+
 /// Failure while validating, publishing, selecting, measuring, or pruning Oven store content.
 #[derive(Debug, thiserror::Error)]
 pub enum OvenStoreError {
@@ -316,9 +329,9 @@ impl OvenStore {
         self.publish_with_legacy_cargo_publisher_permission(request, false)
     }
 
-    /// Publish one immutable result owned by the explicit `legacy_cargo` transition publisher.
+    /// Publish one immutable result owned by the explicit compatibility baker.
     ///
-    /// The caller must already have reserved the complete aggregate allowance through
+    /// The caller must already have reserved the remaining aggregate/domain allowance through
     /// [`Self::reserve_legacy_cargo_publisher_capacity`]. This narrow entry point lets that owner finish its atomic
     /// hand-off while ordinary publishers refuse to overlap its private staging allocation.
     pub(crate) fn publish_from_legacy_cargo(
@@ -365,7 +378,7 @@ impl OvenStore {
             self.reject_active_legacy_cargo_publisher()?;
         }
 
-        let entry_path = self.entry_root(&manifest.identity);
+        let entry_path = self.entry_root_for_kind(&manifest.identity, manifest.kind);
         if entry_path.exists() {
             let verified = verify_entry(&entry_path)?;
             if verified.manifest != manifest {
@@ -610,7 +623,7 @@ impl OvenStore {
 
         let mut pending = Vec::new();
         for publication in &prepared {
-            let existing = self.entry_root(&publication.manifest.identity);
+            let existing = self.entry_root_for_kind(&publication.manifest.identity, publication.manifest.kind);
             if existing.exists() {
                 let verified = verify_entry(&existing)?;
                 if verified.manifest != publication.manifest {
@@ -762,7 +775,7 @@ impl OvenStore {
                     return Err(error);
                 }
             }
-            let destination = self.entry_root(&publication.manifest.identity);
+            let destination = self.entry_root_for_kind(&publication.manifest.identity, publication.manifest.kind);
             if let Err(source) = fs::rename(&publication.staging, &destination) {
                 for path in &published {
                     let _ = fs::remove_dir_all(path);
@@ -1159,14 +1172,23 @@ impl OvenStore {
         self.prune_to_limits(None, 0, 0, false)
     }
 
-    /// Reserve the full aggregate allowance for the explicitly named `legacy_cargo` publisher before it starts
-    /// creating private staging files.
+    /// Reserve the remaining aggregate and compatibility-domain allowance for the explicit compatibility baker.
     ///
-    /// A compiler-suite publisher cannot know its final private target size before Cargo has produced it. Reserving
-    /// the whole aggregate therefore prunes every inactive immutable entry now, or fails closed when an active
-    /// lease prevents that. While the publisher lock remains held, ordinary publication is rejected; its staging
-    /// monitor then enforces the same aggregate ceiling rather than merely inspecting it afterwards.
-    pub(crate) fn reserve_legacy_cargo_publisher_capacity(&self) -> Result<OvenStorePruneReport, OvenStoreError> {
+    /// A live lease must never be pruned. The old all-or-nothing reservation treated even a tiny live Loaf as a
+    /// reason to reject the next serialized bake, which made debug/release preparation impossible in one process.
+    /// Instead, inactive entries are reclaimed as before, active entries stay intact, and Cargo's staging monitor is
+    /// capped at the exact remaining aggregate/domain capacity. The publisher lock excludes another staging writer
+    /// while that cap is in force, so this remains a hard physical bound rather than post-hoc accounting.
+    pub(crate) fn reserve_legacy_cargo_publisher_capacity(
+        &self,
+        domain: &str,
+    ) -> Result<OvenLegacyCargoPublisherReservation, OvenStoreError> {
+        if domain.trim().is_empty() {
+            return Err(OvenStoreError::InvalidInput {
+                field: "compatibility baker domain",
+                message: "must not be empty".to_string(),
+            });
+        }
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
         manager.lock().map_err(|source| OvenStoreError::Io {
@@ -1174,18 +1196,31 @@ impl OvenStore {
             source,
         })?;
         self.reclaim_stale_staging()?;
-        let reservation = self.limits.max_physical_bytes;
-        let report = self.prune_to_limits(None, 0, reservation, true)?;
+        // Requesting the complete aggregate transient amount retains the established deterministic policy of
+        // reclaiming every inactive entry before an expensive publisher run. Unlike the former implementation, an
+        // active entry merely consumes part of the run's staging budget below.
+        let report = self.prune_to_limits(None, 0, self.limits.max_physical_bytes, true)?;
         let entries = self.collect_entries_for_admission()?;
-        if policy_satisfied(&entries, self.limits, None, 0, reservation) {
-            return Ok(report);
+        let retained_physical_bytes = entries.iter().map(|entry| entry.physical_bytes).sum::<u64>();
+        let (_, retained_domain_physical_bytes) = domain_totals(&entries, domain);
+        let aggregate_remaining = self.limits.max_physical_bytes.saturating_sub(retained_physical_bytes);
+        let domain_remaining = self
+            .limits
+            .max_domain_physical_bytes
+            .saturating_sub(retained_domain_physical_bytes);
+        let transient_limit_bytes = aggregate_remaining.min(domain_remaining);
+        if transient_limit_bytes == 0 {
+            return Err(OvenStoreError::CapacityBlocked {
+                domain: domain.to_string(),
+                message: format!(
+                    "active retained physical bytes leave no compatibility-baker staging capacity; skipped active entries {:?}",
+                    report.skipped_active_entries
+                ),
+            });
         }
-        Err(OvenStoreError::CapacityBlocked {
-            domain: "legacy-cargo-publisher".to_string(),
-            message: format!(
-                "full transient physical reservation {reservation} cannot be admitted; skipped active entries {:?}",
-                report.skipped_active_entries
-            ),
+        Ok(OvenLegacyCargoPublisherReservation {
+            prune_report: report,
+            transient_limit_bytes,
         })
     }
 
@@ -1194,9 +1229,9 @@ impl OvenStore {
     ///
     /// Materialized files beneath `legacy-cargo-staging` are hard-linked into the atomic entry staging, so they are
     /// counted once here. Sources outside that private tree are copied by [`write_staged_entry`] and are reserved
-    /// once per digest/executable pair, exactly as the batch writer shares them. The prior full reservation leaves no
-    /// retained entry unless an active lease correctly blocked publication; including entries nevertheless keeps this
-    /// check safe if the method is ever called by another explicit transition owner.
+    /// once per digest/executable pair, exactly as the batch writer shares them. The publisher reservation can retain
+    /// leased entries while capping staging at the remaining capacity, so this hand-off includes those entries again
+    /// and remains safe if another explicit transition owner reuses the primitive.
     pub(crate) fn ensure_legacy_cargo_batch_physical_capacity(
         &self,
         staging: &Path,
@@ -1251,11 +1286,11 @@ impl OvenStore {
                 })?,
             ));
             let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| OvenStoreError::Manifest {
-                path: PathBuf::from(MANIFEST_FILE),
+                path: PathBuf::from(ARTIFACT_MANIFEST_FILE),
                 message: error.to_string(),
             })?;
             let manifest_length = u64::try_from(manifest_bytes.len()).map_err(|_| OvenStoreError::Manifest {
-                path: PathBuf::from(MANIFEST_FILE),
+                path: PathBuf::from(ARTIFACT_MANIFEST_FILE),
                 message: "manifest length does not fit supported physical accounting".to_string(),
             })?;
             observed_physical = observed_physical
@@ -1646,7 +1681,18 @@ impl OvenStore {
     /// Linux. The v2 store root adopts the safe spelling below, so prior entries are never selected into a new
     /// direct-Rustc runtime closure.
     fn entry_root(&self, identity: &str) -> PathBuf {
-        self.entries_root().join(entry_directory_name(identity))
+        let directory_name = entry_directory_name(identity);
+        let loaf = self.entries_root().join(format!("{directory_name}.loaf"));
+        if loaf.exists() {
+            loaf
+        } else {
+            self.entries_root().join(directory_name)
+        }
+    }
+
+    /// Return the immutable destination whose layout is owned by the artifact kind.
+    fn entry_root_for_kind(&self, identity: &str, kind: OvenArtifactKind) -> PathBuf {
+        self.entries_root().join(entry_directory_name_for_kind(identity, kind))
     }
 
     /// Return the published-entry root.
@@ -1677,6 +1723,43 @@ fn entry_directory_name(identity: &str) -> String {
     identity
         .strip_prefix("sha256:")
         .map_or_else(|| identity.to_string(), |digest| format!("sha256-{digest}"))
+}
+
+/// Return the on-disk directory name for one immutable artifact kind.
+///
+/// A direct-rustc plan is Oven's project-level Loaf: it carries its own receipt,
+/// verified closure, and plan. Other store objects remain generic execution or
+/// scheduling artifacts and therefore keep the ordinary entry spelling.
+fn entry_directory_name_for_kind(identity: &str, kind: OvenArtifactKind) -> String {
+    let directory = entry_directory_name(identity);
+    if kind == OvenArtifactKind::DirectRustcPlan {
+        format!("{directory}.loaf")
+    } else {
+        directory
+    }
+}
+
+/// Return the immutable manifest spelling for one artifact class.
+fn manifest_file_name(kind: OvenArtifactKind) -> &'static str {
+    if kind == OvenArtifactKind::DirectRustcPlan {
+        LOAF_MANIFEST_FILE
+    } else {
+        ARTIFACT_MANIFEST_FILE
+    }
+}
+
+/// Resolve the only accepted manifest file within one complete immutable entry.
+///
+/// Direct-rustc project plans are written as `<identity>.loaf/loaf.json`.
+/// `artifact.json` remains readable solely for pre-existing generic entries;
+/// a new direct-rustc project closure never receives that spelling.
+fn manifest_path_for_entry(root: &Path) -> PathBuf {
+    let loaf = root.join(LOAF_MANIFEST_FILE);
+    if loaf.is_file() {
+        loaf
+    } else {
+        root.join(ARTIFACT_MANIFEST_FILE)
+    }
 }
 
 /// Remove only private, not-yet-visible batch staging roots after a failed all-or-nothing publication.
@@ -1728,7 +1811,7 @@ fn artifact_manifest(
         materialized_files: &materialized_files,
     };
     let serialized = serde_json::to_vec(&input).map_err(|error| OvenStoreError::Manifest {
-        path: PathBuf::from(MANIFEST_FILE),
+        path: PathBuf::from(ARTIFACT_MANIFEST_FILE),
         message: error.to_string(),
     })?;
     Ok(OvenArtifactManifest {
@@ -1843,7 +1926,7 @@ fn conservative_physical_reservation_with_shared_materialized_files(
     shared_materialized_files: &mut BTreeSet<(String, bool)>,
 ) -> Result<u64, OvenStoreError> {
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| OvenStoreError::Manifest {
-        path: PathBuf::from(MANIFEST_FILE),
+        path: PathBuf::from(ARTIFACT_MANIFEST_FILE),
         message: error.to_string(),
     })?;
     let manifest_bytes = u64::try_from(manifest_bytes.len()).map_err(|_| OvenStoreError::InvalidInput {
@@ -1942,10 +2025,10 @@ fn write_staged_entry(
     }
     sync_directory_tree(&materialized_root)?;
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| OvenStoreError::Manifest {
-        path: root.join(MANIFEST_FILE),
+        path: root.join(manifest_file_name(manifest.kind)),
         message: error.to_string(),
     })?;
-    write_synced_file(&root.join(MANIFEST_FILE), &manifest_bytes, true)?;
+    write_synced_file(&root.join(manifest_file_name(manifest.kind)), &manifest_bytes, true)?;
     OpenOptions::new()
         .create_new(true)
         .read(true)
@@ -2057,7 +2140,7 @@ fn verify_entry(root: &Path) -> Result<OvenStoreEntry, OvenStoreError> {
 
 /// Verify immutable manifest structure and identity without traversing the materialized compiler closure.
 fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
-    let manifest_path = root.join(MANIFEST_FILE);
+    let manifest_path = manifest_path_for_entry(root);
     let content = fs::read(&manifest_path).map_err(|source| OvenStoreError::Io {
         path: manifest_path.clone(),
         source,
@@ -2238,7 +2321,7 @@ fn measure_entry_for_admission_with_directory_identity(
 ) -> Result<OvenStoreEntry, OvenStoreError> {
     let manifest = verify_entry_manifest(root)?;
     let directory_name = root.file_name().and_then(|name| name.to_str());
-    let encoded_directory_name = entry_directory_name(&manifest.identity);
+    let encoded_directory_name = entry_directory_name_for_kind(&manifest.identity, manifest.kind);
     if require_identity_directory_name && directory_name != Some(encoded_directory_name.as_str()) {
         return Err(OvenStoreError::Integrity {
             identity: manifest.identity,
@@ -2296,7 +2379,7 @@ fn artifact_identity_from_manifest(manifest: &OvenArtifactManifest) -> Result<St
         materialized_files: &manifest.materialized_files,
     };
     let serialized = serde_json::to_vec(&input).map_err(|error| OvenStoreError::Manifest {
-        path: PathBuf::from(MANIFEST_FILE),
+        path: PathBuf::from(ARTIFACT_MANIFEST_FILE),
         message: error.to_string(),
     })?;
     Ok(digest_bytes(&serialized))
@@ -3090,13 +3173,21 @@ mod tests {
         let second = store.publish(&second_request)?;
 
         assert_eq!(second.identity, first.identity);
+        let loaf_root = store.entry_root(&first.identity);
+        assert_eq!(
+            loaf_root.extension().and_then(|extension| extension.to_str()),
+            Some("loaf")
+        );
+        assert!(loaf_root.join(super::LOAF_MANIFEST_FILE).is_file());
+        assert!(!loaf_root.join(super::ARTIFACT_MANIFEST_FILE).exists());
+        assert!(store.select(&first.identity).is_ok());
         assert_eq!(store.inspect()?.entries.len(), 1);
         Ok(())
     }
 
     #[test]
-    fn legacy_publisher_reservation_prunes_inactive_entries_and_refuses_active_leases()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn legacy_publisher_reservation_preserves_active_leases_and_caps_staging() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         write_project(project.path())?;
@@ -3104,13 +3195,21 @@ mod tests {
         let first = store.publish(&request(project.path(), "engine-one", b"first publisher entry")?)?;
         let (_entry, lease) = store.select(&first.identity)?;
 
-        let blocked = store.reserve_legacy_cargo_publisher_capacity();
-        assert!(matches!(blocked, Err(OvenStoreError::CapacityBlocked { .. })));
+        let active_reservation = store.reserve_legacy_cargo_publisher_capacity("engine")?;
         assert_eq!(store.inspect()?.entries.len(), 1);
+        assert!(active_reservation.prune_report.removed_entries.is_empty());
+        assert!(
+            active_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
+            "a held lease must remain while reducing the baker's staging allowance"
+        );
 
         drop(lease);
-        let report = store.reserve_legacy_cargo_publisher_capacity()?;
-        assert_eq!(report.removed_entries, vec![first.identity]);
+        let inactive_reservation = store.reserve_legacy_cargo_publisher_capacity("engine")?;
+        assert_eq!(inactive_reservation.prune_report.removed_entries, vec![first.identity]);
+        assert_eq!(
+            inactive_reservation.transient_limit_bytes,
+            store.limits().max_physical_bytes
+        );
         assert!(store.inspect()?.entries.is_empty());
         Ok(())
     }

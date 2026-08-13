@@ -1,0 +1,6 @@
+from std.io import BytesIO
+
+
+def main() -> None:
+    buffer = BytesIO(b"oven")
+    assert buffer.getvalue() == b"oven"

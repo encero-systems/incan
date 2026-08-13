@@ -5,7 +5,7 @@ inputs:
     description: Stable compatibility-domain suffix for this platform and toolchain lane.
     required: true
   publisher_toolchain:
-    description: Pinned Cargo toolchain used by the earlier baker and logged legacy-interoperability test fixtures.
+    description: Pinned Cargo toolchain used by the explicit baker and logged compatibility test fixtures.
     required: false
     default: nightly-2026-03-24
   consumer_toolchain:

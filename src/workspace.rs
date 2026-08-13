@@ -609,6 +609,90 @@ impl WorkspaceGraph {
         ))
     }
 
+    /// Resolve a workspace scope in the dependency-first order required by library compilation.
+    ///
+    /// Workspace selection remains independent from execution order: this preserves the caller's selected member set
+    /// while ensuring a selected `pub::` provider is materialized before every selected consumer that imports it.
+    /// Unrelated members retain RFC 077's deterministic workspace order. This avoids a consumer spawning a nested
+    /// provider build and then the outer workspace immediately rebuilding that same provider.
+    pub fn resolve_library_build_scope(
+        &self,
+        request: WorkspaceScopeRequest,
+    ) -> Result<ResolvedWorkspaceScope, WorkspaceError> {
+        let selection = self.resolve_scope(request)?;
+        let members = self.library_build_members(&selection)?;
+        Ok(ResolvedWorkspaceScope {
+            workspace_root: self.root.clone(),
+            origin: selection.origin(),
+            members,
+        })
+    }
+
+    /// Order selected library members so every selected local `pub::` provider precedes its consumers.
+    fn library_build_members(
+        &self,
+        selection: &WorkspaceSelection<'_>,
+    ) -> Result<Vec<WorkspaceMember>, WorkspaceError> {
+        let selected = selection.members().collect::<Vec<_>>();
+        let selected_indices = selected
+            .iter()
+            .enumerate()
+            .map(|(index, member)| (member.root().to_path_buf(), index))
+            .collect::<BTreeMap<_, _>>();
+        let mut prerequisites = vec![0_usize; selected.len()];
+        let mut dependents = vec![Vec::new(); selected.len()];
+
+        for (consumer_index, member) in selected.iter().enumerate() {
+            let dependencies = self.resolve_member_dependencies(member)?;
+            let mut selected_providers = BTreeSet::new();
+            for dependency in dependencies.library_dependencies().values() {
+                let dependency_root =
+                    fs::canonicalize(&dependency.spec().path).unwrap_or_else(|_| dependency.spec().path.clone());
+                if let Some(provider_index) = selected_indices.get(&dependency_root) {
+                    selected_providers.insert(*provider_index);
+                }
+            }
+            prerequisites[consumer_index] = selected_providers.len();
+            for provider_index in selected_providers {
+                dependents[provider_index].push(consumer_index);
+            }
+        }
+
+        let mut ready = prerequisites
+            .iter()
+            .enumerate()
+            .filter_map(|(index, count)| (*count == 0).then_some(index))
+            .collect::<BTreeSet<_>>();
+        let mut ordered = Vec::with_capacity(selected.len());
+        while let Some(index) = ready.iter().next().copied() {
+            ready.remove(&index);
+            ordered.push(selected[index].clone());
+            for consumer_index in &dependents[index] {
+                prerequisites[*consumer_index] -= 1;
+                if prerequisites[*consumer_index] == 0 {
+                    ready.insert(*consumer_index);
+                }
+            }
+        }
+
+        if ordered.len() != selected.len() {
+            let remaining = prerequisites
+                .iter()
+                .enumerate()
+                .filter_map(|(index, count)| (*count > 0).then_some(selected[index].name()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(invalid_workspace(
+                &self.root,
+                format!(
+                    "selected library members contain a pub:: dependency cycle: {remaining}; break the cycle before `incan build --workspace --lib`"
+                ),
+            ));
+        }
+
+        Ok(ordered)
+    }
+
     /// Build a selection from validated member indices, normalizing to workspace declaration order.
     fn selection(
         &self,
@@ -1404,6 +1488,48 @@ default-members = ["beta"]
             graph.default_members().map(|member| member.name()).collect::<Vec<_>>(),
             vec!["beta"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn library_build_scope_orders_selected_pub_providers_before_consumers() -> TestResult {
+        let root = tempfile::tempdir()?;
+        write_manifest(
+            root.path(),
+            r#"
+[workspace]
+members = ["packages/*"]
+"#,
+        )?;
+        write_project(root.path().join("packages/leaf"), "leaf")?;
+        write_manifest(
+            root.path().join("packages/parent"),
+            r#"
+[project]
+name = "parent"
+
+[dependencies]
+leaf = { path = "../leaf" }
+"#,
+        )?;
+        write_manifest(
+            root.path().join("packages/middle"),
+            r#"
+[project]
+name = "middle"
+
+[dependencies]
+parent = { path = "../parent" }
+"#,
+        )?;
+        write_project(root.path().join("packages/decoy"), "decoy")?;
+
+        let graph = WorkspaceGraph::load_from_root(root.path())?;
+        let no_members = Vec::<String>::new();
+        let scope = graph.resolve_library_build_scope(WorkspaceScopeRequest::new(root.path(), true, &no_members))?;
+        let names = scope.members().map(|member| member.name()).collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["decoy", "leaf", "parent", "middle"]);
         Ok(())
     }
 

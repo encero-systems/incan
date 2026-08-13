@@ -1,8 +1,0 @@
-"""Minimal checked C-ABI capability fixture for the release Loaf envelope."""
-
-from std.interop import c
-
-
-def main() -> None:
-    """Select the checked C vocabulary without introducing an ambient native library dependency."""
-    assert 2 + 2 == 4

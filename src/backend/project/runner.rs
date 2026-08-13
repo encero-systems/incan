@@ -69,6 +69,51 @@ pub(crate) fn cargo_executable() -> OsString {
         .unwrap_or_else(|| "cargo".into())
 }
 
+/// Resolve the configured Cargo program to a regular file for the bounded Oven compatibility baker.
+///
+/// Ordinary generated-project commands can pass a bare `cargo` name to
+/// [`Command`], which performs PATH lookup itself. The baker verifies and
+/// records its executable before launching it, so it needs the same lookup as
+/// an explicit path rather than treating a valid bare name as a missing file.
+pub(crate) fn resolved_cargo_executable() -> io::Result<PathBuf> {
+    resolve_cargo_executable_from_path(PathBuf::from(cargo_executable()), env::var_os("PATH"))
+}
+
+/// Resolve one configured Cargo selection without consulting process-global state.
+///
+/// A regular path is accepted directly. A bare executable name is resolved only against the supplied PATH, which
+/// keeps the bounded publisher's executable proof testable and prevents a later ambient lookup from selecting a
+/// different Cargo program.
+fn resolve_cargo_executable_from_path(selected: PathBuf, search_path: Option<OsString>) -> io::Result<PathBuf> {
+    if selected.is_file() {
+        return Ok(selected);
+    }
+    if selected.components().count() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "configured Cargo executable is not a regular file: {}",
+                selected.display()
+            ),
+        ));
+    }
+    let Some(search_path) = search_path else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Cargo executable `{}` is not on PATH", selected.display()),
+        ));
+    };
+    let resolved = env::split_paths(&search_path)
+        .map(|directory| directory.join(&selected))
+        .find(|candidate| candidate.is_file());
+    resolved.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Cargo executable `{}` is not on PATH", selected.display()),
+        )
+    })
+}
+
 /// Create one compiler-owned Cargo command from the canonical executable selection.
 pub(crate) fn cargo_command() -> Command {
     Command::new(cargo_executable())
@@ -621,6 +666,18 @@ mod tests {
     use crate::manifest::{DependencySource, DependencySpec};
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
+
+    #[test]
+    fn resolved_cargo_executable_finds_a_bare_name_on_the_supplied_path() -> Result<(), Box<dyn std::error::Error>> {
+        let tools = tempfile::tempdir()?;
+        let cargo = tools.path().join("cargo");
+        fs::write(&cargo, "cargo fixture")?;
+
+        let resolved =
+            resolve_cargo_executable_from_path(PathBuf::from("cargo"), Some(env::join_paths([tools.path()])?))?;
+        assert_eq!(resolved, cargo);
+        Ok(())
+    }
 
     /// Render the smallest valid lock payload for the pure root-name projection contract.
     ///

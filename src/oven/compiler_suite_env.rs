@@ -11,7 +11,7 @@ pub(crate) const OVEN_COMPILER_SUITE_CAPABILITY_ENV: &str = "INCAN_OVEN_COMPILER
 pub(crate) const OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_VOCAB_CAPABILITY";
 /// Stable activation/compiler marker retained for narrow test helpers that need only the selected Rustc path.
 pub(crate) const OVEN_COMPILER_SUITE_RUSTC_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_RUSTC";
-/// Exact Cargo executable admitted only to roots whose tests exercise legacy Cargo interoperability.
+/// Exact Cargo executable admitted only to roots whose tests exercise Cargo compatibility.
 pub(crate) const OVEN_COMPILER_SUITE_FIXTURE_CARGO_REAL_ENV: &str = "INCAN_INTERNAL_OVEN_FIXTURE_CARGO_REAL";
 /// Matching Rustc executable used only by the admitted nightly Cargo child.
 pub(crate) const OVEN_COMPILER_SUITE_FIXTURE_RUSTC_REAL_ENV: &str = "INCAN_INTERNAL_OVEN_FIXTURE_RUSTC_REAL";

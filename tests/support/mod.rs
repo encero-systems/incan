@@ -65,6 +65,60 @@ pub(crate) fn report_build_phase_timing(label: &str, output: &Output) {
     );
 }
 
+/// Emit the per-member phase breakdown from one opt-in workspace build report already produced by a nested command.
+///
+/// A workspace has one command journey but several independently selected members. Prefixing each phase with the
+/// stable member name preserves the whole workspace attribution in one record, rather than making a performance
+/// diagnostic re-run every member just to recover its phase costs.
+#[allow(dead_code)]
+pub(crate) fn report_workspace_build_phase_timing(label: &str, output: &Output) {
+    if std::env::var_os("INCAN_TEST_COMMAND_TIMINGS").is_none() {
+        return;
+    }
+    let Ok(report) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return;
+    };
+    let Some(results) = report.get("results").and_then(serde_json::Value::as_array) else {
+        return;
+    };
+    let mut phase_timings_ms = std::collections::BTreeMap::new();
+    for result in results {
+        let Some(member) = result
+            .get("member")
+            .and_then(|member| member.get("name"))
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let Some(timings) = result
+            .get("report")
+            .and_then(|report| report.get("timings_ms"))
+            .and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
+        for (phase, elapsed_ms) in timings {
+            let Some(elapsed_ms) = elapsed_ms.as_u64() else {
+                continue;
+            };
+            phase_timings_ms.insert(format!("{member}::{phase}"), elapsed_ms);
+        }
+    }
+    if phase_timings_ms.is_empty() {
+        return;
+    }
+    let thread = std::thread::current();
+    let test_name = thread.name().map_or("unnamed", |name| name);
+    eprintln!(
+        "incan-test-build-phase-timing {}",
+        serde_json::json!({
+            "test_name": test_name,
+            "command": label,
+            "phase_timings_ms": phase_timings_ms,
+        })
+    );
+}
+
 /// Return the Incan CLI built alongside the current integration-test executable.
 ///
 /// Nextest rewrites `CARGO_BIN_EXE_incan` when a portable archive is extracted on another runner. Read it at runtime

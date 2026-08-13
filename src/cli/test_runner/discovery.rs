@@ -1146,6 +1146,45 @@ module tests:
     }
 
     #[test]
+    fn discover_inline_module_keeps_marker_registration_and_defaults() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+module tests:
+    from std.testing import mark
+
+    const TEST_MARKERS: List[str] = ["smoke"]
+    const TEST_MARKS: List[str] = ["smoke"]
+
+    @mark("smoke")
+    def test_inline_marker() -> None:
+        pass
+"#;
+        let file = write_source_file(source)?;
+        let result = discover_tests_and_fixtures(file.path())?;
+
+        assert_eq!(result.known_markers, vec!["smoke".to_string()]);
+        assert_eq!(result.default_marks, vec!["smoke".to_string()]);
+        assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].markers.contains(&TestMarker::Mark("smoke".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn discover_resource_and_serial_markers_for_scheduler_admission() -> Result<(), Box<dyn std::error::Error>> {
+        let file = write_test_file(
+            "from std.testing import resource, serial\n\n@resource(\"db\")\ndef test_resource() -> None:\n    pass\n\n@serial\ndef test_serial() -> None:\n    pass\n",
+        )?;
+        let result = discover_tests_and_fixtures(file.path())?;
+        assert_eq!(result.tests.len(), 2);
+        assert!(
+            result.tests[0]
+                .markers
+                .contains(&TestMarker::Resource("db".to_string()))
+        );
+        assert!(result.tests[1].markers.contains(&TestMarker::Serial));
+        Ok(())
+    }
+
+    #[test]
     fn discover_test_file_rejects_module_tests() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 module tests:
@@ -1241,6 +1280,51 @@ def test_broken() -> None:
         assert_eq!(
             result.tests[0].markers[0],
             TestMarker::XFail("known bug #42".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn discover_xfailif_feature_uses_the_collection_feature_context() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.testing import feature, xfailif
+
+@xfailif(feature("known_bug"), reason="feature-gated known issue")
+def test_feature_xfail() -> None:
+    pass
+"#;
+        let file = write_test_file(source)?;
+        let disabled = discover_tests_and_fixtures_with_context(
+            file.path(),
+            &[],
+            &[],
+            &[],
+            &CollectionEvalContext::default(),
+            &FeatureSelection::default(),
+            None,
+        )?;
+        assert!(
+            !disabled.tests[0]
+                .markers
+                .iter()
+                .any(|marker| matches!(marker, TestMarker::XFail(_))),
+            "disabled collection feature must leave xfailif as an ordinary test"
+        );
+
+        let enabled = discover_tests_and_fixtures_with_context(
+            file.path(),
+            &[],
+            &[],
+            &[],
+            &CollectionEvalContext::new(BTreeSet::from(["known_bug".to_string()])),
+            &FeatureSelection::default(),
+            None,
+        )?;
+        assert!(
+            enabled.tests[0]
+                .markers
+                .contains(&TestMarker::XFail("feature-gated known issue".to_string())),
+            "enabled collection feature must lower xfailif to the runner's XFail marker"
         );
         Ok(())
     }
@@ -1608,6 +1692,44 @@ def test_len(input: str, expected: int) -> None:
         } else {
             return Err("expected parametrize marker".into());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn discover_parametrize_rejects_wrong_case_arity() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.testing import parametrize
+
+@parametrize("x, y", [1])
+def test_bad_case(x: int, y: int) -> None:
+    pass
+"#;
+        let file = write_test_file(source)?;
+        let Err(error) = discover_tests_and_fixtures(file.path()) else {
+            return Err("parametrize discovery accepted a wrong-arity case".into());
+        };
+        assert!(error.contains("parametrize case `1`"));
+        assert!(error.contains("expected 2 value(s)"));
+        Ok(())
+    }
+
+    #[test]
+    fn discover_conditional_marker_rejects_runtime_expression() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.testing import skipif
+
+def helper() -> bool:
+    return true
+
+@skipif(helper(), reason="dynamic")
+def test_dynamic_condition() -> None:
+    pass
+"#;
+        let file = write_test_file(source)?;
+        let Err(error) = discover_tests_and_fixtures(file.path()) else {
+            return Err("conditional marker discovery accepted a runtime expression".into());
+        };
+        assert!(error.contains("platform()") && error.contains("feature(\"name\")"));
         Ok(())
     }
 
