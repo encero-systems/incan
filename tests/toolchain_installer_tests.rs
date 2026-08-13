@@ -1041,6 +1041,25 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         "the named publisher Cargo and direct-rustc consumer toolchains must remain separate"
     );
     let workflow = fs::read_to_string(repo_root().join(".github/workflows/ci.yml"))?;
+    let compiler_build = workflow
+        .find("- name: Build the compiler")
+        .ok_or("pull-request CI is missing compiler build")?;
+    let provider_restore = workflow
+        .find("- uses: ./.github/actions/restore-sdk-provider-store")
+        .ok_or("pull-request CI is missing SDK provider cache restore")?;
+    let complete_suite = workflow
+        .find("- name: Run complete Oven suite")
+        .ok_or("pull-request CI is missing complete Oven suite")?;
+    assert!(
+        compiler_build < provider_restore && provider_restore < complete_suite,
+        "pull-request CI must restore its exact SDK provider cache after compiling the identity-bearing compiler and before the complete Oven suite"
+    );
+    assert!(
+        workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS")
+            && workflow.contains("INCAN_TEST_OVEN_COMPILER_SUITE_REPORT")
+            && workflow.contains("oven-pr-linux-stable-timing"),
+        "the stable Linux PR lane must retain the complete-suite timing report needed to investigate remaining native test costs"
+    );
     let evidence_workflow = fs::read_to_string(repo_root().join(".github/workflows/oven_evidence.yml"))?;
     for required in [
         "toolchain: 1.93.0",

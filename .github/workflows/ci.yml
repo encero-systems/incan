@@ -171,7 +171,11 @@ jobs:
           make fetch-oven-loaf-sources
       - name: Build the compiler
         run: CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
+      - uses: ./.github/actions/restore-sdk-provider-store
       - name: Run complete Oven suite
+        env:
+          INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS: ${{ matrix.id == 'linux-stable' && '1' || '' }}
+          INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: ${{ matrix.id == 'linux-stable' && 'target/oven-pr-suite-report.json' || '' }}
         run: >-
           CARGO_NET_OFFLINE=true
           INCAN_TEST_COMPILER_ALREADY_BUILT=1
@@ -179,7 +183,14 @@ jobs:
           INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}
           INCAN_TEST_SUITE_TOOLCHAIN=${{ matrix.toolchain }}
           make -s test-oven
-      - uses: ./.github/actions/restore-sdk-provider-store
+      - name: Upload Linux Oven timing report
+        if: matrix.id == 'linux-stable'
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-stable-timing
+          path: target/oven-pr-suite-report.json
+          if-no-files-found: error
+          retention-days: 1
       - uses: ./.github/actions/install-nightly-toolchain
         with:
           toolchain: nightly-2026-03-24
