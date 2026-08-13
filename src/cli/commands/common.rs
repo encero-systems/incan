@@ -400,6 +400,34 @@ fn sdk_provider_store_identity(
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Return the compiler-owned SDK provider identity for one source checkout.
+///
+/// This is intentionally exposed only to repository automation after it has built the matching CLI. The cache key
+/// must follow the same source closure as provider publication; hashing development executable bytes would make
+/// identical source checkouts miss after unrelated test builds.
+pub(crate) fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> CliResult<String> {
+    let stdlib_root = fs::canonicalize(compiler_root.join("crates/incan_stdlib/stdlib")).map_err(|error| {
+        CliError::failure(format!(
+            "failed to canonicalize built-in stdlib source directory below {}: {error}",
+            compiler_root.display()
+        ))
+    })?;
+    let executable = env::current_exe()
+        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
+    let executable = sdk_provider_builder_executable(None, executable)?;
+    let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
+    let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
+        .ok()
+        .filter(|profile| !profile.is_empty())
+        .unwrap_or_else(|| "full".to_string());
+    sdk_provider_store_identity(
+        &stdlib_root,
+        &executable,
+        workspace_lock.as_deref(),
+        &distribution_profile,
+    )
+}
+
 /// Resolve the source checkout that owns a discovered SDK tree, if this is a development layout.
 fn sdk_provider_compiler_checkout_root(stdlib_root: &Path) -> Option<PathBuf> {
     let explicit = env::var_os("INCAN_SOURCE_ROOT")

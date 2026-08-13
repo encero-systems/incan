@@ -957,6 +957,13 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
+    /// Emit the compiler-owned SDK provider source identity for repository automation.
+    #[command(hide = true)]
+    SdkProviderStoreIdentity {
+        /// Compiler source checkout that owns the built-in standard library
+        #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
+        compiler_root: PathBuf,
+    },
     /// Import frozen Cargo declarations as receipt evidence without launching Cargo
     Import {
         /// Root of the frozen Cargo package to import
@@ -1700,6 +1707,11 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         },
         Some(Command::Oven { command }) => match command {
             OvenCommand::Bake { project, format } => commands::oven_bake_project(project, format),
+            OvenCommand::SdkProviderStoreIdentity { compiler_root } => {
+                let identity = commands::sdk_provider_store_identity_for_compiler_root(&compiler_root)?;
+                println!("{identity}");
+                Ok(ExitCode::SUCCESS)
+            }
             OvenCommand::Import {
                 project,
                 target,
@@ -2922,6 +2934,21 @@ mod tests {
         };
         assert_eq!(project, PathBuf::from("examples/library"));
         assert_eq!(format, OvenOutputFormat::Json);
+
+        let provider_identity = parse_cli([
+            "incan",
+            "oven",
+            "sdk-provider-store-identity",
+            "--compiler-root",
+            "compiler-source",
+        ])?;
+        let Some(Command::Oven {
+            command: OvenCommand::SdkProviderStoreIdentity { compiler_root },
+        }) = provider_identity.command
+        else {
+            return Err(expected_command("oven sdk-provider-store-identity"));
+        };
+        assert_eq!(compiler_root, PathBuf::from("compiler-source"));
 
         let compiler_suite = parse_cli([
             "incan",

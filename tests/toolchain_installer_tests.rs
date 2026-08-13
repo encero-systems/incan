@@ -1056,9 +1056,22 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     );
     assert!(
         workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS")
+            && workflow.contains("INCAN_TEST_COMMAND_TIMINGS")
             && workflow.contains("INCAN_TEST_OVEN_COMPILER_SUITE_REPORT")
             && workflow.contains("oven-pr-linux-stable-timing"),
-        "the stable Linux PR lane must retain the complete-suite timing report needed to investigate remaining native test costs"
+        "the stable Linux PR lane must retain case and nested-command timing evidence needed to investigate remaining native test costs"
+    );
+    let provider_cache_action =
+        fs::read_to_string(repo_root().join(".github/actions/restore-sdk-provider-store/action.yml"))?;
+    assert!(
+        provider_cache_action.contains("oven sdk-provider-store-identity")
+            && provider_cache_action.contains("rustc --version --verbose")
+            && provider_cache_action.contains("incan-sdk-provider-v3"),
+        "the SDK provider cache must use the compiler-owned source identity and retain a selected-rustc suffix"
+    );
+    assert!(
+        !provider_cache_action.contains("shasum -a 256 target/debug/incan"),
+        "a rebuilt development compiler executable must not force an SDK provider cache miss"
     );
     let evidence_workflow = fs::read_to_string(repo_root().join(".github/workflows/oven_evidence.yml"))?;
     for required in [

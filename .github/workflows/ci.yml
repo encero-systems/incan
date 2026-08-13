@@ -175,6 +175,7 @@ jobs:
       - name: Run complete Oven suite
         env:
           INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS: ${{ matrix.id == 'linux-stable' && '1' || '' }}
+          INCAN_TEST_COMMAND_TIMINGS: ${{ matrix.id == 'linux-stable' && '1' || '' }}
           INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: ${{ matrix.id == 'linux-stable' && 'target/oven-pr-suite-report.json' || '' }}
         run: >-
           CARGO_NET_OFFLINE=true

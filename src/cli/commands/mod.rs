@@ -40,6 +40,7 @@ pub use binding_inspect::{BindingInspectionFormat, inspect_bindings};
 pub use build::{build_file, build_library, inspect_rust, run_file, run_inline_source};
 pub use cache::{inspect_generated_cache, prune_generated_cache};
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
+pub(crate) use common::sdk_provider_store_identity_for_compiler_root;
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
 pub use diagnostics::{
