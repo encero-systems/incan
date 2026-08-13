@@ -1040,26 +1040,41 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && makefile.contains("--rustc \"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
         "the named publisher Cargo and direct-rustc consumer toolchains must remain separate"
     );
+    let partition_target = makefile
+        .split_once(".PHONY: test-oven-partition")
+        .and_then(|(_, suffix)| suffix.split_once(".PHONY: test-oven-replay"))
+        .map(|(target, _)| target)
+        .ok_or("Makefile omitted the prepared Oven partition target")?;
+    assert!(
+        partition_target.contains("INCAN_TEST_OVEN_PARTITION_INDEX")
+            && partition_target.contains("INCAN_TEST_OVEN_PARTITION_COUNT")
+            && !partition_target.contains("test-prewarm-oven-loafs"),
+        "a partition replay must require explicit partition coordinates and never silently prewarm or bake"
+    );
     let workflow = fs::read_to_string(repo_root().join(".github/workflows/ci.yml"))?;
-    let compiler_build = workflow
-        .find("- name: Build the compiler")
-        .ok_or("pull-request CI is missing compiler build")?;
-    let provider_restore = workflow
+    let linux_prewarm = workflow
+        .find("linux-reference-handoff:")
+        .ok_or("pull-request CI is missing the Linux Oven prewarm handoff")?;
+    let linux_prewarm_workflow = &workflow[linux_prewarm..];
+    let compiler_build = linux_prewarm_workflow
+        .find("- name: Build Linux compiler and reference generators")
+        .ok_or("pull-request CI is missing Linux compiler build")?;
+    let provider_restore = linux_prewarm_workflow
         .find("- uses: ./.github/actions/restore-sdk-provider-store")
         .ok_or("pull-request CI is missing SDK provider cache restore")?;
-    let complete_suite = workflow
-        .find("- name: Run complete Oven suite")
-        .ok_or("pull-request CI is missing complete Oven suite")?;
+    let complete_suite = linux_prewarm_workflow
+        .find("- name: Prewarm the complete Linux stable Oven suite")
+        .ok_or("pull-request CI is missing complete Linux stable Oven suite")?;
     assert!(
         compiler_build < provider_restore && provider_restore < complete_suite,
-        "pull-request CI must restore its exact SDK provider cache after compiling the identity-bearing compiler and before the complete Oven suite"
+        "pull-request CI must restore its exact SDK provider cache after compiling the identity-bearing compiler and before the complete Linux stable Oven suite"
     );
     assert!(
         workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS")
             && workflow.contains("INCAN_TEST_COMMAND_TIMINGS")
             && workflow.contains("INCAN_TEST_OVEN_COMPILER_SUITE_REPORT")
-            && workflow.contains("oven-pr-linux-stable-timing"),
-        "the stable Linux PR lane must retain case and nested-command timing evidence needed to investigate remaining native test costs"
+            && workflow.contains("oven-pr-linux-partition-${{ matrix.partition }}"),
+        "the first stable Linux partition must retain case and nested-command timing evidence needed to investigate remaining native test costs"
     );
     let provider_cache_action =
         fs::read_to_string(repo_root().join(".github/actions/restore-sdk-provider-store/action.yml"))?;
@@ -1090,12 +1105,19 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     }
     assert!(
         workflow.contains("cancel-in-progress: true")
-            && workflow.contains("make -s test-oven")
+            && workflow.contains("make -s test-prewarm-oven-loafs")
+            && workflow.contains("make -s test-oven-partition")
             && workflow.contains("make test-oven-pr-regressions")
             && workflow.contains("linux-reference-handoff")
-            && workflow.matches("Install WASI target for vocab desugarers").count() == 2
+            && workflow.contains("oven-platform-smoke")
+            && workflow.contains("oven-linux-replay")
+            && workflow.contains("actions/cache/save@v4")
+            && workflow.contains("fail-on-cache-miss: true")
+            && workflow.contains("partition: [0, 1, 2, 3]")
+            && workflow.contains("TEST_ROOT=tests/cli_integration.rs")
+            && workflow.matches("Install WASI target for vocab desugarers").count() == 3
             && !workflow.contains("make test-oven-focused"),
-        "pull-request CI must cancel superseded runs, install the vocab target in both Linux paths, execute the full Oven suite on every platform, and retain Linux process-containment coverage"
+        "pull-request CI must cancel superseded runs, prewarm the complete stable Linux suite once, replay its four receipt partitions without rebaking, retain the platform CLI/C ABI root on macOS and MSRV, and retain Linux process-containment coverage"
     );
     assert!(
         evidence_workflow.contains("uses: ./.github/actions/run-oven-compiler-suite"),

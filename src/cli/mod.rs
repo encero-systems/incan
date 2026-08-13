@@ -1018,6 +1018,22 @@ pub enum OvenCommand {
         /// One exact test in a single receipt-bound target, for a narrow Oven diagnostic run
         #[arg(long = "exact", value_name = "TEST")]
         exact_names: Vec<String>,
+        /// Zero-based receipt-index partition used by the bounded CI replay; requires `--partition-count`
+        #[arg(
+            long = "partition-index",
+            value_name = "INDEX",
+            requires = "partition_count",
+            hide = true
+        )]
+        partition_index: Option<usize>,
+        /// Total receipt-index partitions used by the bounded CI replay; requires `--partition-index`
+        #[arg(
+            long = "partition-count",
+            value_name = "COUNT",
+            requires = "partition_index",
+            hide = true
+        )]
+        partition_count: Option<usize>,
         /// Explicit Cargo for roots whose tests exercise Cargo compatibility
         #[arg(long = "fixture-cargo", value_name = "PATH", hide = true)]
         fixture_cargo: Option<PathBuf>,
@@ -1827,6 +1843,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 features,
                 targets,
                 exact_names,
+                partition_index,
+                partition_count,
                 fixture_cargo,
                 output,
                 store,
@@ -1837,6 +1855,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 features,
                 targets,
                 exact_names,
+                partition_index,
+                partition_count,
                 fixture_cargo,
                 output,
                 store: store.into(),
@@ -2972,6 +2992,30 @@ mod tests {
             exact_names,
             ["rfc031_pub_import_integration_tests::compiled_parent_fields_lower_into_consumer_subclasses_issue885"]
         );
+
+        let compiler_suite_partition = parse_cli([
+            "incan",
+            "oven",
+            "compiler-libtests",
+            "--partition-index",
+            "2",
+            "--partition-count",
+            "4",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::CompilerLibtests {
+                    partition_index,
+                    partition_count,
+                    ..
+                },
+        }) = compiler_suite_partition.command
+        else {
+            return Err(expected_command("oven compiler-libtests partition"));
+        };
+        assert_eq!(partition_index, Some(2));
+        assert_eq!(partition_count, Some(4));
+        assert!(parse_cli(["incan", "oven", "compiler-libtests", "--partition-index", "0",]).is_err());
 
         let import = parse_cli([
             "incan",

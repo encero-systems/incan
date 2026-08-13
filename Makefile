@@ -283,6 +283,18 @@ fetch-oven-loaf-sources:
 
 .PHONY: test-oven
 test-oven: test-prewarm-oven-loafs
+	@$(MAKE) --no-print-directory test-oven-replay
+
+.PHONY: test-oven-partition  ## test - Replay one deterministic prewarmed Oven compiler-suite partition
+test-oven-partition:
+	@test -n "$(INCAN_TEST_OVEN_PARTITION_INDEX)" || { echo "INCAN_TEST_OVEN_PARTITION_INDEX is required" >&2; exit 2; }
+	@test -n "$(INCAN_TEST_OVEN_PARTITION_COUNT)" || { echo "INCAN_TEST_OVEN_PARTITION_COUNT is required" >&2; exit 2; }
+	@echo "\033[1mRunning prepared Oven compiler-suite partition $(INCAN_TEST_OVEN_PARTITION_INDEX)/$(INCAN_TEST_OVEN_PARTITION_COUNT)...\033[0m"
+	@$(MAKE) --no-print-directory test-oven-replay \
+		INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS='--partition-index $(INCAN_TEST_OVEN_PARTITION_INDEX) --partition-count $(INCAN_TEST_OVEN_PARTITION_COUNT)'
+
+.PHONY: test-oven-replay
+test-oven-replay:
 	@echo "\033[1mRunning complete compiler suite through Oven...\033[0m"
 	@set -e; \
 		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)"; \
@@ -314,6 +326,7 @@ test-oven: test-prewarm-oven-loafs
 				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
 				--feature lsp --output "$$suite_output" \
 				--store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
+				$(INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS) \
 				--format text; \
 		test ! -s "$$suite_output/cargo-guard/invocations.log"; \
 		suite_succeeded=true

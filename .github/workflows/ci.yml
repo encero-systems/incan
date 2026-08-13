@@ -128,19 +128,16 @@ jobs:
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
-  oven-pr:
-    name: Oven PR Gate (${{ matrix.name }})
+  oven-platform-smoke:
+    name: Oven platform gate (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - id: linux-stable
-            name: ubuntu-latest, stable
-            runner: ubuntu-latest
-            toolchain: stable
           - id: macos-stable
             name: macos-latest, stable
             runner: macos-latest
@@ -172,31 +169,22 @@ jobs:
       - name: Build the compiler
         run: CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
       - uses: ./.github/actions/restore-sdk-provider-store
-      - name: Run complete Oven suite
-        env:
-          INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS: ${{ matrix.id == 'linux-stable' && '1' || '' }}
-          INCAN_TEST_COMMAND_TIMINGS: ${{ matrix.id == 'linux-stable' && '1' || '' }}
-          INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: ${{ matrix.id == 'linux-stable' && 'target/oven-pr-suite-report.json' || '' }}
+      - uses: ./.github/actions/install-nightly-toolchain
+        with:
+          toolchain: nightly-2026-03-24
+      - name: Install WASI target for the pinned Loaf baker
+        run: rustup target add wasm32-wasip1 --toolchain nightly-2026-03-24
+      # Linux stable is the one complete suite authority below. This root is
+      # retained here because it exercises the platform-sensitive CLI and C ABI
+      # assertions after a full compiler build on each supported target.
+      - name: Run platform CLI and C ABI Oven root
         run: >-
           CARGO_NET_OFFLINE=true
           INCAN_TEST_COMPILER_ALREADY_BUILT=1
           INCAN_TEST_PREWARM_TOOLCHAIN=${{ matrix.toolchain }}
           INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}
           INCAN_TEST_SUITE_TOOLCHAIN=${{ matrix.toolchain }}
-          make -s test-oven
-      - name: Upload Linux Oven timing report
-        if: matrix.id == 'linux-stable'
-        uses: actions/upload-artifact@v6
-        with:
-          name: oven-pr-linux-stable-timing
-          path: target/oven-pr-suite-report.json
-          if-no-files-found: error
-          retention-days: 1
-      - uses: ./.github/actions/install-nightly-toolchain
-        with:
-          toolchain: nightly-2026-03-24
-      - name: Install WASI target for the pinned Loaf baker
-        run: rustup target add wasm32-wasip1 --toolchain nightly-2026-03-24
+          make -s test-one TEST_ROOT=tests/cli_integration.rs
       - name: Bake the release Loafs and guard normal build, run, and test
         run: >-
           CARGO_NET_OFFLINE=true
@@ -206,10 +194,13 @@ jobs:
           make -s test-oven-release-smoke
 
   linux-reference-handoff:
-    name: Linux reference artifact handoff
+    name: Linux Oven prewarm and reference handoff
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    timeout-minutes: 25
+    outputs:
+      oven_suite_cache_key: ${{ steps.oven-suite-cache-key.outputs.key }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -234,8 +225,33 @@ jobs:
           CARGO_BUILD_JOBS=2 cargo build --locked -p incan_core --bin generate_lang_reference
       - name: Run bounded Oven process-containment regressions
         run: make test-oven-pr-regressions
-      - name: Prewarm Linux SDK providers for checked references
-        run: INCAN_TEST_COMPILER_ALREADY_BUILT=1 make test-prewarm-sdk
+      - uses: ./.github/actions/restore-sdk-provider-store
+      - uses: ./.github/actions/install-nightly-toolchain
+        with:
+          toolchain: nightly-2026-03-24
+      - name: Install WASI target for the pinned Loaf baker
+        run: rustup target add wasm32-wasip1 --toolchain nightly-2026-03-24
+      - name: Prewarm the complete Linux stable Oven suite
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+          INCAN_TEST_PREWARM_TOOLCHAIN=stable
+          INCAN_TEST_LOAF_TOOLCHAIN=stable
+          INCAN_TEST_SUITE_TOOLCHAIN=stable
+          make -s test-prewarm-oven-loafs
+      - name: Derive immutable prepared-suite cache key
+        id: oven-suite-cache-key
+        run: echo "key=incan-oven-suite-v1-Linux-X64-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      - name: Save prepared Linux stable Oven suite
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.oven-suite-cache-key.outputs.key }}
+          path: |
+            .incan/oven/compiler-libtests-receipt.json
+            target/share/incan/oven/loafs
+            target/oven-compiler-suite-store
+            target/incan_test_sdk_provider_store
+            target/incan_test_sdk_provider_path
       - name: Upload compiler and reference generators
         uses: actions/upload-artifact@v6
         with:
@@ -252,6 +268,94 @@ jobs:
           name: test-linux-sdk-provider-store
           path: target/incan_test_sdk_provider_store
           if-no-files-found: error
+          retention-days: 1
+
+  oven-linux-replay:
+    name: Oven Linux replay (${{ matrix.partition }}/4)
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - linux-reference-handoff
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1 --toolchain stable
+      - uses: ./.github/actions/install-nightly-toolchain
+        with:
+          toolchain: nightly-2026-03-24
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-oven-pr-sources-v1-stable-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock') }}
+          restore-keys: |
+            incan-oven-pr-sources-v1-stable-Linux-X64-
+      - name: Fetch locked compiler and Loaf publisher sources
+        run: |
+          make fetch-locked-cargo-sources
+          make fetch-oven-loaf-sources
+      - name: Download prewarmed compiler and reference generators
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-tools
+          path: target/debug
+      - name: Restore executable permissions
+        run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
+      - name: Restore immutable prepared Oven suite
+        uses: actions/cache/restore@v4
+        with:
+          key: ${{ needs.linux-reference-handoff.outputs.oven_suite_cache_key }}
+          path: |
+            .incan/oven/compiler-libtests-receipt.json
+            target/share/incan/oven/loafs
+            target/oven-compiler-suite-store
+            target/incan_test_sdk_provider_store
+            target/incan_test_sdk_provider_path
+          fail-on-cache-miss: true
+      - name: Verify prepared suite handoff
+        run: |
+          test -s .incan/oven/compiler-libtests-receipt.json
+          test -d target/share/incan/oven/loafs
+          test -d target/oven-compiler-suite-store
+          test -s target/incan_test_sdk_provider_path
+      - name: Run receipt-bound Oven partition
+        env:
+          INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
+          INCAN_TEST_COMMAND_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
+          INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: target/oven-pr-linux-partition-${{ matrix.partition }}.json
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+          INCAN_TEST_PREWARM_TOOLCHAIN=stable
+          INCAN_TEST_LOAF_TOOLCHAIN=stable
+          INCAN_TEST_SUITE_TOOLCHAIN=stable
+          make -s test-oven-partition
+          INCAN_TEST_OVEN_PARTITION_INDEX=${{ matrix.partition }}
+          INCAN_TEST_OVEN_PARTITION_COUNT=4
+      - name: Bake the release Loafs and guard normal build, run, and test
+        if: matrix.partition == 0
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+          INCAN_TEST_PREWARM_TOOLCHAIN=stable
+          INCAN_TEST_LOAF_TOOLCHAIN=stable
+          make -s test-oven-release-smoke
+      - name: Upload Oven partition report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-partition-${{ matrix.partition }}
+          path: target/oven-pr-linux-partition-${{ matrix.partition }}.json
+          if-no-files-found: warn
           retention-days: 1
 
   audit:
@@ -420,7 +524,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - changes
-      - oven-pr
+      - oven-platform-smoke
+      - oven-linux-replay
       - linux-reference-handoff
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     steps:
