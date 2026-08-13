@@ -1077,8 +1077,9 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         compiler_build < linux_tools_workflow.len()
             && provider_restore < complete_suite
             && linux_prewarm_workflow.contains("needs:\n      - changes\n      - linux-tool-handoff")
-            && linux_prewarm_workflow.contains("persist: \"false\""),
-        "pull-request CI must build the identity-bearing compiler once, hand it to the single Linux prewarm, and avoid a duplicate provider-cache upload inside the prepared-suite handoff"
+            && linux_prewarm_job.contains("- name: Save prepared Linux stable Oven suite")
+            && linux_prewarm_job.contains("target/incan_test_sdk_provider_store"),
+        "pull-request CI must build the identity-bearing compiler once, reuse its persistent provider input cache in the single Linux prewarm, and capture that provider store in the immutable prepared-suite handoff"
     );
     assert_eq!(
         linux_prewarm_job.matches("name: test-linux-sdk-provider-store").count(),
@@ -1105,10 +1106,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         "a rebuilt development compiler executable must not force an SDK provider cache miss"
     );
     assert!(
-        provider_cache_action.contains("inputs:")
-            && provider_cache_action.contains("persist:")
-            && provider_cache_action.contains("actions/cache/restore@v4"),
-        "the provider-store action must permit a prepared-suite handoff to restore without a duplicate post-job upload"
+        provider_cache_action.contains("actions/cache@v4")
+            && !provider_cache_action.contains("persist:")
+            && !provider_cache_action.contains("actions/cache/restore@v4"),
+        "the provider-store action must own one persistent source/toolchain-keyed input cache; the prepared-suite handoff is a separate exact-source replay cache"
     );
     let evidence_workflow = fs::read_to_string(repo_root().join(".github/workflows/oven_evidence.yml"))?;
     for required in [

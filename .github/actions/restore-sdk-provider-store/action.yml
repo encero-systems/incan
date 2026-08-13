@@ -1,10 +1,5 @@
 name: Restore compiled SDK provider store
 description: Reuse an immutable SDK provider store for the compiler-owned source closure and selected Rust toolchain.
-inputs:
-  persist:
-    description: Whether a cache miss should be saved after this job succeeds.
-    required: false
-    default: "true"
 runs:
   using: composite
   steps:
@@ -16,18 +11,7 @@ runs:
         rustc_identity="$(rustc --version --verbose | shasum -a 256 | awk '{print $1}')"
         printf 'provider_identity=%s\n' "$provider_identity" >> "$GITHUB_OUTPUT"
         printf 'rustc_identity=%s\n' "$rustc_identity" >> "$GITHUB_OUTPUT"
-    - name: Restore compiled SDK provider store without saving
-      if: inputs.persist != 'true'
-      # A job that embeds this store in a larger immutable handoff must not
-      # upload the same provider tree a second time in its post-job cache hook.
-      uses: actions/cache/restore@v4
-      with:
-        path: target/incan_test_sdk_provider_store
-        key: >-
-          incan-sdk-provider-v3-${{ runner.os }}-${{ runner.arch }}-${{
-          steps.identity.outputs.provider_identity }}-${{ steps.identity.outputs.rustc_identity }}
-    - name: Restore compiled SDK provider store
-      if: inputs.persist == 'true'
+    - name: Restore and save compiled SDK provider store
       # The compiler independently validates the content-addressed store. The cache accelerates an exact match but
       # never becomes the authority for provider compatibility.
       uses: actions/cache@v4

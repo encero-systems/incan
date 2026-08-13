@@ -259,9 +259,11 @@ jobs:
           path: target/debug
       - name: Restore executable permissions
         run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
+      # This source/toolchain-keyed input cache survives across compatible
+      # commits. The exact-SHA prepared-suite cache below is separately
+      # retained because the replay partitions must restore a self-contained
+      # immutable closure.
       - uses: ./.github/actions/restore-sdk-provider-store
-        with:
-          persist: "false"
       - uses: ./.github/actions/install-nightly-toolchain
         with:
           toolchain: nightly-2026-03-24
