@@ -1059,6 +1059,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .find("linux-oven-prewarm:")
         .ok_or("pull-request CI is missing the Linux Oven prewarm handoff")?;
     let linux_prewarm_workflow = &workflow[linux_prewarm..];
+    let linux_prewarm_end = linux_prewarm_workflow
+        .find("\n  oven-process-containment:")
+        .ok_or("pull-request CI is missing the job after the Linux Oven prewarm")?;
+    let linux_prewarm_job = &linux_prewarm_workflow[..linux_prewarm_end];
     let linux_tools_workflow = &workflow[linux_tools..linux_prewarm];
     let compiler_build = linux_tools_workflow
         .find("- name: Build Linux compiler and reference generators")
@@ -1075,6 +1079,11 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && linux_prewarm_workflow.contains("needs:\n      - changes\n      - linux-tool-handoff")
             && linux_prewarm_workflow.contains("persist: \"false\""),
         "pull-request CI must build the identity-bearing compiler once, hand it to the single Linux prewarm, and avoid a duplicate provider-cache upload inside the prepared-suite handoff"
+    );
+    assert_eq!(
+        linux_prewarm_job.matches("name: test-linux-sdk-provider-store").count(),
+        1,
+        "the Linux prewarm is the sole publisher of the provider-store artifact"
     );
     assert!(
         workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS")

@@ -295,13 +295,6 @@ jobs:
           path: target/incan_test_sdk_provider_store
           if-no-files-found: error
           retention-days: 1
-      - name: Upload SDK provider store
-        uses: actions/upload-artifact@v6
-        with:
-          name: test-linux-sdk-provider-store
-          path: target/incan_test_sdk_provider_store
-          if-no-files-found: error
-          retention-days: 1
 
   oven-process-containment:
     name: Oven process-containment regressions
