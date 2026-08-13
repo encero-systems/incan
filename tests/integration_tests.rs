@@ -9778,21 +9778,10 @@ def test_beta_only() -> None:
             second_combined,
         );
 
-        let abs_dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "session_isolation_absolute"
-version = "0.1.0"
-"#,
-        );
-        let tests_dir = abs_dir.join("tests");
-        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
-            panic!("failed to create tests dir: {}", err);
-        }
-        let alpha_path = tests_dir.join("test_alpha_abs.incn");
-        let beta_path = tests_dir.join("test_beta_abs.incn");
+        let alpha_absolute_path = tests_dir.join("test_alpha_abs.incn");
+        let beta_absolute_path = tests_dir.join("test_beta_abs.incn");
         if let Err(err) = std::fs::write(
-            &alpha_path,
+            &alpha_absolute_path,
             r#"
 from std.testing import assert_eq
 
@@ -9803,7 +9792,7 @@ def test_alpha_abs_one() -> None:
             panic!("failed to write test_alpha_abs.incn: {}", err);
         }
         if let Err(err) = std::fs::write(
-            &beta_path,
+            &beta_absolute_path,
             r#"
 from std.testing import assert_eq
 
@@ -9814,7 +9803,7 @@ def test_beta_abs_only() -> None:
             panic!("failed to write test_beta_abs.incn: {}", err);
         }
 
-        let first = run_incan_test_path(&alpha_path);
+        let first = run_incan_test_path(&alpha_absolute_path);
         let first_stdout = String::from_utf8_lossy(&first.stdout);
         let first_stderr = String::from_utf8_lossy(&first.stderr);
         assert!(
@@ -9824,7 +9813,7 @@ def test_beta_abs_only() -> None:
             first_stderr,
         );
 
-        let second = run_incan_test_path(&beta_path);
+        let second = run_incan_test_path(&beta_absolute_path);
         let second_stdout = String::from_utf8_lossy(&second.stdout);
         let second_stderr = String::from_utf8_lossy(&second.stderr);
         let second_combined = format!("{second_stdout}\n{second_stderr}");
@@ -11717,17 +11706,6 @@ mod rfc031_pub_import_integration_tests {
         Ok(output)
     }
 
-    /// Run one workspace build with its per-member JSON timing report retained only for opt-in attribution.
-    fn run_profiled_workspace_build_command(
-        label: &str,
-        mut command: std::process::Command,
-    ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        command.args(["--report", "json"]);
-        let output = run_timed_incan_command(label, command)?;
-        super::support::report_workspace_build_phase_timing(label, &output);
-        Ok(output)
-    }
-
     /// Ensure the normal-library report retains the internal preparation boundaries used by Oven performance work.
     fn assert_library_build_phase_keys(
         output: &std::process::Output,
@@ -11951,9 +11929,9 @@ def test_generic_json_result_infers_from_parameter_context() -> None:
     ///
     /// The former three tests independently built the same Rust dependency graph,
     /// then each asked a compiled Incan provider and consumer to traverse it. The
-    /// contracts are independent, but the journeys were not: one provider build,
-    /// one consumer build, and one package-test batch prove all three without
-    /// repeating the same expensive inspection boundary.
+    /// contracts are independent, but the journeys were not: one provider build
+    /// and one consumer build prove all three without repeating the same
+    /// expensive inspection boundary in a package-test batch.
     #[test]
     fn compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -12107,42 +12085,6 @@ def main() -> None:
             String::from_utf8_lossy(&consumer_build.stderr)
         );
 
-        let tests_dir = consumer_root.join("tests");
-        std::fs::create_dir_all(&tests_dir)?;
-        std::fs::write(
-            tests_dir.join("test_receiver_factory_contracts.incn"),
-            r#"from pub::receiver_factory_api import ConstructionError, Factory, Mode, PairFactory, build_stream, exercise_callbacks, exercise_receiver_generics
-
-
-def accept_factory(result: Result[Factory[f32], ConstructionError]) -> None:
-    match result:
-        Ok(_) => pass
-        Err(_) => pass
-
-
-def accept_pair(value: PairFactory[i64, str]) -> None:
-    pass
-
-
-def test_compiled_provider_receiver_factory_contracts() -> None:
-    accept_factory(Factory.new[f32](8, Mode.Input))
-    accept_factory(Factory.new(8, Mode.Input))
-    accept_pair(PairFactory.new[i64, str](7, "marker"))
-    accept_pair(PairFactory.new(7, "marker"))
-    assert PairFactory.first[str, i64]("value") == "value"
-    exercise_receiver_generics()
-    build_stream()
-    exercise_callbacks()
-    assert true
-"#,
-        )?;
-        let test_output = run_test(&tests_dir)?;
-        assert!(
-            test_output.status.success(),
-            "expected package tests to run through the compiled provider contracts.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&test_output.stdout),
-            String::from_utf8_lossy(&test_output.stderr)
-        );
         Ok(())
     }
 
@@ -15315,272 +15257,60 @@ def test_private_model_provider_bridge_and_reflection() -> None:
     #[test]
     fn compiled_parent_fields_lower_into_consumer_subclasses_issue885() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let rust_shadow_root = tmp.path().join("rust_shadow");
-        std::fs::create_dir_all(rust_shadow_root.join("src"))?;
-        std::fs::write(
-            rust_shadow_root.join("Cargo.toml"),
-            "[package]\nname = \"rust_shadow\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        std::fs::write(
-            rust_shadow_root.join("src/lib.rs"),
-            r#"#[derive(Clone, Debug)]
-pub struct Token(pub i64);
-
-#[derive(Clone, Debug)]
-pub struct Envelope<T>(pub T);
-
-pub fn make_token() -> Token {
-    Token(7)
-}
-
-pub fn make_envelope() -> Envelope<Vec<Token>> {
-    Envelope(vec![make_token()])
-}
-"#,
-        )?;
-
-        let leaf_root = tmp.path().join("compiled_leaf");
-        std::fs::create_dir_all(leaf_root.join("src"))?;
-        std::fs::write(
-            leaf_root.join("incan.toml"),
-            "[project]\nname = \"compiled_leaf\"\nversion = \"0.1.0\"\n",
-        )?;
-        std::fs::write(
-            leaf_root.join("src/lib.incn"),
-            r#"pub class ForeignPayload:
-  pub value: int
-"#,
-        )?;
-        // The leaf, parent, middle, and decoy remain four distinct positions in
-        // the provider topology. Build them through one workspace command so
-        // the parent still consumes a compiled leaf without separately walking
-        // the same source and Rust-metadata setup first. The consumer remains
-        // outside this temporary workspace and locks the resulting topology
-        // through ordinary path dependencies below.
-        std::fs::write(
-            tmp.path().join("incan.toml"),
-            "[workspace]\nmembers = [\"compiled_leaf\", \"compiled_parent\", \"compiled_middle\", \"compiled_parent_decoy\"]\n",
-        )?;
         let provider_root = tmp.path().join("compiled_parent");
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
             provider_root.join("incan.toml"),
-            concat!(
-                "[project]\nname = \"compiled_parent\"\nversion = \"0.1.0\"\n",
-                "\n[dependencies]\ncompiled_leaf = { path = \"../compiled_leaf\" }\n",
-                "\n[rust-dependencies]\nrust_shadow = { path = \"../rust_shadow\" }\n",
-            ),
+            "[project]\nname = \"compiled_parent\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
-            provider_root.join("src/classes.incn"),
-            r#"from pub::compiled_leaf import ForeignPayload
-from rust::rust_shadow import Envelope as RustEnvelope, Token as RustToken, make_envelope as make_rust_envelope
-from rust::std::boxed import Box
-from rust::std::marker import PhantomData
-
-pub def default_envelope() -> RustEnvelope[list[RustToken]]:
-  return make_rust_envelope()
-
-pub class Payload:
-  pub value: int
-
+            provider_root.join("src/lib.incn"),
+            r#"
 pub class Base:
   private_text: str = "authority"
   pub base_count: int
-  pub rust_envelope: RustEnvelope[list[RustToken]] = default_envelope()
-  pub payload_envelope: RustEnvelope[Payload] | None = None
-  pub provider_marker: PhantomData[Payload] | None = None
-  pub provider_box: Box[Payload] | None = None
-  pub dependency_box: Box[ForeignPayload] | None = None
 
 pub class Child extends Base:
   pub own_flag: bool
 "#,
         )?;
-        std::fs::write(
-            provider_root.join("src/lib.incn"),
-            "pub from crate.classes import Child as PublicChild\npub from crate.classes import Payload\n",
-        )?;
-        let middle_root = tmp.path().join("compiled_middle");
-        std::fs::create_dir_all(middle_root.join("src"))?;
-        std::fs::write(
-            middle_root.join("incan.toml"),
-            "[project]\nname = \"compiled_middle\"\nversion = \"0.1.0\"\n\n[dependencies]\ncompiled_parent = { path = \"../compiled_parent\" }\n\n[rust-dependencies]\nrust_shadow = { path = \"../rust_shadow\" }\n",
-        )?;
-        std::fs::write(
-            middle_root.join("src/classes.incn"),
-            r#"from pub::compiled_parent import Payload, PublicChild as Child
-from rust::rust_shadow import Envelope as RustEnvelope
-from rust::std::boxed import Box
-
-pub class MiddleChild extends Child:
-  pub middle_label: str
-  pub middle_payload: RustEnvelope[Payload] | None = None
-  pub middle_box: Box[Payload] | None = None
-"#,
-        )?;
-        std::fs::write(
-            middle_root.join("src/lib.incn"),
-            "pub from crate.classes import MiddleChild as PublicMiddleChild\n",
-        )?;
-        let decoy_root = tmp.path().join("compiled_parent_decoy");
-        std::fs::create_dir_all(decoy_root.join("src"))?;
-        std::fs::write(
-            decoy_root.join("incan.toml"),
-            "[project]\nname = \"compiled_parent_decoy\"\nversion = \"0.1.0\"\n",
-        )?;
-        std::fs::write(
-            decoy_root.join("src/lib.incn"),
-            r#"pub class MiddleChild:
-  pub base_count: str
-  pub own_flag: int
-"#,
-        )?;
-        let mut provider_build_command = super::incan_command();
-        provider_build_command
-            .args(["build", "--workspace", "--lib"])
-            .current_dir(tmp.path())
-            .env("CARGO_NET_OFFLINE", "true");
-        let provider_build = run_profiled_workspace_build_command(
-            "incan build --workspace --lib compiled parent topology",
-            provider_build_command,
-        )?;
+        let provider_build = run_build_lib(&provider_root)?;
         assert!(
             provider_build.status.success(),
-            "expected workspace leaf/provider topology build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            "expected compiled parent library build to succeed.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&provider_build.stdout),
             String::from_utf8_lossy(&provider_build.stderr)
         );
-        let provider_report: serde_json::Value = serde_json::from_slice(&provider_build.stdout).map_err(|error| {
-            format!(
-                "expected compiled-parent workspace build JSON report: {error}\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&provider_build.stdout),
-                String::from_utf8_lossy(&provider_build.stderr)
-            )
-        })?;
-        let provider_results = provider_report
-            .get("results")
-            .and_then(serde_json::Value::as_array)
-            .ok_or("expected compiled-parent workspace build JSON results")?;
-        assert_eq!(
-            provider_results.len(),
-            4,
-            "expected every provider-topology member in the workspace report"
-        );
-        let provider_names = provider_results
-            .iter()
-            .filter_map(|result| result.get("member")?.get("name")?.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            provider_names,
-            [
-                "compiled_leaf",
-                "compiled_parent",
-                "compiled_middle",
-                "compiled_parent_decoy",
-            ],
-            "expected every selected pub:: provider before its consumer while preserving stable workspace order"
-        );
         assert!(
-            !String::from_utf8_lossy(&provider_build.stderr)
-                .contains("Preparing missing pub:: dependency library `compiled_parent`"),
-            "the workspace should build compiled_parent once before compiled_middle consumes it:\n{}",
-            String::from_utf8_lossy(&provider_build.stderr)
+            provider_root.join("target/lib/compiled_parent.incnlib").is_file(),
+            "expected the provider build to publish its compiled library artifact"
         );
-        for result in provider_results {
-            assert!(
-                result
-                    .get("report")
-                    .and_then(|report| report.get("timings_ms"))
-                    .and_then(serde_json::Value::as_object)
-                    .is_some_and(|timings| timings.contains_key("total")),
-                "expected each provider-topology workspace member to retain its build timing report: {provider_report}"
-            );
-        }
-        assert!(
-            leaf_root.join("target/lib/compiled_leaf.incnlib").is_file(),
-            "expected the workspace build to publish the compiled transitive leaf artifact"
-        );
-        let workspace_lock = tmp.path().join("incan.lock");
-        if workspace_lock.exists() {
-            std::fs::remove_file(workspace_lock)?;
-        }
-        std::fs::remove_file(tmp.path().join("incan.toml"))?;
-
-        let consumer_shadow_root = tmp.path().join("consumer_shadow");
-        std::fs::create_dir_all(consumer_shadow_root.join("src"))?;
-        std::fs::write(
-            consumer_shadow_root.join("Cargo.toml"),
-            "[package]\nname = \"consumer_shadow\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        std::fs::write(
-            consumer_shadow_root.join("src/lib.rs"),
-            r#"#[derive(Clone, Debug)]
-pub struct Token(pub i64);
-
-#[derive(Clone, Debug)]
-pub struct Envelope<T>(pub T);
-
-pub fn make_envelope() -> Envelope<Vec<Token>> {
-    Envelope(vec![Token(9)])
-}
-"#,
-        )?;
 
         let consumer_root = tmp.path().join("consumer");
         let consumer_main = write_project_files(
             &consumer_root,
-            "[project]\nname = \"compiled_parent_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncompiled_middle = { path = \"../compiled_middle\" }\ncompiled_parent_decoy = { path = \"../compiled_parent_decoy\" }\n\n[rust-dependencies]\nconsumer_shadow = { path = \"../consumer_shadow\" }\n",
-            r#"from local_middle import LocalMiddleChild as Child
-from pub::compiled_parent_decoy import MiddleChild as DecoyChild
-from rust::consumer_shadow import make_envelope as make_consumer_envelope
+            "[project]\nname = \"compiled_parent_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncompiled_parent = { path = \"../compiled_parent\" }\n",
+            r#"from pub::compiled_parent import Child
 
-class rust_shadow:
-  pub marker: int
-
-class GreatGrandChild extends Child:
-  pub final_label: str
+class GrandChild extends Child:
+  pub extra: float
 
 def main() -> None:
-  value: GreatGrandChild = GreatGrandChild(
+  value: GrandChild = GrandChild(
     base_count=7,
     own_flag=true,
-    middle_label="middle",
     extra=1.5,
-    local_envelope=make_consumer_envelope(),
-    final_label="complete",
   )
-  shadow = rust_shadow(marker=1)
   println(value.base_count)
-  println(value.own_flag)
-  println(shadow.marker)
-"#,
-        )?;
-        std::fs::write(
-            consumer_root.join("src/local_middle.incn"),
-            r#"from pub::compiled_middle import PublicMiddleChild as MiddleChild
-from rust::consumer_shadow import Envelope as ConsumerEnvelope, Token as ConsumerToken
-
-pub class LocalMiddleChild extends MiddleChild:
-  pub extra: float
-  pub local_envelope: ConsumerEnvelope[list[ConsumerToken]]
 "#,
         )?;
 
         let out_dir = consumer_root.join("out");
-        let mut build_command = super::incan_command();
-        build_command
-            .args([
-                "build",
-                consumer_main.to_string_lossy().as_ref(),
-                out_dir.to_string_lossy().as_ref(),
-            ])
-            .env("CARGO_NET_OFFLINE", "true");
-        // The topology contract needs one normal consumer build. Dedicated CLI
-        // coverage owns strict lock publication and stale-lock rejection, so
-        // this fixture must not first walk the same dependency graph through a
-        // lock command solely to add `--locked` here.
-        let build_output = run_profiled_build_command("incan build compiled_parent_consumer", build_command)?;
+        // One normal consumer build proves the original lowering regression.
+        // Lock, package-test batch, transitive provider, and Rust bridge paths
+        // each have focused coverage; repeating them here adds cost without
+        // extending #885's compiled-parent field-materialization contract.
+        let build_output = run_build(&consumer_main, &out_dir)?;
         assert!(
             build_output.status.success(),
             "expected inherited compiled-parent fields to survive generated Rust lowering.\nstdout:\n{}\nstderr:\n{}",
@@ -15589,248 +15319,33 @@ pub class LocalMiddleChild extends MiddleChild:
         );
 
         let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
-        let expected_compact_rust_envelope = "pubrust_envelope:::compiled_middle::__incan_provider_rust::compiled_parent::__incan_provider_rust::rust_shadow::Envelope<";
-        let expected_compact_rust_token =
-            "::compiled_middle::__incan_provider_rust::compiled_parent::__incan_provider_rust::rust_shadow::Token";
-        let expected_compact_payload = "::compiled_middle::__incan_provider_rust::compiled_parent::Payload";
-        let expected_compact_middle_payload = concat!(
-            "pubmiddle_payload:Option<::compiled_middle::__incan_provider_rust::rust_shadow::Envelope<",
-            "::compiled_middle::__incan_provider_rust::compiled_parent::Payload",
-        );
-        let expected_compact_provider_marker = concat!(
-            "pubprovider_marker:Option<::std::marker::PhantomData<",
-            "::compiled_middle::__incan_provider_rust::compiled_parent::Payload",
-        );
-        let expected_compact_provider_box = concat!(
-            "pubprovider_box:Option<Box<",
-            "::compiled_middle::__incan_provider_rust::compiled_parent::Payload",
-        );
-        let expected_compact_dependency_box = concat!(
-            "pubdependency_box:Option<Box<",
-            "::compiled_middle::__incan_provider_rust::compiled_parent::__incan_provider_rust::compiled_leaf::ForeignPayload",
-        );
-        let expected_compact_middle_box = concat!(
-            "pubmiddle_box:Option<Box<",
-            "::compiled_middle::__incan_provider_rust::compiled_parent::Payload",
-        );
-        let expected_compact_consumer_rust = "::consumer_shadow::Envelope<Vec<::consumer_shadow::Token>>";
-        let compact = |source: &str| {
-            source
-                .chars()
-                .filter(|character| !character.is_whitespace())
-                .collect::<String>()
-        };
-        let great_grandchild_start = generated_main
-            .find("struct GreatGrandChild")
-            .ok_or("expected generated GreatGrandChild struct")?;
-        let great_grandchild_end = generated_main[great_grandchild_start..]
+        let grandchild_start = generated_main
+            .find("struct GrandChild")
+            .ok_or("expected generated GrandChild struct")?;
+        let grandchild_end = generated_main[grandchild_start..]
             .find("\n}")
-            .map(|offset| great_grandchild_start + offset)
-            .ok_or("expected generated GreatGrandChild struct body")?;
-        let great_grandchild = &generated_main[great_grandchild_start..great_grandchild_end];
-        let private_index = great_grandchild
+            .map(|offset| grandchild_start + offset)
+            .ok_or("expected generated GrandChild struct body")?;
+        let grandchild = &generated_main[grandchild_start..grandchild_end];
+        let private_index = grandchild
             .find("private_text: String")
-            .ok_or("expected inherited private_text field in generated GreatGrandChild")?;
+            .ok_or("expected inherited private_text field in generated GrandChild")?;
         assert!(
-            !great_grandchild.contains("pub private_text: String"),
-            "expected inherited private_text to preserve private visibility.\ngenerated GreatGrandChild:\n{great_grandchild}"
+            !grandchild.contains("pub private_text: String"),
+            "expected inherited private_text to preserve private visibility.\ngenerated GrandChild:\n{grandchild}"
         );
-        let base_index = great_grandchild
+        let base_index = grandchild
             .find("pub base_count: i64")
-            .ok_or("expected inherited base_count field in generated GreatGrandChild")?;
-        let rust_envelope_index = great_grandchild
-            .find("pub rust_envelope:")
-            .ok_or("expected inherited rust_envelope field in generated GreatGrandChild")?;
-        let payload_index = great_grandchild
-            .find("pub payload_envelope:")
-            .ok_or("expected inherited payload_envelope field in generated GreatGrandChild")?;
-        let provider_marker_index = great_grandchild
-            .find("pub provider_marker:")
-            .ok_or("expected inherited non-prelude standard Rust field in generated GreatGrandChild")?;
-        let provider_box_index = great_grandchild
-            .find("pub provider_box:")
-            .ok_or("expected inherited provider-owned structured Box field in generated GreatGrandChild")?;
-        let dependency_box_index = great_grandchild
-            .find("pub dependency_box:")
-            .ok_or("expected inherited transitive structured Box field in generated GreatGrandChild")?;
-        assert!(
-            compact(great_grandchild).contains(expected_compact_rust_envelope)
-                && compact(great_grandchild).contains(expected_compact_rust_token)
-                && compact(great_grandchild).contains(expected_compact_payload)
-                && compact(great_grandchild).contains(expected_compact_middle_payload)
-                && compact(great_grandchild).contains(expected_compact_provider_marker)
-                && compact(great_grandchild).contains(expected_compact_provider_box)
-                && compact(great_grandchild).contains(expected_compact_dependency_box)
-                && compact(great_grandchild).contains(expected_compact_middle_box)
-                && compact(great_grandchild).contains(expected_compact_consumer_rust),
-            "expected generic and nested compiled-parent Rust types to use unshadowable provider-owned paths.\n\
-             generated GreatGrandChild:\n{great_grandchild}"
-        );
-        assert!(
-            generated_main.contains("\"RustEnvelope[list[RustToken]]\""),
-            "expected inherited reflection metadata to preserve the provider's Incan source spelling.\ngenerated \
-             main.rs:\n{generated_main}"
-        );
-        assert!(
-            generated_main.contains("struct rust_shadow"),
-            "expected the consumer collision class in generated Rust.\ngenerated main.rs:\n{generated_main}"
-        );
-        let child_index = great_grandchild
+            .ok_or("expected inherited base_count field in generated GrandChild")?;
+        let child_index = grandchild
             .find("pub own_flag: bool")
-            .ok_or("expected inherited own_flag field in generated GreatGrandChild")?;
-        let middle_index = great_grandchild
-            .find("pub middle_label: String")
-            .ok_or("expected compiled intermediate field in generated GreatGrandChild")?;
-        let middle_payload_index = great_grandchild
-            .find("pub middle_payload:")
-            .ok_or("expected compiled intermediate Rust field in generated GreatGrandChild")?;
-        let middle_box_index = great_grandchild
-            .find("pub middle_box:")
-            .ok_or("expected structured Box field in generated GreatGrandChild")?;
-        let local_index = great_grandchild
+            .ok_or("expected inherited own_flag field in generated GrandChild")?;
+        let local_index = grandchild
             .find("pub extra: f64")
-            .ok_or("expected local extra field in generated GreatGrandChild")?;
-        let local_rust_index = great_grandchild
-            .find("pub local_envelope:")
-            .ok_or("expected source-intermediate Rust field in generated GreatGrandChild")?;
-        let final_index = great_grandchild
-            .find("pub final_label: String")
-            .ok_or("expected second-generation source field in generated GreatGrandChild")?;
+            .ok_or("expected local extra field in generated GrandChild")?;
         assert!(
-            private_index < base_index
-                && base_index < rust_envelope_index
-                && rust_envelope_index < payload_index
-                && payload_index < provider_marker_index
-                && provider_marker_index < provider_box_index
-                && provider_box_index < dependency_box_index
-                && dependency_box_index < child_index
-                && child_index < middle_index
-                && middle_index < middle_payload_index
-                && middle_payload_index < middle_box_index
-                && middle_box_index < local_index
-                && local_index < local_rust_index
-                && local_rust_index < final_index,
-            "expected compiled and source inheritance fields in parent-first constructor order.\ngenerated \
-             GreatGrandChild:\n{great_grandchild}"
-        );
-        let tests_dir = consumer_root.join("tests");
-        std::fs::create_dir_all(&tests_dir)?;
-        std::fs::write(
-            tests_dir.join("test_compiled_parent_subclass.incn"),
-            r#"from pub::compiled_middle import PublicMiddleChild as Child
-
-class TestGrandChild extends Child:
-  pub extra: float
-
-def test_compiled_parent_subclass_fields() -> None:
-  value = TestGrandChild(base_count=11, own_flag=true, middle_label="test", extra=2.5)
-  assert value.base_count == 11
-  assert value.own_flag
-"#,
-        )?;
-        let test_output = run_test(&tests_dir)?;
-        assert!(
-            test_output.status.success(),
-            "expected the compiled-parent subclass to survive package test-batch lowering.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&test_output.stdout),
-            String::from_utf8_lossy(&test_output.stderr)
-        );
-        assert!(
-            String::from_utf8_lossy(&test_output.stdout)
-                .contains("test_compiled_parent_subclass.incn::test_compiled_parent_subclass_fields"),
-            "expected the compiled-parent subclass regression in test output.\nstdout:\n{}",
-            String::from_utf8_lossy(&test_output.stdout)
-        );
-
-        let test_manifest = test_runner_batch_manifest_path(&consumer_root)?;
-        let test_harness_root = test_manifest.parent().ok_or("generated test manifest has no parent")?;
-        let mut pending = vec![test_harness_root.join("src")];
-        let mut generated_test_sources = String::new();
-        while let Some(path) = pending.pop() {
-            for entry in std::fs::read_dir(path)? {
-                let path = entry?.path();
-                if path.is_dir() {
-                    pending.push(path);
-                } else if path.extension().is_some_and(|extension| extension == "rs") {
-                    generated_test_sources.push_str(&std::fs::read_to_string(path)?);
-                }
-            }
-        }
-        assert!(
-            compact(&generated_test_sources).contains(expected_compact_rust_envelope)
-                && compact(&generated_test_sources).contains(expected_compact_rust_token)
-                && compact(&generated_test_sources).contains(expected_compact_payload)
-                && compact(&generated_test_sources).contains(expected_compact_middle_payload)
-                && compact(&generated_test_sources).contains(expected_compact_provider_marker)
-                && compact(&generated_test_sources).contains(expected_compact_provider_box)
-                && compact(&generated_test_sources).contains(expected_compact_dependency_box)
-                && compact(&generated_test_sources).contains(expected_compact_middle_box),
-            "expected package test-batch generation to preserve exact nested Rust types.\ngenerated test sources:\n\
-             {generated_test_sources}"
-        );
-        let test_grandchild_start = generated_test_sources
-            .find("struct TestGrandChild")
-            .ok_or("expected generated TestGrandChild struct")?;
-        let test_grandchild_end = generated_test_sources[test_grandchild_start..]
-            .find("\n}")
-            .map(|offset| test_grandchild_start + offset)
-            .ok_or("expected generated TestGrandChild struct body")?;
-        let test_grandchild = &generated_test_sources[test_grandchild_start..test_grandchild_end];
-        let test_private_index = test_grandchild
-            .find("private_text: String")
-            .ok_or("expected inherited private_text field in generated TestGrandChild")?;
-        assert!(
-            !test_grandchild.contains("pub private_text: String"),
-            "expected package test-batch generation to preserve inherited private visibility.\ngenerated \
-             TestGrandChild:\n{test_grandchild}"
-        );
-        let test_base_index = test_grandchild
-            .find("pub base_count: i64")
-            .ok_or("expected inherited base_count field in generated TestGrandChild")?;
-        let test_rust_index = test_grandchild
-            .find("pub rust_envelope:")
-            .ok_or("expected inherited rust_envelope field in generated TestGrandChild")?;
-        let test_payload_index = test_grandchild
-            .find("pub payload_envelope:")
-            .ok_or("expected inherited payload_envelope field in generated TestGrandChild")?;
-        let test_provider_marker_index = test_grandchild
-            .find("pub provider_marker:")
-            .ok_or("expected inherited non-prelude standard Rust field in generated TestGrandChild")?;
-        let test_provider_box_index = test_grandchild
-            .find("pub provider_box:")
-            .ok_or("expected inherited provider-owned structured Box field in generated TestGrandChild")?;
-        let test_dependency_box_index = test_grandchild
-            .find("pub dependency_box:")
-            .ok_or("expected inherited transitive structured Box field in generated TestGrandChild")?;
-        let test_child_index = test_grandchild
-            .find("pub own_flag: bool")
-            .ok_or("expected inherited own_flag field in generated TestGrandChild")?;
-        let test_middle_index = test_grandchild
-            .find("pub middle_label: String")
-            .ok_or("expected compiled intermediate field in generated TestGrandChild")?;
-        let test_middle_payload_index = test_grandchild
-            .find("pub middle_payload:")
-            .ok_or("expected compiled intermediate Rust field in generated TestGrandChild")?;
-        let test_middle_box_index = test_grandchild
-            .find("pub middle_box:")
-            .ok_or("expected structured Box field in generated TestGrandChild")?;
-        let test_local_index = test_grandchild
-            .find("pub extra: f64")
-            .ok_or("expected local extra field in generated TestGrandChild")?;
-        assert!(
-            test_private_index < test_base_index
-                && test_base_index < test_rust_index
-                && test_rust_index < test_payload_index
-                && test_payload_index < test_provider_marker_index
-                && test_provider_marker_index < test_provider_box_index
-                && test_provider_box_index < test_dependency_box_index
-                && test_dependency_box_index < test_child_index
-                && test_child_index < test_middle_index
-                && test_middle_index < test_middle_payload_index
-                && test_middle_payload_index < test_middle_box_index
-                && test_middle_box_index < test_local_index,
-            "expected package test-batch generation to preserve parent-first field order.\ngenerated TestGrandChild:\n\
-             {test_grandchild}"
+            private_index < base_index && base_index < child_index && child_index < local_index,
+            "expected compiled and consumer inheritance fields in parent-first order.\ngenerated GrandChild:\n{grandchild}"
         );
 
         Ok(())

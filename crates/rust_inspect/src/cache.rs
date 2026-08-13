@@ -528,6 +528,18 @@ fn insert_cached_item(inner: &mut CacheInner, root: &Path, metadata: Arc<RustIte
         .insert((root.to_path_buf(), metadata.canonical_path.clone()), metadata);
 }
 
+/// Return whether cached metadata can satisfy a caller that requires a complete Rust type surface.
+///
+/// Syntax-only source fallbacks intentionally retain a `FieldsAndVariantsOnly` marker, so they must still be
+/// upgraded through semantic extraction. A complete type record already contains the methods and trait
+/// implementations such a caller requires and can be reused without reopening its workspace.
+fn is_complete_type_metadata(metadata: &RustItemMetadata) -> bool {
+    matches!(
+        &metadata.kind,
+        RustItemKind::Type(type_info) if type_info.metadata_completeness.is_complete()
+    )
+}
+
 /// Re-key a cached item for a query path while preserving the extracted Rust metadata.
 fn insert_aliased_item(
     inner: &mut CacheInner,
@@ -4318,6 +4330,7 @@ impl RustMetadataCache {
         let root = manifest_dir.canonicalize()?;
         let timing_enabled = rust_inspect_timing_enabled();
         let mut trace = CallTrace::new(timing_enabled, &root, canonical_path);
+        let key_item = (root.clone(), canonical_path.to_owned());
         let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
             path: root.clone(),
             message: format!("metadata cache lock poisoned: {e}"),
@@ -4332,6 +4345,18 @@ impl RustMetadataCache {
             disk_load_started.elapsed(),
             disk_report.detail().as_str(),
         );
+        if let Some(hit) = inner
+            .items
+            .get(&key_item)
+            .filter(|metadata| is_complete_type_metadata(metadata))
+        {
+            let outcome = CacheAccessOutcome::ExactHit;
+            trace.set_outcome(outcome.trace_label());
+            return Ok(CacheAccess {
+                metadata: Arc::clone(hit),
+                outcome,
+            });
+        }
         let mut last_err = None;
         for candidate in canonical_path_candidates(canonical_path) {
             match extract_in_workspace_set(

@@ -1145,6 +1145,11 @@ pub use writer::Builder;
         append_data.signature.params[1].type_display,
         "&mut super::Header"
     );
+    let repeated = complete_cache.get_or_extract_complete(&root, "source_dep::Builder", &|_| ())?;
+    assert!(
+        std::sync::Arc::ptr_eq(&metadata, &repeated),
+        "a second complete lookup must reuse the complete in-memory type record"
+    );
     Ok(())
 }
 
