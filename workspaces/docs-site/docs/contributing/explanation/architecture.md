@@ -55,7 +55,7 @@ This diagram shows the Incan compiler pipeline at a high level.
 | TokenStream      | Rust `TokenStream` from codegen (`proc_macro2` via `quote`/`syn`). This is the final output of the compiler before being formatted to Rust code. |
 | prettyplease     | Formats Rust syntax/TokenStream into human-readable Rust source code.                                                                            |
 | Rust source      | The generated Rust code as text.                                                                                                                 |
-| ProjectGenerator | Writes caller-owned generated Rust and compatibility metadata. Normal build/run/test execution does not delegate to its Cargo compatibility runner.     |
+| ProjectGenerator | Writes caller-owned generated Rust and compatibility metadata. Normal build/run/test execution does not delegate to its Cargo compatibility runner. |
 | Oven receipt     | Content-derived request binding source, compiler, SDK/provider, target, profile, features, locks, and other build-relevant evidence.              |
 | Loaf             | Immutable content-addressed directory containing a verified direct-`rustc` plan, artifacts, identity, provenance, digests, and byte accounting.   |
 | Oven store       | Policy-bounded store that selects and leases compatible plans and reports logical, physical, reclaimable, and active-use storage separately.      |

@@ -98,11 +98,8 @@ An exact, complete envelope match returns `reused` without launching Cargo or re
 
 The built-in Alpha envelopes are typed in Oven:
 
-- `release` contains the debug and release variants of one complete release-version standard-library Loaf family;
-  each variant seals every supported `std.*` provider, its checked direct-Rustc closure, and its registry-source
-  authority for that target/profile;
-- `compiler-suite` contains the corresponding complete debug and release standard-library variants used to run
-  Incan's repository tests through Oven, plus the receipt-bound test-plan store.
+- `release` contains the debug and release variants of one complete release-version standard-library Loaf family; each variant seals every supported `std.*` provider, its checked direct-Rustc closure, and its registry-source authority for that target/profile.
+- `compiler-suite` contains the corresponding complete debug and release standard-library variants used to run Incan's repository tests through Oven, plus the receipt-bound test-plan store.
 
 Their source programs are checked Incan fixtures. Make and CI compose the CLI; they do not define identity, bundle contents, admission policy, or fixture source. For the compiler-suite envelope, the same baker call also prepares or reuses the bounded receipt-compatible suite store selected by the Cargo-guarded replay.
 
@@ -118,9 +115,7 @@ incan test
 
 Each command selects a receipt-compatible Loaf and stored direct-`rustc` plan. A changed compiler, target, SDK, feature selection, lock, or relevant source changes the identity. An unchanged clean checkout can select the same Loaf because Git status and shell-script revisions are not compatibility inputs.
 
-For a supported manifest-backed Incan project, an explicit preparation step makes first-use selection or publication
-visible before a normal command. `oven bake` discovers `src/lib.incn` and `src/main.incn` when present, so an
-initialized application and a library use the same command:
+For a supported manifest-backed Incan project, an explicit preparation step makes first-use selection or publication visible before a normal command. `oven bake` discovers `src/lib.incn` and `src/main.incn` when present, so an initialized application and a library use the same command:
 
 ```bash
 incan oven bake --project . --format json
@@ -130,12 +125,7 @@ incan build --lib # library
 
 The release ships one complete standard-library Loaf family: immutable debug and release variants are both required because Rust artifacts are target/profile-specific. Each variant contains the checked full stdlib/provider closure, its direct-`rustc` plan, sealed registry source authority, provenance, digests, and byte accounting. It is one release-versioned standard-library service, not a pair of partial stdlibs or a cache copied once per project.
 
-`oven bake` records debug and release receipts for every discovered project target. If the full stdlib Loaf already
-covers a profile, it reports `toolchain_loaf` and selects that immutable closure directly—no Cargo process and no
-per-project copy. If a target needs a closure outside the installed standard-library envelope, the explicit command
-may run the bounded publisher once and publish a receipt-bound project Loaf as `<identity>.loaf/loaf.json` in the
-policy-bounded local store. A repeat reports `reused` and starts no Cargo process. Generated Rust, final binaries,
-and final `rlib` output remain project-owned.
+`oven bake` records debug and release receipts for every discovered project target. If the full stdlib Loaf already covers a profile, it reports `toolchain_loaf` and selects that immutable closure directly—no Cargo process and no per-project copy. If a target needs a closure outside the installed standard-library envelope, the explicit command may run the bounded publisher once and publish a receipt-bound project Loaf as `<identity>.loaf/loaf.json` in the policy-bounded local store. A repeat reports `reused` and starts no Cargo process. Generated Rust, final binaries, and final `rlib` output remain project-owned.
 
 Normal `build`, `run`, and `test` are consumers only. A compatibility miss stops with the `oven bake --project` action; it never turns the normal command into a Cargo fallback. Registry-source authority for supported standard-library facades remains independent from linkable closure selection, so source inspection never joins artifacts from different feature graphs.
 
