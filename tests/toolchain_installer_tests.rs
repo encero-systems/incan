@@ -1052,11 +1052,15 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         "a partition replay must require explicit partition coordinates and never silently prewarm or bake"
     );
     let workflow = fs::read_to_string(repo_root().join(".github/workflows/ci.yml"))?;
+    let linux_tools = workflow
+        .find("linux-tool-handoff:")
+        .ok_or("pull-request CI is missing the Linux compiler handoff")?;
     let linux_prewarm = workflow
-        .find("linux-reference-handoff:")
+        .find("linux-oven-prewarm:")
         .ok_or("pull-request CI is missing the Linux Oven prewarm handoff")?;
     let linux_prewarm_workflow = &workflow[linux_prewarm..];
-    let compiler_build = linux_prewarm_workflow
+    let linux_tools_workflow = &workflow[linux_tools..linux_prewarm];
+    let compiler_build = linux_tools_workflow
         .find("- name: Build Linux compiler and reference generators")
         .ok_or("pull-request CI is missing Linux compiler build")?;
     let provider_restore = linux_prewarm_workflow
@@ -1066,8 +1070,11 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .find("- name: Prewarm the complete Linux stable Oven suite")
         .ok_or("pull-request CI is missing complete Linux stable Oven suite")?;
     assert!(
-        compiler_build < provider_restore && provider_restore < complete_suite,
-        "pull-request CI must restore its exact SDK provider cache after compiling the identity-bearing compiler and before the complete Linux stable Oven suite"
+        compiler_build < linux_tools_workflow.len()
+            && provider_restore < complete_suite
+            && linux_prewarm_workflow.contains("needs:\n      - changes\n      - linux-tool-handoff")
+            && linux_prewarm_workflow.contains("persist: \"false\""),
+        "pull-request CI must build the identity-bearing compiler once, hand it to the single Linux prewarm, and avoid a duplicate provider-cache upload inside the prepared-suite handoff"
     );
     assert!(
         workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS")
@@ -1088,6 +1095,12 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         !provider_cache_action.contains("shasum -a 256 target/debug/incan"),
         "a rebuilt development compiler executable must not force an SDK provider cache miss"
     );
+    assert!(
+        provider_cache_action.contains("inputs:")
+            && provider_cache_action.contains("persist:")
+            && provider_cache_action.contains("actions/cache/restore@v4"),
+        "the provider-store action must permit a prepared-suite handoff to restore without a duplicate post-job upload"
+    );
     let evidence_workflow = fs::read_to_string(repo_root().join(".github/workflows/oven_evidence.yml"))?;
     for required in [
         "toolchain: 1.93.0",
@@ -1103,21 +1116,40 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             "release evidence CI must retain `{required}`"
         );
     }
+    let platform_gate = workflow
+        .find("oven-platform-smoke:")
+        .and_then(|start| {
+            workflow[start..]
+                .find("linux-tool-handoff:")
+                .map(|end| &workflow[start..start + end])
+        })
+        .ok_or("pull-request CI is missing the bounded platform C-ABI gate")?;
     assert!(
         workflow.contains("cancel-in-progress: true")
             && workflow.contains("make -s test-prewarm-oven-loafs")
             && workflow.contains("make -s test-oven-partition")
             && workflow.contains("make test-oven-pr-regressions")
-            && workflow.contains("linux-reference-handoff")
+            && workflow.contains("linux-tool-handoff")
+            && workflow.contains("linux-oven-prewarm")
+            && workflow.contains("oven-process-containment")
             && workflow.contains("oven-platform-smoke")
             && workflow.contains("oven-linux-replay")
             && workflow.contains("actions/cache/save@v4")
             && workflow.contains("fail-on-cache-miss: true")
             && workflow.contains("partition: [0, 1, 2, 3]")
-            && workflow.contains("TEST_ROOT=tests/cli_integration.rs")
-            && workflow.matches("Install WASI target for vocab desugarers").count() == 3
+            && workflow.matches("timeout-minutes: 20").count() >= 4
+            && workflow.matches("Install WASI target for vocab desugarers").count() == 5
             && !workflow.contains("make test-oven-focused"),
-        "pull-request CI must cancel superseded runs, prewarm the complete stable Linux suite once, replay its four receipt partitions without rebaking, retain the platform CLI/C ABI root on macOS and MSRV, and retain Linux process-containment coverage"
+        "pull-request CI must cancel superseded runs, prewarm the complete stable Linux suite once, replay its four receipt partitions without rebaking, retain independent process-containment coverage, and cap every Oven job at twenty minutes"
+    );
+    assert!(
+        platform_gate.contains("make -s test-prewarm-sdk")
+            && platform_gate.contains("${{ matrix.c_abi_test }}")
+            && platform_gate.contains("check_verifies_c_bindings_against_a_declared_android_interop_target")
+            && platform_gate.contains("check_verifies_c_bindings_against_a_declared_ios_interop_target")
+            && !platform_gate.contains("test-one")
+            && !platform_gate.contains("test-oven-release-smoke"),
+        "reduced macOS and MSRV gates must retain their platform-specific C-ABI assertions after one SDK prewarm, without repeating the Linux Oven suite bake"
     );
     assert!(
         evidence_workflow.contains("uses: ./.github/actions/run-oven-compiler-suite"),
