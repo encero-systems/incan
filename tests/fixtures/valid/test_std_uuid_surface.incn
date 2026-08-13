@@ -93,23 +93,28 @@ def exercise_uuid() -> Result[None, UuidError]:
 
 def assert_parse_err(text: str) -> None:
     match UUID.parse(text):
-        Ok(_) => assert False
+        Ok(_) =>
+            assert false
         Err(_) => pass
 
 
 def assert_from_bytes_err(raw: bytes) -> None:
     match UUID.from_bytes(raw):
-        Ok(_) => assert False
+        Ok(_) =>
+            assert false
         Err(_) => pass
 
 
 def assert_v8_err(raw: bytes) -> None:
     match UUID.v8(raw):
-        Ok(_) => assert False
+        Ok(_) =>
+            assert false
         Err(_) => pass
 
 
-def main() -> None:
+def test_std_uuid_surface() -> None:
     match exercise_uuid():
-        Ok(_) => println("std.uuid ok")
-        Err(err) => println(err.message())
+        Ok(_) =>
+            assert true
+        Err(err) =>
+            assert false, err.message()

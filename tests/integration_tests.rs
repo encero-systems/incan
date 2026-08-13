@@ -7611,24 +7611,28 @@ async def main() -> None:
     }
 
     #[test]
-    fn test_run_std_uuid_surface() -> Result<(), Box<dyn std::error::Error>> {
-        // Anchor `std.uuid`'s generated-project runtime dependency in the root test build so offline CI shards do not
+    fn test_std_uuid_surface_runs_as_native_test_issue1051() -> Result<(), Box<dyn std::error::Error>> {
+        // Anchor `std.uuid`'s generated native-test dependency in the root test build so offline CI shards do not
         // depend on cache order.
         let mut rng = rand::thread_rng();
         let _ = rand::Rng::gen_range(&mut rng, 0..1);
 
         let output = incan_command()
-            .args(["run", "tests/fixtures/valid/std_uuid_surface.incn"])
+            .args(["test", "tests/fixtures/valid/test_std_uuid_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
         assert!(
             output.status.success(),
-            "incan run std_uuid_surface failed: status={:?} stderr={}",
+            "incan test std_uuid_surface failed: status={:?} stderr={}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.uuid ok");
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("test_std_uuid_surface"),
+            "the UUID native-test regression must execute its declared test. stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         Ok(())
     }
 
