@@ -1,10 +1,30 @@
-# Incan Programming Language
+<p align="center">
+  <img src="workspaces/docs-site/docs/shared/incapunk/wordmark_small_001.png" alt="Incan" width="360" />
+</p>
 
-Incan is a statically typed language for writing clear, high-level application code that compiles to native Rust. It aims to feel lightweight and expressive while keeping the things that matter in large codebases explicit: types, errors, and mutability.
+<p align="center">
+  <strong>Readable, typed application code. Native Rust binaries.</strong>
+</p>
 
-The current toolchain is designed to be easy to install, try, inspect, and diagnose without cloning the compiler repository first.
+<p align="center">
+  <a href="#get-started">Get started</a> ·
+  <a href="workspaces/docs-site/docs/start_here/index.md">Documentation</a> ·
+  <a href="workspaces/docs-site/docs/release_notes/0_5.md">What’s new in 0.5</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
+</p>
 
-## Getting started
+<p align="center">
+  <a href="https://github.com/encero-systems/incan/actions/workflows/ci.yml"><img src="https://github.com/encero-systems/incan/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-5b3cc4" alt="Apache-2.0 license" /></a>
+  <a href="https://github.com/encero-systems/incan/stargazers"><img src="https://img.shields.io/github/stars/encero-systems/incan?style=flat&color=f2a900" alt="GitHub stars" /></a>
+  <a href="workspaces/docs-site/docs/stability.md"><img src="https://img.shields.io/badge/status-beta-f2a900" alt="Beta software" /></a>
+</p>
+
+Incan is a statically typed language for writing clear, high-level application code that compiles to native Rust. It keeps the things that matter in large codebases explicit—types, errors, and mutability—without giving up a lightweight, expressive authoring experience.
+
+**In 0.5:** typed C ABI interop, multi-package workspaces, stronger library and SDK composition, fallible streaming, crash-safe local state primitives, and broad compiler/package-boundary hardening.
+
+## Get started
 
 Install the latest toolchain release before creating your first project:
 
@@ -55,7 +75,7 @@ The current toolchain includes these public surfaces for installation, first con
 - **Codegraph export** through `incan inspect codegraph --format jsonl`, with compiler-backed files, modules, declarations, imports, exports, references, calls, diagnostics, spans, provenance, and degraded-state records.
 - **Boundary parity hardening** across local, imported, re-exported, package, test-batch, generated-Rust, and vocab/tooling paths.
 
-Read the [CLI reference](workspaces/docs-site/docs/tooling/reference/cli_reference.md) for detailed command contracts, or the [0.4 release notes](workspaces/docs-site/docs/release_notes/0_4.md) for release-specific change history.
+Read the [CLI reference](workspaces/docs-site/docs/tooling/reference/cli_reference.md) for detailed command contracts, or the [0.5 release notes](workspaces/docs-site/docs/release_notes/0_5.md) for release-specific change history.
 
 These examples show the inspection commands most useful when evaluating a project:
 
@@ -147,7 +167,7 @@ Start here:
 - Start here: `workspaces/docs-site/docs/start_here/index.md`
 - Language: `workspaces/docs-site/docs/language/index.md`
 - Tooling: `workspaces/docs-site/docs/tooling/index.md`
-- Release notes: `workspaces/docs-site/docs/release_notes/0_4.md`
+- Release notes: `workspaces/docs-site/docs/release_notes/0_5.md`
 
 Build/serve locally:
 
