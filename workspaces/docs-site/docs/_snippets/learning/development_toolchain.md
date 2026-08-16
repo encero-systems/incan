@@ -1,0 +1,20 @@
+The project tutorials in the development docs target the current 0.5 development line. Build that compiler and its bounded release Loaf envelope from the matching repository checkout:
+
+```bash
+git clone https://github.com/encero-systems/incan.git
+cd incan
+git switch main
+export INCAN_CHECKOUT="$PWD"
+make build
+make test-prewarm-oven-release-loafs \
+  INCAN_TEST_COMPILER_ALREADY_BUILT=1 \
+  INCAN_TEST_OVEN_RELEASE_COMPILER_BIN="$PWD/target/debug/incan"
+export INCAN_SOURCE_ROOT="$INCAN_CHECKOUT"
+export INCAN_STDLIB="$INCAN_CHECKOUT/crates/incan_stdlib/stdlib"
+export INCAN_STDLIB_DIR="$INCAN_STDLIB"
+export INCAN_TOOLCHAIN_CRATES_DIR="$INCAN_CHECKOUT/crates"
+export PATH="$INCAN_CHECKOUT/target/oven-alpha-release-toolchain/bin:$PATH"
+incan --version
+```
+
+`make build` compiles the compiler and language server. The explicit prewarm target then assembles the same finite release envelope used by repository smoke tests and puts its compiler under `target/oven-alpha-release-toolchain/bin`. The checkout variables keep source-verified preview material tied to the same compiler and standard library after you change directories. This is a source-checkout preparation step, not a normal project build command. Keep that prepared binary first on `PATH` while following 0.5 development tutorials, and repeat both commands after updating the checkout.

@@ -1,0 +1,19 @@
+def main() -> None:
+    names = ["Alice", "Alice", "Bob", "Bob", "Cara"]
+
+    # 1) Normalize and print.
+    normalized = [name.strip().lower() for name in names]
+    for name in normalized:
+        println(name)
+
+    # 2) Count occurrences.
+    mut name_counts: dict[str, int] = {}
+    for name in normalized:
+        current_count = name_counts.get(name).copied().unwrap_or(0)
+        name_counts[name] = current_count + 1
+
+    # 3) Deduplicate and print counts (set iteration order is not guaranteed).
+    unique = set(normalized)
+    for name in unique:
+        count = name_counts.get(name).copied().unwrap_or(0)
+        println(f"{name}: {count}")

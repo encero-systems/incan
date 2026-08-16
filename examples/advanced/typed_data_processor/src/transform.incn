@@ -1,0 +1,32 @@
+"""Pure transformation logic for the order-report tutorial."""
+
+from domain import OrderBatch, OrderReport, OrderSummary
+
+
+pub def order_total(quantity: int, unit_price: float) -> float:
+    """Return the monetary total for a quantity and unit price."""
+
+    return float(quantity) * unit_price
+
+
+pub def is_acceptable(quantity: int, unit_price: float) -> bool:
+    """Accept only positive quantities with non-negative prices."""
+
+    return quantity > 0 and unit_price >= 0.0
+
+
+pub def build_report(batch: OrderBatch) -> OrderReport:
+    """Transform one input batch into accepted summaries and a rejection count."""
+
+    mut accepted: list[OrderSummary] = []
+    mut rejected_count = 0
+
+    for order in batch.orders:
+        if is_acceptable(order.quantity, order.unit_price):
+            accepted.append(
+                OrderSummary(id=order.id, product=order.product, total=order_total(order.quantity, order.unit_price)),
+            )
+        else:
+            rejected_count += 1
+
+    return OrderReport(accepted=accepted, rejected_count=rejected_count)

@@ -1,0 +1,6 @@
+from pub::pricing import LineItem, subtotal
+
+
+def main() -> None:
+    item = LineItem(name="keyboard", quantity=2, unit_price=79.5)
+    println(f"{item.name}: {subtotal(item)}")

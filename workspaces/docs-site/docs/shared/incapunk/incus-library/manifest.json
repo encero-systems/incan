@@ -1,0 +1,578 @@
+{
+  "pools": {
+    "tip": [
+      "/shared/incapunk/incus-library/tip/incus_tip_pointing.webp",
+      "/shared/incapunk/incus-library/tip/incus_tip_lightbulb.webp"
+    ],
+    "info": [
+      "/shared/incapunk/incus-library/info/incus_info_open_palm.webp",
+      "/shared/incapunk/incus-library/info/incus_info_rubber_duck.webp",
+      "/shared/incapunk/incus-library/info/incus_info_dna.webp",
+      "/shared/incapunk/incus-library/info/incus_info_equation_book.webp"
+    ],
+    "warning": [
+      "/shared/incapunk/incus-library/warning/incus_warning_visor_alert.webp",
+      "/shared/incapunk/incus-library/warning/incus_warning_sparking_cables.webp",
+      "/shared/incapunk/incus-library/warning/incus_warning_danger_switch.webp"
+    ],
+    "neutral": [
+      "/shared/incapunk/incus-library/neutral/incus_neutral_portrait.webp",
+      "/shared/incapunk/incus-library/neutral/incus_neutral_sleepy.webp",
+      "/shared/incapunk/incus-library/neutral/incus_neutral_music.webp",
+      "/shared/incapunk/incus-library/neutral/incus_neutral_standing.webp",
+      "/shared/incapunk/incus-library/neutral/incus_neutral_three_quarter.webp",
+      "/shared/incapunk/incus-library/neutral/incus_neutral_hands_behind_back.webp"
+    ],
+    "easter-egg": [
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_rtfm_coffee.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_soda.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_animal_mug.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_shrug.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_flower.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_energy_sword.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_goldfish.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_pool_duck.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_goldfish_alt.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_bubbles.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_adventurer.webp",
+      "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_laptop_coffee.webp"
+    ],
+    "javascript": [
+      "/shared/incapunk/incus-library/javascript/incus_javascript_javascript_coffee.webp"
+    ],
+    "python": [
+      "/shared/incapunk/incus-library/python/incus_python_python_book.webp",
+      "/shared/incapunk/incus-library/python/incus_python_python_snake.webp",
+      "/shared/incapunk/incus-library/python/incus_python_python_hat.webp",
+      "/shared/incapunk/incus-library/python/incus_python_python_duck.webp",
+      "/shared/incapunk/incus-library/python/incus_python_python_laptop.webp",
+      "/shared/incapunk/incus-library/python/incus_python_python_noodles.webp"
+    ],
+    "rust": [
+      "/shared/incapunk/incus-library/rust/incus_rust_rust_shield.webp",
+      "/shared/incapunk/incus-library/rust/incus_rust_rust_crab.webp",
+      "/shared/incapunk/incus-library/rust/incus_rust_rust_mug.webp"
+    ],
+    "hint": [
+      "/shared/incapunk/incus-library/hint/incus_hint_magnifying_glass.webp",
+      "/shared/incapunk/incus-library/hint/incus_hint_treasure_map.webp",
+      "/shared/incapunk/incus-library/hint/incus_hint_checklist.webp",
+      "/shared/incapunk/incus-library/hint/incus_hint_lightbulb.webp",
+      "/shared/incapunk/incus-library/hint/incus_hint_question.webp",
+      "/shared/incapunk/incus-library/hint/incus_hint_next_arrow.webp"
+    ],
+    "composed-failure": [
+      "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_usb_mismatch.webp",
+      "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_cracked_cube.webp",
+      "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_leaking_pipe.webp",
+      "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_broken_connector.webp"
+    ],
+    "seasonal-october": [
+      "/shared/incapunk/incus-library/seasonal-october/incus_seasonal_october_zombie.webp"
+    ],
+    "system": [
+      "/shared/incapunk/incus-library/system/incus_system_data_cube.webp",
+      "/shared/incapunk/incus-library/system/incus_system_connect_nodes.webp",
+      "/shared/incapunk/incus-library/system/incus_system_orchestrate.webp"
+    ],
+    "success": [
+      "/shared/incapunk/incus-library/success/incus_success_flex.webp",
+      "/shared/incapunk/incus-library/success/incus_success_arms_crossed.webp",
+      "/shared/incapunk/incus-library/success/incus_success_dumbbell.webp",
+      "/shared/incapunk/incus-library/success/incus_success_calculator.webp",
+      "/shared/incapunk/incus-library/success/incus_success_arms_up.webp",
+      "/shared/incapunk/incus-library/success/incus_success_cube_coffee.webp",
+      "/shared/incapunk/incus-library/success/incus_success_trophy.webp"
+    ]
+  },
+  "sprites": [
+    {
+      "source": "a01",
+      "panel": 0,
+      "category": "tip",
+      "name": "pointing",
+      "path": "/shared/incapunk/incus-library/tip/incus_tip_pointing.webp",
+      "included": true
+    },
+    {
+      "source": "a01",
+      "panel": 1,
+      "category": "info",
+      "name": "open-palm",
+      "path": "/shared/incapunk/incus-library/info/incus_info_open_palm.webp",
+      "included": true
+    },
+    {
+      "source": "a01",
+      "panel": 2,
+      "category": "warning",
+      "name": "visor-alert",
+      "path": "/shared/incapunk/incus-library/warning/incus_warning_visor_alert.webp",
+      "included": true
+    },
+    {
+      "source": "a01",
+      "panel": 3,
+      "category": "neutral",
+      "name": "portrait",
+      "path": "/shared/incapunk/incus-library/neutral/incus_neutral_portrait.webp",
+      "included": true
+    },
+    {
+      "source": "a02",
+      "panel": 0,
+      "category": "tip",
+      "name": "lightbulb",
+      "path": "/shared/incapunk/incus-library/tip/incus_tip_lightbulb.webp",
+      "included": true
+    },
+    {
+      "source": "a02",
+      "panel": 1,
+      "category": "info",
+      "name": "rubber-duck",
+      "path": "/shared/incapunk/incus-library/info/incus_info_rubber_duck.webp",
+      "included": true
+    },
+    {
+      "source": "a02",
+      "panel": 2,
+      "category": "easter-egg",
+      "name": "rtfm-coffee",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_rtfm_coffee.webp",
+      "included": true
+    },
+    {
+      "source": "a03",
+      "panel": 0,
+      "category": "easter-egg",
+      "name": "soda",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_soda.webp",
+      "included": true
+    },
+    {
+      "source": "a03",
+      "panel": 1,
+      "category": "easter-egg",
+      "name": "animal-mug",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_animal_mug.webp",
+      "included": true
+    },
+    {
+      "source": "a03",
+      "panel": 2,
+      "category": "javascript",
+      "name": "javascript-coffee",
+      "path": "/shared/incapunk/incus-library/javascript/incus_javascript_javascript_coffee.webp",
+      "included": true
+    },
+    {
+      "source": "a04",
+      "panel": 0,
+      "category": "python",
+      "name": "python-book",
+      "path": "/shared/incapunk/incus-library/python/incus_python_python_book.webp",
+      "included": true
+    },
+    {
+      "source": "a04",
+      "panel": 1,
+      "category": "python",
+      "name": "python-snake",
+      "path": "/shared/incapunk/incus-library/python/incus_python_python_snake.webp",
+      "included": true
+    },
+    {
+      "source": "a04",
+      "panel": 2,
+      "category": "python",
+      "name": "python-hat",
+      "path": "/shared/incapunk/incus-library/python/incus_python_python_hat.webp",
+      "included": true
+    },
+    {
+      "source": "a05",
+      "panel": 0,
+      "category": "rust",
+      "name": "rust-shield",
+      "path": "/shared/incapunk/incus-library/rust/incus_rust_rust_shield.webp",
+      "included": true
+    },
+    {
+      "source": "a05",
+      "panel": 1,
+      "category": "rust",
+      "name": "rust-crab",
+      "path": "/shared/incapunk/incus-library/rust/incus_rust_rust_crab.webp",
+      "included": true
+    },
+    {
+      "source": "a05",
+      "panel": 2,
+      "category": "rust",
+      "name": "rust-mug",
+      "path": "/shared/incapunk/incus-library/rust/incus_rust_rust_mug.webp",
+      "included": true
+    },
+    {
+      "source": "a06",
+      "panel": 0,
+      "category": "python",
+      "name": "python-duck",
+      "path": "/shared/incapunk/incus-library/python/incus_python_python_duck.webp",
+      "included": true
+    },
+    {
+      "source": "a06",
+      "panel": 1,
+      "category": "python",
+      "name": "python-laptop",
+      "path": "/shared/incapunk/incus-library/python/incus_python_python_laptop.webp",
+      "included": true
+    },
+    {
+      "source": "a06",
+      "panel": 2,
+      "category": "python",
+      "name": "python-noodles",
+      "path": "/shared/incapunk/incus-library/python/incus_python_python_noodles.webp",
+      "included": true
+    },
+    {
+      "source": "a07",
+      "panel": 0,
+      "category": "hint",
+      "name": "magnifying-glass",
+      "path": "/shared/incapunk/incus-library/hint/incus_hint_magnifying_glass.webp",
+      "included": true
+    },
+    {
+      "source": "a07",
+      "panel": 1,
+      "category": "hint",
+      "name": "treasure-map",
+      "path": "/shared/incapunk/incus-library/hint/incus_hint_treasure_map.webp",
+      "included": true
+    },
+    {
+      "source": "a07",
+      "panel": 2,
+      "category": "hint",
+      "name": "checklist",
+      "path": "/shared/incapunk/incus-library/hint/incus_hint_checklist.webp",
+      "included": true
+    },
+    {
+      "source": "a08",
+      "panel": 0,
+      "category": "hint",
+      "name": "lightbulb",
+      "path": "/shared/incapunk/incus-library/hint/incus_hint_lightbulb.webp",
+      "included": true
+    },
+    {
+      "source": "a08",
+      "panel": 1,
+      "category": "hint",
+      "name": "question",
+      "path": "/shared/incapunk/incus-library/hint/incus_hint_question.webp",
+      "included": true
+    },
+    {
+      "source": "a08",
+      "panel": 2,
+      "category": "hint",
+      "name": "next-arrow",
+      "path": "/shared/incapunk/incus-library/hint/incus_hint_next_arrow.webp",
+      "included": true
+    },
+    {
+      "source": "a09",
+      "panel": 0,
+      "category": "composed-failure",
+      "name": "usb-mismatch",
+      "path": "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_usb_mismatch.webp",
+      "included": true
+    },
+    {
+      "source": "a09",
+      "panel": 1,
+      "category": "warning",
+      "name": "sparking-cables",
+      "path": "/shared/incapunk/incus-library/warning/incus_warning_sparking_cables.webp",
+      "included": true
+    },
+    {
+      "source": "a09",
+      "panel": 2,
+      "category": "warning",
+      "name": "danger-switch",
+      "path": "/shared/incapunk/incus-library/warning/incus_warning_danger_switch.webp",
+      "included": true
+    },
+    {
+      "source": "a10",
+      "panel": 0,
+      "category": "easter-egg",
+      "name": "shrug",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_shrug.webp",
+      "included": true
+    },
+    {
+      "source": "a10",
+      "panel": 1,
+      "category": "easter-egg",
+      "name": "doge",
+      "included": false,
+      "reason": "embedded generated text"
+    },
+    {
+      "source": "a10",
+      "panel": 2,
+      "category": "easter-egg",
+      "name": "zero-problems",
+      "included": false,
+      "reason": "embedded generated text"
+    },
+    {
+      "source": "b01",
+      "panel": 0,
+      "category": "easter-egg",
+      "name": "flower",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_flower.webp",
+      "included": true
+    },
+    {
+      "source": "b01",
+      "panel": 1,
+      "category": "info",
+      "name": "dna",
+      "path": "/shared/incapunk/incus-library/info/incus_info_dna.webp",
+      "included": true
+    },
+    {
+      "source": "b01",
+      "panel": 2,
+      "category": "easter-egg",
+      "name": "energy-sword",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_energy_sword.webp",
+      "included": true
+    },
+    {
+      "source": "b02",
+      "panel": 0,
+      "category": "easter-egg",
+      "name": "goldfish",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_goldfish.webp",
+      "included": true
+    },
+    {
+      "source": "b02",
+      "panel": 1,
+      "category": "neutral",
+      "name": "sleepy",
+      "path": "/shared/incapunk/incus-library/neutral/incus_neutral_sleepy.webp",
+      "included": true
+    },
+    {
+      "source": "b02",
+      "panel": 2,
+      "category": "easter-egg",
+      "name": "pool-duck",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_pool_duck.webp",
+      "included": true
+    },
+    {
+      "source": "b03",
+      "panel": 0,
+      "category": "easter-egg",
+      "name": "goldfish-alt",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_goldfish_alt.webp",
+      "included": true
+    },
+    {
+      "source": "b03",
+      "panel": 1,
+      "category": "neutral",
+      "name": "music",
+      "path": "/shared/incapunk/incus-library/neutral/incus_neutral_music.webp",
+      "included": true
+    },
+    {
+      "source": "b03",
+      "panel": 2,
+      "category": "easter-egg",
+      "name": "bubbles",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_bubbles.webp",
+      "included": true
+    },
+    {
+      "source": "b04",
+      "panel": 0,
+      "category": "easter-egg",
+      "name": "adventurer",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_adventurer.webp",
+      "included": true
+    },
+    {
+      "source": "b04",
+      "panel": 1,
+      "category": "easter-egg",
+      "name": "wizard",
+      "included": false,
+      "reason": "pale beard cannot be cleanly recovered from JPEG checkerboard"
+    },
+    {
+      "source": "b04",
+      "panel": 2,
+      "category": "seasonal-october",
+      "name": "zombie",
+      "path": "/shared/incapunk/incus-library/seasonal-october/incus_seasonal_october_zombie.webp",
+      "included": true
+    },
+    {
+      "source": "b05",
+      "panel": 0,
+      "category": "system",
+      "name": "data-cube",
+      "path": "/shared/incapunk/incus-library/system/incus_system_data_cube.webp",
+      "included": true
+    },
+    {
+      "source": "b05",
+      "panel": 1,
+      "category": "system",
+      "name": "connect-nodes",
+      "path": "/shared/incapunk/incus-library/system/incus_system_connect_nodes.webp",
+      "included": true
+    },
+    {
+      "source": "b05",
+      "panel": 2,
+      "category": "system",
+      "name": "orchestrate",
+      "path": "/shared/incapunk/incus-library/system/incus_system_orchestrate.webp",
+      "included": true
+    },
+    {
+      "source": "b06",
+      "panel": 0,
+      "category": "neutral",
+      "name": "standing",
+      "path": "/shared/incapunk/incus-library/neutral/incus_neutral_standing.webp",
+      "included": true
+    },
+    {
+      "source": "b06",
+      "panel": 1,
+      "category": "neutral",
+      "name": "three-quarter",
+      "path": "/shared/incapunk/incus-library/neutral/incus_neutral_three_quarter.webp",
+      "included": true
+    },
+    {
+      "source": "b06",
+      "panel": 2,
+      "category": "neutral",
+      "name": "hands-behind-back",
+      "path": "/shared/incapunk/incus-library/neutral/incus_neutral_hands_behind_back.webp",
+      "included": true
+    },
+    {
+      "source": "b07",
+      "panel": 0,
+      "category": "composed-failure",
+      "name": "cracked-cube",
+      "path": "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_cracked_cube.webp",
+      "included": true
+    },
+    {
+      "source": "b07",
+      "panel": 1,
+      "category": "composed-failure",
+      "name": "leaking-pipe",
+      "path": "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_leaking_pipe.webp",
+      "included": true
+    },
+    {
+      "source": "b07",
+      "panel": 2,
+      "category": "composed-failure",
+      "name": "broken-connector",
+      "path": "/shared/incapunk/incus-library/composed-failure/incus_composed_failure_broken_connector.webp",
+      "included": true
+    },
+    {
+      "source": "b08",
+      "panel": 0,
+      "category": "success",
+      "name": "flex",
+      "path": "/shared/incapunk/incus-library/success/incus_success_flex.webp",
+      "included": true
+    },
+    {
+      "source": "b08",
+      "panel": 1,
+      "category": "success",
+      "name": "arms-crossed",
+      "path": "/shared/incapunk/incus-library/success/incus_success_arms_crossed.webp",
+      "included": true
+    },
+    {
+      "source": "b08",
+      "panel": 2,
+      "category": "success",
+      "name": "dumbbell",
+      "path": "/shared/incapunk/incus-library/success/incus_success_dumbbell.webp",
+      "included": true
+    },
+    {
+      "source": "b09",
+      "panel": 0,
+      "category": "info",
+      "name": "equation-book",
+      "path": "/shared/incapunk/incus-library/info/incus_info_equation_book.webp",
+      "included": true
+    },
+    {
+      "source": "b09",
+      "panel": 1,
+      "category": "easter-egg",
+      "name": "laptop-coffee",
+      "path": "/shared/incapunk/incus-library/easter-egg/incus_easter_egg_laptop_coffee.webp",
+      "included": true
+    },
+    {
+      "source": "b09",
+      "panel": 2,
+      "category": "success",
+      "name": "calculator",
+      "path": "/shared/incapunk/incus-library/success/incus_success_calculator.webp",
+      "included": true
+    },
+    {
+      "source": "b10",
+      "panel": 0,
+      "category": "success",
+      "name": "arms-up",
+      "path": "/shared/incapunk/incus-library/success/incus_success_arms_up.webp",
+      "included": true
+    },
+    {
+      "source": "b10",
+      "panel": 1,
+      "category": "success",
+      "name": "cube-coffee",
+      "path": "/shared/incapunk/incus-library/success/incus_success_cube_coffee.webp",
+      "included": true
+    },
+    {
+      "source": "b10",
+      "panel": 2,
+      "category": "success",
+      "name": "trophy",
+      "path": "/shared/incapunk/incus-library/success/incus_success_trophy.webp",
+      "included": true
+    }
+  ]
+}

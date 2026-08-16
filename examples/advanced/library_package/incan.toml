@@ -1,0 +1,3 @@
+[workspace]
+members = ["producer", "consumer"]
+default-members = ["pricing_app"]

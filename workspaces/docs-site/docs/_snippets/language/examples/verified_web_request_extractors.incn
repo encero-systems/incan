@@ -1,0 +1,37 @@
+"""Typed query-string and JSON-body request extractors."""
+
+from std.web import App, route, Json, Query, GET, POST
+from std.serde import json
+import std.async
+
+
+@derive(json)
+model SearchParams:
+    q: str
+
+
+@derive(json)
+model CreateUser:
+    name: str
+    email: str
+
+
+@derive(json)
+model User:
+    id: int
+    name: str
+    email: str
+
+
+@route("/search", methods=[GET])
+async def search(params: Query[SearchParams]) -> Json[list[User]]:
+    return Json([User(id=1, name=params.q, email="search@example.com")])
+
+
+@route("/users", methods=[POST])
+async def create_user(body: Json[CreateUser]) -> Json[User]:
+    return Json(User(id=1, name=body.name, email=body.email))
+
+
+def main() -> None:
+    App.run(host="127.0.0.1", port=8080)

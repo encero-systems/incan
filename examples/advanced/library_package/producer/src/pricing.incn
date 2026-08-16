@@ -1,0 +1,15 @@
+"""Reusable pricing primitives."""
+
+
+pub model LineItem:
+    """One priced item whose quantity participates in a subtotal."""
+
+    pub name: str
+    pub quantity: int
+    pub unit_price: float
+
+
+pub def subtotal(item: LineItem) -> float:
+    """Return `quantity * unit_price` for one line item."""
+
+    return float(item.quantity) * item.unit_price

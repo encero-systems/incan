@@ -1,0 +1,34 @@
+"""Read orders, validate them, and write a typed JSON report."""
+
+from domain import OrderBatch, OrderReport
+from transform import build_report
+from std.fs import Path
+from std.serde.json import Deserialize, Serialize
+
+
+def create_report() -> Result[OrderReport, str]:
+    input_path = Path("orders.json")
+    output_dir = Path("target/tutorial-output")
+    output_path = output_dir / "order-report.json"
+
+    source = input_path
+        .read_text("utf-8", "strict")
+        .map_err((error) => f"Could not read orders.json: {error.message()}")?
+    batch = OrderBatch.from_json(source).map_err((error) => f"Invalid order data: {error}")?
+    report = build_report(batch)
+
+    output_dir
+        .mkdir(parents=true, exist_ok=true)
+        .map_err((error) => f"Could not prepare output directory: {error.message()}")?
+    output_path
+        .write_text(report.to_json(), "utf-8", "strict", None)
+        .map_err((error) => f"Could not write report: {error.message()}")?
+    return Ok(report)
+
+
+def main() -> None:
+    match create_report():
+        Err(error) => println(error)
+        Ok(report) =>
+            println(f"Wrote {len(report.accepted)} accepted orders to order-report.json")
+            println(f"Rejected {report.rejected_count} invalid order(s)")

@@ -1,0 +1,9 @@
+[project]
+name = "pricing_app"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+pricing = { path = "../producer" }

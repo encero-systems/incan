@@ -1,0 +1,9 @@
+[project]
+name = "regex_tutorial"
+version = "0.1.0"
+
+[project.scripts]
+main = "main.incn"
+
+[rust-dependencies]
+regex = "1"
