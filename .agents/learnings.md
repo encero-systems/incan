@@ -51,6 +51,10 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 - **Loop identity gates resumes**: Ralph-loop state must record the active repo, issue/RFC/milestone allowlist, and verification-only downstream repos; on resume, filter stale slices before scheduling work or consumer-repo validation can turn into unrelated implementation. (Incan 0.5 Ralph-loop scope drift, July 2026)
 
+## Governed product boundaries
+
+- **Observations are not authority**: Treat learner events, activity completion, and model-mediated assessment as versioned observations that may create review work; they must not silently alter reviewed knowledge, curriculum, Package authority, or durable learner state. (Governed learning interaction research, August 2026)
+
 ## Parser and lexer patterns
 
 - **Parser warning infrastructure**: `Parser.warnings` stores non-fatal warnings as `Vec<CompileError>`. On success they move into `Program.warnings`; on error they fold into the error vec with `ErrorKind::Warning`. This is the canonical way to add syntax nudges without blocking compilation.
