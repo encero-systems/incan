@@ -20,9 +20,9 @@ theme:
   pygments_style: default
   pygments_style_dark: native
   palette:
-    - scheme: slate
-      primary: black
-      accent: amber
+    scheme: slate
+    primary: black
+    accent: amber
   features:
     - navigation.instant
     - navigation.tabs
@@ -37,7 +37,8 @@ plugins:
       scripts:
         - utils/gen_rfc_index_snippet.py
   - search
-  - tags
+  - tags:
+      tags_file: tags.md
 hooks:
   - mkdocs_hooks.py
 
@@ -66,7 +67,8 @@ markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
-          class: mermaid
+          class: inc-diagram
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - toc:
@@ -78,19 +80,24 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css
+  - /shared/incapunk/incapunk.css?v=20260812-oven-story-19
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
+  - _snippets/javascripts/incan_home_motion.js?v=20260810-learning-refresh-1
+  - shared/incapunk/incus-library/manifest.js?v=20260810-learning-refresh-1
+  - _snippets/javascripts/incan_docs_components.js?v=20260810-learning-refresh-1
+  - _snippets/javascripts/incan_mermaid.js?v=20260810-learning-refresh-1
   - https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js
   - _snippets/javascripts/tablesort.js
   - _snippets/javascripts/rfc_table_filter.js
 
 nav:
   - Home: index.md
-  - Start here:
+  - Learn:
       - Overview: start_here/index.md
       - What Incan is for: start_here/what_incan_is_for.md
+      - Incan or IncQL?: start_here/incan_or_incql.md
       - Coming from Python (apps): start_here/coming_from_python.md
       - Coming from Rust (evaluator): start_here/coming_from_rust.md
       - Coming from TypeScript or JavaScript: start_here/coming_from_typescript_javascript.md
@@ -98,13 +105,13 @@ nav:
       - Encero stack: start_here/encero_stack.md
       - 1.0 domain-native demo target: start_here/domain_native_demo.md
       - 1.0 public contracts: start_here/public_contracts.md
-      - Beginner: start_here/beginner.md
+      - New to typed programming: start_here/beginner.md
       - Comparisons:
           - Incan vs Python: comparisons/python.md
           - Incan vs JS/TS: comparisons/javascript_typescript.md
           - Incan vs Rust: comparisons/rust.md
   - Language:
-      - Start here: language/index.md
+      - Language overview: language/index.md
       - Tutorials:
           - The Incan Book (Basics):
               - Overview: language/tutorials/book/index.md
@@ -122,7 +129,11 @@ nav:
               - 12. Newtypes (stronger types): language/tutorials/book/12_newtypes.md
               - 13. Unit tests: language/tutorials/book/13_unit_tests.md
           - Dates and times: language/tutorials/dates_and_times.md
+          - Build a typed data processor: language/tutorials/typed_data_processor.md
           - Build your first API: language/tutorials/build_your_first_api.md
+          - Build an asynchronous worker pipeline: language/tutorials/async_worker_pipeline.md
+          - Add a Rust crate: language/tutorials/add_a_rust_crate.md
+          - Guided project spine: language/tutorials/guided_project.md
           - Fallible and infallible paths: language/tutorials/fallible_and_infallible_paths.md
           - Checked C binding (experimental): language/tutorials/checked_c_binding.md
           - Typed registries: language/tutorials/typed_registries.md
@@ -250,11 +261,14 @@ nav:
           - Scopes and name resolution: language/explanation/scopes_and_name_resolution.md
   - Oven: tooling/explanation/oven_alpha.md
   - Tooling:
-      - Start here: tooling/index.md
+      - Tooling overview: tooling/index.md
       - Tutorials:
           - Getting started: tooling/tutorials/getting_started.md
           - Your first project: tooling/tutorials/your_first_project.md
+          - Build and consume a library: tooling/tutorials/build_and_consume_library.md
           - Pipeline mini-project: tooling/tutorials/pipeline_mini_project.md
+          - Local project to CI artifact: tooling/tutorials/project_to_ci_artifact.md
+          - Diagnose a failed build: tooling/tutorials/diagnose_failed_build.md
       - How-to:
           - Install/build/run: tooling/how-to/install_and_run.md
           - Managing dependencies: tooling/how-to/dependencies.md
@@ -331,5 +345,7 @@ nav:
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
           - A Cargo-free toolchain for Incan and Rust: whitepapers/incan_oven_positioning.md
       - Roadmap: roadmap.md
+      - Learning journey QA: project/learning_journey.md
       # XXX: Temporary page while in beta
       - Stability policy: stability.md
+      - Meet Incus: project/incus.md

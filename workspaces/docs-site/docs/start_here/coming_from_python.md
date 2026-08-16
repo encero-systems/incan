@@ -1,55 +1,51 @@
 # Coming from Python (apps)
 
-This page routes Python developers who are evaluating Incan for application code, services, typed domain packages, and deployment-oriented tooling.
+This route is for Python developers evaluating Incan for application code, services, typed domain packages, and deployment-oriented tools.
 
-## Install first
+<aside class="inc-bridge-note inc-incus-slot" data-incus-category="python" aria-label="Python to Incan mental model">
+  <span class="inc-eyebrow">Python → Incan</span>
+  <strong>Keep the readable application-code shape. Move more failure, type, and deployment facts into contracts the compiler can check.</strong>
+</aside>
 
-If you use Python tooling day to day, `pipx` is the cleanest package-manager entrypoint because it keeps the command package isolated from project environments while still installing the verified Incan toolchain archive. The installer also provisions the Rust backend when needed, so a fresh machine can move straight from install to `incan run`:
+## Choose your route
 
-```bash
-pipx install incan
-incan --version
-```
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="../tooling/tutorials/getting_started/"><span class="inc-eyebrow">Start</span><strong>Run the first project</strong><span>Use the canonical installer and complete the run, test, and release-build loop.</span></a>
+  <a class="inc-route-card" href="../tooling/tutorials/your_first_project/"><span class="inc-eyebrow">First project</span><strong>Build a small native command</strong><span>Keep the readable function-and-module shape while adding explicit exports, tests, and a locked native build.</span></a>
+  <a class="inc-route-card" href="../tooling/tutorials/pipeline_mini_project/"><span class="inc-eyebrow">Workflow</span><strong>Compose a typed processing step</strong><span>Model an input, return a typed result, split the project into modules, and test both paths.</span></a>
+  <a class="inc-route-card" href="../comparisons/python/"><span class="inc-eyebrow">Evaluate</span><strong>Compare Python and Incan</strong><span>Check ecosystem, runtime, deployment, type, and error-model tradeoffs before adopting.</span></a>
+</div>
 
-The direct installer is the same toolchain release path and is useful in shell scripts, CI images, and environments where you do not want another package manager involved:
+## Preview broader 0.5 source surfaces
 
-```bash
---8<-- "_snippets/commands/direct_install.sh"
-export PATH="$HOME/.local/bin:$PATH"
-incan --version
-```
+The [typed data processor](../language/tutorials/typed_data_processor.md) and [typed API](../language/tutorials/build_your_first_api.md) show the intended serde and web authoring surfaces. Their source is checked against the 0.5 development compiler, but the finite 0.5 release envelope does not yet ship the typed-serde or web Loafs required to execute them. Use them to evaluate language shape, not as the first successful runtime exercise.
 
-After installation, create a project and run the normal first-contact loop:
+## Install once
 
-```bash
-incan new hello --yes
-cd hello
-incan run
-incan test
-incan build --release
-```
+Follow [Getting Started](../tooling/tutorials/getting_started.md) for the current installer choices and canonical `new` → `run` → `test` → `build` loop. If you use Python tooling every day, the `pipx` option keeps the `incan` command isolated from project environments; it does not make Incan a Python package runtime.
 
-## What you should do next
+## What transfers
 
-- Install the toolchain and create a starter project: [Getting Started](../tooling/tutorials/getting_started.md)
-- If anything fails: [Troubleshooting](../tooling/how-to/troubleshooting.md)
-- Learn the basics: [The Incan Book (Basics)](../language/tutorials/book/index.md)
-- Build your first API: [Build your first API](../language/tutorials/build_your_first_api.md)
-- Multi-file apps: [Imports and modules (how-to)](../language/how-to/imports_and_modules.md)
-- Write tests: [Testing in Incan](../language/how-to/testing_stdlib.md)
-- Set up your workflow:
-    - [Formatting](../tooling/how-to/formatting.md)
-    - [Testing CLI](../tooling/how-to/testing.md)
-    - [Editor setup](../tooling/how-to/editor_setup.md) (LSP, syntax highlighting)
+- Readable functions, named arguments, modules, collections, comprehensions, and model-shaped application code
+- Familiar function, module, and result composition for application work
+- A small amount of syntax around an explicit, testable application core
 
-## Explanation
+## What changes
 
-- [Why Incan?](../language/explanation/why_incan.md)
-- [How Incan works](../language/explanation/how_incan_works.md)
+- `Result`, `Option`, and `?` make ordinary fallibility part of the function contract instead of an exception-only convention.
+- Models and derives move validation and serialization behavior into compiler-visible types.
+- The toolchain produces native binaries through Rust rather than executing source in CPython.
+- A manifest and lockfile own project and dependency facts that Python tools often distribute across several files.
 
-## Mental model translations (high level)
+## What not to expect
 
-- **errors**: exceptions vs Result/Option (see: [Error Handling](../language/explanation/error_handling.md))
-- **models**: dataclasses/Pydantic vs models/derives (see: [Models & Classes](../language/explanation/models_and_classes/index.md))
-- **interfaces**: Protocols/ABCs vs traits/derives (see: [Derives & Traits](../language/reference/derives_and_traits.md))
-- **async**: asyncio mental model mapping (see: [Async Programming](../language/how-to/async_programming.md))
+- CPython compatibility, Python package compatibility, or the ability to import arbitrary PyPI packages
+- Notebook or dataframe compatibility merely because the source syntax is familiar
+- Dynamic monkey-patching as an application extension model
+
+## Continue
+
+- [The Incan Book](../language/tutorials/book/index.md) for a linear fundamentals route
+- [Error handling](../language/explanation/error_handling.md) for the `Result` and `Option` model
+- [Models and classes](../language/explanation/models_and_classes/index.md) for data and behavior types
+- [Editor setup](../tooling/how-to/editor_setup.md) and [Troubleshooting](../tooling/how-to/troubleshooting.md) for the working loop

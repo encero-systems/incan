@@ -1,78 +1,45 @@
-# Language: Start here
+# Language
 
-This section is about writing `.incn` programs: syntax, semantics, patterns, and mental models.
+This section owns Incan source: syntax, semantics, patterns, and the mental models behind `.incn` programs. Start from what you are trying to learn or build; use the navigation taxonomy only when you already know the page type you need.
 
-If you’re not sure where you fit, start at [Start here](../start_here/index.md).
+## Choose a route
 
-## Deciding if Incan fits
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="tutorials/book/"><span class="inc-eyebrow">Fundamentals</span><strong>Read the Incan Book</strong><span>Learn values, functions, control flow, errors, models, traits, and tests through small runnable chapters.</span></a>
+  <a class="inc-route-card" href="tutorials/guided_project/"><span class="inc-eyebrow">Cumulative</span><strong>Carry one project through the language</strong><span>Apply functions, results, modules, tests, locking, and native builds to one typed workflow step.</span></a>
+  <a class="inc-route-card" href="../tooling/tutorials/build_and_consume_library/"><span class="inc-eyebrow">Package preview</span><strong>Design a library boundary</strong><span>Choose an explicit public surface and source-check its producer and locked-workspace consumer.</span></a>
+  <a class="inc-route-card" href="tutorials/checked_c_binding/"><span class="inc-eyebrow">Native boundary</span><strong>Build a checked C binding</strong><span>Use the experimental checked-C surface when a governed native ABI is the right boundary.</span></a>
+  <a class="inc-route-card" href="../start_here/"><span class="inc-eyebrow">Background bridge</span><strong>Translate what you already know</strong><span>Choose the Python, Rust, TypeScript/JavaScript, or automation route from the Learn hub.</span></a>
+</div>
 
-- [Why Incan?](explanation/why_incan.md)
-- [How Incan works](explanation/how_incan_works.md)
+## Recommended learning sequence
 
-## Tutorials (learn)
+1. Complete [Getting Started](../tooling/tutorials/getting_started.md) so the compiler, project, tests, and release build all work.
+2. Use the [Book](tutorials/book/index.md) for syntax and fundamentals.
+3. Follow the [guided project spine](tutorials/guided_project.md) or choose a representative [project tutorial](../start_here/index.md#build-with-the-05-release-envelope).
+4. Keep [how-to guides](how-to/error_handling_recipes.md) and the [generated language reference](reference/language.md) as lookup surfaces.
 
-- The Incan Book (Basics): [Book index](tutorials/book/index.md)
-- Dates and times: [Dates and times](tutorials/dates_and_times.md)
-- Fallible and infallible paths: [Fallible and infallible paths](tutorials/fallible_and_infallible_paths.md)
-- Checked C binding: [Write your first checked C binding](tutorials/checked_c_binding.md) (experimental)
-- Web framework tutorial: [Web Framework](tutorials/web_framework.md) (advanced; reads like tutorial + how-to)
+## Choose the kind of answer
 
-## How-to guides (do)
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="tutorials/guided_project/"><span class="inc-eyebrow">Tutorial</span><strong>Learn by completing an outcome</strong><span>Use a staged, release-envelope executable project when you want the reasoning and sequence together.</span></a>
+  <a class="inc-route-card" href="how-to/error_handling_recipes/"><span class="inc-eyebrow">How-to</span><strong>Solve a focused task</strong><span>Use recipes for errors, files, JSON, async work, modules, tests, collections, and Rust interop.</span></a>
+  <a class="inc-route-card" href="reference/language/"><span class="inc-eyebrow">Reference</span><strong>Look up the contract</strong><span>Use generated syntax, type, built-in, derive, and standard-library surfaces when you know what to find.</span></a>
+  <a class="inc-route-card" href="explanation/how_incan_works/"><span class="inc-eyebrow">Explanation</span><strong>Understand why it works this way</strong><span>Read the mental models behind compilation, errors, modules, models, traits, and Rust-shaped confidence.</span></a>
+</div>
 
-- [Async Programming](how-to/async_programming.md)
-- [Dates and times](how-to/dates_and_times.md)
-- [Error Messages](how-to/error_messages.md)
-- [File I/O](how-to/file_io.md)
-- [Generators](how-to/generators.md)
-- [Module state](how-to/module_state.md)
-- [Choosing collection types](how-to/choosing_collections.md)
-- [Choosing numeric types](how-to/choosing_numeric_types.md)
-- [Performance](how-to/performance.md)
-- [Rust Interop](how-to/rust_interop.md)
-- [Checked C bindings](how-to/checked_c_bindings.md) (experimental)
+## Common lookup points
 
-## Reference (look up)
+- [Feature inventory](reference/feature_inventory.md)
+- [Error handling](explanation/error_handling.md)
+- [Models and classes](explanation/models_and_classes/index.md)
+- [Imports and modules](how-to/imports_and_modules.md)
+- [Async programming](how-to/async_programming.md)
+- [Rust interop](how-to/rust_interop.md)
+- [Checked C bindings](tutorials/checked_c_binding.md)
+- [Web framework](tutorials/web_framework.md)
+- [Standard library index](reference/stdlib/index.md)
 
-- Current feature inventory: [Feature inventory (generated)](reference/feature_inventory.md)
-- Generated language reference: [Language reference (generated)](reference/language.md)
-- Code style (canonical source layout guide): [Incan Code Style Guide](reference/code_style.md)
-- Static storage: [Static storage](reference/static_storage.md)
-- Numeric semantics: [Numeric Semantics](reference/numeric_semantics.md)
-- Strings: [Strings](reference/strings.md)
-- Generators: [Generators](reference/generators.md)
-- Derives reference cluster:
+For installation, projects, commands, editor support, reports, and CI, continue to [Tooling](../tooling/index.md). RFCs remain [design records for contributors](../RFCs/index.md), not a prerequisite for learning the language.
 
-| Guide                                                               | Derives                     |
-| ------------------------------------------------------------------- | --------------------------- |
-| [String Representation](reference/derives/string_representation.md) | `Debug`, `Display`          |
-| [Comparison](reference/derives/comparison.md)                       | `Eq`, `Ord`, `Hash`         |
-| [Copying & Default](reference/derives/copying_default.md)           | `Clone`, `Copy`, `Default`  |
-| [Serialization](reference/derives/serialization.md)                 | `Serialize`, `Deserialize`  |
-| [Validation](reference/derives/validation.md)                       | `Validate`                  |
-| [Custom Behavior](reference/derives/custom_behavior.md)             | Overriding derived behavior |
-
-## Explanation (understand)
-
-- [Control flow](explanation/control_flow.md)
-- [Callable presets](explanation/callable_presets.md)
-- [Closures](explanation/closures.md)
-- [Compile time and runtime](explanation/compile_time_and_runtime.md)
-- [Rust-shaped confidence](explanation/rust_shaped_confidence.md)
-- [Consts](explanation/consts.md)
-- [Module static storage](explanation/static_storage.md)
-- [Numeric types](explanation/numeric_types.md)
-- [Date and time model](explanation/datetime_model.md)
-- [OrdinalMap](explanation/ordinal_map.md)
-- [Derives & Traits](reference/derives_and_traits.md)
-- [Enums](explanation/enums.md)
-- [Generators](explanation/generators.md)
-- [Error Handling](explanation/error_handling.md)
-- [Imports & Modules](explanation/imports_and_modules.md)
-- [Models & Classes](explanation/models_and_classes/index.md)
-- [Scopes & Name Resolution](explanation/scopes_and_name_resolution.md)
-- [How checked C interop is structured](explanation/checked_c_interop.md)
-
-## See also
-
-- Tooling: [Tooling start here](../tooling/index.md)
-- RFCs (design records): [RFC index](../RFCs/index.md)
+The [typed data processor](tutorials/typed_data_processor.md), [typed API](tutorials/build_your_first_api.md), [async worker](tutorials/async_worker_pipeline.md), and [external Rust crate](tutorials/add_a_rust_crate.md) remain visible as source-verified previews. Each page states the runtime Loaf that the finite 0.5 release envelope does not yet ship.

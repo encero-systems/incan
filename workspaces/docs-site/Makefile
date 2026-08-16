@@ -13,8 +13,24 @@ docs-install:
 	@python -m pip install -r requirements-docs.txt
 	@echo "\033[32m✓ Docs dependencies installed\033[0m"
 
+.PHONY: docs-check-components  ## docs - Validate Incapunk component and asset contracts
+docs-check-components:
+	@echo "\033[1mChecking Incapunk component contracts...\033[0m"
+	@python scripts/check_incapunk_components.py
+	@node scripts/check_incan_mermaid_runtime.mjs
+	@echo "\033[32m✓ Incapunk component contracts passed\033[0m"
+
+.PHONY: docs-check-learning  ## docs - Validate learning routes and canonical tutorial contracts
+docs-check-learning:
+	@echo "\033[1mChecking learning journey contracts...\033[0m"
+	@python scripts/check_learning_journey.py
+	@echo "\033[32m✓ Learning journey contracts passed\033[0m"
+
+.PHONY: docs-check  ## docs - Run every lightweight docs contract
+docs-check: docs-check-components docs-check-learning
+
 .PHONY: docs-build  ## docs - Build docs site (MkDocs strict)
-docs-build:
+docs-build: docs-check
 	@echo "\033[1mBuilding docs site...\033[0m"
 	@python -m mkdocs build --strict
 	@echo "\033[32m✓ Docs site built\033[0m"

@@ -1,5 +1,7 @@
 # 4. Control flow
 
+<div class="inc-book-progress" aria-label="Chapter 4 of 13"><div class="inc-book-progress__meta"><strong>Chapter 4 of 13</strong><span>Control flow</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 30.8%"></span></div></div>
+
 Control flow is how you branch and loop.
 
 ## `if` / `elif` / `else`
@@ -55,8 +57,13 @@ def log_done(status: JobStatus) -> None:
 `match` is the main way to branch on enums like `Result` and `Option`:
 
 ```incan
+def validate_port(port: int) -> Result[int, str]:
+    if port < 1 or port > 65535:
+        return Err("port must be between 1 and 65535")
+    return Ok(port)
+
 def main() -> None:
-    result = parse_port("8080")
+    result = validate_port(8080)
 
     match result:
         case Ok(port): println(f"port={port}")
@@ -162,55 +169,7 @@ def find_value(flag: bool) -> int:
 ??? example "One possible solution"
 
     ```incan
-    # 1) classify function
-    def classify(n: int) -> str:
-        if n < 0:
-            return "negative"
-        elif n == 0:
-            return "zero"
-        else:
-            return "positive"
-
-    def main() -> None:
-        println(classify(-1))  # negative
-        println(classify(0))   # zero
-        println(classify(2))   # positive
-
-        # 2) if let on Option
-        maybe_name = Some("Danny")
-        if let Some(name) = maybe_name:
-            println(name)
-
-        # 3) match on Result
-        match parse_port("8080"):
-            Ok(port) => println(f"port={port}")
-            Err(e) => println(f"error={e}")
-
-        # 4) while let on a sequence of optional values
-        def next_value(values: list[Option[int]], idx: int) -> Option[int]:
-            if idx < len(values):
-                return values[idx]
-            return None
-
-        values = [Some(1), Some(2), None]
-        idx = 0
-        while let Some(value) = next_value(values, idx):
-            println(value)
-            idx += 1
-
-        # 5) loop over a list and stop early with break
-        items = ["Alice", "Bob", "Cara"]
-        for name in items:
-            if name == "Bob":
-                break
-            println(name)
-
-        # 6) loop expression with break value
-        value = loop:
-            if len(items) > 0:
-                break 42
-            break 0
-        println(value)
+    --8<-- "_snippets/language/examples/verified_control_flow_solution.incn"
     ```
 
 ## Where to learn more
@@ -219,8 +178,4 @@ def find_value(flag: bool) -> int:
 - Enums (often used with `match`): [Enums](../../explanation/enums.md)
 - Error handling (deep dive on `Result`/`Option`): [Error Handling](../../explanation/error_handling.md)
 
-## Next
-
-Back: [3. Functions](03_functions.md)
-
-Next chapter: [5. Modules and imports](05_modules_and_imports.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../03_functions/"><small>Previous chapter</small><strong>← 3. Functions</strong></a><a href="../05_modules_and_imports/"><small>Next chapter</small><strong>5. Modules and imports →</strong></a></nav>

@@ -242,7 +242,7 @@ The following items remain intentionally deferred until they have a focused RFC 
 
 ### Guides
 
-- Web framework guide: [Web framework](language/tutorials/web_framework.md)
+- Web framework guide: [Web framework guide](language/tutorials/web_framework.md)
 - Rust interop guide: [Rust interop](language/how-to/rust_interop.md)
 - Testing guide: [Testing](tooling/how-to/testing.md)
 

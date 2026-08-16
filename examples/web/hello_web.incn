@@ -7,14 +7,11 @@ This example demonstrates:
 - Path parameters
 - Model serialization
 
-Run with:
-    incan build examples/web/hello_web.incn
-    ./target/release/hello_web
+Source-check preview:
+    incan check examples/web/hello_web.incn
 
-Then visit:
-    http://localhost:8080/
-    http://localhost:8080/api/greet/World
-    http://localhost:8080/api/user/42
+Native execution requires a compatible std.web Loaf beyond the bounded 0.5
+release envelope.
 """
 
 from std.web import App, route, Response, Json, GET
@@ -33,9 +30,8 @@ model User:
     id: int
     name: str
     email: str
-
-
 # Routes
+
 
 @route("/")
 async def index() -> Response:

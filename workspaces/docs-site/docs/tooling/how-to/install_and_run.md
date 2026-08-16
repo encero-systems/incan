@@ -1,83 +1,39 @@
 # Install and run Incan
 
-This page documents the public 0.4 install path. Use the toolchain installer when you want to try Incan as a user. Use the source-build path only when you are contributing to the compiler or testing an unreleased branch.
+The latest stable toolchain is Incan 0.4. The tutorials marked as 0.5 development docs require a compiler built from the matching repository checkout. Keep those two paths distinct so an example never silently depends on a newer language surface.
 
 ## Supported hosts
 
-The 0.4 toolchain installer ships archives for macOS arm64, macOS x86_64, and Linux x86_64. Native Windows and Linux arm64 are not part of the initial toolchain installer; use WSL2 or a source build for those hosts for now. Generated Rust projects use Cargo under the hood, so the direct installer provisions stable Rust through `rustup` when needed and ensures the `wasm32-wasip1` target is installed for packages that ship vocabulary companions.
+The stable binary installer ships archives for macOS arm64, macOS x86_64, and Linux x86_64. Native Windows and Linux arm64 are not supported by the current binary installer; use WSL2 or a source build on those hosts.
 
-The toolchain manifest records the Rust backend policy for the release, including the Rust channel and extra targets the installer must make available.
+The release manifest records the compiler archive, checksum, Rust backend policy, and extra targets needed by the toolchain. The direct installer and package-manager adapters consume the same release payload rather than publishing separate compiler builds.
 
-## Install the toolchain
+## Install the stable toolchain
 
-The canonical 0.4 artifact source is the GitHub Release. The release publishes `install.sh`, `manifest.json`, checksums, and platform toolchain archives; Homebrew, npm, and pip are thin adapters over that same manifest rather than separate compiler builds.
+--8<-- "_snippets/learning/install_toolchain.md"
 
-Use the direct installer when you want the release manifest, checksum verification, and command links without a package-manager adapter:
-
-```bash
---8<-- "_snippets/commands/direct_install.sh"
-```
-
-For a dry run that resolves the manifest and target without writing files:
-
-```bash
---8<-- "_snippets/commands/direct_install_dry_run.sh"
-```
-
-The installer reads the release manifest, selects the archive for your host target, provisions the Rust backend unless you pass `--skip-rust`, verifies the archive checksum, installs into `INCAN_HOME` (default `~/.incan`), and links `incan` plus `incan-lsp` into `INCAN_BIN_DIR` (default `~/.local/bin`). Make sure the bin directory is on `PATH`.
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-incan --version
-incan-lsp --version
-```
-
-Package-manager installs use the same release archive payloads while fitting into the command manager you already use:
-
-```bash
-brew tap encero-systems/tap
-brew install incan
-npm install -g @incan/toolchain
-pipx install incan
-```
-
-Use Homebrew when you want native macOS or Linux command management and already have Rust managed separately. The generated release formula is published through the Encero tap, while the release asset remains the source used to update that formula. Use npm when you want the toolchain command shims available through Node-based tooling, editors, or CI images without an install-time lifecycle script. Use `pipx` for Python-oriented environments; plain `pip install --user incan` also works, but `pipx` keeps the command package isolated from project environments.
-
-The npm package installs `@incan/toolchain` plus a host-specific optional platform package and then runs the packaged `incan` and `incan-lsp` binaries directly. It does not run `postinstall`, download archives during npm install, or provision Rust automatically. Make sure `rustup`, `cargo`, `rustc`, and `wasm32-wasip1` are available before building projects from an npm-installed toolchain.
-
-The direct installer and pipx package route through the shared installer, so they can provision Rust unless you pass `--skip-rust` through `install-incan` or set `INCAN_SKIP_RUST_INSTALL=1`. Set `INCAN_TOOLCHAIN_MANIFEST` to pin a manifest, or use the direct `install.sh --manifest <URL|PATH>` path when you need fully explicit release control.
-
-Rust users can also install from Git through Cargo, which compiles the release source instead of downloading a prebuilt toolchain archive:
+Rust users can instead compile the stable release from source:
 
 ```bash
 cargo install --git https://github.com/encero-systems/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
 ```
 
-Cargo installation compiles the compiler from source instead of downloading a prebuilt toolchain archive. The `lsp` feature enables the `incan-lsp` binary alongside the default `incan` CLI, so this is the right Cargo command when you want the same two commands exposed by the release installer. Prefer the direct installer, Homebrew, npm, or pipx when you want checksum-verified prebuilt release artifacts.
+This Cargo command builds the compiler and language server; it is not the normal project build path documented for the 0.5 development line.
 
-## Create a starter project
+## Create and exercise a project
 
-After installation, the shortest first run creates a starter project and exercises run, test, and release-build paths:
+--8<-- "_snippets/learning/first_project_loop.md"
 
-```bash
-incan new hello --yes
-cd hello
-incan run
-incan test
-incan build --release
-```
+`incan new` creates `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter is deliberately small so the first run proves the complete project loop without hiding the generated files.
 
-`incan new` creates an `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The generated project is intentionally small: one function, one entrypoint, and one test that checks the generated behavior.
+## Follow the 0.5 development docs
 
-## Source-build fallback for contributors
+--8<-- "_snippets/learning/development_toolchain.md"
 
-If you are working on Incan itself, build from the repository instead:
+The 0.5 compiler uses the Oven-managed build path: project dependencies resolve into receipt-compatible Loaf state, generated Rust stays inspectable, and ordinary `incan build`, `run`, and `test` invoke `rustc` without a Cargo fallback. Cargo remains an internal publishing and compatibility boundary rather than the authority for normal project builds.
 
-```bash
-git clone https://github.com/encero-systems/incan.git
-cd incan
-make install
-incan run examples/simple/hello.incn
-```
+## Continue
 
-The source-build path links the compiler from the checkout and is useful for development. It is not the public first-contact path for evaluating a toolchain release.
+- [Getting Started](../tutorials/getting_started.md) for a guided first-contact loop.
+- [Choose a learning route](../../start_here/index.md) when you know the outcome you want.
+- [Oven alpha](../explanation/oven_alpha.md) for the 0.5 build and package-system contract.

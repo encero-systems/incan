@@ -1,59 +1,53 @@
 # Coming from Rust (evaluator)
 
-This page routes Rust-first evaluators who want to understand where Incan keeps Rust-shaped semantics and where it trades surface syntax for application-code ergonomics.
+This route is for Rust-first evaluators deciding whether Incan offers a useful higher-level boundary for application code.
 
-## Install first
+<aside class="inc-bridge-note inc-bridge-note--rust inc-incus-slot" data-incus-category="rust" aria-label="Rust to Incan mental model">
+  <span class="inc-eyebrow">Rust → Incan</span>
+  <strong>Keep explicit fallibility, traits, native compilation, and crate reach. Spend less surface syntax on application structure.</strong>
+</aside>
 
-If you already use Cargo and want a source-built compiler, install the release source directly from Git with the LSP feature enabled so both `incan` and `incan-lsp` are installed:
+## Choose your route
 
-```bash
-cargo install --git https://github.com/encero-systems/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
-incan --version
-incan-lsp --version
-```
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="../tooling/tutorials/getting_started/"><span class="inc-eyebrow">Start</span><strong>Run the first project</strong><span>Install the current toolchain and complete the native run, test, and release-build loop.</span></a>
+  <a class="inc-route-card" href="../tooling/tutorials/build_and_consume_library/"><span class="inc-eyebrow">Package preview</span><strong>Design an Incan library boundary</strong><span>Choose a small public API, source-check producer and consumer, and trace the intended <code>pub::</code> and lock workflow.</span></a>
+  <a class="inc-route-card" href="../language/explanation/rust_shaped_confidence/"><span class="inc-eyebrow">Semantics</span><strong>Inspect the Rust-shaped guarantees</strong><span>See what Incan keeps and what it deliberately makes smaller at the authoring surface.</span></a>
+  <a class="inc-route-card" href="../language/how-to/rust_interop/"><span class="inc-eyebrow">Interop</span><strong>Cross the Rust boundary</strong><span>Import crates and author explicit interop where native ecosystem reach matters.</span></a>
+</div>
 
-If you want the faster binary toolchain path instead, use the release installer. This path can also bootstrap the stable Rust backend through `rustup` on a fresh machine:
+## Preview arbitrary-crate interop
 
-```bash
---8<-- "_snippets/commands/direct_install.sh"
-export PATH="$HOME/.local/bin:$PATH"
-incan --version
-incan-lsp --version
-```
+[Add a Rust crate](../language/tutorials/add_a_rust_crate.md) verifies the manifest, import, and lock contract against the 0.5 development compiler. Executing an arbitrary external crate also requires a receipt-compatible Rust inspection Loaf that is not part of the finite 0.5 release envelope, so keep the library project above as the successful first build.
 
-After installation, create a project and run the normal first-contact loop:
+## Install once
 
-```bash
-incan new hello --yes
-cd hello
-incan run
-incan test
-incan build --release
-```
+Follow [Getting Started](../tooling/tutorials/getting_started.md) for the current stable release channel, installer choices, and canonical first-project commands. Development tutorials declare their required compiler range separately.
 
-## What you should do next
+## What transfers
 
-- Quickstart: [Getting Started](../tooling/tutorials/getting_started.md) (toolchain install, starter project, and source-build fallback for contributors)
-- Explanation:
-    - [Why Incan?](../language/explanation/why_incan.md)
-    - [Why not just Rust?](../language/explanation/why_not_just_rust.md)
-    - [Rust-shaped confidence](../language/explanation/rust_shaped_confidence.md)
-    - [How Incan works](../language/explanation/how_incan_works.md)
-- Interop: [Rust Interop](../language/how-to/rust_interop.md)
-- Error handling: [Fallible and infallible paths](../language/tutorials/fallible_and_infallible_paths.md)
-- Projects today: [Projects today](../tooling/explanation/projects_today.md)
-- Reference surfaces:
-    - [Language reference (generated)](../language/reference/language.md)
-    - [CLI reference](../tooling/reference/cli_reference.md)
-- Stability: [Stability policy](../stability.md) + [Release notes](../release_notes/index.md)
-- Evolution surfaces:
-    - [Contributing start here](../contributing/index.md)
-    - [Incan Contributor Book (Advanced)](../contributing/tutorials/book/index.md)
-    - [RFC index](../RFCs/index.md)
-    - [Roadmap](../roadmap.md)
+- Native compilation, explicit `Result` and `Option` values, traits, enums, pattern matching, and crate access
+- Reproducible manifests and lockfiles
+- A preference for compiler-visible contracts over runtime convention
 
-## What to look for
+## What changes
 
-- Clear boundaries: what exists today vs roadmap (especially for WASM/frontend)
-- “Stable vs experimental” labeling without forcing you to read RFCs first
-- Rust-shaped `Result` composition: Incan keeps `map`, `map_err`, `and_then`, `or_else`, `inspect`, and `inspect_err` rather than adding Python-style aliases, with callable arguments documented as `Callable[...]`
+- Ownership and borrowing remain implementation concerns at Rust boundaries, but ordinary Incan application code does not expose Rust lifetime syntax.
+- Models, derives, named arguments, and Python-shaped control flow reduce authoring ceremony.
+- Generated Rust is inspectable backend output, not the public source or ABI compatibility contract.
+
+## What not to expect
+
+- A low-level Rust replacement for kernels, unsafe systems work, or exact control over allocation and representation
+- Every crate API to feel natural without a small wrapper
+- Stable compatibility based on generated Rust internals
+
+## Continue
+
+- [Fallible and infallible paths](../language/tutorials/fallible_and_infallible_paths.md)
+- [Projects today](../tooling/explanation/projects_today.md)
+- [Stability policy](../stability.md) and [release notes](../release_notes/index.md)
+
+## Contributing to the compiler
+
+The contributor journey is separate from learning Incan as a user. Use the [Contributor Book](../contributing/tutorials/book/index.md), [compiler architecture](../contributing/explanation/architecture.md), and [RFC index](../RFCs/index.md) when you want to work on the toolchain itself.

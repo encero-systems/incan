@@ -89,6 +89,9 @@ Awaiting a `JoinHandle[T]` returns `Result[T, TaskJoinError]`. A task cancelled 
 
 ## Module: `std.async.channel`
 
+!!! warning "Current compiler limitation"
+    These declarations are present in the standard library, but the current compiler rejects the documented typed constructor and imported wrapper methods. This section records the intended library contract; it is not presently a verified runnable authoring path.
+
 Top-level API:
 
 - `channel[T](buffer: int) -> Tuple[Sender[T], Receiver[T]]`

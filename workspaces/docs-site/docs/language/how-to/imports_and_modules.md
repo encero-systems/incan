@@ -130,6 +130,17 @@ When you import a local module, the compiler:
 
 Published-library consumers follow a different trust boundary: they resolve `pub::` imports from the checked `.incnlib` artifact and generated library crate rather than re-reading the dependency's source.
 
+```mermaid
+flowchart LR
+  A["main.incn import"] --> B["resolve module path"]
+  B --> C["models.incn or models/mod.incn"]
+  C --> D["parse and type-check module"]
+  D --> E["checked public symbols"]
+  E --> F["importing module scope"]
+```
+
+<p class="inc-diagram-caption">Imports resolve files first, then expose checked symbols. They do not paste source text into the caller.</p>
+
 ## Examples from the repo
 
 - Multi-file example: `examples/advanced/multifile/`

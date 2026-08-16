@@ -29,7 +29,7 @@ That does not mean Incan is Python compatibility tooling or a Rust replacement. 
 
 ## Current beta versus 1.0 direction
 
-Incan is beta software. In the documented Oven Alpha envelope, ordinary build, test, and run commands select receipt-bound direct-`rustc` plans from Incan-owned storage; Cargo-backed compatibility publication is confined to the hidden, explicitly named `legacy_cargo` Loaf baker rather than acting as a normal-command fallback. Generated Rust remains inspectable backend output, but it should not be treated as the permanent public semantic contract.
+Incan is beta software. The 0.5 development compiler uses Oven-managed, receipt-bound build plans and direct `rustc` execution for the documented Alpha envelope. Generated Rust, diagnostics, and build reports remain inspectable, while Cargo is limited to an explicitly named compatibility publisher rather than a silent normal-command fallback. Generated Rust source should not be treated as the permanent public semantic contract.
 
 The 1.0 direction is:
 
@@ -62,6 +62,10 @@ The 1.0 direction is:
 
 ## Where to go next
 
+- If the fit is clear, [run the stable first-project loop](../tooling/tutorials/getting_started.md).
+- If you want a representative executable project, [build a typed workflow step](../tooling/tutorials/pipeline_mini_project.md).
+- If you want to study package boundaries, use the source-verified [library producer and consumer preview](../tooling/tutorials/build_and_consume_library.md).
+- If you want to inspect a broader source surface before its runtime Loafs ship, [preview the typed data processor](../language/tutorials/typed_data_processor.md).
 - If you are comparing against Python, read [Incan vs Python](../comparisons/python.md).
 - If you need Python compatibility details, read the compatibility boundary in [Incan vs Python](../comparisons/python.md#compatibility-boundary).
 - If you are evaluating the 1.0 category, read [1.0 domain-native demo target](domain_native_demo.md).

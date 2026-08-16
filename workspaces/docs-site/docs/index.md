@@ -40,7 +40,53 @@ hide:
 [Duckborrowing →](contributing/explanation/duckborrowing.md){ .inc-hero__text-link }
 </div>
 
+<div class="inc-hero__quickstart" aria-label="First Incan project">
+<div class="inc-quickstart__terminal">
+<div class="inc-quickstart__terminal-bar"><img src="shared/incapunk/icons/terminal.svg" alt=""><span>First run</span><strong>ready</strong></div>
+<pre><code><span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> incan new hello --yes</span>
+<span class="inc-terminal-line inc-terminal-line--output">Created project 'hello' at hello</span>
+<span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> cd hello &amp;&amp; incan run</span>
+<span class="inc-terminal-line inc-terminal-line--success">Hello from hello!</span></code></pre>
 </div>
+<div class="inc-quickstart__incus">
+<a class="inc-quickstart__incus-link" href="project/incus/" aria-label="Meet Incus">
+<img src="shared/incapunk/incus_observer_001.png" alt="">
+</a>
+</div>
+</div>
+
+</div>
+
+</section>
+
+<section class="inc-section" aria-label="What you can build" markdown="1">
+
+## Start from an outcome.
+
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="tooling/tutorials/your_first_project/"><span class="inc-eyebrow">Application</span><strong>Build a real first project</strong><span>Split a native command-line project into public modules, meaningful tests, and a release build.</span></a>
+  <a class="inc-route-card" href="tooling/tutorials/build_and_consume_library/"><span class="inc-eyebrow">Library preview</span><strong>Design a local package boundary</strong><span>Choose a small public API, source-check its producer and consumer, and trace the intended build and lock workflow.</span></a>
+  <a class="inc-route-card" href="tooling/tutorials/pipeline_mini_project/"><span class="inc-eyebrow">Automation</span><strong>Build a typed workflow step</strong><span>Make inputs, successful output, failure, execution, and tests explicit in one deterministic native step.</span></a>
+</div>
+
+<p><a href="start_here/what_incan_is_for/">Check whether Incan fits</a> · <a href="start_here/index/">Choose a learning route</a> · <a href="start_here/incan_or_incql/">Choose Incan-shaped or IncQL-shaped work</a></p>
+
+</section>
+
+<section class="inc-section" aria-label="Preview language surfaces" markdown="1">
+
+## Explore what comes next.
+
+These source-verified pages document language surfaces that need compatible Loafs beyond the finite 0.5 release envelope. They are previews, not disguised runnable onboarding paths.
+
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="language/tutorials/typed_data_processor/"><span class="inc-eyebrow">Preview · Typed serde</span><strong>Design a typed data processor</strong><span>Check models, transformations, file failures, tests, and a typed JSON report contract.</span></a>
+  <a class="inc-route-card" href="language/tutorials/build_your_first_api/"><span class="inc-eyebrow">Preview · Web</span><strong>Trace a typed API</strong><span>Check route declarations, path parameters, response models, and the HTTP boundary.</span></a>
+  <a class="inc-route-card" href="language/tutorials/async_worker_pipeline/"><span class="inc-eyebrow">Preview · Async</span><strong>Model an async worker</strong><span>Check task spawning, typed join failures, and deadline semantics.</span></a>
+  <a class="inc-route-card" href="language/tutorials/add_a_rust_crate/"><span class="inc-eyebrow">Preview · Rust crate</span><strong>Shape a crate boundary</strong><span>Keep Rust-facing calls narrow and record a reproducible dependency contract.</span></a>
+</div>
+
+</section>
 
 <div class="inc-hero__flow" aria-label="Compiler flow">
 <div class="inc-flow-step inc-tone-cyan"><img src="shared/incapunk/icons/code.svg" alt=""><strong>Write</strong><span>Readable typed source</span></div>
@@ -54,8 +100,6 @@ hide:
 <div class="inc-flow-step inc-tone-gold"><img src="shared/incapunk/icons/rocket.svg" alt=""><strong>Ship</strong><span>Native binary</span></div>
 </div>
 
-</section>
-
 <section class="inc-section inc-build-strip" aria-label="Build path" markdown="1">
 
 <p class="inc-strip-title">Readable source in. Native binaries out.</p>
@@ -64,7 +108,7 @@ hide:
 <div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/terminal.svg" alt=""><strong>Typed by default</strong><span>Types, errors, and mutability stay explicit.</span></div>
 <div class="inc-build-card inc-tone-gold"><img src="shared/incapunk/icons/workflow.svg" alt=""><strong>Ownership planned</strong><span>Compiler-assisted ownership, not runtime guesswork.</span></div>
 <div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/file-code.svg" alt=""><strong>Rust emitted</strong><span>Generated Rust stays inspectable.</span></div>
-<div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/shield-check.svg" alt=""><strong>Cargo checked</strong><span>Cargo and rustc keep the build honest.</span></div>
+<div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/shield-check.svg" alt=""><strong>Receipt checked</strong><span>Oven validates the resolved build plan before rustc runs.</span></div>
 <div class="inc-build-card inc-tone-gold"><img src="shared/incapunk/icons/rocket.svg" alt=""><strong>Native binary</strong><span>No Python process model at deploy time.</span></div>
 </div>
 
@@ -176,7 +220,8 @@ fn main() {
 
 <div class="inc-why-card inc-tone-gold">
 <img src="shared/incapunk/icons/package.svg" alt="">
-<span>Cargo crates and Rust tooling remain in the deployment path.</span>
+<span>Sealed Rust dependencies remain available through compatible Loaf closures; broader arbitrary-crate use stays an explicit preview.</span>
+<a href="language/tutorials/add_a_rust_crate/">See the boundary</a>
 </div>
 
 <div class="inc-why-card inc-tone-pink">

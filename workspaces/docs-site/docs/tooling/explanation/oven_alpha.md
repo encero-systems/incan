@@ -2,189 +2,274 @@
 title: Oven Alpha
 hide:
   - toc
+  - navigation
 ---
 
-<!-- markdownlint-disable MD033 -->
+<!-- markdownlint-disable MD033 MD060 -->
 
 <section class="inc-oven-hero" aria-labelledby="oven-hero-title" markdown="1">
 
 <div class="inc-oven-hero__copy" markdown="1">
 
-<p class="inc-oven-hero__kicker">Experimental · Oven Alpha</p>
+<p class="inc-oven-hero__kicker">A better build system</p>
 
 <h1 id="oven-hero-title"><span>Build once.</span><span>Keep the proof.</span></h1>
 
-<p class="inc-oven-hero__lead">Oven turns a verified Rust compatibility closure into immutable Loafs, then lets normal Incan build, run, and test commands reuse direct <code>rustc</code> plans without Cargo on the consumer path.</p>
+<p class="inc-oven-hero__lead">Oven turns a verified Rust compatibility closure into immutable Loafs, then lets normal Incan build, run, and test commands reuse direct-<code>rustc</code> plans without Cargo on the consumer path.</p>
 
 <div class="inc-oven-hero__actions" markdown="1">
 [Why Oven exists](#why-oven-exists){ .md-button .md-button--primary }
-[See the Alpha flow](#from-source-to-loaf-to-result){ .md-button }
+[See the Alpha flow](#how-oven-builds-and-proves){ .md-button }
 [Read the architecture](../../whitepapers/incan_oven_positioning.md){ .md-button }
 [Run the compiler suite](../../contributing/how-to/oven_alpha_benchmark.md){ .md-button }
 </div>
 
-<p class="inc-oven-hero__truth"><strong>Alpha means explicit boundaries.</strong> A compatible Loaf is reused; a miss explains whether to install an Oven-enabled toolchain or remove unsupported caller-owned Rust dependencies. Normal <code>incan build</code>, <code>incan run</code>, and <code>incan test</code> never quietly launch Cargo or switch backends.</p>
+<p class="inc-oven-hero__truth"><strong>Alpha means explicit boundaries.</strong> A compatible Loaf is reproducible by the same toolchain and inputs.</p>
 
 </div>
 
 <div class="inc-oven-hero__image" role="img" aria-label="A cybernetic alpaca baker tending a glowing oven in a mountain workshop"></div>
 
-<div class="inc-oven-hero__proofs" aria-label="Oven Alpha guarantees">
-<div><strong>Receipt-bound</strong><span>Exact source, target, compiler, SDK, and dependency evidence.</span></div>
-<div><strong>Policy-bounded</strong><span>Logical artifacts and physical disk use are measured separately.</span></div>
-<div><strong>Lease-safe</strong><span>Active work cannot be pruned underneath a consumer.</span></div>
+</section>
+
+<nav class="inc-oven-local-nav" aria-label="Oven page sections">
+<span class="inc-oven-local-nav__label">Explore Oven</span>
+<span class="inc-oven-local-nav__links">
+<a href="#oven-hero-title">Overview</a>
+<a href="#how-oven-builds-and-proves">Architecture</a>
+<a href="#normal-commands">Commands</a>
+<a href="#evidence-you-can-inspect">Evidence</a>
+<a href="#current-alpha-boundary">Alpha boundary</a>
+<a href="../../reference/cli_reference/">CLI reference ↗</a>
+</span>
+</nav>
+
+<section class="inc-oven-route" aria-labelledby="oven-route-title" markdown="1">
+
+<div class="inc-oven-section-heading" markdown="1">
+<h2 id="oven-route-title">One system, three ways in.</h2>
+<p>Use Oven through the surface that matches the question you are asking.</p>
+</div>
+
+<div class="inc-oven-route__grid">
+
+<a class="inc-oven-route__card inc-oven-route__card--developer" href="#normal-commands">
+<span class="inc-oven-route__icon"><img src="../../../shared/incapunk/icons/terminal.svg" alt="" aria-hidden="true"></span>
+<span class="inc-oven-route__number">CLI</span>
+<strong>Command line</strong>
+<span>Build, run, and test through the normal Incan workflow.</span>
+<em><code>incan build</code> →</em>
+</a>
+
+<a class="inc-oven-route__card inc-oven-route__card--maintainer" href="#how-oven-builds-and-proves">
+<span class="inc-oven-route__icon"><img src="../../../shared/incapunk/icons/code.svg" alt="" aria-hidden="true"></span>
+<span class="inc-oven-route__number">MODEL</span>
+<strong>Programmatic surface</strong>
+<span>See the typed compiler-facing contracts behind every plan.</span>
+<em>Read the architecture →</em>
+</a>
+
+<a class="inc-oven-route__card inc-oven-route__card--operator" href="#evidence-you-can-inspect">
+<span class="inc-oven-route__icon"><img src="../../../shared/incapunk/icons/eye.svg" alt="" aria-hidden="true"></span>
+<span class="inc-oven-route__number">PROOF</span>
+<strong>Inspect the proof</strong>
+<span>Explore stored evidence and the reason a plan was reused or rejected.</span>
+<em><code>incan oven store inspect</code> →</em>
+</a>
+
 </div>
 
 </section>
 
-Oven Alpha is the first production-shaped slice of Incan's native build system. It is designed around a simple developer expectation: unchanged work should be ready to use, and the toolchain should be able to explain why.
+<section id="why-oven-exists" class="inc-oven-thesis" aria-labelledby="oven-thesis-title">
+<header>
+<span>Why Oven exists</span>
+<h2 id="oven-thesis-title">The build result should explain itself.</h2>
+<p>Cargo can compile Incan's generated Rust. The limitation is the contract around that result: a mutable target tree and local fingerprints do not give Incan one durable answer for what was built, why it is compatible, or when it may be reused.</p>
+</header>
+<div class="inc-oven-thesis__grid">
+<article><span>01 · Artifact</span><strong>A Loaf is not a cache guess.</strong><p>Its identity binds source, dependency lock, compiler, SDK, target, profile, features, artifacts, and integrity evidence.</p></article>
+<article><span>02 · Boundary</span><strong>Prepare once. Consume deliberately.</strong><p>A publisher may pay the compatibility cost once. Normal commands only select and consume a verified result; a miss stays explicit.</p></article>
+<article><span>03 · Lifecycle</span><strong>Retention is part of correctness.</strong><p>Bounded admission, atomic publication, and active leases keep reuse predictable under concurrency, crashes, and cleanup.</p></article>
+</div>
+<p class="inc-oven-thesis__conclusion"><strong>The innovation is not merely calling <code>rustc</code> directly.</strong> Oven makes a prepared compatibility closure a first-class Incan artifact—with an identity, a receipt, and an owned lifecycle.</p>
+</section>
 
-For supported compatibility domains, Oven provides:
+<section id="normal-commands" class="inc-oven-mechanic inc-oven-mechanic--commands" aria-labelledby="oven-commands-title">
+<header>
+<span>Use · the normal workflow</span>
+<h2 id="oven-commands-title">Oven sits behind the commands you already know.</h2>
+<p>For a supported project, <code>build</code>, <code>run</code>, and <code>test</code> select a receipt-compatible Loaf and its stored direct-<code>rustc</code> plan.</p>
+</header>
+<div class="inc-oven-command-stack" aria-label="Normal Incan commands">
+<code><span>$</span> incan build</code>
+<code><span>$</span> incan run</code>
+<code><span>$</span> incan test</code>
+</div>
+<div class="inc-oven-mechanic__explain">
+<strong>Compatibility is selected, not guessed.</strong>
+<p>Compiler, target, SDK, feature selection, dependency lock, and relevant source all contribute to identity. Change one and Oven prepares or refuses; match them and Oven can reuse the sealed result without Cargo on the consumer path.</p>
+<p class="inc-oven-mechanic__prep"><b>Make first materialization explicit</b><code>incan oven bake --project . --format json</code><code>incan build --lib</code></p>
+<details class="inc-oven-detail">
+<summary>Maintainer and low-level commands</summary>
+<p><code>oven bake</code> can materialize a compatible Loaf already shipped by the active toolchain. It does not compile a final <code>rlib</code>, resolve a Rust graph, or launch Cargo. If no compatible Loaf exists, the normal command stops explicitly.</p>
+<p><code>incan oven store inspect --format json</code> reads the store; <code>incan oven store prune --dry-run --format json</code> previews bounded reclamation. <code>bake-loafs</code> remains the maintainer-only publisher path, never a developer fallback.</p>
+</details>
+</div>
+</section>
 
-- content-addressed `<identity>.loaf/` bundles with a checked `loaf.json`, direct-`rustc` plan, artifacts, compatibility identity, provenance, digests, and byte accounting;
-- exact reuse from compiler, SDK/provider, toolchain, target, profile, feature, lock, and source evidence;
-- normal build, run, and test consumers that clear inherited Cargo state and never use Cargo as a fallback;
-- a bounded Oven-owned store with dry-run pruning and active leases; and
-- a complete repository test runner that reports both test cases and green or red roots.
+<aside class="inc-oven-manifesto" aria-label="Oven operating principle">
+<span aria-hidden="true">“</span>
+<div><strong>Reuse the proof—or explain the miss.</strong><p>Deterministic inputs. Immutable Loafs. Verifiable outcomes.</p></div>
+<img src="../../../shared/incapunk/incus-library/hint/incus_hint_magnifying_glass.webp" alt="" aria-hidden="true">
+</aside>
 
-## Why Oven exists
+## How Oven builds and proves
 
-Cargo is a capable Rust package manager and build tool. The problem is not that Cargo cannot compile Incan's generated Rust; it can. The problem is that making Cargo the normal backend also makes Cargo's project graph, mutable target state, fingerprints, and command lifecycle the authority behind every Incan build. Incan can wrap that process, but a wrapper cannot independently promise that work was prepared once, prove why an artifact is compatible, bound all owned storage, or give the CLI, CI, IDE, and future interactive sessions one shared account of project state.
+The publisher pays the compatibility cost once. Oven fingerprints the inputs that made the result valid, seals the result and its receipt into one immutable Loaf, then lets a compatible consumer reuse it without Cargo. If those facts no longer match, Oven refuses reuse and tells you why. Alpha ships two typed compatibility envelopes: the release foundations distributed with the toolchain and the compiler-suite foundations used to test Incan itself.
 
-Oven changes who owns that contract. Rust source, crates, target triples, and `rustc` remain part of the system. Cargo remains a narrow compatibility publisher during Alpha. But Oven owns selection, identity, execution, evidence, and lifecycle for the supported consumer envelope.
+<section class="inc-oven-architecture" aria-label="Oven publisher, Loaf, and consumer architecture">
 
-| Concern | Cargo-centered Incan path | Oven model |
-| --- | --- | --- |
-| Project authority | Incan emits a generated Cargo project, then Cargo decides the build graph and manages target state. | Incan checks the project; Oven selects an explicit compatibility identity and verified build plan. |
-| Unit of reuse | A mutable local target tree whose fingerprints are Cargo implementation state, not a portable Incan artifact contract. | An immutable Loaf with declared inputs, artifacts, direct-`rustc` plan, digests, provenance, and accounting. |
-| When expensive work happens | The first consumer command pays unless a compatible local Cargo target happens to be warm. | The hidden publisher performs compatibility compilation once. `incan oven bake` explicitly materializes a shipped sealed Loaf into a local bounded store; an ordinary command may perform that same bounded copy, but never re-resolves or invokes Cargo. |
-| Why reuse is valid | Cargo can explain compilation activity, but Incan has no single receipt spanning source, SDK, compiler, dependency closure, selection, and storage. | The same evidence selects the Loaf, drives execution, and records why work was reused or invalidated. |
-| Storage and liveness | Cargo target directories are useful build state, but their lifecycle is not an Incan-owned, lease-protected storage policy. | Oven admits against aggregate and domain bounds, separates logical and physical use, and will not prune active work. |
-| Local and CI semantics | Each surrounding tool can arrange Cargo differently and inherit different cache and process state. | Normal commands and the repository suite use the same stored plans, Cargo guard, compatibility rules, and reports. |
+<ol class="inc-oven-proof-story" aria-label="How Oven turns publisher inputs into reusable proof">
+<li><span>01–02 · Publisher</span><strong>Identify and prepare once.</strong><p>Fingerprint source, lock, compiler, SDK, target, profile, and build intent before paying the compatibility cost.</p></li>
+<li><span>03 · Seal</span><strong>Keep the result and its explanation.</strong><p>Package the immutable artifact, direct-<code>rustc</code> plan, compatibility identity, and build receipt as one Loaf.</p></li>
+<li><span>04–05 · Consumer</span><strong>Reuse—or get a precise refusal.</strong><p>Match the requested environment, reuse locally without Cargo, and inspect the evidence behind the decision.</p></li>
+</ol>
 
-The Alpha implements the Oven side of this table for a deliberately bounded compatibility envelope. It does **not** yet replace Cargo's resolver for arbitrary Rust workspaces, publish Loafs through `incan.pub`, or provide the persistent interactive session model. Those are the north star, documented separately in [A Cargo-free toolchain for Incan and Rust](../../whitepapers/incan_oven_positioning.md).
+<div class="inc-oven-architecture__board">
+<img class="inc-oven-architecture__connectors inc-oven-architecture__connectors--publisher" src="../../../shared/incapunk/oven_architecture_connectors_publisher_v1.png" alt="" aria-hidden="true">
+<img class="inc-oven-architecture__connectors inc-oven-architecture__connectors--consumer" src="../../../shared/incapunk/oven_architecture_connectors_consumer_v1.png" alt="" aria-hidden="true">
+<div class="inc-oven-architecture__inputs">
+<p>Publisher inputs</p>
+<div><img src="../../../shared/incapunk/icons/file-code.svg" alt="" aria-hidden="true"><span><strong>Source</strong><small><code>main.incn</code></small></span></div>
+<div><img src="../../../shared/incapunk/icons/shield-check.svg" alt="" aria-hidden="true"><span><strong>Dependency lock</strong><small><code>lock.json</code></small></span></div>
+<div><img src="../../../shared/incapunk/icons/workflow.svg" alt="" aria-hidden="true"><span><strong>SDK + toolchain</strong><small>compiler · target · profile</small></span></div>
+</div>
 
-## Where the innovation lies
+<figure class="inc-oven-loaf">
+<img src="../../../shared/incapunk/oven_loaf_evidence_002.png" alt="A sealed bread Loaf carrying the Oven stamp">
+<figcaption><strong>LOAF</strong><span><b>L</b>ocked, <b>O</b>bservable <b>A</b>rtifact <b>F</b>ormat</span><small>Immutable · inspectable · reusable</small></figcaption>
+</figure>
 
-Directly invoking `rustc` is not the innovation by itself, and putting a new command in front of Cargo would not be either. The architectural shift is treating a prepared compatibility closure as a first-class product rather than incidental build-cache state:
+<div class="inc-oven-architecture__outcomes">
+<p>Consumer outcomes</p>
+<div><img src="../../../shared/incapunk/icons/shield-check.svg" alt="" aria-hidden="true"><span><strong>Compatibility check</strong><small>Inputs match the environment</small></span></div>
+<div><img src="../../../shared/incapunk/icons/package.svg" alt="" aria-hidden="true"><span><strong>Local reuse</strong><small>Run and test without Cargo</small></span></div>
+<div><img src="../../../shared/incapunk/icons/rocket.svg" alt="" aria-hidden="true"><span><strong>Artifacts</strong><small>Native binary + files</small></span></div>
+<div><img src="../../../shared/incapunk/icons/file-code.svg" alt="" aria-hidden="true"><span><strong>Receipt</strong><small>Why this result exists</small></span></div>
+<div><img src="../../../shared/incapunk/icons/eye.svg" alt="" aria-hidden="true"><span><strong>Inspect</strong><small>Explore the evidence</small></span></div>
+</div>
 
-1. **A Loaf is an artifact, not a cache guess.** Its identity binds the source and lock evidence, compiler, SDK/provider, target, profile, features, artifacts, and integrity metadata needed to consume it safely.
-2. **Preparation and consumption are separate contracts.** A publisher may do expensive compatibility work once; a normal command only selects and consumes a verified result. A miss is explicit instead of silently turning a small command into a large build.
-3. **Receipts connect correctness, performance, and provenance.** The evidence that authorizes reuse is also what explains invalidation, elapsed phases, artifact origin, and storage ownership.
-4. **Lifecycle is part of correctness.** Bounded admission, atomic publication, deterministic oversized-domain refusal, and active leases make artifact retention predictable under concurrency and crashes—not a cleanup convention left to users.
+<aside class="inc-oven-inspector" aria-label="Example fields in an Oven evidence receipt">
+<p><span></span>Live inspector</p>
+<dl>
+<div><dt>Compiler</dt><dd>incan 0.5</dd></div>
+<div><dt>Source</dt><dd>SHA256: 3f2a…</dd></div>
+<div><dt>Lock</dt><dd>SHA256: 8b12…</dd></div>
+<div><dt>Artifact</dt><dd>SHA256: 7cfb…</dd></div>
+<div><dt>Target</dt><dd>x86_64-linux</dd></div>
+<div><dt>Receipt</dt><dd>rec_0f9c…</dd></div>
+</dl>
+<a href="#evidence-you-can-inspect">Open the evidence fields →</a>
+</aside>
+</div>
 
-That foundation is what can later support published Loafs, mixed Incan/Rust workspaces, and persistent notebook or IDE sessions without changing the meaning of a normal build. Oven Alpha is the first narrow proof of that architecture, not the completed ecosystem.
+<div class="inc-oven-flow__boundary">
+<div><span>What the proof remembers</span><strong>One receipt answers: “Why does this artifact exist?”</strong><p>Every Loaf is bound to its source, dependency lock, compiler, SDK, target, profile, and build intent. The proof travels with the result instead of disappearing into a build cache.</p></div>
+<div><span>Why Oven refuses reuse</span><strong>A miss protects the guarantee.</strong><p>Oven rebuilds or stops when the requested environment cannot honestly reuse the sealed result.</p><ul><li>the toolchain or target differs;</li><li>dependency or source evidence changed; or</li><li>the request sits outside the Alpha envelope.</li></ul></div>
+</div>
 
-## From source to Loaf to result
+<section id="evidence-you-can-inspect" class="inc-oven-evidence" aria-labelledby="oven-evidence-title">
+<header>
+<span>Inspect · the reason</span>
+<h2 id="oven-evidence-title">The receipt separates what happened from why reuse was allowed.</h2>
+<p>Oven keeps preparation, execution, compatibility, and storage evidence distinct. The result is a proof you can inspect instead of a cache entry you have to reverse-engineer.</p>
+</header>
+<div class="inc-oven-evidence__grid">
+<article><img src="../../../shared/incapunk/icons/workflow.svg" alt="" aria-hidden="true"><span><b>Selection</b><strong>Which Loaf matched?</strong><small>Source, lock, compiler, SDK, target, profile, features, and build intent.</small></span></article>
+<article><img src="../../../shared/incapunk/icons/rocket.svg" alt="" aria-hidden="true"><span><b>Execution</b><strong>What did the replay prove?</strong><small>Prepared roots, passed and failed tests, artifacts, and phase timings remain separate.</small></span></article>
+<article><img src="../../../shared/incapunk/icons/database-arrow-right.svg" alt="" aria-hidden="true"><span><b>Storage</b><strong>What can be reclaimed?</strong><small>Logical, physical, owned, reclaimable, and active-lease bytes are reported independently.</small></span></article>
+</div>
+<details class="inc-oven-detail inc-oven-detail--evidence">
+<summary>Evidence fields, limits, and benchmark rules</summary>
+<p>Do not combine cold publication and prepared replay into one headline number. The approximately-five-minute acceptance target applies to the prepared full-suite replay and is meaningful only with its commit, machine, toolchain, cache state, workload, and storage junctions.</p>
+<div class="inc-oven-evidence__fields" role="table" aria-label="Oven storage evidence fields">
+<div role="row"><strong role="rowheader">Logical artifact bytes</strong><span role="cell">Declared immutable payload lengths.</span></div>
+<div role="row"><strong role="rowheader">Policy physical bytes</strong><span role="cell">Filesystem allocation charged by Oven policy.</span></div>
+<div role="row"><strong role="rowheader">Owned bytes</strong><span role="cell">Allocation owned by the current envelope.</span></div>
+<div role="row"><strong role="rowheader">Reclaimable bytes</strong><span role="cell">Inactive allocation policy may safely remove.</span></div>
+<div role="row"><strong role="rowheader">Active-lease bytes</strong><span role="cell">Allocation protected by running consumers.</span></div>
+</div>
+<p>The developer store defaults to <code>$INCAN_HOME/oven/store/v1</code> (or <code>~/.incan/oven/store/v1</code>) with bounded aggregate and per-domain allowances. Oven may reclaim least-recently-used inactive entries, never an active lease, and never silently expands an operator-supplied limit.</p>
+<a href="../../contributing/how-to/oven_alpha_benchmark.md">Run the reproducible benchmark sequence →</a>
+</details>
+</section>
 
-```text
-checked source + lock + SDK + rustc
-                 │
-                 ▼
-      hidden legacy_cargo Loaf baker
-                 │
-                 ▼
-       <content-identity>.loaf/
-        loaf.json + artifacts
-                 │
-                 ▼
-      normal incan build/run/test
-          direct rustc, no Cargo
-```
+</section>
 
-Within Oven Alpha compatibility publication, Cargo has one deliberately named role: maintainers and CI may use the hidden `legacy-cargo` baker to resolve and compile a missing Rust dependency closure. Oven verifies the result, seals it into Loafs, and owns subsequent selection and execution. That boundary is visible and auditable; it is not a normal-command backend. Cargo may still be used to build the Incan compiler itself or by repository lint and security tooling.
+<section class="inc-oven-cargo" aria-labelledby="oven-cargo-title">
+<div class="inc-oven-cargo__compare">
+<p>Why Oven beats Cargo-only workflows</p>
+<h2 id="oven-cargo-title">One build. A reusable result with receipts.</h2>
+<div class="inc-oven-cargo__intro">Cargo is a compatibility publisher inside today's Alpha boundary, not Oven's consumer build path. Oven owns the artifact contract: one reusable result, one compatibility identity, and one inspectable explanation.</div>
+<div class="inc-oven-cargo__table" role="table" aria-label="Cargo-only and Oven Alpha comparison">
+<div role="row"><span role="columnheader">Cargo-centered Incan</span><b role="columnheader">Concern</b><span role="columnheader">Oven Alpha</span></div>
+<div role="row"><span role="cell">Each environment resolves and compiles its own generated graph.</span><b role="cell">Process</b><span role="cell">A publisher prepares the supported closure once.</span></div>
+<div role="row"><span role="cell">Target artifacts and mutable build state.</span><b role="cell">Output</b><span role="cell">Immutable Loaf + build receipt.</span></div>
+<div role="row"><span role="cell">Local target cache and Cargo fingerprints.</span><b role="cell">Reuse</b><span role="cell">Explicit compatibility identity.</span></div>
+<div role="row"><span role="cell">Cargo explains build activity, not one Incan artifact contract.</span><b role="cell">Evidence</b><span role="cell">One inspectable proof spans selection, execution, and storage.</span></div>
+</div>
+</div>
 
-An exact, complete envelope match returns `reused` without launching Cargo or rerunning behavioural probes. A missing, mutated, incomplete, or incompatible Loaf fails closed. Publication happens in isolated staging and an atomic manifest switch, so an interrupted replacement leaves the previous valid generation authoritative.
+<div class="inc-oven-capabilities" aria-label="Oven Alpha capabilities available now">
+<p>Alpha · available now</p>
+<strong>Useful proof today</strong>
+<span>The current surface is deliberately narrow, but the core reuse contract is real.</span>
+<ul><li>Deterministic builds</li><li>Immutable Loaf artifacts</li><li>Human-readable inspection</li><li>No Cargo on the consumer path</li></ul>
+<a href="#normal-commands">Get started with Oven →</a>
+</div>
 
-The built-in Alpha envelopes are typed in Oven:
+<div class="inc-oven-north-star" aria-label="Planned Oven capabilities">
+<p>North star · planned</p>
+<strong>Proof that can travel</strong>
+<span>These layers explain where Oven is going; they are not presented as shipped Alpha capabilities.</span>
+<ul><li>Trust and signatures</li><li>SBOM and broader provenance</li><li>Portable publication</li><li>Verification chains</li></ul>
+<small>Planned capabilities. Not available in Alpha.</small>
+</div>
+</section>
 
-- `release` contains the foundations shipped with a release toolchain;
-- `compiler-suite` contains the debug and release foundations used to run Incan's repository tests through Oven.
+<section class="inc-oven-decision" aria-labelledby="oven-decision-title">
+<header>
+<span>Decide · the compatibility boundary</span>
+<h2 id="oven-decision-title">A matching receipt permits reuse. A mismatch stops it.</h2>
+<p>Oven does not infer that yesterday's artifact is “probably fine.” It compares the requested environment with the identity sealed into the Loaf, then returns an explicit reuse decision.</p>
+</header>
+<div class="inc-oven-decision__cards">
+<article><img src="../../../shared/incapunk/icons/shield-check.svg" alt="" aria-hidden="true"><span><b>Match</b><strong>Reuse the sealed Loaf.</strong><small>The same source, lock, compiler, SDK, target, profile, features, and build intent select the stored direct-<code>rustc</code> plan.</small></span></article>
+<article><img src="../../../shared/incapunk/icons/eye.svg" alt="" aria-hidden="true"><span><b>Miss</b><strong>Rebuild or stop with a reason.</strong><small>A changed compatibility fact—or a request outside the Alpha envelope—cannot silently fall back to hidden Cargo work.</small></span></article>
+</div>
+<a href="../../whitepapers/incan_oven_positioning.md">Read the full architecture and ownership model →</a>
+</section>
 
-Their source programs are checked Incan fixtures. Make and CI compose the CLI; they do not define identity, bundle contents, admission policy, or fixture source. For the compiler-suite envelope, the same baker call also prepares or reuses the bounded receipt-compatible suite store selected by the Cargo-guarded replay.
+<section id="current-alpha-boundary" class="inc-oven-closing" aria-labelledby="oven-boundary-title">
+<div class="inc-oven-closing__commands">
+<p>Inspect the surface</p>
+<code><span>$</span> incan oven store inspect</code>
+<code><span>$</span> incan oven store prune --dry-run</code>
+<code><span>$</span> incan oven bake --project .</code>
+<code><span>$</span> incan inspect oven --receipt receipt.json</code>
+<a href="../reference/cli_reference.md">Open the CLI reference →</a>
+</div>
+<div class="inc-oven-closing__boundary">
+<p>Alpha boundary</p>
+<h2 id="oven-boundary-title">Early by design. Explicit by default.</h2>
+<span>Oven Alpha proves the maintained Incan workflow and the repository's own compiler suite. It does not yet claim:</span>
+<ul><li>general Cargo compatibility for arbitrary Rust workspaces;</li><li>every build script, procedural macro, target, or platform dependency shape;</li><li>compressed or remotely distributed <code>.loaf</code> bundles;</li><li>the authored <code>Loaf.toml</code>, resolved <code>Oven.lock</code>, workspace, or registry model proposed for later work; or</li><li>broad ecosystem readiness from external-library bake-offs.</li></ul>
+<small>Those belong to 0.6-and-later releases and RFC work. If the Alpha envelope cannot authorize a normal command, Oven explains the miss and stops.</small>
+</div>
+<div class="inc-oven-closing__visual" role="img" aria-label="Incus keeping watch beside the glowing Oven">
+<span>Incus is observing.<br>Always.</span>
+</div>
+</section>
 
-## Normal commands
-
-For a supported project, use the commands developers already know:
-
-```bash
-incan build
-incan run
-incan test
-```
-
-Each command selects a receipt-compatible Loaf and stored direct-`rustc` plan. A changed compiler, target, SDK, feature selection, lock, or relevant source changes the identity. An unchanged clean checkout can select the same Loaf because Git status and shell-script revisions are not compatibility inputs.
-
-For a dependency-free Incan library, an explicit preparation step makes first-use store materialization visible before a build:
-
-```bash
-incan oven bake --project . --format json
-incan build --lib
-```
-
-`oven bake` records debug and release receipts, then reports `materialized` or `reused` for each selected plan. It only copies a receipt-compatible Loaf already shipped by the active toolchain through Oven's bounded, atomic, lease-aware store; it does not compile a final `rlib`, resolve a Rust graph, or launch Cargo. Generated Rust remains project-owned. Normal `build`, `run`, and `test` may also perform this controlled first materialization for a shipped compatible Loaf, but never an uncontrolled cold compatibility bake.
-
-If no compatible Loaf exists, the command stops without invoking Cargo. For a library, first try `incan oven bake --project <library-root>`; if the active toolchain has no compatible shipped Loaf, install or reinstall an Oven-enabled toolchain for the target, or remove caller-owned Rust dependencies outside the documented Alpha envelope. `bake-loafs` remains only the maintainer path for preparing a toolchain; neither normal commands nor `oven bake` run that baker automatically.
-
-Low-level `incan oven` commands remain available for inspection and verification. For example:
-
-```bash
-incan oven store inspect --format json
-incan oven store prune --dry-run --format json
-incan oven bake --project . --format json
-```
-
-The hidden baker is a maintainer interface, not a developer fallback:
-
-```bash
-incan oven legacy-cargo bake-loafs \
-  --compiler-root . \
-  --output target/share/incan/oven/loafs \
-  --suite-store target/oven-compiler-suite-store \
-  --envelope compiler-suite \
-  --sdk-inventory path/to/sdk-inventory.json \
-  --cargo "$(rustup which --toolchain nightly-2026-03-24 cargo)" \
-  --rustc "$(rustup which --toolchain stable rustc)" \
-  --format json
-```
-
-The publisher Cargo and consumer compiler are separate on purpose. The pinned Cargo supplies publisher-only graph data; the selected `rustc` defines the Loaf identity and performs direct compilation and replay. This lets the stable and MSRV lanes prove their actual consumer toolchains.
-
-## Evidence you can inspect
-
-Oven reports preparation and replay as separate phases. Repository-suite reports include total, passed, failed, ignored, and filtered test cases plus total, green, red, and unreported roots. The benchmark procedure records cold preparation, exact warm reuse, prepared replay, representative normal builds, Cargo-guard results, and phase wall-clock timings. Do not combine cold publication and prepared replay into one headline number: the approximately-five-minute acceptance target applies to the prepared full-suite replay.
-
-Storage reports keep these quantities distinct:
-
-| Field | Meaning |
-| --- | --- |
-| Logical artifact bytes | Sum of declared immutable payload lengths. |
-| Policy physical bytes | Filesystem allocation charged by Oven policy. |
-| Raw disk use | Host measurement of the relevant store or output tree. |
-| Owned bytes | Physical allocation owned by the current envelope. |
-| Reclaimable bytes | Inactive allocation policy may safely remove. |
-| Active-lease bytes | Allocation protected by running consumers. |
-
-See the [Oven Alpha benchmark guide](../../contributing/how-to/oven_alpha_benchmark.md) for the reproducible local sequence and the evidence files it produces. Performance numbers are meaningful only with their exact commit, machine, toolchain, cache state, workload, and storage junctions.
-
-## Bounded storage, not cache archaeology
-
-The default developer store is `$INCAN_HOME/oven/store/v1`, or `~/.incan/oven/store/v1` when `INCAN_HOME` is unset. Its defaults are 3 GiB aggregate physical allocation, 1 GiB physical allocation per compatibility domain, and 768 MiB logical artifact bytes per domain. Compiler-suite and release baking may use explicit allowances calibrated from their measured valid closures.
-
-Oven enforces those bounds during admission. It can reclaim least-recently-used inactive entries, but never an active lease. A single domain that cannot fit its allowance is refused deterministically; an operator-supplied limit is never silently expanded. Production defaults are practical policy, not aspirational guesses: a healthy measured closure receives sensible headroom, while duplication, leaked intermediates, and unbounded growth remain defects.
-
-Publication and replacement account for both the existing authoritative generation and private staging at the high-water point. Logical size, policy physical allocation, and raw disk use are reported independently because filesystem clones, sparse files, compression, and allocation units can make them differ.
-
-## Current Alpha boundary
-
-Oven Alpha proves the maintained Incan workflow and the repository's own compiler suite. It does not yet claim:
-
-- general Cargo compatibility for arbitrary Rust workspaces;
-- native resolution of every build script, procedural macro, target, or platform dependency shape;
-- compressed or remotely distributed `.loaf` bundles;
-- the authored `Loaf.toml`, resolved `Oven.lock`, workspace settings, or registry model proposed for later work; or
-- broad ecosystem readiness based on Axum, Tokio, DataFusion, or other external-library bake-offs.
-
-Those are 0.6-and-later releases and RFC work. For the v0.5 Alpha, the hidden baker is the only Cargo-backed compatibility publisher for supported Oven closures. If the Alpha envelope cannot authorize a normal command, Oven explains the miss and stops.
-
-For the complete command surface, see the [CLI reference](../reference/cli_reference.md).
+<p class="inc-oven-page-end">For the complete command surface, see the <a href="../reference/cli_reference.md">CLI reference</a>.</p>

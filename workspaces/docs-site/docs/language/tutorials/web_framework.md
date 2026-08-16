@@ -1,41 +1,27 @@
-# Web Framework
+# Web framework guide
 
-Incan includes a web framework that currently lowers to [Axum](https://docs.rs/axum/latest/axum/), giving you Flask/FastAPI-like syntax with a native async server backend.
+This page is the task-oriented source guide to Incan's web framework. For a linear first experience, start with [Preview a typed API](build_your_first_api.md).
+
+Incan's web surface currently lowers to [Axum](https://docs.rs/axum/latest/axum/), giving Flask/FastAPI-shaped route declarations a native async server design.
+
+!!! info "0.5 source-verified preview"
+    The included `verified_*.incn` snippets pass source verification, and the documented route shapes are covered by the repository's generated-Rust route tests. Short fragments with ellipses illustrate local concepts rather than complete checked programs. The finite 0.5 release envelope does not ship a compatible `std.web` Loaf, so this guide does not claim a native server you can build or run with that envelope.
 
 ## Quick Start
 
 --8<-- "_snippets/callouts/no_install_fallback.md"
 
 ```incan
-from std.web import App, route, Response, Json
-from std.serde import json
-import std.async
-
-@derive(json)
-model Greeting:
-    message: str
-
-@route("/")
-async def index() -> Response:
-    return Response.html("<h1>Hello from Incan!</h1>")
-
-@route("/api/greet/{name}")
-async def greet(name: str) -> Json[Greeting]:
-    return Json(Greeting(message=f"Hello, {name}!"))
-
-def main() -> None:
-    app = App()
-    app.run(port=8080)
+--8<-- "_snippets/language/examples/verified_web_quick_start.incn"
 ```
 
-Build and run:
+Check the source contract:
 
 ```bash
-incan build examples/web/hello_web.incn
-./target/incan/hello_web/target/release/hello_web
+incan check examples/web/hello_web.incn
 ```
 
-Note: the first build may download Rust crates via Cargo (can take minutes) and requires internet access.
+This verifies the route declarations and handler types. Native execution becomes available only when the active toolchain supplies the receipt-compatible web Loaf; the compiler does not fall back to an implicit Cargo build when that capability is absent.
 
 ## Routes
 
@@ -51,11 +37,11 @@ async def handler() -> Response:
 
 @route("/api/resource", methods=[GET])
 async def get_resource() -> Response:
-    ...
+    return Response.ok()
 
 @route("/api/resource", methods=[POST])
 async def create_resource() -> Response:
-    ...
+    return Response.status(202, "accepted")
 ```
 
 ### Path Parameters
@@ -101,19 +87,19 @@ async def ping_items() -> Response:
 
 @route("/items", methods=[GET])
 async def list_items() -> Json[list[Item]]:
-    ...
+    return Json([])
 
-@route("/items", methods=[POST])
-async def create_item(body: Json[CreateItem]) -> Json[Item]:
-    ...
+@route("/items/reindex", methods=[POST])
+async def reindex_items() -> Response:
+    return Response.status(202, "reindex queued")
 
 @route("/items/{id}", methods=[PUT])
 async def update_item(id: int) -> Response:
-    ...
+    return Response.ok()
 
 @route("/items/{id}", methods=[DELETE])
 async def delete_item(id: int) -> Response:
-    ...
+    return Response.ok()
 ```
 
 ## Responses
@@ -154,7 +140,7 @@ async def index() -> Response:
 
 ### Status Codes
 
-Use `Response` methods for different status codes:
+Use `Response.ok()` for an empty 200 response, or `Response.status(code, body)` when the status and body are explicit:
 
 ```incan
 from std.web import route, Response
@@ -166,23 +152,23 @@ async def health() -> Response:
 
 @route("/created")
 async def created() -> Response:
-    return Response.created()  # 201
+    return Response.status(201, "created")
 
 @route("/empty")
 async def empty() -> Response:
-    return Response.no_content()  # 204
+    return Response.status(204, "")
 
 @route("/error")
 async def error() -> Response:
-    return Response.bad_request("Invalid input")  # 400
+    return Response.status(400, "Invalid input")
 
 @route("/missing")
 async def missing() -> Response:
-    return Response.not_found("Resource not found")  # 404
+    return Response.status(404, "Resource not found")
 
 @route("/server-error")
 async def server_error() -> Response:
-    return Response.internal_error("Something went wrong")  # 500
+    return Response.status(500, "Something went wrong")
 ```
 
 ## Request Data
@@ -200,58 +186,25 @@ async def get_post(user_id: int, post_id: int) -> Json[Post]:
     ...
 ```
 
-### Query Parameters
+### Query parameters and JSON bodies
 
-Use `Query[T]` for query string parameters:
-
-```incan
-from std.web import route, Json, Query
-from std.serde import json
-import std.async
-
-@derive(json)
-model SearchParams:
-    q: str
-    limit: int = 10
-
-@route("/search")
-async def search(params: Query[SearchParams]) -> Json[list[Result]]:
-    results = do_search(params.q, params.limit)
-    return Json(results)
-```
-
-### JSON Body
-
-Use `Json[T]` as a parameter for JSON request bodies:
+Use `Query[T]` for typed query-string parameters and `Json[T]` for typed JSON request bodies. Both inner models derive JSON support:
 
 ```incan
-from std.web import route, Json, POST
-from std.serde import json
-import std.async
-
-@derive(json)
-model CreateUser:
-    name: str
-    email: str
-
-@route("/users", methods=[POST])
-async def create_user(body: Json[CreateUser]) -> Json[User]:
-    user = User(id=1, name=body.name, email=body.email)
-    return Json(user)
+--8<-- "_snippets/language/examples/verified_web_request_extractors.incn"
 ```
 
-## Application
+## Application design
 
-### Starting the Server
+### Declaring the server entry point
 
-Create an `App` and call `run()`:
+Call the static `App.run()` entry point:
 
 ```incan
 from std.web import App
 
 def main() -> None:
-    app = App()
-    app.run(host="0.0.0.0", port=3000)
+    App.run(host="0.0.0.0", port=3000)
 ```
 
 Parameters:
@@ -261,12 +214,12 @@ Parameters:
 
 ## How It Works
 
-When you compile an Incan web application:
+When a compatible web Loaf is installed and the application is compiled:
 
 1. **Routes are collected** from `@route` decorators
 2. **Handlers become async Rust functions** with Axum extractors
 3. **Models with `@derive(json)`** get serde derives
-4. **`app.run()`** becomes Axum router setup + tokio server
+4. **`App.run()`** becomes Axum router setup + tokio server
 
 The generated Rust code uses:
 
@@ -279,75 +232,21 @@ The generated Rust code uses:
 ## Complete Example
 
 ```incan
-"""
-A simple REST API for managing items.
-"""
-
-from std.web import App, route, Response, Json, GET, POST, DELETE
-from std.serde import json
-import std.async
-
-
-@derive(json)
-model Item:
-    id: int
-    name: str
-    price: float
-
-
-# In-memory storage (in a real app, use a database)
-items: list[Item] = []
-
-
-@route("/api/items", methods=[GET])
-async def list_items() -> Json[list[Item]]:
-    """List all items."""
-    return Json(items)
-
-
-@route("/api/items", methods=[POST])
-async def create_item(body: Json[Item]) -> Json[Item]:
-    """Create a new item."""
-    item = Item(id=body.id, name=body.name, price=body.price)
-    items.append(item)
-    return Json(item)
-
-
-@route("/api/items/{id}", methods=[GET])
-async def get_item(id: int) -> Response:
-    """Get an item by ID."""
-    for item in items:
-        if item.id == id:
-            return Json(item)
-    return Response.not_found("Item not found")
-
-
-@route("/api/items/{id}", methods=[DELETE])
-async def delete_item(id: int) -> Response:
-    """Delete an item by ID."""
-    for i, item in enumerate(items):
-        if item.id == id:
-            items.pop(i)
-            return Response.no_content()
-    return Response.not_found("Item not found")
-
-
-def main() -> None:
-    println("Starting API server at http://localhost:8080")
-    app = App()
-    app.run(port=8080)
+--8<-- "_snippets/language/examples/verified_web_framework_complete.incn"
 ```
 
-## Performance
+The example is deliberately read-only. Once you add persistence, keep database failures explicit and give each handler one coherent response type across all branches.
 
-With the current Rust/Axum-backed path, your web application runs with:
+## Runtime shape
+
+The generated Rust/Axum-backed design targets:
 
 - **Native server path** — no Python interpreter process in the request path
 - **Tokio-backed async** — an efficient async runtime without Python event-loop compatibility claims
-- **No garbage collector** — predictable latency
-- **Low memory usage** — Rust's ownership model
+- **Deterministic ownership** — generated Rust does not depend on a tracing garbage collector
+- **Workload-dependent performance** — latency and memory use still depend on handlers, dependencies, traffic, and deployment settings, so benchmark the service you intend to run
 
-That makes Incan a reasonable fit for API and microservice code where Python-readable source and a native async server backend both matter.
+These are architectural properties, not benchmark results or a claim that the 0.5 release envelope can execute this guide today. Benchmark the service and deployment you actually ship after a compatible web Loaf is published.
 
 ## See Also
 

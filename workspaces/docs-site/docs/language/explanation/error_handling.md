@@ -196,7 +196,9 @@ Use this for optional values where a default makes sense.
 
 ```incan
 def get_setting(key: str) -> str:
-    return settings.get(key).unwrap_or("default_value")
+    match settings.get(key):
+        Some(value) => return str(value)
+        None => return "default_value"
 ```
 
 ### Convert `Option[T]` to `Result[T, E]` with `ok_or`

@@ -2,7 +2,17 @@
 
 This tutorial is a lightweight, CI-friendly walkthrough for “step-based” automation in Incan.
 
-Prerequisite: [Install, build, and run](../how-to/install_and_run.md).
+<aside class="inc-tutorial-meta" aria-label="Tutorial details">
+  <dl>
+    <div><dt>Reader</dt><dd>Automation or pipeline developer</dd></div>
+    <div><dt>Prerequisites</dt><dd>Getting Started and basic Result handling</dd></div>
+    <div><dt>Time</dt><dd>15–20 minutes</dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>&gt;=0.5.0-0,&lt;0.6.0</code> development docs; run and tests exercised with the prepared 0.5 release envelope</dd></div>
+    <div><dt>Status</dt><dd>Release-envelope executable</dd></div>
+    <div><dt>Outcome</dt><dd>A deterministic typed workflow step</dd></div>
+    <div><dt>Artifacts</dt><dd>Runnable step and focused tests</dd></div>
+  </dl>
+</aside>
 
 ## Goal
 
@@ -18,24 +28,38 @@ Create this small project layout:
 
 ```text
 my_project/
-├── pipeline_step.incn
+├── incan.toml
+├── src/
+│   └── pipeline_step.incn
 └── tests/
     └── test_pipeline_step.incn
 ```
 
 Run the commands below from `my_project/` (this matters for module resolution).
 
-Create `pipeline_step.incn`:
+Create `incan.toml`:
+
+```toml
+[project]
+name = "pipeline_step"
+version = "0.1.0"
+requires-incan = ">=0.5.0-0,<0.6.0"
+
+[project.scripts]
+main = "src/pipeline_step.incn"
+```
+
+Create `src/pipeline_step.incn`:
 
 ```incan
 """
 A tiny step-style function that validates input and returns a typed error.
 """
 
-def normalize_name(name: str) -> Result[str, str]:
+pub def normalize_name(name: str) -> Result[str, str]:  # (1)
     if len(name.strip()) == 0:
-        return Err("name must not be empty")
-    return Ok(name.strip().lower())
+        return Err("name must not be empty")  # (2)
+    return Ok(name.strip().lower())  # (3)
 
 
 def main() -> None:
@@ -45,10 +69,14 @@ def main() -> None:
         case Err(e): println(f"err: {e}")
 ```
 
+1. `pub` exposes the step to the test module; the `Result[str, str]` signature keeps both outcomes explicit.
+2. Invalid input returns a typed failure instead of logging and continuing with ambient state.
+3. The success branch contains the normalized value, so downstream stages cannot confuse it with the original input.
+
 ## Step 2: Run it
 
 ```bash
-incan run pipeline_step.incn
+incan run
 ```
 
 --8<-- "_snippets/callouts/no_install_fallback.md"
@@ -58,7 +86,7 @@ incan run pipeline_step.incn
 Create `tests/test_pipeline_step.incn`:
 
 ```incan
-from ..pipeline_step import normalize_name
+from pipeline_step import normalize_name
 from std.testing import assert_eq
 
 def test_normalize_name_ok() -> None:
@@ -71,8 +99,14 @@ def test_normalize_name_err() -> None:
 Run:
 
 ```bash
-incan test tests/
+incan test
 ```
+
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
+
+You built a deterministic workflow step whose input, successful output, failure, and tests are explicit.
+
+</section>
 
 ## Next
 

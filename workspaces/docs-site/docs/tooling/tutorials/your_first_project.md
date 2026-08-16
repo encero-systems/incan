@@ -2,9 +2,17 @@
 
 This tutorial walks you through setting up a real Incan project from scratch: create a new project, run it, split it into modules, and add tests.
 
-**Prerequisites**: [Getting started](getting_started.md) (Incan installed and `incan run hello.incn` works).
-
-**Time**: ~10 minutes.
+<aside class="inc-tutorial-meta" aria-label="Tutorial details">
+  <dl>
+    <div><dt>Reader</dt><dd>New Incan project author</dd></div>
+    <div><dt>Prerequisites</dt><dd>Getting Started completed</dd></div>
+    <div><dt>Time</dt><dd>15–25 minutes</dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>&gt;=0.5.0-0,&lt;0.6.0</code> development docs; run and tests exercised with the prepared 0.5 release envelope</dd></div>
+    <div><dt>Status</dt><dd>Release-envelope executable</dd></div>
+    <div><dt>Outcome</dt><dd>A multi-module command-line project</dd></div>
+    <div><dt>Artifacts</dt><dd>Manifest, modules, entry point, and tests</dd></div>
+  </dl>
+</aside>
 
 ## What you'll build
 
@@ -110,23 +118,26 @@ Let's extract the greeting logic into its own module. Create `src/greet.incn`:
 ```incan title="src/greet.incn"
 """Greeting utilities."""
 
-pub def greet(name: str) -> str:
+pub def greet(name: str) -> str:  # (1)
     return f"Hello, {name}!"
 ```
 
-Note the `pub` keyword — without it, `greet` would be private to its module and you couldn't import it.
+1. `pub` is an explicit module boundary. Without it, `greet` remains private to `greet.incn`.
 
 Now update `src/main.incn` to use the `greet` function from the `greet.incn` module:
 
 ```incan title="src/main.incn"
-from greet import greet
+from greet import greet  # (1)
 
-pub def greeting() -> str:
+pub def greeting() -> str:  # (2)
     return greet("World")
 
 def main() -> None:
     println(greeting())
 ```
+
+1. Project imports resolve from `src/`; the filename becomes the module name.
+2. Export only the function the tests or another module need. `main` can remain private as the configured script entry point.
 
 Run again:
 
@@ -183,7 +194,7 @@ Goodbye, World!
 `incan new` already created a placeholder test. Let's replace it with real tests for our greeting module. Update `tests/test_main.incn`:
 
 ```incan
-from greet import greet, farewell
+from greet import greet, farewell  # (1)
 
 from std.testing import assert_eq
 
@@ -196,6 +207,8 @@ def test_greet_empty() -> None:
 def test_farewell() -> None:
     assert_eq(farewell("Alice"), "Goodbye, Alice!")
 ```
+
+1. Tests use the same `src/` module namespace as application code; they do not reach into files through relative paths.
 
 Notice the import: `from greet import greet, farewell` — the exact same syntax as in `src/main.incn`. The test runner resolves imports against your project's source root (`src/`), so tests and source code share the same import paths.
 
@@ -234,6 +247,12 @@ greeter/
 ├── .gitignore
 └── incan.toml             # Project manifest
 ```
+
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
+
+You now have a manifest-backed command-line project with a public module boundary and meaningful tests.
+
+</section>
 
 ## Recap
 

@@ -1,56 +1,51 @@
 # Coming from TypeScript or JavaScript
 
-This page is a routing guide for TypeScript and JavaScript developers evaluating Incan for application code, command-line tools, services, and typed domain packages.
+This route is for TypeScript and JavaScript developers evaluating Incan for command-line tools, services, and typed application packages.
 
-## Install first
+<aside class="inc-bridge-note inc-incus-slot" data-incus-category="javascript" aria-label="TypeScript and JavaScript to Incan mental model">
+  <span class="inc-eyebrow">TypeScript / JavaScript → Incan</span>
+  <strong>Keep explicit application structure. Move runtime-only assumptions into types, results, and compiler-owned project facts.</strong>
+</aside>
 
-If you already use Node-based tooling, install the npm adapter. It installs command shims plus a host-specific optional platform package for the same prebuilt Incan toolchain payloads used by the release installers, without running an npm lifecycle script:
+## Choose your route
 
-```bash
-npm install -g @incan/toolchain
-incan --version
-incan-lsp --version
-```
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="../tooling/tutorials/getting_started/"><span class="inc-eyebrow">Start</span><strong>Run the first project</strong><span>Install the toolchain once, then run, test, and release-build a native starter.</span></a>
+  <a class="inc-route-card" href="../tooling/tutorials/your_first_project/"><span class="inc-eyebrow">First project</span><strong>Build a native command</strong><span>Use modules, explicit exports, typed functions, tests, and a native build without a JavaScript runtime.</span></a>
+  <a class="inc-route-card" href="../tooling/tutorials/build_and_consume_library/"><span class="inc-eyebrow">Package preview</span><strong>Design a local typed boundary</strong><span>Source-check a deliberately small library API and its locked-workspace consumer.</span></a>
+  <a class="inc-route-card" href="../comparisons/javascript_typescript/"><span class="inc-eyebrow">Evaluate</span><strong>Compare JS/TS and Incan</strong><span>Check runtime, deployment, type, error, package, and ecosystem tradeoffs before adopting.</span></a>
+</div>
 
-The npm path exposes `incan` and `incan-lsp` immediately, but it does not run rustup during installation. Make sure Rust and `wasm32-wasip1` are available before building projects, or use the direct installer when you want Rust provisioning and explicit control over the toolchain manifest:
+## Preview service and typed-serde surfaces
 
-```bash
---8<-- "_snippets/commands/direct_install.sh"
-export PATH="$HOME/.local/bin:$PATH"
-incan --version
-incan-lsp --version
-```
+The [typed API](../language/tutorials/build_your_first_api.md) and [typed data processor](../language/tutorials/typed_data_processor.md) are source-verified previews of the intended web and serde authoring experience. Their runtime Loafs are not shipped in the finite 0.5 release envelope, so they supplement rather than replace the executable routes above.
 
-After installation, create a project and run the normal first-contact loop:
+## Install once
 
-```bash
-incan new hello --yes
-cd hello
-incan run
-incan test
-incan build --release
-```
+Follow [Getting Started](../tooling/tutorials/getting_started.md) for the current installer choices and canonical first-project commands. If you already use Node tooling, the npm option installs command shims plus a host-specific release package; it does not make Incan a JavaScript runtime or TypeScript transpiler.
 
-## What you should do next
+## What transfers
 
-- Install the toolchain and create a starter project: [Getting Started](../tooling/tutorials/getting_started.md)
-- Compare the runtime and deployment tradeoffs: [Incan vs JS/TS](../comparisons/javascript_typescript.md)
-- If anything fails: [Troubleshooting](../tooling/how-to/troubleshooting.md)
-- Set up your editor: [Editor setup](../tooling/how-to/editor_setup.md)
-- Learn the basics: [The Incan Book (Basics)](../language/tutorials/book/index.md)
-- Look up commands and JSON outputs: [CLI reference](../tooling/reference/cli_reference.md)
-- Inspect compiler-owned project facts: [Codegraph inspection](../tooling/reference/codegraph_inspection.md)
+- Modules, async functions, collection transforms, JSON-shaped models, and service or CLI architecture
+- Static application types as documentation and editor feedback
+- Familiar package-manager ergonomics for installing the compiler command
 
-## Mental model translations
+## What changes
 
-- **Types are not erased at the authoring boundary**: Incan uses static types for source checking and then compiles through Rust, so the typed API surface is intended to support both humans and tooling before runtime.
-- **Errors are values by default**: `Result`, `Option`, and `?` make fallible paths explicit instead of relying on JavaScript-style exceptions for normal control flow.
-- **Packages can expose tooling facts**: diagnostics, build reports, generated Rust inspection, and codegraph export are public CLI surfaces rather than ad hoc logs.
-- **Native output is the current deployment target**: Incan is not a JS runtime or a TypeScript transpiler; it is a native toolchain for new application code that should stay readable while compiling through the Rust ecosystem.
+- Types participate in source checking and native compilation rather than being erased before execution.
+- `Result`, `Option`, and `?` make ordinary failure paths explicit instead of relying on exceptions or rejected promises.
+- Manifests, lockfiles, build reports, and generated-code inspection are compiler-owned project surfaces.
+- The deployment artifact is native rather than a JavaScript bundle plus runtime.
 
-## Explanation
+## What not to expect
 
-- [Why Incan?](../language/explanation/why_incan.md)
+- A JavaScript runtime, TypeScript transpiler, npm package compatibility, or browser DOM APIs
+- Structural typing to behave exactly like TypeScript
+- Existing Node services to run unchanged
+
+## Continue
+
 - [How Incan works](../language/explanation/how_incan_works.md)
 - [Error handling](../language/explanation/error_handling.md)
 - [Rust-shaped confidence](../language/explanation/rust_shaped_confidence.md)
+- [CLI reference](../tooling/reference/cli_reference.md)

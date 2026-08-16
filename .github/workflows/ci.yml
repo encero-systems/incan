@@ -46,7 +46,7 @@ jobs:
               # The two generated reference pages are derived from the compiler,
               # so they must retain the full generated-reference check.
               case "$file" in
-                workspaces/docs-site/docs/language/reference/language.md|workspaces/docs-site/docs/language/reference/feature_inventory.md)
+                workspaces/docs-site/docs/language/reference/language.md|workspaces/docs-site/docs/language/reference/feature_inventory.md|workspaces/docs-site/docs/_snippets/language/examples/verified_*.incn)
                   docs_only=false
                   break
                   ;;
@@ -190,6 +190,12 @@ jobs:
           INCAN_TEST_PREWARM_TOOLCHAIN=${{ matrix.toolchain }}
           INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}
           make -s test-oven-release-smoke
+      - name: Check verified documentation examples
+        if: ${{ matrix.id == 'linux-stable' }}
+        run: >-
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+          INCAN_TEST_PREWARM_TOOLCHAIN=${{ matrix.toolchain }}
+          make -s check-docs-examples
       - name: Upload Linux compiler and reference generators
         if: ${{ matrix.id == 'linux-stable' }}
         uses: actions/upload-artifact@v6
@@ -369,7 +375,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-docs.txt
       - name: Build docs site (strict)
-        run: python -m mkdocs build --strict
+        run: make docs-build
 
   generated-reference:
     name: Generated Reference Up-to-date

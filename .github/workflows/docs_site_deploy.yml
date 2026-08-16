@@ -55,11 +55,11 @@ jobs:
           git fetch origin +gh-pages:gh-pages
           git worktree add "$tmp" gh-pages
 
-          rm -rf "$tmp/shared/incapunk"
+          rm -rf "$tmp/shared"
           mkdir -p "$tmp/shared"
-          cp -R docs/shared/incapunk "$tmp/shared/incapunk"
+          cp -R docs/shared/. "$tmp/shared/"
 
-          git -C "$tmp" add -A shared/incapunk
+          git -C "$tmp" add -A shared
           if git -C "$tmp" diff --cached --quiet; then
             exit 0
           fi
@@ -71,7 +71,7 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.docs_version == 'dev')
         run: |
           export INCAN_DOCS_BASE_PREFIX="dev"
-          python -m mkdocs build --strict
+          make docs-build
           mike deploy --push dev
           mike set-default --push dev
 
@@ -95,5 +95,5 @@ jobs:
           fi
 
           export INCAN_DOCS_BASE_PREFIX="${MINOR}"
-          python -m mkdocs build --strict
+          make docs-build
           mike deploy --push "${MINOR}"

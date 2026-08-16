@@ -502,6 +502,15 @@ smoke-test-examples:
 	@echo "\033[1mRunning examples...\033[0m"
 	@$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" INCAN_NO_BANNER=1 \
 		INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
+	@echo "\033[1mChecking documentation examples...\033[0m"
+	@$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" INCAN_NO_BANNER=1 \
+		INCAN_BIN=./target/release/incan bash scripts/check_docs_examples.sh
+
+.PHONY: check-docs-examples  ## test - Typecheck committed verified documentation examples
+check-docs-examples: test-prewarm-sdk
+	@echo "\033[1mChecking verified documentation examples...\033[0m"
+	@$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" INCAN_NO_BANNER=1 \
+		INCAN_BIN=./target/debug/incan bash scripts/check_docs_examples.sh
 
 .PHONY: smoke-test-rust-interop-examples
 smoke-test-rust-interop-examples: test-prewarm-oven-loafs
@@ -702,6 +711,14 @@ docs:
 .PHONY: docs-install  ## docs - Install docs site dependencies (MkDocs + Material)
 docs-install:
 	@$(MAKE) -C workspaces/docs-site docs-install
+
+.PHONY: docs-check-components  ## docs - Validate Incapunk component and asset contracts
+docs-check-components:
+	@$(MAKE) -C workspaces/docs-site docs-check-components
+
+.PHONY: docs-check-learning  ## docs - Validate learning routes and canonical tutorial contracts
+docs-check-learning:
+	@$(MAKE) -C workspaces/docs-site docs-check-learning
 
 .PHONY: docs-build  ## docs - Build docs site (MkDocs strict)
 docs-build:

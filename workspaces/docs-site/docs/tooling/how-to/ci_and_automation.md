@@ -67,13 +67,13 @@ If the lock file is missing or stale, the command fails immediately — no silen
 
 See: [Managing dependencies](dependencies.md) for more details.
 
-## GitHub Actions example
+## GitHub Actions source-check example
 
-Use the repository composite action to install an `incan` binary in downstream project CI. Pin the action with the ref you want the project to track: a commit SHA for strict reproducibility, a release tag when versioned binary releases exist, or `main` when the project intentionally follows the current development compiler.
+Use the repository composite action to install an `incan` compiler binary in downstream project CI. Pin the action to an accepted commit SHA. The current action builds the compiler from source; it does not install the prepared 0.5 release Loaf envelope, so this hosted example deliberately stops at formatting and source checking.
 
 ```yaml
 - name: Install Incan
-  uses: encero-systems/incan/.github/actions/install-incan@main
+  uses: encero-systems/incan/.github/actions/install-incan@<accepted-commit-sha>
 
 - name: Show toolchain
   run: incan --version
@@ -85,19 +85,19 @@ The action also installs the `wasm32-wasip1` Rust target by default. Downstream 
 
 ```yaml
 - name: Install Incan
-  uses: encero-systems/incan/.github/actions/install-incan@main
+  uses: encero-systems/incan/.github/actions/install-incan@<accepted-commit-sha>
   with:
     profile: debug
 ```
 
 ```yaml
 - name: Install Incan
-  uses: encero-systems/incan/.github/actions/install-incan@main
+  uses: encero-systems/incan/.github/actions/install-incan@<accepted-commit-sha>
   with:
     targets: wasm32-wasip1,x86_64-unknown-linux-musl
 ```
 
-For a complete project workflow, keep project-specific checks in the downstream repository and use the action only for installation:
+For a hosted source-contract workflow, keep project-specific checks in the downstream repository and use the action only for compiler installation:
 
 ```yaml
 name: CI
@@ -121,7 +121,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install Incan
-        uses: encero-systems/incan/.github/actions/install-incan@main
+        uses: encero-systems/incan/.github/actions/install-incan@<accepted-commit-sha>
 
       - name: Show toolchain
         run: |
@@ -131,12 +131,11 @@ jobs:
       - name: Format
         run: incan fmt --check .
 
-      - name: Test
-        run: incan test --locked
-
-      - name: Build
-        run: incan build src/main.incn --locked
+      - name: Check
+        run: incan check src/main.incn --format json
 ```
+
+Run `incan test --locked` and `incan build --locked` on a runner only after its toolchain installation also provides the finite, receipt-compatible release envelope. The 0.5 development checkout prepares that envelope with `make test-prewarm-oven-release-loafs`; the current downstream composite action does not yet perform that packaging step. See [Take a local project to a CI artifact](../tutorials/project_to_ci_artifact.md) for the verified local gate and the hosted handoff.
 
 Use a matrix when the downstream project needs coverage on more than Linux:
 
@@ -149,7 +148,7 @@ strategy:
 runs-on: ${{ matrix.os }}
 ```
 
-The action is intentionally smaller than a reusable workflow: it installs the compiler, then lets each project choose its own `fmt`, `test`, `build`, or smoke-test commands.
+The action is intentionally smaller than a reusable workflow: it installs the compiler. Formatting and source checks fit that contract today; tests, builds, and smoke tests also require the project-compatible release envelope.
 
 ```yaml
 - name: Type check
@@ -158,9 +157,6 @@ The action is intentionally smaller than a reusable workflow: it installs the co
 - name: Format (CI)
   run: incan fmt --check .
 
-- name: Tests (locked)
-  run: incan test --locked
-
-- name: Build (locked)
-  run: incan build src/main.incn --locked
+- name: Type check (machine-readable)
+  run: incan check src/main.incn --format json
 ```
