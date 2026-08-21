@@ -10,7 +10,7 @@
     - RFC 034 (`incan.pub` package registry)
     - RFC 075 (starter profiles and capability packs)
     - RFC 076 (project mutation policy and recovery)
-    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
 - **Issue:** https://github.com/encero-systems/incan/issues/402
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
@@ -676,7 +676,7 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 
 - **Parser:** rendered Incan templates must parse before they are written when `language = "incan"`.
 - **Formatter:** rendered Incan templates should be formatted before write and before `rendered_hash` is recorded when a formatter is available.
-- **Manifest schema / configuration validation:** project tooling must support an explicit provenance location for tracked templates, whether in a typed `Loaf.toml` table or an explicit tool-owned state artifact. `Oven.lock` remains resolver state and must not become a general mutation-history store.
+- **Manifest schema / configuration validation:** project tooling must support an explicit provenance location for tracked templates, whether in a typed `loaf.toml` table or an explicit tool-owned state artifact. `Oven.lock` remains resolver state and must not become a general mutation-history store.
 - **CLI / tooling:** lifecycle tooling must implement deterministic template rendering, path validation, parameter validation, ownership handling, provenance recording, and check/status/values-file/diff/update/reset operations.
 - **LSP / IDE tooling:** editor-facing tools should consume machine-readable template provenance and lifecycle diagnostics rather than reimplementing template rendering.
 - **Package integration:** package-provided templates must be loaded as package data and rendered locally under the same safety rules as built-in templates. Package or registry metadata may feed version-aware status and upgrade previews.
@@ -684,7 +684,7 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 
 ## Unresolved questions
 
-- Should template provenance live in a typed `Loaf.toml` table or a separate tool-owned state file, and which facts must remain outside `Oven.lock`?
+- Should template provenance live in a typed `loaf.toml` table or a separate tool-owned state file, and which facts must remain outside `Oven.lock`?
 - Is the v1 parameter kind set sufficient, or should it include specific kinds for package names, dependency requirements, env names, and script ids?
 - Which derived-value transforms should be standardized in v1?
 - Should optional file groups live in RFC 074 as template renderer metadata, or should RFC 075 own them as starter/capability mutation metadata?

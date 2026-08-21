@@ -226,6 +226,16 @@ A `review-orchestrate` run is invalid if any of the following is true:
 
 If subagents cannot be used, do not pretend this skill ran successfully. Fall back explicitly to `/review` and say that `review-orchestrate` could not be honored.
 
+## Findings ledger
+
+When the canonical report's `## Findings` section is non-empty at the end of a run, or when this run confirms findings from a prior run are now `fixed`, append one line per materially distinct finding (not per worker slice) to `.agents/state/findings-ledger.md` (a symlink into a private, non-git location — see `AGENTS.md`):
+
+```
+- YYYY-MM-DD | review-orchestrate | <one-line finding, e.g. "F2: env overlays inspectable but not executable"> | <what changed, or "pending">
+```
+
+Skip this for a run that closes with zero open findings. If `.agents/state/findings-ledger.md` doesn't exist, skip silently rather than creating it yourself.
+
 ## Relationship to other skills
 
 - Use `orchestrate-parallel-work` as the worker-spawning substrate when delegation is justified.

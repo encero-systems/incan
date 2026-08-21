@@ -442,6 +442,7 @@ When code is ready:
 - produce a concise done summary
 - draft the commit message with `write-commit-message`
 - draft the PR description with `create-pr-description`
+- append one line to `.agents/state/findings-ledger.md` (a symlink into a private, non-git location — see `AGENTS.md`) if this loop's integration review (step 6) surfaced a real defect, regression, or scope gap that got fixed before shipping: `- YYYY-MM-DD | ralph-loop | <loop_id>: <what was found> | <what changed>`. Skip this for a loop that shipped clean with nothing notable to record, and skip silently if the ledger file doesn't exist in this workspace.
 
 For RFC-driven work, only the parent loop drafts or owns the final PR description. Child loops must not produce PRs of their own.
 

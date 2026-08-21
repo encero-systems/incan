@@ -1,18 +1,19 @@
 # RFC 090: typed CLI framework
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 015 (hatch-like tooling and project lifecycle CLI)
     - RFC 019 (test runner, CLI, and ecosystem)
     - RFC 021 (model field metadata and schema-safe aliases)
+    - RFC 024 (extensible derive protocol)
     - RFC 033 (`ctx` typed configuration context)
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 083 (symbol and method aliases)
     - RFC 089 (`std.environ` runtime environment access)
-    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/87
 - **RFC PR:** —
@@ -26,7 +27,7 @@ This RFC introduces `std.cli`, a typed model-first framework for authoring comma
 ## Core model
 
 1. **A CLI spec is typed data:** command structure is declared with ordinary Incan enums, models, reusable fields, descriptions, and defaults rather than a stringly parser builder.
-2. **Parsing produces a command value:** `std.cli.parse[T](argv)` validates an argument vector and returns `Result[T, CliError]`, where `T` is the command enum or model that describes the CLI.
+2. **Parsing produces a command value:** `std.cli.parse[T](argv)` validates an argument vector and returns `Result[T, CliError]`, where `T` is a command model or enum that has derived `CliArgs` or `CliCommand` (see "CLI eligibility is a derived trait, not an ambient marker").
 3. **One spec drives every surface:** parse behavior, help text, usage text, completions metadata, validation errors, command descriptions, and optional dispatch helpers must all lower to the same underlying CLI spec.
 4. **Metadata stays small:** the CLI framework should reuse ordinary `description` text and define only the extra keys required for command-line shape, while the field type, default, optionality, and collection shape remain the source of truth for parsing.
 5. **Command execution is separate:** this RFC parses current-program arguments and renders CLI outcomes; child process spawning remains owned by `std.process`.
@@ -53,6 +54,7 @@ This also helps library and application tests. A CLI program should be testable 
 - Standardize exit code mapping for success, usage errors, and application failures.
 - Keep command handlers independent from parsing so CLI logic is easy to unit test.
 - Allow command presentation metadata to live in a typed sidecar spec without requiring new enum syntax.
+- Generate shell completion scripts for bash, zsh, fish, and PowerShell from the same spec used for parsing and help.
 
 ## Non-Goals
 
@@ -61,7 +63,7 @@ This also helps library and application tests. A CLI program should be testable 
 - Replacing Oven project lifecycle env execution, matrix execution, or `oven env run` behavior from RFCs 073 and 117.
 - Replacing direct runtime environment access from RFC 089.
 - Defining terminal UI widgets, progress bars, prompts, interactive menus, curses-style interfaces, or rich text styling.
-- Defining shell completion script generation in full detail, though the spec should preserve enough structure for a later RFC or extension to add it.
+- Defining dynamic, context-aware, or custom completion callbacks for open-ended values (for example completing a `Path` field against the real filesystem, or completing a value from a live remote lookup). Static completions derived from the spec itself — command names, subcommand names, option/flag spellings, and enum-typed value choices — are in scope; runtime-dependent completion logic is not.
 - Defining a general application dependency-injection framework.
 - Making decorator CLI authoring a separate parser system.
 - Adding enum-variant metadata syntax as a special case for CLI only.
@@ -74,6 +76,7 @@ A command-line program starts with a typed command shape. A single-command progr
 ```incan
 from std.cli import parse
 
+@derive(CliArgs)
 model ServeArgs:
     host [description="Address to bind"]: str = "127.0.0.1"
     port [description="TCP port to listen on", short="p", value_name="PORT"]: int = 8000
@@ -89,15 +92,18 @@ For a multi-command program, an enum defines the command set and each variant ca
 ```incan
 from std.cli import parse
 
+@derive(CliArgs)
 model ServeArgs:
     host [description="Address to bind"]: str = "127.0.0.1"
     port [description="TCP port to listen on", short="p", value_name="PORT"]: int = 8000
     reload [description="Restart when source files change"]: bool = false
 
+@derive(CliArgs)
 model BuildArgs:
     release [description="Build optimized artifacts"]: bool = false
     output [description="Write artifacts to this path", short="o", value_name="PATH"]: Path | None = None
 
+@derive(CliCommand)
 enum ToolCommand:
     Serve(ServeArgs)
     Build(BuildArgs)
@@ -198,6 +204,7 @@ Reusable field contracts from RFC 087 compose with CLI argument models. A reusab
 ```incan
 field port [description="TCP port to listen on"]: int = 8000
 
+@derive(CliArgs)
 model ServeArgs:
     host [description="Address to bind"]: str = "127.0.0.1"
     field port [short="p", value_name="PORT"]
@@ -209,6 +216,7 @@ The imported `port` field supplies the canonical field name, type, default, and 
 Environment fallbacks use the same string-boundary parsing rules as command-line arguments:
 
 ```incan
+@derive(CliArgs)
 model DeployArgs:
     token [description="API token for deployment", env="API_TOKEN", secret=true]: SecretStr
     region [description="Deployment region", env="APP_REGION"]: str = "eu-west-1"
@@ -216,31 +224,72 @@ model DeployArgs:
 
 If `--token` is omitted, parsing may consult `API_TOKEN`. If the token is still absent or fails validation, the parser returns a `CliError` rather than letting the handler discover the problem later. Handlers do not have to know whether a value came from an option, a positional argument, a default, or an environment fallback unless the program explicitly asks for provenance metadata. The ordinary result is just a typed command value.
 
+### CLI eligibility is a derived trait, not an ambient marker
+
+`parse[T]` and `spec_for[T]` only accept a type that has explicitly derived `CliArgs` (for a single-command model) or `CliCommand` (for a multi-command enum):
+
+```incan
+trait CliArgs:
+    ...
+
+trait CliCommand:
+    ...
+
+@derive(CliArgs)
+model ServeArgs:
+    ...
+
+@derive(CliCommand)
+enum ToolCommand:
+    ...
+```
+
+`@derive(CliArgs)`/`@derive(CliCommand)` are not new compiler-internal derives in the shape of `Debug`/`Eq`/`Clone` (which are Rust proc macros with no Incan-expressible body). They are ordinary RFC 024 `__derives__` modules: `CliArgs`/`CliCommand` trait bodies authored in plain Incan, using RFC 021's `Model.__fields__() -> List[FieldInfo]` reflection to inspect a model's fields or an enum's variants at derive time — the same pattern RFC 024's own `SqlSchema` example already demonstrates for a different derivable trait. No new compiler-internal trait-generation logic is needed; `std.cli` is a library consumer of two mechanisms this project has already shipped, not a third compiler-magic derive path.
+
+This does require `FieldInfo` to carry more than it does today. RFC 021 already reserves an `extra: dict[str, str]` slot on `FieldInfo` for exactly this kind of consumer-specific metadata, but nothing populates it yet. `std.cli`'s `__derives__` body reads its CLI-specific bracket keys (`option`, `short`, `positional`, `value_name`) out of `extra`, so populating that reserved slot for the compiler's own field reflection is part of this RFC's own scope — not an amendment to RFC 021 (which stays untouched and Implemented), but the first real use of an extension point RFC 021 already built for this. `FieldInfo` does not need to expose a field's actual default *value*: `parse[T]`'s generated command value only passes fields it actually resolved (from CLI arguments or an environment fallback) to the model constructor, and omits everything else, letting the model's own ordinary default application handle the rest — exactly like any other Incan constructor call. `has_default: bool`, already part of `FieldInfo`, is all `CliArgs`'s derive body needs to know whether omission is legal.
+
+This split matters for the metadata keys too. `option`, `short`, `positional`, and `value_name` are meaningful only on a `CliArgs`/`CliCommand`-derived type and are diagnosed if present on a field of a type that hasn't derived one; `env` and `secret` are general-purpose model field metadata usable on any model regardless of CLI derivation (see "Relationship to field metadata and reusable fields").
+
 ## Reference-level explanation
 
 ### Module surface
 
-`std.cli` must provide a core parsing and rendering surface:
+`std.cli` must provide a core parsing and rendering surface. Every function taking a command type `T` is declared twice, bound on `CliArgs` and on `CliCommand` respectively, since Incan's generic bounds are intersection-only and there is no union-bound syntax to express "T implements either trait" in one declaration. The concrete `T` at a call site (a `@derive(CliArgs)` model or a `@derive(CliCommand)` enum) resolves which declaration applies, the same multi-instantiation dispatch RFC 025 already establishes for this shape of problem:
 
 ```incan
-def parse[T](argv: list[str]) -> Result[T, CliError]
-def parse_from[T](argv: list[str], config: CliParseConfig = CliParseConfig()) -> Result[T, CliError]
-def spec_for[T]() -> Result[CliSpec[T], CliSpecError]
-def render_help[T](program_name: str | None = None) -> Result[str, CliSpecError]
+def parse[T with CliArgs](argv: list[str]) -> Result[T, CliError]
+def parse[T with CliCommand](argv: list[str]) -> Result[T, CliError]
+
+def parse_from[T with CliArgs](argv: list[str], config: CliParseConfig = CliParseConfig()) -> Result[T, CliError]
+def parse_from[T with CliCommand](argv: list[str], config: CliParseConfig = CliParseConfig()) -> Result[T, CliError]
+
+def spec_for[T with CliArgs]() -> Result[CliSpec[T], CliSpecError]
+def spec_for[T with CliCommand]() -> Result[CliSpec[T], CliSpecError]
+
+def render_help[T with CliArgs](program_name: str | None = None) -> Result[str, CliSpecError]
+def render_help[T with CliCommand](program_name: str | None = None) -> Result[str, CliSpecError]
+
+def render_completions[T with CliArgs](shell: Shell) -> Result[str, CliSpecError]
+def render_completions[T with CliCommand](shell: Shell) -> Result[str, CliSpecError]
+
 def render_error(error: CliError, style: CliRenderStyle = CliRenderStyle.default()) -> str
 def exit_code_for(result: CliOutcome) -> int
-def run_cli[T](argv: list[str], handler: Callable[[T], Result[int, E] | int]) -> int
+
+def run_cli[T with CliArgs](argv: list[str], handler: Callable[[T], Result[int, E] | int]) -> int
+def run_cli[T with CliCommand](argv: list[str], handler: Callable[[T], Result[int, E] | int]) -> int
 ```
 
-The exact helper names may change before this RFC moves to Planned, but the committed surface must include typed parse, spec derivation, help rendering, error rendering, and exit-code mapping.
+`Shell` is a plain enum (`Bash`, `Zsh`, `Fish`, `PowerShell`). `render_completions[T]` draws entirely from the same `CliSpec` every other renderer already uses — no second spec, no completion-specific derive.
+
+The exact helper names may change before this RFC moves to Planned, but the committed surface must include typed parse, spec derivation, help rendering, completion rendering, error rendering, and exit-code mapping.
 
 ### CLI spec derivation
 
-`spec_for[T]` must derive a CLI spec from a supported command type `T`.
+`spec_for[T]` must derive a CLI spec from a supported command type `T`. `T` must have derived `CliArgs` or `CliCommand`; a type that has not is rejected at the `spec_for[T]`/`parse[T]` call site as a compile-time bound-not-satisfied error, not a runtime diagnostic.
 
-A model type may describe a single-command CLI. Its fields become options, flags, or positional arguments according to the rules in this RFC.
+A model type that has derived `CliArgs` may describe a single-command CLI. Its fields become options, flags, or positional arguments according to the rules in this RFC.
 
-An enum type may describe a multi-command CLI. Each variant becomes a subcommand. A variant with a payload model uses that model as the subcommand argument shape. A payload-free variant is a subcommand with no additional arguments. A variant with unsupported payload shape must be rejected at spec derivation time.
+An enum type that has derived `CliCommand` may describe a multi-command CLI. Each variant becomes a subcommand. A variant with a payload model uses that model as the subcommand argument shape; that payload model must itself have derived `CliArgs`. A payload-free variant is a subcommand with no additional arguments. A variant with unsupported payload shape, or a payload model that has not derived `CliArgs`, must be rejected at spec derivation time.
 
 Field metadata may customize CLI presentation and input sources, but type information remains authoritative. Metadata must not cause a field typed as `int` to parse as `str`, a required field to silently become optional, or a non-collection field to accept repeated values unless a future RFC defines that behavior.
 
@@ -252,18 +301,25 @@ This RFC must not add bracket metadata to enum variants. Current enum syntax alr
 
 `std.cli` must not reuse RFC 021 `alias` as the spelling for command-line option aliases. Field `alias` is a wire/schema name and participates in model construction, field access, destructuring, and descriptor metadata. Command-line spellings live in the CLI parser namespace and must not change ordinary model member resolution.
 
-RFC 087 reusable field contracts may appear in CLI argument models. When a model imports a reusable field, the imported field's canonical name, type, default, description, and validation contract are available to the CLI spec. A local model use may add CLI presentation metadata such as `short`, `option`, `positional`, `env`, or `value_name` without changing the reusable field contract itself.
+RFC 087 reusable field contracts may appear in CLI argument models. When a model imports a reusable field, the imported field's canonical name, type, default, description, and validation contract are available to the CLI spec. A local model use may add CLI presentation metadata such as `short`, `option`, `positional`, or `value_name` without changing the reusable field contract itself.
 
 If a reusable field and a local model use both provide the same CLI-specific metadata key, the local model use must win. This allows one domain field such as `port` to be reused across several commands while each command chooses its own short option or positional behavior.
 
-The CLI-specific metadata set should be small:
+The metadata set splits into two groups, matching whether it needs `CliArgs`/`CliCommand` to mean anything at all:
+
+CLI-specific, meaningful only on a field of a `CliArgs`/`CliCommand`-derived type and diagnosed otherwise:
 
 - `option`: override the long option spelling without leading dashes;
 - `short`: provide one short option character without a leading dash;
 - `positional`: mark a field as positional;
-- `env`: name an environment fallback;
-- `value_name`: display name for usage and help;
-- `secret`: suppress value display in diagnostics and help-rendered defaults.
+- `value_name`: display name for usage and help.
+
+General-purpose model field metadata, usable on any field regardless of CLI derivation, in the same way `description` already is:
+
+- `env`: name an environment fallback, useful beyond CLI parsing for any typed configuration value (for example an RFC 033 `ctx` model) that wants "fall back to this environment variable" independent of ever being parsed as CLI args;
+- `secret`: suppress value display in diagnostics and rendered defaults, useful for any sensitive field (a config model's password, a stored token) regardless of whether the containing type is ever used as CLI args.
+
+`std.cli` reuses `env` and `secret` for its own environment-fallback and diagnostic-redaction behavior rather than owning them, the same relationship it already has with `description`. A field using an `option`, `short`, `positional`, or `value_name` key on a type that has not derived `CliArgs` or `CliCommand` must be diagnosed: these four keys are only meaningful on a derived type, and the diagnostic should suggest adding the missing `@derive`.
 
 Aliases, deprecations, hidden commands, grouping, shell completion annotations, prompts, and rich terminal formatting are outside this RFC unless Draft discussion proves they are required for the core contract.
 
@@ -377,6 +433,18 @@ Hidden fields and hidden commands are deferred until a follow-up extension defin
 Help rendering must be deterministic for a given spec.
 
 The parser must reserve `--help` for help by default. A command may not define its own conflicting `--help` option unless an explicit parser configuration disables automatic help.
+
+### Shell completion
+
+`render_completions[T](shell: Shell)` must generate a completion script from the same spec used by parsing and help, for each of `Shell.Bash`, `Shell.Zsh`, `Shell.Fish`, and `Shell.PowerShell`.
+
+Completions must cover: command and subcommand names, long and short option spellings, and enum-typed value choices. These are static facts already present in the derived `CliSpec`; generation must not require any metadata beyond what `spec_for[T]` already produces.
+
+Completion generation must not invoke dynamic or context-aware logic (filesystem lookups, remote calls, running the program itself) to produce candidates. A field whose value cannot be statically enumerated from the spec (for example a `Path` or a plain `str`) completes with no candidates rather than a runtime-dependent guess; per-field custom completion callbacks are out of scope for this RFC (see Non-Goals).
+
+Completion output must be deterministic for a given spec, matching help rendering's own determinism requirement.
+
+Secret fields must not appear as completable values; a secret option's own name may still complete normally.
 
 ### Errors and diagnostics
 
@@ -501,6 +569,22 @@ Rejected because it solves token access but not CLI quality. Users would still h
 
 Rejected as the primary surface because it duplicates information already present in typed Incan declarations. A builder may still be useful as a lower-level escape hatch, but it should not be the user-facing center of gravity.
 
+### CLI eligibility as a plain decorator marker
+
+Rejected. An earlier shape used a bare `@cli.args`/`@cli.command` decorator purely as a checked marker with no generated behavior — functionally adequate for gating `parse[T]`, but an inert annotation that carries no substance and forecloses ever attaching real methods to a CLI-shaped type without a later redesign. `@derive(CliArgs)`/`@derive(CliCommand)` generating a real trait implementation, using the same derive convention `@derive(Debug, Eq, Clone)` already establishes, costs nothing extra today and leaves room to attach real trait methods later without revisiting the eligibility mechanism.
+
+### Ambient eligibility via import
+
+Rejected. Making any model automatically CLI-eligible merely by importing `std.cli` somewhere in the file would be ambient, implicit behavior with no local signal at the declaration site — exactly the kind of inference this RFC's model-first philosophy and the rest of this project's design principles avoid. Eligibility must be visible at the type's own declaration.
+
+### A dedicated `cli.args` declaration form
+
+Open, deferred past this RFC. A form such as `cli.args ServeArgs:` (declaring the model with CLI-specific vocabulary directly, rather than an ordinary `model` plus `@derive`) would read more locally but is new syntax or vocab surface that must justify itself beyond a nicer example, the same bar this RFC already applies to the dedicated CLI DSL alternative below. `@derive(CliArgs)` is the answer for this RFC's committed contract; a future RFC may reconsider dedicated declaration syntax once real usage shows the derive form is too indirect.
+
+### Attach command descriptions via RFC 032 value-enum assignment instead of a sidecar
+
+Considered and rejected for this RFC, worth revisiting when a general enum-variant metadata RFC exists. The proposed shape was `Serve(ServeArgs) = cli.command(description="...")`, reusing RFC 032's `enum Name(str|int): Variant = literal` value-assignment syntax so a command's description could live directly on its variant instead of in a separate `cli.spec[...]` sidecar. This does not work today on two independent grounds: RFC 032 makes payload-carrying variants and value-assignment mutually exclusive (an explicit Non-Goal, enforced by the parser), and even without that conflict, RFC 032 only accepts a `str`/`int` literal as the assigned value, not a function call — Incan has no `const fn` concept (a function provably pure/deterministic enough to fold into a compile-time constant), so `cli.command(...)` cannot be treated as a literal today regardless of the payload restriction. Separately from both syntactic blockers, RFC 032's value slot is conceptually the enum's wire/backing representation (its `str`/`int` identity for serialization, comparison, FFI), not a general per-variant metadata slot — even a hypothetical relaxed literal rule would be reusing the wrong feature for this. The right future vehicle is the general enum-variant metadata RFC this RFC's own "Relationship to field metadata and reusable fields" section already points at ("a later RFC that defines enum-variant metadata generally"), not an expansion of RFC 032's narrower, already-shipped scope. RFC 032 is `Implemented` and is not retroactively amended.
+
 ### Dedicated CLI DSL
 
 Open. A DSL such as `cli ToolCli for ToolCommand:` would make command descriptions and presentation metadata more local than a const sidecar while still avoiding enum-variant metadata. The cost is a new syntax or vocab surface that must justify itself beyond one nicer example. If accepted, the DSL must lower to the same `CliSpec` as the typed sidecar and must not create a second parser model.
@@ -519,7 +603,7 @@ Rejected. Dogfooding is valuable, but forcing compiler CLI migration into this R
 - Metadata-driven behavior can become opaque if the accepted metadata keys are too broad or poorly named, so this RFC keeps the metadata set intentionally small.
 - Help rendering and diagnostic quality require polish; a technically correct parser with weak messages would not meet this RFC's goal.
 - Deriving behavior from types creates pressure to define parse paths for more types than this RFC should commit to.
-- Shell completion and rich terminal output are attractive follow-ons, but including them too early would make the first contract too large.
+- Shell completion adds four separate script-generation targets (bash, zsh, fish, PowerShell) to implement and keep correct as shells evolve their own completion conventions; rich terminal output stays out of scope to bound this RFC's surface.
 
 ## Implementation architecture
 
@@ -527,25 +611,24 @@ Rejected. Dogfooding is valuable, but forcing compiler CLI migration into this R
 
 ## Layers affected
 
-- **Stdlib / runtime (`incan_stdlib`)**: new `std.cli` module, parser entry points, error types, help rendering, and exit-code helpers.
-- **Typechecker / symbol resolution**: CLI spec derivation must validate supported command enum and model shapes, metadata keys, option spelling collisions, defaults, and parse paths.
-- **Metadata / descriptors**: field and variant metadata must preserve CLI-specific keys in a checked form that the parser and renderer can consume.
+- **Stdlib / runtime (`incan_stdlib`)**: new `std.cli` module, parser entry points, error types, help rendering, shell completion rendering for bash/zsh/fish/PowerShell, and exit-code helpers.
+- **Typechecker / symbol resolution**: CLI spec derivation must validate supported command enum and model shapes, metadata keys, option spelling collisions, and parse paths; must reject `parse[T]`/`spec_for[T]` calls where `T` has derived neither `CliArgs` nor `CliCommand` (ordinary RFC 025 multi-instantiation bound checking, no CLI-specific typechecker logic required beyond that); must diagnose CLI-specific metadata keys (`option`, `short`, `positional`, `value_name`) used on a field of a type that has derived neither trait. `@derive(CliArgs)`/`@derive(CliCommand)` themselves are RFC 024 `__derives__` modules with Incan-authored bodies, not new typechecker-level derive-generation code.
+- **Metadata / descriptors**: RFC 021's `FieldInfo.extra: dict[str, str]` reserved slot must actually be populated with a field's bracket-metadata keys during reflection, so `std.cli`'s Incan-authored derive body can read `option`/`short`/`positional`/`value_name`/`env`/`secret` back out through `__fields__()`. This is the first real consumer of that reserved slot, not a new descriptor mechanism.
 - **Emission / runtime handoff**: generated programs need a stable way to pass the current argument vector into Incan `main` or equivalent CLI entry points.
 - **Formatter**: no new syntax is required, but examples and metadata-heavy model declarations should format predictably.
 - **LSP / tooling**: completions and hovers should understand `std.cli` metadata keys, command specs, and parse errors where practical.
 - **Docs / examples**: tutorials should show parse-test-handler structure and clarify the boundaries with `std.process`, `std.environ`, and project lifecycle commands.
 
-## Unresolved questions
+## Design decisions
 
-- Should the CLI metadata keys be exactly `option`, `short`, `positional`, `env`, `value_name`, and `secret`, or should any of those be renamed before Planned?
-- Should command presentation metadata use the const sidecar form, a dedicated CLI DSL, or both as equivalent frontends to `CliSpec`?
-- Should positional fields be opt-in only with `positional=true`, or should required scalar fields without defaults become positionals by convention?
-- What exact numeric exit codes should be standardized for usage errors and application errors?
-- Should `bool` fields with default `true` support automatic `--no-name` negation, require explicit metadata, or be rejected?
-- Which target types are guaranteed to have CLI parse paths in the committed surface?
-- Should `std.cli` define a public `CliSpec` builder escape hatch now, or keep spec construction derived-only until concrete escape-hatch needs appear?
-- Should command and option aliases beyond `short` be deferred, or is long-alias support required by this RFC's contract?
-- Should automatic shell completion metadata be part of this RFC's accepted contract or explicitly left to a follow-up RFC?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **CLI eligibility is the `CliArgs`/`CliCommand` derived traits, not a bare marker or ambient inference:** `parse[T]`/`spec_for[T]`/`render_help[T]`/`run_cli[T]` each declare two bound overloads, `T with CliArgs` and `T with CliCommand`, dispatched per RFC 025's existing multi-instantiation mechanism (Incan's generic bounds are intersection-only; there is no union-bound syntax, so one declaration cannot accept "either trait"). This also gives the LSP an unambiguous, local signal at the type's own declaration site, without needing to trace `parse[T]` call sites across module or package boundaries to know a model is CLI-shaped. An ambient-by-import mechanism was considered and rejected (see "Alternatives considered").
+- **`@derive(CliArgs)`/`@derive(CliCommand)` are RFC 024 `__derives__` modules, not new compiler-internal derive logic:** unlike `Debug`/`Eq`/`Clone` (Rust proc macros with no Incan-expressible body), `CliArgs`/`CliCommand` are ordinary trait bodies authored in plain Incan, using RFC 021's `Model.__fields__() -> List[FieldInfo]` reflection — the same pattern RFC 024's own `SqlSchema` example already demonstrates. `std.cli` is a library consumer of two already-shipped mechanisms, not a third compiler-magic derive path; this was a real correction caught during this pass, not the original framing. This requires actually populating RFC 021's reserved-but-empty `FieldInfo.extra: dict[str, str]` slot with a field's bracket-metadata keys during reflection — the first real consumer of an extension point RFC 021 already built, not an amendment to RFC 021 (which stays untouched and `Implemented`). `FieldInfo` does not need to expose a field's actual default value: `parse[T]`'s generated command value omits any field it didn't resolve from CLI/env and lets the model's own ordinary default application handle it, so `has_default: bool` (already in `FieldInfo`) is sufficient.
+- **The metadata key set splits into CLI-specific and general-purpose groups, resolving the original naming question without renaming anything:** `option`, `short`, `positional`, and `value_name` remain CLI-specific — meaningful, and diagnosed as a probable missing-`@derive` mistake when absent, only on a field of a `CliArgs`/`CliCommand`-derived type. `env` and `secret` become general-purpose model field metadata, usable on any model regardless of CLI derivation, exactly as `description` already is — `std.cli` reuses them rather than owning them. This split was motivated by genuinely broader utility beyond CLI parsing: an RFC 033 `ctx` typed configuration model has the same "fall back to this environment variable" and "don't display this value" needs independent of ever being parsed as CLI args. No key names changed; the six original names all stay.
+- **The const sidecar (`cli.spec[ToolCommand](...)`) is the only committed command-presentation mechanism:** a dedicated CLI DSL and a dedicated `cli.args`/reused-value-enum declaration form were all considered (see "Alternatives considered") and stay explicitly open/deferred, not spec'd by this RFC. Each would need new syntax or vocab surface to justify itself beyond a nicer-looking example; the sidecar already does the job without that cost. Command descriptions living directly on enum variants — via RFC 032's value-enum assignment or a future dedicated syntax — remains a real, worth-revisiting direction once a general enum-variant metadata RFC exists to own it properly, rather than reusing or loosening RFC 032's narrower, already-shipped wire-representation feature.
+- **Positional fields stay strictly opt-in:** `positional=true` is the only way a field becomes positional; a required scalar field with no default never becomes positional by convention. Matches this RFC's existing default (scalar fields become named options) and the explicit-over-inference instinct applied throughout this pass — two structurally identical fields could legitimately need different treatment, which convention-based inference can't express.
+- **Exit codes: `0` success, `2` usage error, `1` application error**, matching the widely-recognized Unix convention (bash, Python's `argparse`, GNU tools) this RFC's own Prior Art section already gestures at.
+- **A `negate` metadata key, not automatic `--no-*` generation, for default-`true` bool fields:** a `bool` field defaulting to `true` needs an explicit `negate=true` to generate its `--no-<name>` spelling; there is no implicit negation and no rejection of default-`true` bool fields outright. This is a fifth CLI-specific metadata key (joining `option`/`short`/`positional`/`value_name`), chosen over forcing users to invert a field's polarity (e.g. renaming `color: bool = true` to `no_color: bool = false`) just to satisfy the parser.
+- **The guaranteed CLI parse-path type list is already fully specified** by the "String-boundary parsing and validation" section: `str`, `int` (plus sized integers with overflow/underflow rejection), `float`, `Path`, `bool`, enum values, validated newtypes (covering types like `SecretStr`), `Option[T]`, and collection fields, with the rules composing for nested cases rather than needing per-combination entries. This closes the question; no new type support was added.
+- **No `CliSpec` builder API, now or later:** manual `CliSpec` construction without deriving it from a model is not a compiler-provided fluent/chained builder (`.builder().option(...).build()`) — that shape is borrowed Rust/Java idiom, not native Incan. If manual construction is ever needed, `CliSpec` is an ordinary constructible value using normal Incan value-construction syntax, the same as any other model. This is not "defer the builder until a need appears" — there is no builder pattern to defer.
+- **Long aliases beyond `short` stay deferred**, per this RFC's own existing "outside this RFC unless Draft discussion proves required" language for aliases. No guide-level example has needed a second long spelling for one field; nothing demonstrated the need.
+- **Shell completion is designed and committed now, not deferred to a follow-up RFC.** Initially framed as out of scope purely for contract-size reasons — corrected mid-pass as a "north star first, don't pre-assign versions" mistake, the same principle already applied to RFC 117/118/119: settle the design now, decide implementation phasing (which shells ship first, which release) separately. `render_completions[T](shell: Shell)` generates static completions (command/subcommand names, option spellings, enum-typed value choices) entirely from the existing `CliSpec`, for `Bash`, `Zsh`, `Fish`, and `PowerShell`. Dynamic/context-aware completion callbacks for open-ended values (filesystem paths, remote lookups) remain explicitly out of scope — a genuinely different, runtime-dependent feature, not a scope cut for size alone.

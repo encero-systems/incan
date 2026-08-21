@@ -12,7 +12,7 @@
     - RFC 077 (workspace and multi-package projects)
     - RFC 079 (`incan.pub` artifact graph)
     - RFC 080 (AI assets and agent metadata)
-    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
@@ -263,7 +263,7 @@ Rejected because install-time hooks are difficult to review and policy-gate. Pro
 
 ## Implementation architecture
 
-The recommended implementation shape is to build an action registry from built-ins, `Loaf.toml` project and workspace data, package metadata, starter/capability descriptors, and AI assets. `oven action list` and IDE tooling consume this registry. `oven action run` resolves source, inherited workspace scope, env, policy, target context, and execution mode before invoking anything. RFC 118 may expose an Incan convenience that delegates downward to this operation, but it must not resolve or execute actions independently.
+The recommended implementation shape is to build an action registry from built-ins, `loaf.toml` project and workspace data, package metadata, starter/capability descriptors, and AI assets. `oven action list` and IDE tooling consume this registry. `oven action run` resolves source, inherited workspace scope, env, policy, target context, and execution mode before invoking anything. RFC 118 may expose an Incan convenience that delegates downward to this operation, but it must not resolve or execute actions independently.
 
 ## Layers affected
 

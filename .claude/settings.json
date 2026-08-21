@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/claude_hooks/dispatch.py",
+            "timeout": 15,
+            "statusMessage": "Checking Ralph-loop state (shared policy with Codex)"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/claude_hooks/dispatch.py",
+            "timeout": 15,
+            "statusMessage": "Loading Ralph-loop context (shared policy with Codex)"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/claude_hooks/dispatch.py",
+            "timeout": 15,
+            "statusMessage": "Checking Ralph-loop hygiene (shared policy with Codex)"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/claude_hooks/dispatch.py",
+            "timeout": 15,
+            "statusMessage": "Checking Ralph-loop closeout (shared policy with Codex)"
+          }
+        ]
+      }
+    ]
+  }
+}

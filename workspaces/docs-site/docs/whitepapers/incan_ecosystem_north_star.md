@@ -526,7 +526,7 @@ These are the decisions that most affect the final shape:
 The whitepaper stands on its own as the ecosystem direction. The concrete branch-out work lives in seven focused RFCs:
 
 - [RFC 074: template rendering and boilerplate provenance](../RFCs/074_template_rendering_and_boilerplate_provenance.md) defines how static provider-side templates become validated project files and how provenance, ownership, update, and reset behavior work.
-- [RFC 075: starter profiles and capability packs](../RFCs/075_starter_profiles_and_capability_packs.md) defines explicit project recipes for starters and capabilities, including mutation plans, applicability, file roles, actions, and agent guidance metadata.
+- [RFC 075: starter profiles and mixes](../RFCs/075_starter_profiles_and_capability_packs.md) defines explicit project recipes for starters and mixes, including mutation plans, applicability, file roles, actions, and agent guidance metadata.
 - [RFC 076: project mutation policy and recovery](../RFCs/076_project_mutation_policy_and_recovery.md) defines receiver-side policy, risk classification, approval, quarantine, advisory handling, and recovery for project mutations.
 - [RFC 077: workspace and multi-package projects](../RFCs/closed/implemented/077_workspace_and_multi_package_projects.md) defines workspace topology, member selection, shared lock and policy state, and workspace-scoped mutations.
 - [RFC 078: tool execution and typed workflow actions](../RFCs/078_tool_execution_and_typed_workflow_actions.md) defines typed actions, tool sources, execution modes, dry-run behavior, and policy-gated workflow execution.

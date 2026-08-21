@@ -9,7 +9,7 @@
     - RFC 034 (`incan.pub` package registry)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 075 (starter profiles and capability packs)
-    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/404
 - **RFC PR:** —
@@ -328,7 +328,7 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 ## Layers affected
 
-- **Manifest schema / configuration validation:** project tooling needs a place to describe project-local policy and record policy-related audit metadata, whether in a typed `Loaf.toml` policy table or an explicit tool-owned policy state artifact. `Oven.lock` is not a general policy store.
+- **Manifest schema / configuration validation:** project tooling needs a place to describe project-local policy and record policy-related audit metadata, whether in a typed `loaf.toml` policy table or an explicit tool-owned policy state artifact. `Oven.lock` is not a general policy store.
 - **CLI / tooling:** lifecycle commands must evaluate policy before applying template, starter, capability, update, reset, refresh, or recovery mutations.
 - **LSP / IDE tooling:** editor-facing tools should surface policy outcomes, blocked mutation reasons, review requirements, and recovery actions from machine-readable lifecycle output.
 - **Package and catalog integration:** registries and catalogs may provide source identity, integrity, yanking, revocation, advisory, compatibility, and trust-tier metadata that policy can consume.
@@ -337,7 +337,7 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 ## Unresolved questions
 
-- Should project-local mutation policy live in a typed `Loaf.toml` table or an explicit tool-owned policy state artifact, and which audit facts belong in receipts rather than either location?
+- Should project-local mutation policy live in a typed `loaf.toml` table or an explicit tool-owned policy state artifact, and which audit facts belong in receipts rather than either location?
 - What is the minimum useful policy syntax for v1?
 - Which risk categories should be standardized in v1, and which should remain extension labels?
 - Should policy support explicit reviewer or owner requirements, or should it only emit categories for external review systems to interpret?

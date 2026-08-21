@@ -9,7 +9,7 @@
     - RFC 018 (language primitives for testing)
     - RFC 019 (test runner, CLI, and ecosystem)
     - RFC 020 (Cargo offline and locked policy)
-    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/401
 - **RFC PR:** —
@@ -18,7 +18,7 @@
 
 ## Summary
 
-This RFC defines two parts of the Oven-managed environment model: enforceable Incan toolchain constraints and matrix-expanded environments. `Loaf.toml` projects and named environments may declare `requires-incan` constraints that the active toolchain must satisfy before project-aware execution begins, and environments may define matrices that expand one logical env into multiple concrete env instances. Environment and matrix constraints only narrow inherited compatibility; they do not loosen it. Matrix execution stays at the Oven lifecycle layer: it repeats env scripts across resolved env cells, but it does not define test-runner semantics, parallel scheduling policy, or toolchain installation.
+This RFC defines two parts of the Oven-managed environment model: enforceable Incan toolchain constraints and matrix-expanded environments. `loaf.toml` projects and named environments may declare `requires-incan` constraints that the active toolchain must satisfy before project-aware execution begins, and environments may define matrices that expand one logical env into multiple concrete env instances. Environment and matrix constraints only narrow inherited compatibility; they do not loosen it. Matrix execution stays at the Oven lifecycle layer: it repeats env scripts across resolved env cells, but it does not define test-runner semantics, parallel scheduling policy, or toolchain installation.
 
 ## Core model
 
@@ -29,7 +29,7 @@ Read this RFC as four foundations plus three mechanisms:
 3. **Foundation:** A matrix env is still one named env in the manifest, but it expands into multiple concrete env instances at execution time.
 4. **Foundation:** Matrix orchestration belongs to Oven, not to the test runner. RFC 019 remains the owner of test collection, parametrization, fixtures, reporting, and parallel test execution semantics.
 5. **Mechanism A:** Execution commands compute an effective `requires-incan` constraint and fail early when the active toolchain does not satisfy it, while inspection commands surface compatibility without being blocked by it.
-6. **Mechanism B:** `[[oven.envs.<name>.matrix]]` in `Loaf.toml` declares one or more axes that generate concrete env instances by Cartesian product.
+6. **Mechanism B:** `[[oven.envs.<name>.matrix]]` in `loaf.toml` declares one or more axes that generate concrete env instances by Cartesian product.
 7. **Mechanism C:** Selecting a concrete env instance runs one resolved env; selecting a matrix root env runs the target script across all generated env instances in deterministic order.
 
 ## Motivation
@@ -174,7 +174,7 @@ The following commands must resolve the nearest project root and enforce an effe
 - `oven test`
 - `oven lock`
 - `oven env run`
-- any future Oven operation that reads a `Loaf.toml` project
+- any future Oven operation that reads a `loaf.toml` project
 
 The following commands must resolve and report the effective constraint, but they must not require the active toolchain to satisfy it merely to inspect configuration:
 
@@ -201,7 +201,7 @@ Commands that do not resolve a project root must not attempt to infer or enforce
 
 ### Environment schema additions
 
-This RFC adds the following optional fields to `[oven.envs.<name>]` in `Loaf.toml`:
+This RFC adds the following optional fields to `[oven.envs.<name>]` in `loaf.toml`:
 
 - `requires-incan: str`
 - `matrix: List[Table]`

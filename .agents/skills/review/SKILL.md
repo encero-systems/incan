@@ -391,3 +391,18 @@ The default verification bar for a strong review is:
 - `make pre-commit`
 
 If either command was not run, say so explicitly in the final review report and treat that as residual risk rather than silently claiming the branch is clean.
+
+## Findings ledger
+
+`.agents/state/review-report.md` is per-worktree and gets overwritten by the next run (Step 11). To keep a durable record of what review actually catches over time, append one line to `.agents/state/findings-ledger.md` (a symlink into a private, non-git location — see `AGENTS.md`) whenever this run:
+
+- concludes with at least one 🔴 blocker or 🟡 warning, or
+- confirms a *previous* run's blocker/warning is now resolved.
+
+Format, appended not rewritten:
+
+```
+- YYYY-MM-DD | review | <one-line finding> | <what changed, or "pending" if not yet fixed>
+```
+
+Skip the ledger entirely for a clean pass with nothing to report — it should stay a record of real findings, not a heartbeat log. If `.agents/state/findings-ledger.md` doesn't exist (e.g. this workspace layout wasn't set up), skip this step silently rather than creating it yourself.

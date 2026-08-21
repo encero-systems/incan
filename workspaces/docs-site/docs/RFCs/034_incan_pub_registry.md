@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 027 (incan-vocab), RFC 031 (library system phase 1), RFC 117 (`Loaf.toml` and Oven's language-neutral project model), RFC 118 (Incan and Oven command-line surfaces)
+- **Related:** RFC 027 (incan-vocab), RFC 031 (library system phase 1), RFC 117 (`loaf.toml` and Oven's language-neutral project model), RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** [#168](https://github.com/encero-systems/incan/issues/168)
 - **RFC PR:** —
 - **Written against:** ~~v0.2~~ v0.5
@@ -57,7 +57,7 @@ $ oven publish
 ### Consuming a published package
 
 ```toml
-# my-app/Loaf.toml
+# my-app/loaf.toml
 [project]
 name = "my-app"
 version = "0.1.0"
@@ -329,7 +329,7 @@ mylib = { loaf = "mylib", version = "0.1.0", registry = "incan.pub" } # explicit
 
 Resolution:
 
-1. Read the typed dependency entry from `Loaf.toml`
+1. Read the typed dependency entry from `loaf.toml`
 2. For each registry dep: `GET https://incan.pub/index/<prefix>/<name>`
 3. Parse JSON lines, filter by version requirement, select newest matching non-yanked version
 4. Check local cache `~/.incan/libs/<name>-<version>/` — if cached and checksum matches, skip download
@@ -348,9 +348,9 @@ The resolver must not wire downloaded generated Rust source into generated `Carg
 
 | Command                       | Description                                                                       |
 | ----------------------------- | --------------------------------------------------------------------------------- |
-| `oven add <pkg>`              | Add a Loaf dependency to `Loaf.toml` (fetch latest version from `incan.pub`)      |
-| `oven add --crate <pkg>`      | Add a crate dependency to `Loaf.toml` (fetch from crates.io by default)           |
-| `oven remove <pkg>`           | Remove a typed dependency from `Loaf.toml`                                        |
+| `oven add <pkg>`              | Add a Loaf dependency to `loaf.toml` (fetch latest version from `incan.pub`)      |
+| `oven add --crate <pkg>`      | Add a crate dependency to `loaf.toml` (fetch from crates.io by default)           |
+| `oven remove <pkg>`           | Remove a typed dependency from `loaf.toml`                                        |
 | `oven update`                 | Re-resolve the selected closure and update `Oven.lock`                            |
 | `oven login`                  | Authenticate with `incan.pub`, save credentials in Oven-controlled secure storage |
 | `oven publish`                | Bake the selected Loaf, package `.incanpkg`, sign, and upload it                  |
@@ -361,7 +361,7 @@ The resolver must not wire downloaded generated Rust source into generated `Carg
 
 #### `oven add` in detail
 
-Like `cargo add`, this is the primary way users add dependencies. It edits `Loaf.toml` for you. The final aliases exposed through `incan` are owned by RFC 118; they must delegate to Oven rather than duplicate this resolution behavior.
+Like `cargo add`, this is the primary way users add dependencies. It edits `loaf.toml` for you. The final aliases exposed through `incan` are owned by RFC 118; they must delegate to Oven rather than duplicate this resolution behavior.
 
 ```bash
 # Add latest version from incan.pub
@@ -387,14 +387,14 @@ $ oven add widgets --git https://github.com/example/widgets --tag v0.2.0
 
 **Behavior:**
 
-1. If no `Loaf.toml` exists, error with "run `oven init` first"
+1. If no `loaf.toml` exists, error with "run `oven init` first"
 2. Query the registry index for the latest non-yanked version (unless `@version` or `--path`/`--git` specified)
 3. Default to `^major.minor.patch` range (SemVer-compatible, like Cargo)
 4. Write the typed entry to `[dependencies]`
-5. If the package is already in `Loaf.toml`, update the version (with a confirmation prompt unless `--force`)
+5. If the package is already in `loaf.toml`, update the version (with a confirmation prompt unless `--force`)
 6. Update `Oven.lock` with the resolved closure
 
-`oven remove` does the inverse: removes the entry from `Loaf.toml` and re-locks.
+`oven remove` does the inverse: removes the entry from `loaf.toml` and re-locks.
 
 ## Infrastructure: provider selection
 
@@ -541,7 +541,7 @@ German provider, good pricing. However: no scale-to-zero compute (minimum €4.5
 
 ## Future extensions (out of scope)
 
-- **Private registries.** Organizations may register an `incan.pub`-compatible registry in Oven-controlled organization or user configuration, then allow-list that registered identity from a Loaf or workspace. Credentials and trust policy never live in `Loaf.toml`; `Oven.lock` records the resolved canonical identity and observed trust facts.
+- **Private registries.** Organizations may register an `incan.pub`-compatible registry in Oven-controlled organization or user configuration, then allow-list that registered identity from a Loaf or workspace. Credentials and trust policy never live in `loaf.toml`; `Oven.lock` records the resolved canonical identity and observed trust facts.
 - **Trusted Publishers (GitHub Actions OIDC).** Like PyPI's Trusted Publishers — CI/CD can publish without long-lived tokens by using GitHub Actions' OIDC identity directly with Sigstore.
 - **Package auditing tools.** `oven audit` to check dependencies against a vulnerability database.
 - **Mirror support.** Read-only mirrors of `incan.pub` for network-restricted environments or regional performance.

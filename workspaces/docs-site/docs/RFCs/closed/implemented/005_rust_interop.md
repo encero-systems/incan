@@ -316,7 +316,7 @@ Reason: generated programs are Rust-to-Rust call paths, and preserving native pa
 
 4. **Non-native target behavior (`wasm32`, etc.)**
 
-Decision: target-specific interop constraints are out of RFC 005 scope and must be specified in target/toolchain RFCs (e.g., [RFC 092](../../092_interactive_runtime_stdlib_contracts.md) or a dedicated target-constraints RFC).
+Decision: target-specific interop constraints are out of RFC 005 scope and must be specified in target/toolchain RFCs (e.g., [RFC 092](../rejected/092_interactive_runtime_stdlib_contracts.md) or a dedicated target-constraints RFC).
 
 Reason: interop validity is target-dependent (runtime availability, crate support, panic model), so policy belongs in the target model rather than the base Rust interop contract.
 

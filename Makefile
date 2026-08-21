@@ -192,6 +192,15 @@ rustdoc-gate-ci:
 version-gate:
 	@python3 scripts/check_release_version_consistency.py
 
+.PHONY: agents-doc-sync  ## quality - Check AGENTS.md's skill table matches .agents/skills/ (local only, not CI)
+agents-doc-sync:
+	@echo "\033[1mChecking AGENTS.md skill table against .agents/skills/...\033[0m"
+	@python3 scripts/check_agents_doc_sync.py
+
+.PHONY: agents-doc-sync-ci
+agents-doc-sync-ci:
+	@python3 scripts/check_agents_doc_sync.py
+
 .PHONY: cargo-deny  ## quality - Run cargo-deny policy checks
 cargo-deny:
 	@echo "\033[1mRunning cargo-deny...\033[0m"
@@ -226,15 +235,20 @@ pre-commit-fast:
 	$(MAKE) -s rustdoc-gate-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t2=$$(date +%s); \
+	printf "\033[1mChecking AGENTS.md skill table...\033[0m "; \
+	$(MAKE) -s agents-doc-sync-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2b=$$(date +%s); \
 	printf "\033[1mChecking version consistency...\033[0m "; \
 	$(MAKE) -s version-gate; \
 	echo "\033[32mDONE\033[0m"; \
+	t2c=$$(date +%s); \
 	echo "\033[1mRunning cargo check (fast gate)...\033[0m"; \
 	$(MAKE) -s check-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t3=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, check=$$((t3-t2))s, total=$$((t3-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, agents-doc-sync=$$((t2b-t2))s, version=$$((t2c-t2b))s, check=$$((t3-t2c))s, total=$$((t3-start))s"
 
 .PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
 pre-commit-full-gate:
@@ -248,6 +262,14 @@ pre-commit-full-gate:
 	$(MAKE) -s rustdoc-gate-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t2=$$(date +%s); \
+	printf "\033[1mChecking AGENTS.md skill table...\033[0m "; \
+	$(MAKE) -s agents-doc-sync-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2b=$$(date +%s); \
+	printf "\033[1mChecking version consistency...\033[0m "; \
+	$(MAKE) -s version-gate; \
+	echo "\033[32mDONE\033[0m"; \
+	t2c=$$(date +%s); \
 	echo "\033[1mRunning tests...\033[0m"; \
 	$(MAKE) -s test-oven; \
 	echo "\033[32mDONE\033[0m"; \
@@ -261,7 +283,7 @@ pre-commit-full-gate:
 	echo "\033[32mDONE\033[0m"; \
 	t5=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (full)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, tests=$$((t3-t2))s, lint=$$((t4-t3))s, deny=$$((t5-t4))s, total=$$((t5-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, agents-doc-sync=$$((t2b-t2))s, version=$$((t2c-t2b))s, tests=$$((t3-t2c))s, lint=$$((t4-t3))s, deny=$$((t5-t4))s, total=$$((t5-start))s"
 
 .PHONY: pre-commit  ## quality - Full local gate: pre-commit-full-gate + smoke-test-fast
 pre-commit:

@@ -34,7 +34,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 [`.github/ISSUE_TEMPLATE/`]: .github/ISSUE_TEMPLATE/
 [`.agents/learnings.md`]: .agents/learnings.md
 
-Skills, learnings, and agent notes live under **this repository’s** `.agents/` directory (committed here).
+Skills (`.agents/skills/`) and learnings (`.agents/learnings.md`) live under **this repository’s** `.agents/` directory and are committed here. Working state and review-run artifacts (`.agents/state/`) live in the same directory but are **not** committed — they're gitignored, per-machine scratch, except `.agents/state/findings-ledger.md` which is a symlink into a private workspace-level log (see `.agents/skills/review/SKILL.md` and `.agents/skills/ralph-loop/SKILL.md` for how it's used).
 
 ## General Workflow
 
@@ -217,17 +217,61 @@ Key directories:
 
 ### Skills
 
-Skills are reusable workflows in `.agents/skills/`. Use them by name when the task matches:
+Skills are reusable workflows in `.agents/skills/`. Use them by name when the task matches. This table is checked against `.agents/skills/` by `make agents-doc-sync` (part of `make pre-commit-fast`) -- if you add or remove a skill, update this table in the same change or the local gate will fail.
 
-| Skill           | Trigger                           | What it does                                                                                                                            |
-| --------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `/start-work`   | Starting work on an issue or RFC  | Creates branch, gathers context from issue/RFC, checks learnings; does **not** commit (maintainer-only commits unless explicitly asked) |
-| `/test`         | Writing tests for a change        | Guides test selection, provides correct patterns per compiler stage                                                                     |
-| `/review`       | Code review, PR review            | Runs the full Incan-aware review checklist                                                                                              |
-| `/write-rfc`    | Drafting a new RFC                | Scaffolds an RFC with correct structure and conventions                                                                                 |
-| `/review-rfc`   | Checking an RFC before submission | Validates formatting, structure, content, and status-specific rules                                                                     |
-| `/bump-rfc`     | Promoting an RFC status           | Handles Draft -> Planned -> In Progress -> Done transitions                                                                             |
-| `/add-learning` | Recording a reusable insight      | Appends to learnings file with correct format and topic grouping                                                                        |
+**Core workflow**
+
+| Skill | Trigger | What it does |
+| --- | --- | --- |
+| `/start-work` | Starting work on an issue or RFC | Creates branch, gathers context from issue/RFC, checks learnings; does **not** commit (maintainer-only commits unless explicitly asked) |
+| `/create-plan` | Drafting an implementation plan before coding | TDD-oriented plan with doc updates and verification commands for encero-workspace repos |
+| `/test` | Writing tests for a change | Guides test selection, provides correct patterns per compiler stage |
+| `/write-commit-message` | Drafting a commit message | Formats `chore\|bugfix\|feature - <issue_id(s)> <description>` per workspace convention |
+| `/create-pr-description` | Drafting a PR description | Fills in the repo's PR template from the current git diff |
+| `/yeet-pr` | Publishing local changes to GitHub | Commits/pushes/opens a review-ready or draft PR per repo commit-message and PR-description conventions |
+| `/create-github-issue` | Filing a GitHub issue | Drafts title/body using the target repo's issue templates |
+| `/closeout` | Cleaning up after a merged PR | Removes task-owned worktrees/branches, prunes refs, reports dirty or ambiguous leftovers |
+| `/fleet-audit` | Checking what worktrees can be cleaned up | Fleet-wide report of protected/safe-to-close/needs-review worktrees under `tmp/`; never deletes anything itself |
+
+**Review and repair**
+
+| Skill | Trigger | What it does |
+| --- | --- | --- |
+| `/review` | Code review, PR review | Runs the full Incan-aware review checklist |
+| `/fix` | Repairing review findings | Fixes actionable in-scope findings, usually after `/review` |
+| `/review-and-fix` | Autonomous review + repair loop | Runs review, fixes findings, re-reviews until clean or blocked |
+| `/loop` | Looping named skills until clean | Thin orchestrator that reruns a detector/repair skill pair (e.g. `/review` `/fix`) until clean or blocked |
+| `/review-orchestrate` | Broad, multi-agent review | Runs specialized reviewer roles in parallel, merges into one canonical report |
+| `/review-architecture` | Architecture-specific review pass | Layering, crate boundaries, single-source-of-truth, registry-driven behavior |
+| `/review-code-smells` | Maintainability-specific review pass | Duplication, awkward indirection, dead code, naming, Boy Scout opportunities |
+| `/review-docs-claims` | Docs-truth review pass | User-facing docs/CLI text for truthfulness, prose quality, RFC leakage |
+| `/review-incan-source-quality` | Incan-source readability review pass | Checks `.incn` code reads like well-written Python, not Rust-shaped scaffolding |
+| `/review-rust-prose` | Rust comment/rustdoc review pass | Prose-comment quality, rustdoc accuracy, manual line-wrap smells |
+| `/review-scope` | Scope-completeness review pass | Checks the change actually matches the intended issue/RFC/branch scope |
+| `/review-test-style` | Test-style review pass | Result-returning patterns, panic helpers, unwrap/expect use, obvious coverage gaps |
+| `/flag-compiler-bug` | Suspecting a compiler defect mid-task | Minimizes the repro, checks for duplicates, files via `/create-github-issue` |
+
+**RFC lifecycle**
+
+| Skill | Trigger | What it does |
+| --- | --- | --- |
+| `/write-rfc` | Drafting a new RFC | Scaffolds an RFC with correct structure and conventions |
+| `/review-rfc` | Checking an RFC before submission | Validates formatting, structure, content, and status-specific rules |
+| `/bump-rfc` | Promoting an RFC status | Handles Draft -> Planned -> In Progress -> Implemented transitions |
+
+**Multi-agent orchestration**
+
+| Skill | Trigger | What it does |
+| --- | --- | --- |
+| `/orchestrate-parallel-work` | Delegating to parallel sub-agents | Splits a task into non-overlapping, worktree-isolated slices with orchestrator-led integration |
+| `/ralph-loop` | High-thoroughness autonomous implementation | Plan/do/check/act loop across worker worktrees through to ship-ready commit/PR artifacts |
+
+**Other**
+
+| Skill | Trigger | What it does |
+| --- | --- | --- |
+| `/add-learning` | Recording a reusable insight | Appends to learnings file with correct format and topic grouping |
+| `/hello-world` | Trivial example/smoke-test request | Says hello world; not part of the real workflow, used to sanity-check the skill mechanism itself |
 
 ### Agents
 

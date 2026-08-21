@@ -46,7 +46,9 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Local AI agent instructions
-.claude/
+# .claude/settings.json (project hooks/policy) and .claude/agents/* are committed
+# and shared; only personal per-machine overrides are ignored.
+.claude/settings.local.json
 .agents/state/*
 !.agents/state/.gitkeep
 

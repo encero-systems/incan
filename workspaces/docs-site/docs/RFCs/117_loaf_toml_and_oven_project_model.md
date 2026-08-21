@@ -1,6 +1,6 @@
-# RFC 117: `Loaf.toml` and Oven's language-neutral project model
+# RFC 117: `loaf.toml` and Oven's language-neutral project model
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-08-04
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -22,7 +22,7 @@
     - RFC 116 (typed C ABI interop)
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
-- **Issue:** [#1009](https://github.com/encero-systems/incan/issues/1009)
+- **Issue:** [#1063](https://github.com/encero-systems/incan/issues/1063)
 - **RFC PR:** —
 - **Written against:** v0.5
 - **Target scope:** v0.6 design and implementation planning; this is not a shipment claim.
@@ -30,9 +30,9 @@
 
 ## Summary
 
-This RFC replaces `incan.toml` with `Loaf.toml` as the sole authored manifest for an Oven-managed project. A `Loaf.toml` may describe one project, a rooted workspace, or a virtual workspace. Its package, target, lock, cache, and receipt model is language-neutral. Incan and Rust are the built-in authored source facets in v0.6; checked C interop remains under `[interop.c]`; later foreign integrations require their own explicit interop RFC rather than becoming ambient source languages.
+This RFC replaces `incan.toml` with `loaf.toml` as the sole authored manifest for an Oven-managed project. A `loaf.toml` may describe one project, a rooted workspace, or a virtual workspace. Its package, target, lock, cache, and receipt model is language-neutral. Incan and Rust are the built-in authored source facets in v0.6; checked C interop remains under `[interop.c]`; later foreign integrations require their own explicit interop RFC rather than becoming ambient source languages.
 
-`[project]` remains the familiar metadata table. `[workspace]` remains the explicit repository-coordination table. Dependencies use one typed graph whose unit kind and origin are explicit when the defaults are insufficient: Incan Loaf packages default to `incan.pub`, Rust crates default to crates.io, and foreign/system requirements use Oven-managed capability providers. Oven resolves authored intent into `Oven.lock`, then bakes the selected target into immutable, verified `*.loaf` assets and receipts. Cargo remains a deliberately explicit compatibility mode for repositories that have no `Loaf.toml`; it is never inferred as part of a Loaf build.
+`[project]` remains the familiar metadata table. `[workspace]` remains the explicit repository-coordination table. Dependencies use one typed graph whose unit kind and origin are explicit when the defaults are insufficient: Incan Loaf packages default to `incan.pub`, Rust crates default to crates.io, and foreign/system requirements use Oven-managed providers. Oven resolves authored intent into `Oven.lock`, then bakes the selected target into immutable, verified `*.loaf` assets and receipts. Cargo remains a deliberately explicit compatibility mode for repositories that have no `loaf.toml`; it is never inferred as part of a Loaf build.
 
 This RFC also rehomes the authored configuration boundaries of existing environment, matrix, action, workspace, provider, and interop RFCs. It does not define the final command spelling or a general-purpose task shell.
 
@@ -40,19 +40,19 @@ This RFC also rehomes the authored configuration boundaries of existing environm
 
 Read this RFC as thirteen foundations:
 
-1. **One authored manifest:** `Loaf.toml` is the only Incan/Oven project manifest. `incan.toml` is not read as a compatibility format.
+1. **One authored manifest:** `loaf.toml` is the only Incan/Oven project manifest. `incan.toml` is not read as a compatibility format.
 2. **A familiar project table:** `[project]` owns package identity and publication metadata. The filename carries the Loaf vocabulary; the metadata table remains ordinary and legible.
 3. **A workspace is an optional hierarchy:** `[workspace]` declares explicit members and shared policy. A root with both `[project]` and `[workspace]` is a rooted workspace; a root with only `[workspace]` is virtual. Members may form explicit structural child groups, but the root remains the sole authority for resolution, locking, registry trust, target policy, and receipts.
 4. **The package graph is language-neutral:** every dependency is one logical requirement with a typed provider contract. The author does not choose a separate Incan-versus-Rust dependency table.
 5. **Origins are configurable:** Loaf packages default to `incan.pub`; crates default to crates.io. A project may explicitly select registered private registries, Git, path, or other supported controlled sources.
-6. **Provider semantics stay visible:** an `incan.pub` package contributes checked Incan semantic/provider facts, a Cargo ecosystem crate contributes Rust interop and implementation requirements, and a system/foreign capability contributes a verified target requirement. Oven must not flatten those differences or expose backend details as public Incan API.
+6. **Provider semantics stay visible:** an `incan.pub` package contributes checked Incan semantic/provider facts, a Cargo ecosystem crate contributes Rust interop and implementation requirements, and a system/foreign provider contributes a verified target requirement. Oven must not flatten those differences or expose backend details as public Incan API.
 7. **Core source facets are convention-first and unambiguous:** a conventional single-language project uses the ordinary `src/` layout. A mixed or nonstandard project declares non-overlapping `[incan.source]` and `[rust.source]` roots; `.incn` and `.rs` files never compete within one undiscriminated source root. C source inputs, headers, shims, and artifacts remain deliberate `[interop.c]` concerns. A Loaf never implicitly consumes a neighbouring `Cargo.toml`.
 8. **Targets have three scopes:** a Loaf declares supported target/interface combinations; a workspace declares shared delivery policy; a bake invocation chooses one concrete target, carrier, profile, and feature closure that produces a target-bound `*.loaf` asset.
 9. **Plans precede effects:** resolution, import, installation, or the presence of a file must not execute package code. Oven exposes a plan before baking and records the actual execution in a receipt.
 10. **Named environments and actions are explicit Loaf intent:** the standard `dev`, `test`, `lint`, and `docs` environments always exist; authored environment and typed-action configuration moves out of `[tool.incan.*]` and into the Loaf model. Environments select named, reproducible command contexts; they do not silently change a production bake.
 11. **Derived state is separate:** `Oven.lock`, immutable `*.loaf` assets, the artifact store, selected host toolchains, caches, staged outputs, generated code, and receipts are not authored Loaf configuration.
 12. **Distribution assets are verifiable and future-reusable:** a `*.loaf` asset is immutable and target-bound. It identifies the selected project/facet, target, carrier, profile, resolved graph, payload digest, and receipt; those facts reserve the compatibility boundary through which a future `incan.pub` consumer can safely reuse a pre-warmed asset rather than rebuild it. Its wire or bundle format is intentionally deferred.
-13. **Cargo compatibility is explicit:** a directory with only `Cargo.toml` may be run by Oven in Cargo-compatibility mode. A directory containing `Loaf.toml` is a Loaf project; Cargo files there are ignored with a diagnostic unless the user explicitly invokes Cargo compatibility.
+13. **Cargo compatibility is explicit:** a directory with only `Cargo.toml` may be run by Oven in Cargo-compatibility mode. A directory containing `loaf.toml` is a Loaf project; Cargo files there are ignored with a diagnostic unless the user explicitly invokes Cargo compatibility.
 
 ## Motivation
 
@@ -60,22 +60,22 @@ The current `incan.toml` correctly introduced project identity, dependency decla
 
 That assumption is constraining in both directions. An Incan-authored package may need a Rust crate, a C ABI library, a C++ shim, a target SDK, or a later JNI/Python carrier without ceasing to be one package. A Rust-authored project that elects to use Oven should be able to adopt the same package, target, receipt, and workspace model without being forced to rewrite its sources into Incan. Cargo must remain runnable where Cargo is explicitly authoritative, but Cargo's implicit build scripts, proc macros, target conventions, and workspace semantics must not become accidental Loaf semantics.
 
-The same pressure exists at the repository root. A separate `Oven.toml` would distinguish package metadata from workspace orchestration, but introduces two canonical files and an ownership/discovery boundary without a demonstrated capability need. Cargo already demonstrates that one manifest can express a root package, a virtual workspace, or both. `Loaf.toml` can do the same when its table scopes are explicit.
+The same pressure exists at the repository root. A separate `Oven.toml` would distinguish package metadata from workspace orchestration, but introduces two canonical files and an ownership/discovery boundary without a demonstrated capability need. Cargo already demonstrates that one manifest can express a root package, a virtual workspace, or both. `loaf.toml` can do the same when its table scopes are explicit.
 
 Oven is more than a package resolver. It must plan target-specific C ABI, JNI, Python, Rust-host, and future carrier builds; select and verify toolchains; materialize controlled environments; protect shared artifact stores; and describe exactly what happened. That requires a manifest that captures desired inputs, not hidden host discovery or arbitrary execution.
 
 ## Goals
 
-- Replace `incan.toml` with `Loaf.toml` wholesale before Incan 1.0.
+- Replace `incan.toml` with `loaf.toml` wholesale before Incan 1.0.
 - Preserve `[project]` as the familiar package-metadata surface.
 - Preserve rooted and virtual workspace forms using optional `[workspace]`.
-- Give Incan packages, Rust crates, and foreign/system capabilities one dependency grammar while retaining their distinct resolver and linkage contracts.
+- Give Incan packages, Rust crates, and foreign/system providers one dependency grammar while retaining their distinct resolver and linkage contracts.
 - Make `incan.pub` the default origin for Loaf packages and crates.io the default origin for Rust crates, while allowing registered alternative registries and explicit sources.
-- Define safe discovery when `Loaf.toml` and `Cargo.toml` coexist.
+- Define safe discovery when `loaf.toml` and `Cargo.toml` coexist.
 - Permit explicitly declared hierarchical sub-Loaves under one inherited root-workspace authority.
 - Keep source-language choice out of the package identity while avoiding implicit Cargo participation.
 - Define a target model that distinguishes platform target, deployable carrier, profile, and delivery policy.
-- Distinguish authored intent (`Loaf.toml`), resolved graph (`Oven.lock`), and immutable target-bound distribution assets (`*.loaf`) without making any of them hidden state.
+- Distinguish authored intent (`loaf.toml`), resolved graph (`Oven.lock`), and immutable target-bound distribution assets (`*.loaf`) without making any of them hidden state.
 - Make plans, declared effects, selected inputs, output artifacts, and receipts inspectable.
 - Rehome environment/matrix/action configuration ownership to Oven without re-specifying the semantics already owned by RFCs 073 and 078.
 - Rehome package-level C ABI configuration from `[oven.interop]` into `[interop]`, a direct semantic root that future binding kinds may share, while retaining RFC 116 as the owner of C safety semantics.
@@ -102,8 +102,8 @@ Oven is more than a package resolver. It must plan target-specific C ABI, JNI, P
 
 Closed RFCs remain historical records and are not retroactively edited. This RFC explicitly supersedes the following decisions for implementations that adopt the Loaf/Oven project model:
 
-- **RFC 013 and RFC 031:** separate authored `[dependencies]` and `[rust-dependencies]` tables, and the assumption that a consumer's dependency graph is authored as Cargo wiring. `Loaf.toml` has one typed dependency graph; provider-specific Rust requirements remain visible facts rather than a second authoring domain.
-- **RFC 015:** `incan.toml` as the project manifest, nearest-manifest root discovery, project generation that writes `incan.toml`, and `[tool.incan.envs]` as the environment-configuration home. `Loaf.toml` is the sole authored manifest, while environment semantics remain owned by their dedicated RFCs.
+- **RFC 013 and RFC 031:** separate authored `[dependencies]` and `[rust-dependencies]` tables, and the assumption that a consumer's dependency graph is authored as Cargo wiring. `loaf.toml` has one typed dependency graph; provider-specific Rust requirements remain visible facts rather than a second authoring domain.
+- **RFC 015:** `incan.toml` as the project manifest, nearest-manifest root discovery, project generation that writes `incan.toml`, and `[tool.incan.envs]` as the environment-configuration home. `loaf.toml` is the sole authored manifest, while environment semantics remain owned by their dedicated RFCs.
 - **RFC 020:** `incan.lock` as the generated resolution identity. The reproducibility and locked/offline requirements remain; their generated artifact is `Oven.lock`.
 - **RFC 077:** a flat workspace that forbids nested workspaces. Explicit membership, rooted and virtual workspace forms, and one shared resolution boundary remain; a member may now declare explicit sub-Loaves within a single inherited root-workspace authority.
 - **RFC 112:** the public lockfile path used by its publication examples. Crash-safe publication and coordination requirements remain unchanged, but the published lockfile is `Oven.lock` and its companion coordination identity follows that name.
@@ -113,10 +113,10 @@ This RFC does not supersede the retained semantic contracts in those RFCs: repro
 
 ## Terminology and mental model
 
-The user-facing contract is intentionally small: authors write `Loaf.toml`; Oven plans and bakes it. The surrounding bread vocabulary is a guide-level model and an Oven inspection affordance, not a second vocabulary users must configure.
+The user-facing contract is intentionally small: authors write `loaf.toml`; Oven plans and bakes it. The surrounding bread vocabulary is a guide-level model and an Oven inspection affordance, not a second vocabulary users must configure.
 
 ```text
-Loaf.toml + declared sources + declared inputs
+loaf.toml + declared sources + declared inputs
   -> Doughball (internal source-and-input mass)
   -> Oven shapes one or more Loaves (resolved logical build units)
   -> Oven bakes a selected Loaf for a selected target
@@ -128,16 +128,16 @@ Loaf.toml + declared sources + declared inputs
 - A **`loaves/` group** is the repository convention for non-root workspace members. It may be nested, for example `loaves/stdlib/web/`; its path is not a dependency, publication, or Rust-crate identity.
 - A **Doughball** is Oven's internal representation of the selected sources, declared dependencies, features, interop inputs, and policy before target shaping.
 - A **Loaf** is the resolved logical build unit Oven obtains by shaping a Doughball for a selected package facet and target-compatible plan.
-- A **`*.loaf` asset** is the immutable, verified, target-bound build and distribution asset emitted by a bake. It carries the selected Loaf identity, target/carrier/profile, resolved-graph identity, payload digest, and receipt identity. Its archive or wire format is outside this RFC.
-- To **bake** is the operation that executes a resolved plan for a selected target/carrier/profile and produces a `*.loaf` asset plus a receipt. "Bake" is a verb, not a required artifact type.
+- A **`*.loaf` asset** is the immutable, verified, target-bound build and distribution asset emitted by a bake of a loaf-shaped carrier. It carries the selected Loaf identity, target/carrier/profile, resolved-graph identity, payload digest, and receipt identity. Its archive or wire format is outside this RFC.
+- To **bake** is the operation that executes a resolved plan for a selected target/carrier/profile and produces a build artifact plus a receipt. "Bake" is a verb, not a required artifact type. The produced artifact's packaging depends on the selected carrier's shape (see below): a loaf-shaped carrier yields a `*.loaf` asset, a terminal carrier yields a plain build artifact. Both shapes still go through the same plan, policy decision, and receipt; only downstream-reuse packaging differs.
 - **Cold**, **warm**, and **hot** Loaves may be shown by Oven's internal inspection and cache-status UX. Their precise state semantics are intentionally not specified here.
-- A **carrier** is the target deliverable form: for example, a static library, framework, JNI shared library, Python wheel, Rust-host caller projection, executable, or another declared artifact family.
+- A **carrier** is the target deliverable form: for example, a static library, framework, JNI shared library, Python wheel, Rust-host caller projection, executable, or another declared artifact family. Every carrier has a **shape**: **loaf-shaped** carriers (static library, framework, JNI shared library, Python wheel, Rust-host caller projection) produce a `*.loaf` asset meant for another Oven consumer to depend on or reuse; the **terminal** carrier `executable` produces a plain build artifact meant to be run or deployed directly, never depended on as a package. A carrier's shape is fixed by whichever RFC defines that carrier kind, not chosen per invocation.
 
 ## Guide-level explanation
 
 ### A single project
 
-An ordinary project needs only `Loaf.toml`:
+An ordinary project needs only `loaf.toml`:
 
 ```toml
 [project]
@@ -163,7 +163,7 @@ This example is mixed, so it names separate roots. An Incan-only project convent
 
 ### A workspace of Loaves
 
-The root `Loaf.toml` can be a project and a workspace:
+The root `loaf.toml` can be a project and a workspace:
 
 ```toml
 [project]
@@ -185,7 +185,7 @@ targets = ["aarch64-apple-ios", "aarch64-linux-android"]
 profile = "release"
 ```
 
-A virtual workspace omits `[project]` and retains `[workspace]`. Every member has its own `Loaf.toml`; no member is inferred merely because it lives under `loaves/` or a nested group beneath it. A Rust-only member remains a Rust crate in its own source facet; `loaves/` is the repository's package hierarchy, not a replacement name for Rust compilation units.
+A virtual workspace omits `[project]` and retains `[workspace]`. Every member has its own `loaf.toml`; no member is inferred merely because it lives under `loaves/` or a nested group beneath it. A Rust-only member remains a Rust crate in its own source facet; `loaves/` is the repository's package hierarchy, not a replacement name for Rust compilation units.
 
 The directory name is a repository convention, not an identity rule. A member can live anywhere inside the workspace root if it is explicitly included by `members`.
 
@@ -195,17 +195,17 @@ A workspace can group members recursively without flattening its repository layo
 
 ```text
 incan/
-├── Loaf.toml                         # root authority and Oven.lock
+├── loaf.toml                         # root authority and Oven.lock
 └── loaves/
     ├── compiler/
-    │   ├── syntax/Loaf.toml
-    │   └── semantics/Loaf.toml
+    │   ├── syntax/loaf.toml
+    │   └── semantics/loaf.toml
     └── stdlib/
-        ├── io/Loaf.toml
-        └── web/Loaf.toml
+        ├── io/loaf.toml
+        └── web/loaf.toml
 ```
 
-If a group itself needs a local member-selection boundary or narrower local requirements, it may declare a structural parent `Loaf.toml` with explicit children. That parent inherits the root's resolved graph, lock, registry trust, target/delivery policy, and receipt boundary. It cannot create a second `Oven.lock`, rebind a registry, widen target policy, or form a second publication authority.
+If a group itself needs a local member-selection boundary or narrower local requirements, it may declare a structural parent `loaf.toml` with explicit children. That parent inherits the root's resolved graph, lock, registry trust, target/delivery policy, and receipt boundary. It cannot create a second `Oven.lock`, rebind a registry, widen target policy, or form a second publication authority.
 
 Membership hierarchy is not a dependency graph. Parent/child placement, a shared workspace, and a selected closure create no runtime, linkage, or publication dependency between packages; those relationships exist only through declared typed dependencies. For example, `incql-core`, `incql-db`, and `incql-datafusion` can remain independently versioned packages whether or not one is structurally nested below another; any dependency between them is explicit in the consuming package's dependency table.
 
@@ -223,7 +223,7 @@ root = "sources/incan"
 root = "sources/rust"
 ```
 
-The roots must not overlap. Generated output is not an authored source root. The root's package/target authority remains in `Loaf.toml`; neither source facet can select a different lock, registry, target, policy, or carrier.
+The roots must not overlap. Generated output is not an authored source root. The root's package/target authority remains in `loaf.toml`; neither source facet can select a different lock, registry, target, policy, or carrier.
 
 C is not a peer top-level source namespace. When a C integration needs authored shim source, it remains behind the deliberate C interop contract:
 
@@ -246,7 +246,7 @@ Rust crate    -> crates.io
 Users or organizations explicitly register additional registries in Oven-controlled user or organization configuration. Registry configuration identifies the registry kind, endpoint/index, trust policy, and a reference to credentials held outside the project.
 
 ```toml
-# Illustrative Oven user/organization configuration, not Loaf.toml.
+# Illustrative Oven user/organization configuration, not loaf.toml.
 [registries.encero]
 kind = "loaf"
 index = "https://packages.encero.dev/index"
@@ -269,7 +269,7 @@ serde = { crate = "serde", registry = "internal-cargo" }
 allow = ["encero", "internal-cargo"]
 ```
 
-The registry alias is convenience, not the security identity. `Oven.lock` records the canonical registry endpoint and protocol, exact package identity, immutable digest, and observed signature/trust result. Credentials never enter `Loaf.toml` or the lock. A project cannot silently register, rebind, or trust a registry on a developer's machine.
+The registry alias is convenience, not the security identity. `Oven.lock` records the canonical registry endpoint and protocol, exact package identity, immutable digest, and observed signature/trust result. Credentials never enter `loaf.toml` or the lock. A project cannot silently register, rebind, or trust a registry on a developer's machine.
 
 ### Declaring C ABI and future carriers
 
@@ -285,11 +285,11 @@ headers = ["interop/include/vision.h"]
 requires = ["vision-runtime"]
 
 [targets.ios]
-platform = "aarch64-apple-ios"
+platforms = ["aarch64-apple-ios"]
 carrier = "framework"
 
 [targets.android]
-platform = "aarch64-linux-android"
+platforms = ["aarch64-linux-android"]
 carrier = "jni-library"
 ```
 
@@ -297,7 +297,7 @@ This example is intentionally schematic. `[interop]` is Loaf-owned requirement d
 
 ### Baking and inspecting
 
-Before Oven performs external work, it can show a plan containing selected members, dependencies, providers, target, carrier, profile, capabilities, declared inputs/outputs, and expected effect classes. Baking executes only that plan and emits a target-bound `*.loaf` asset plus a receipt.
+Before Oven performs external work, it can show a plan containing selected members, dependencies, providers, target, carrier, profile, capabilities, declared inputs/outputs, and expected effect classes. Baking executes only that plan and emits a target-bound build artifact plus a receipt — a `*.loaf` asset for a loaf-shaped carrier, or a plain build artifact for a terminal carrier such as `executable`.
 
 The exact CLI spelling is intentionally outside this RFC. The semantic operation is:
 
@@ -317,7 +317,7 @@ A repository containing only `Cargo.toml` remains runnable by Oven in explicitly
 If both files are present, Oven must continue as a Loaf project and issue a warning equivalent to:
 
 ```text
-Found Loaf.toml and Cargo.toml. Loaf.toml is authoritative; Cargo configuration
+Found loaf.toml and Cargo.toml. loaf.toml is authoritative; Cargo configuration
 was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantics.
 ```
 
@@ -327,7 +327,7 @@ Oven must not parse, merge, or infer dependency, feature, source, workspace, bui
 
 ### Manifest discovery and shapes
 
-1. `Loaf.toml` is the canonical manifest filename. Project-aware discovery walks upward from the working directory or source path to the nearest directory containing it.
+1. `loaf.toml` is the canonical manifest filename. Project-aware discovery walks upward from the working directory or source path to the nearest directory containing it.
 2. A manifest containing `[project]` and no `[workspace]` describes one project.
 3. A manifest containing `[project]` and `[workspace]` describes a rooted workspace. The root project is a member without requiring `"."` in `members`.
 4. A manifest containing `[workspace]` and no `[project]` describes a virtual workspace. It must declare at least one resolved member.
@@ -336,8 +336,8 @@ Oven must not parse, merge, or infer dependency, feature, source, workspace, bui
 7. Membership and parent/child hierarchy are never dependency, linkage, or publication edges. Those edges arise only from declared typed dependency requirements; a path dependency does not imply membership, and membership does not imply a dependency.
 8. The root workspace is the sole authority for the resolved graph, `Oven.lock`, registry trust, workspace delivery policy, and receipt boundary. Child workspace declarations may add local membership and narrow local requirements, but may not create a lock, rebind registries, weaken trust, broaden target policy, or establish an independent publication authority.
 9. A manifest containing neither `[project]` nor `[workspace]` is invalid.
-10. `incan.toml` is not a project manifest after this RFC. A directory that contains it but no `Loaf.toml` must receive a targeted diagnostic rather than legacy parsing.
-11. If a `Loaf.toml` project also contains `Cargo.toml`, Oven must warn and ignore Cargo configuration. The diagnostic must name the ignored file and explain explicit Cargo-compatibility selection.
+10. `incan.toml` is not a project manifest after this RFC. A directory that contains it but no `loaf.toml` must receive a targeted diagnostic rather than legacy parsing.
+11. If a `loaf.toml` project also contains `Cargo.toml`, Oven must warn and ignore Cargo configuration. The diagnostic must name the ignored file and explain explicit Cargo-compatibility selection.
 
 ### Project metadata and source domains
 
@@ -367,11 +367,11 @@ Every dependency requirement has a **unit kind** and an **origin**.
 | ------------ | ----------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------- |
 | `loaf`       | `incan.pub`                         | checked Incan semantic/provider facts and public package features           | a Cargo crate or generated Rust source contract |
 | `crate`      | crates.io                           | Rust interop metadata and backend implementation/linkage requirements       | a public Incan feature namespace by accident    |
-| `capability` | Oven-managed system/foreign catalog | target-specific library, SDK, toolchain, runtime, or deployment requirement | an ambient host discovery result                |
+| `provider`   | Oven-managed system/foreign catalog | target-specific library, SDK, toolchain, runtime, or deployment requirement | an ambient host discovery result                |
 
 An entry may override its default origin through a registered registry, Git, path, or another supported source form. The resolved provider contract determines the legal source forms; a Loaf registry must not be accepted as a Cargo registry merely because it has a URL.
 
-Project features remain additive public Loaf capabilities as defined by RFC 114. They may enable optional Loaf dependencies and request public features from Loaf dependencies. A project may explicitly request a provider-specific crate feature as part of a crate dependency requirement, but that request is not exposed as a public project feature unless the project explicitly maps it through its public feature definition. Cargo feature names, generated crate names, and backend module paths remain implementation details.
+Project features remain additive public Loaf features as defined by RFC 114. They may enable optional Loaf dependencies and request public features from Loaf dependencies. A project may explicitly request a provider-specific crate feature as part of a crate dependency requirement, but that request is not exposed as a public project feature unless the project explicitly maps it through its public feature definition. Cargo feature names, generated crate names, and backend module paths remain implementation details.
 
 Workspace inheritance remains explicit. A workspace may own a dependency identity and members may opt into it. A member may refine only the usage properties RFC 114 and the selected dependency kind allow; it may not silently replace the source, registry, package identity, or trust policy selected by the workspace.
 
@@ -381,7 +381,7 @@ Workspace inheritance remains explicit. A workspace may own a dependency identit
 2. Additional registries are registered through Oven-controlled user or organization configuration, never by an unreviewed dependency or an implicit network lookup.
 3. A registry registration must declare a stable identity, unit kind/protocol, endpoint/index, and trust policy. Credentials are referenced from secure user/organization storage rather than copied into project files.
 4. A Loaf or workspace may allow-list registered registry identities. It may select an allowed alias but may not define credentials, rebind an alias, or weaken a user/organization trust policy.
-5. The lock records canonical registry identity, protocol, exact resolved package/crate/capability identity, version, immutable digest, source reference, and signature/trust outcome. An alias alone is insufficient for reproducibility or audit.
+5. The lock records canonical registry identity, protocol, exact resolved package/crate/provider identity, version, immutable digest, source reference, and signature/trust outcome. An alias alone is insufficient for reproducibility or audit.
 6. Resolution in locked or offline mode must not query an unrecorded registry, substitute an ambient local package, or accept a source with different trust facts.
 
 RFC 034 remains the protocol and publication authority for `incan.pub`; this RFC defines how `incan.pub` participates in the generic Loaf graph. A future Cargo-registry adapter must respect Cargo registry identity and integrity semantics without making Cargo the authority for a Loaf bake.
@@ -407,6 +407,21 @@ The resolved plan must distinguish:
 
 An explicit invocation has the highest selection precedence but cannot override package support or workspace policy. A workspace delivery policy may narrow a project choice but cannot make a package claim an unsupported target. An unqualified local bake may choose a deterministic host-development target and profile, and the receipt must record that choice. Publication or deployment must require an explicit target/carrier or named delivery policy; it must not silently publish a host-default artifact.
 
+### Carrier shape and bake output
+
+A carrier's **shape** determines what packaging, if any, a bake of it produces:
+
+| Carrier                     | Shape       | Bake output                                                 |
+| ---------------------------- | ----------- | -------------------------------------------------------------- |
+| static library                | loaf-shaped | `*.loaf` asset, verified and reusable by another Oven bake     |
+| framework                     | loaf-shaped | `*.loaf` asset, verified and reusable by another Oven bake     |
+| JNI shared library             | loaf-shaped | `*.loaf` asset, verified and reusable by another Oven bake     |
+| Python wheel                  | loaf-shaped | `*.loaf` asset, verified and reusable by another Oven bake     |
+| Rust-host caller projection    | loaf-shaped | `*.loaf` asset, verified and reusable by another Oven bake     |
+| executable                    | terminal    | plain build artifact, no `.loaf` packaging                     |
+
+A loaf-shaped carrier's output is meant for another Oven consumer to depend on or reuse: it is the shape a package published for downstream consumption needs. A terminal carrier's output is meant to be run or deployed directly and is never depended on as a package, so packaging it as a reusable `*.loaf` would carry no meaning — nothing will ever declare a dependency on it. Both shapes go through the same plan, policy decision, and receipt; shape changes packaging for downstream reuse, not plan rigor, policy gating, or audit requirements. A future carrier RFC declares its own carrier's shape alongside its other properties; shape is fixed per carrier kind, not selectable per invocation.
+
 ### Plans, effects, extensions, and receipts
 
 Oven uses the following boundary:
@@ -425,7 +440,7 @@ The resolver may fetch, verify, and stage immutable declared inputs according to
 Every execution edge in a bake must belong to one of these categories:
 
 1. **Oven-managed provider operation:** a known provider kind performs typed work, such as compiling declared Rust sources, verifying C headers, compiling a declared C/C++ shim, or materializing a selected SDK component.
-2. **Declared generator operation:** a generator has typed inputs, outputs, provider identity, target constraints, capability requirements, and generated-output ownership. It may not overwrite authored source through an ordinary bake.
+2. **Declared generator operation:** a generator is a typed Incan (or `rust::`-interop) function with typed inputs, outputs, declaring-package identity, target constraints, capability requirements, and generated-output ownership. It may not overwrite authored source through an ordinary bake.
 3. **Explicit workflow action:** an action from RFC 078 is selected by the user or an authorized tool and is evaluated under RFC 076 policy before execution.
 
 An extension must have a versioned, typed schema and a known provider/action identity. Unknown extension kinds are invalid; they are not a generic `[tool.*]` escape hatch. A provider or action may advertise a required capability, network requirement, external executable, or mutation class, but it must not gain authority merely by being selected as a dependency.
@@ -436,7 +451,7 @@ RFC 104 owns capability-enforcement and receipt semantics. RFC 112 owns crash-sa
 
 ### Environments and actions
 
-The following authored concepts move into `Loaf.toml` under Oven ownership. Their table roots are intentionally typed and reserved; arbitrary `[tool.*]` namespaces do not carry forward:
+The following authored concepts move into `loaf.toml` under Oven ownership. Their table roots are intentionally typed and reserved; arbitrary `[tool.*]` namespaces do not carry forward:
 
 | Concept                                       | Semantic owner | Oven responsibility                                                            |
 | --------------------------------------------- | -------------- | ------------------------------------------------------------------------------ |
@@ -447,7 +462,7 @@ The following authored concepts move into `Loaf.toml` under Oven ownership. Thei
 
 RFC 015 is implemented, so RFC 117 supersedes its `incan.toml` discovery and `[tool.incan.envs]` configuration placement. RFCs 073, 076, and 078 are still Draft and must be amended to name the new Loaf tables and terminology rather than preserving legacy configuration compatibility.
 
-The initial table roots are `[envs]`, `[actions]`, `[policy]`, `[capabilities]`, and `[templates]`. Their dedicated RFCs own the detailed schema and semantics. No `[oven.*]` prefix is needed: a `Loaf.toml` is already Oven's authored project document, and roots should name their semantic domain instead. They must remain explicit, scoped, inspectable, and free of implicit lifecycle execution. RFC 118 owns whether users invoke those semantics through `incan`, `oven`, aliases, or another command arrangement.
+The initial table roots are `[envs]`, `[actions]`, `[policy]`, `[mixes]`, and `[templates]`. Their dedicated RFCs own the detailed schema and semantics. No `[oven.*]` prefix is needed: a `loaf.toml` is already Oven's authored project document, and roots should name their semantic domain instead. They must remain explicit, scoped, inspectable, and free of implicit lifecycle execution. RFC 118 owns whether users invoke those semantics through `incan`, `oven`, aliases, or another command arrangement.
 
 ### Standard environments
 
@@ -469,13 +484,13 @@ mdbook = { crate = "mdbook", version = "0.4" }
 
 An environment is a named, reproducible command context. It may select extra development tools and project features, but it must not silently alter the selected target, carrier, profile, provider closure, or release dependency closure of an ordinary bake. `bake` is therefore not a standard environment: a bake records its target, carrier, profile, and feature selection directly in the plan and receipt. Dependencies needed to compile or execute a provider belong to that provider; target-specific dependencies belong to the target. Environment inheritance must diagnose conflicting bindings in the selected closure rather than silently choose one.
 
-Project scaffolding must generate a valid, minimal `Loaf.toml` and include the four standard environments as commented examples. The comments must explain that the defaults already exist and show where test, lint, and documentation dependencies belong; they must not materialize active configuration that merely duplicates the defaults.
+Project scaffolding must generate a valid, minimal `loaf.toml` and include the four standard environments as commented examples. The comments must explain that the defaults already exist and show where test, lint, and documentation dependencies belong; they must not materialize active configuration that merely duplicates the defaults.
 
 ### Interop package envelope
 
-RFC 116's current `[oven.interop]` shape is package-owned requirement data, not a record of a host toolchain already selected. Under this RFC it moves to the Loaf-level `[interop]` namespace: C declarations use `[interop.c]`. The file name changes from `incan.toml` to `Loaf.toml`; the ownership boundary does not.
+RFC 116's current `[oven.interop]` shape is package-owned requirement data, not a record of a host toolchain already selected. Under this RFC it moves to the Loaf-level `[interop]` namespace: C declarations use `[interop.c]`. The file name changes from `incan.toml` to `loaf.toml`; the ownership boundary does not.
 
-The interop envelope must be binding-kind neutral. It represents declared headers, shims, foreign artifacts, toolchain/SDK capabilities, target variants, carrier requirements, lock identities, plan inputs, generated verification records, artifact staging, and receipts. It does not make C pointer types, C ownership, JNI handles, Python reference counts, or another runtime's safety rules universal. Each binding-kind RFC continues to define its own source vocabulary and checking rules. Loaf-facing configuration uses precise terms such as `interop.c`, `host`, `target`, and declared linker artifact form; it does not introduce a catch-all `native` configuration namespace. Existing RFC 116 source syntax remains historical until a future language-level proposal changes it.
+The interop envelope must be binding-kind neutral. It represents declared headers, shims, foreign artifacts, toolchain/SDK provider requirements, target variants, carrier requirements, lock identities, plan inputs, generated verification records, artifact staging, and receipts. It does not make C pointer types, C ownership, JNI handles, Python reference counts, or another runtime's safety rules universal. Each binding-kind RFC continues to define its own source vocabulary and checking rules. Loaf-facing configuration uses precise terms such as `interop.c`, `host`, `target`, and declared linker artifact form; it does not introduce a catch-all `native` configuration namespace. Existing RFC 116 source syntax remains historical until a future language-level proposal changes it.
 
 ### Locks and derived state
 
@@ -483,7 +498,7 @@ The interop envelope must be binding-kind neutral. It represents declared header
 
 The lock must include every semantic or physical input whose change can alter checking, linking, target compatibility, generated output, or the baked artifact closure. It must not contain credentials, mutable cache paths, arbitrary environment values, or unreviewed host discovery output.
 
-`*.loaf` is the immutable, target-bound distribution/build asset derived from the lock and the selected bake plan. It must identify its project/facet, target, carrier, profile, resolved graph identity, payload digest, and receipt identity; it is not an editable project manifest or a replacement lockfile. The artifact store, provider payload store, staged deployment files, generated Rust, target intermediates, and receipts are separate from the lock. They are inspectable and may be content-addressed, but they are not user-authored package configuration or semantic authority.
+`*.loaf` is the immutable, target-bound distribution/build asset derived from the lock and the selected bake plan for a loaf-shaped carrier. It must identify its project/facet, target, carrier, profile, resolved graph identity, payload digest, and receipt identity; it is not an editable project manifest or a replacement lockfile. A bake of a terminal carrier such as `executable` instead produces a plain build artifact identified by the same lock and receipt, without `.loaf` packaging (see "Carrier shape and bake output"). The artifact store, provider payload store, staged deployment files, generated Rust, target intermediates, and receipts are separate from the lock. They are inspectable and may be content-addressed, but they are not user-authored package configuration or semantic authority.
 
 ### Future registry-supplied warm reuse
 
@@ -495,10 +510,10 @@ This is not a promise that one published binary works on every machine, nor that
 
 ### Manifest ownership map
 
-`Loaf.toml` is the authored envelope. Existing RFCs continue to own the meaning of their respective content:
+`loaf.toml` is the authored envelope. Existing RFCs continue to own the meaning of their respective content:
 
 ```text
-Loaf.toml
+loaf.toml
 ├── [project]                 RFC 117
 ├── [workspace]               RFC 117; prospectively supersedes RFC 077's flat-workspace restriction
 ├── dependencies/features     RFC 117 + RFC 114
@@ -506,7 +521,7 @@ Loaf.toml
 ├── [envs]                    RFC 073, rehomed by RFC 117
 ├── [actions]                 RFC 078, rehomed by RFC 117
 ├── [policy]                  RFC 076, rehomed by RFC 117
-├── [capabilities]            RFC 075, governed by RFC 076
+├── [mixes]                   RFC 075, governed by RFC 076
 ├── [templates]               RFC 074, governed by RFC 076
 ├── [incan.source]            built-in Incan source facet
 ├── [rust.source] / [rust.*]  built-in Rust source facet; RFC 119 owns exceptions
@@ -530,8 +545,8 @@ The Rust facet is the language-neutral planner contract for Rust-authored or mix
 
 Cargo compatibility has two valid states:
 
-1. **Cargo project:** a directory has `Cargo.toml` and no `Loaf.toml`. An explicitly selected Oven Cargo-compatibility operation delegates to Cargo. Cargo retains authority over its manifest and side effects.
-2. **Loaf project:** a directory has `Loaf.toml`, with or without `Cargo.toml`. Oven uses only the Loaf graph. Cargo is not an implicit source of build policy.
+1. **Cargo project:** a directory has `Cargo.toml` and no `loaf.toml`. An explicitly selected Oven Cargo-compatibility operation delegates to Cargo. Cargo retains authority over its manifest and side effects.
+2. **Loaf project:** a directory has `loaf.toml`, with or without `Cargo.toml`. Oven uses only the Loaf graph. Cargo is not an implicit source of build policy.
 
 There is no mixed automatic state. In particular, Oven must not merge dependency tables, inherit Cargo workspace membership, execute a discovered `build.rs`, or allow a Cargo feature to silently change a Loaf's public feature API.
 
@@ -555,20 +570,20 @@ Diagnostics must distinguish configuration errors, unsupported target/carrier co
 
 This RFC is intentionally breaking and should land before Incan 1.0.
 
-- `incan.toml` is replaced wholesale with `Loaf.toml`.
+- `incan.toml` is replaced wholesale with `loaf.toml`.
 - `incan.lock` is replaced with `Oven.lock`.
 - Existing implemented project/workspace/environment code must be updated to discover and write the new schema; it must not retain a legacy `incan.toml` parser.
 - Existing Draft RFCs that refer to `[tool.incan.*]` must be amended before their implementation is scheduled.
 - Existing project authors must explicitly adopt the Loaf contract; a raw rename is valid only when the resulting tables satisfy the new schema.
 - Cargo-only repositories require no adoption to be runnable in explicit Cargo-compatibility mode.
 
-The tool should emit a targeted diagnostic when it finds `incan.toml` without `Loaf.toml`, but it must not silently interpret the old file. This keeps the authority transition explicit and avoids supporting every interaction between old Incan configuration, Cargo configuration, and the new Oven model.
+The tool should emit a targeted diagnostic when it finds `incan.toml` without `loaf.toml`, but it must not silently interpret the old file. This keeps the authority transition explicit and avoids supporting every interaction between old Incan configuration, Cargo configuration, and the new Oven model.
 
 ## Alternatives considered
 
-### Add `Oven.toml` beside `Loaf.toml`
+### Add `Oven.toml` beside `loaf.toml`
 
-Rejected for now. A separate root file makes the package-versus-workspace vocabulary literal, but it creates two canonical documents, discovery precedence, and synchronization questions. A single `Loaf.toml` with explicit `[project]` and `[workspace]` scopes supports single projects, rooted workspaces, and virtual workspaces without losing capability. A future RFC may introduce a separate file only if independently versioned workspace policy demonstrates a real need.
+Rejected for now. A separate root file makes the package-versus-workspace vocabulary literal, but it creates two canonical documents, discovery precedence, and synchronization questions. A single `loaf.toml` with explicit `[project]` and `[workspace]` scopes supports single projects, rooted workspaces, and virtual workspaces without losing capability. A future RFC may introduce a separate file only if independently versioned workspace policy demonstrates a real need.
 
 ### Keep `incan.toml` and add Loaf concepts inside it
 
@@ -598,13 +613,13 @@ Rejected. Unconstrained tool tables make the canonical manifest a dumping ground
 
 - This is a breaking pre-1.0 configuration change touching project creation, discovery, documentation, workspaces, locking, environments, package resolution, interop, and tooling.
 - Typed dependencies and registered registries are more explicit than one string version requirement; good defaults and concise syntax are necessary for everyday use.
-- A strict Cargo boundary means Rust projects that adopt `Loaf.toml` cannot rely on arbitrary Cargo manifest behavior without an explicit supported Oven provider/action model.
+- A strict Cargo boundary means Rust projects that adopt `loaf.toml` cannot rely on arbitrary Cargo manifest behavior without an explicit supported Oven provider/action model.
 - Plans, policies, and receipts impose vocabulary and implementation work beyond a simple compiler wrapper.
-- One manifest filename means a virtual workspace has a `Loaf.toml` without a `[project]` table. The explicit table scopes must make that form obvious.
+- One manifest filename means a virtual workspace has a `loaf.toml` without a `[project]` table. The explicit table scopes must make that form obvious.
 
 ## Layers affected
 
-- **Manifest discovery and validation** — must recognize only `Loaf.toml`, validate rooted/virtual workspace shapes, reject unknown or conflicting scope, and diagnose legacy or coexisting manifests precisely.
+- **Manifest discovery and validation** — must recognize only `loaf.toml`, validate rooted/virtual workspace shapes, reject unknown or conflicting scope, and diagnose legacy or coexisting manifests precisely.
 - **Workspace resolution** — must preserve explicit membership, shared lock ownership, scoped command selection, and typed dependency inheritance while replacing `incan.toml` paths and tables.
 - **Provider and dependency resolution** — must normalize typed dependencies, apply default origins, resolve registered registries, preserve provider-specific semantics, verify trust/integrity, and construct one session-owned plan.
 - **Source and backend planning** — must discover one conventional built-in source facet, require `[incan.source]` and `[rust.source]` for mixed or nonstandard roots, diagnose ambiguous mixed roots, define the bounded Rust facet needed to plan Rust compilation, and prevent Cargo conventions from participating in Loaf planning.
@@ -613,13 +628,13 @@ Rejected. Unconstrained tool tables make the canonical manifest a dumping ground
 - **Locking, stores, and publication** — must rename the canonical lock to `Oven.lock`, preserve deterministic whole-workspace resolution, reserve immutable target-bound `*.loaf` identities, and keep locks, receipts, caches, and publication artifacts distinct.
 - **Cargo compatibility adapter** — must run Cargo only when explicitly selected, report its mode and side-effect boundary, and never act as a fallback inside a Loaf build.
 - **CLI and inspection** — must expose manifest shape, plan, target selection, registry/trust facts, effects, `*.loaf` assets, and receipts; RFC 118 owns final binary/subcommand spelling and alias behavior.
-- **Documentation, templates, LSP, and IDEs** — must create, discover, edit, display, and diagnose `Loaf.toml` consistently without making generated Rust or hidden backend state the public model.
+- **Documentation, templates, LSP, and IDEs** — must create, discover, edit, display, and diagnose `loaf.toml` consistently without making generated Rust or hidden backend state the public model.
 
 ## Acceptance criteria
 
 RFC 117 is ready to move beyond Draft when its normative rules and updated related RFCs establish all of the following:
 
-- A standalone project, rooted workspace, and virtual workspace have unambiguous `Loaf.toml` examples and discovery rules.
+- A standalone project, rooted workspace, and virtual workspace have unambiguous `loaf.toml` examples and discovery rules.
 - The dependency grammar distinguishes unit kind from origin and explains defaults, source overrides, features, integrity, and trust.
 - The `incan.pub` and crates.io defaults, explicit registry registration, project allow-list, credential boundary, and lock identity are defined precisely enough to implement.
 - An Incan-only, Rust-only, and mixed Incan/Rust Loaf have defined source-root behavior: simple projects are convention-first, mixed roots use `[incan.source]` and `[rust.source]`, ambiguous co-located `.incn`/`.rs` sources diagnose, and no implicit Cargo participation occurs.
@@ -635,14 +650,14 @@ RFC 117 is ready to move beyond Draft when its normative rules and updated relat
 
 ### Phase 1: Manifest and workspace authority
 
-- Introduce `Loaf.toml` discovery and validation; remove `incan.toml` discovery from project-aware operations.
+- Introduce `loaf.toml` discovery and validation; remove `incan.toml` discovery from project-aware operations.
 - Implement rooted and virtual workspace shapes, explicit member selection, and precise coexisting-Cargo diagnostics.
 - Support nested `loaves/` groups, retaining explicit membership and allowing a structural parent manifest only when it has real child-selection or local-requirement work to do.
 - Update project creation, documentation, LSP/IDE manifest discovery, and fixtures.
 
 ### Phase 2: Typed graph, registries, and lock
 
-- Normalize Loaf, crate, and capability dependencies into one resolver-owned graph.
+- Normalize Loaf, crate, and provider dependencies into one resolver-owned graph.
 - Implement default origins, registered registry identities, workspace allow-lists, integrity/trust facts, and the `Oven.lock` format.
 - Amend RFC 034 integration and retain RFC 114's public-feature/provider boundaries.
 
@@ -654,7 +669,7 @@ RFC 117 is ready to move beyond Draft when its normative rules and updated relat
 
 ### Phase 4: Environment and action rehoming
 
-- Amend and implement the `Loaf.toml` configuration location for RFC 073 environments/matrices and RFC 078 typed actions.
+- Amend and implement the `loaf.toml` configuration location for RFC 073 environments/matrices and RFC 078 typed actions.
 - Materialize the standard `dev`, `test`, `lint`, and `docs` environments; support explicit inheritance, environment dependency closure, conflict diagnostics, and commented scaffold defaults.
 - Make Oven materialization, scope selection, dry-run, and policy gating consume the same project/workspace plan without allowing an environment to change an ordinary bake implicitly.
 
@@ -667,20 +682,18 @@ RFC 117 is ready to move beyond Draft when its normative rules and updated relat
 ## Design decisions
 
 - **Loafified-package distribution advantage:** the long-term `incan.pub` value proposition is a verified, target-compatible pre-warmed Loaf closure that Oven can reuse across consumers after compatibility and trust verification. It is not universal-binary distribution, an implicit network effect, or a v0.6 release requirement. The v0.6 package/lock/receipt model must nevertheless preserve the identities needed to make it a later registry capability rather than a new authority model.
-- **Nested Loaf topology:** `loaves/` is the conventional home for all non-root workspace member projects, including Rust-only members. It supports arbitrary nested groups such as `loaves/stdlib/web`; paths are never implicit membership, dependency, linkage, or publication edges. A group gains a `Loaf.toml` only when it needs a real structural parent contract, and it always inherits the root authority.
+- **Nested Loaf topology:** `loaves/` is the conventional home for all non-root workspace member projects, including Rust-only members. It supports arbitrary nested groups such as `loaves/stdlib/web`; paths are never implicit membership, dependency, linkage, or publication edges. A group gains a `loaf.toml` only when it needs a real structural parent contract, and it always inherits the root authority.
 - **Built-in source facets:** Incan and Rust are the v0.6 built-in authored source facets. Simple one-language projects use `src/` by convention. Mixed or nonstandard projects use `[incan.source]` and `[rust.source]` with non-overlapping roots; the compiler diagnoses co-located `.incn` and `.rs` source files instead of imposing precedence. Rust exceptions remain beneath `rust.*`.
 - **Deliberate interop boundary:** C remains behind the existing `[interop.c]` facade, including any authored C shim root. `[interop.*]` is reserved for later concrete integrations such as JNI or Python; v0.6 does not define a plugin system, automatic foreign-tool discovery, or generic foreign-source execution.
 - **Precise C configuration terminology:** Loaf configuration names C interop, host, target, and linker artifact form directly. It does not use `native` as an interop configuration keyword or a generic foreign-language category. Any change to RFC 116's existing source-level binding spelling requires a later language proposal rather than a retroactive edit to that closed RFC.
-
-## Unresolved questions
-
-1. What is the final compact TOML syntax for typed dependency entries and provider-specific feature requests, while preserving the unit-kind/origin distinction?
-2. Which detailed environment matrix and action/policy subtable shapes are needed under the settled direct semantic roots without weakening the standard-environment or explicit-effect boundaries?
-3. Which generated-input declarations and compact `rust.*` exception fields are necessary for the first 0.6 implementation, beyond the settled core source-root syntax?
-4. How should an organization distribute and administer trusted registry registrations without letting a checked-out project overwrite user or organization trust policy?
-5. Which target/carrier combinations and named delivery-policy grammar constitute the first 0.6 proof set?
-6. What is the smallest typed generator/provider extension API that supports real code generation and native shims without becoming a generic script hook?
-7. Which `*.loaf` container or wire format, registry transport, and multi-asset publication protocol best carries the already-reserved immutable target-bound identity without changing its authored/lock/receipt contract?
-8. What precise inspection meaning, if any, should cold, warm, and hot Loaves have after the Oven's cache and lifecycle model is settled?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. -->
+- **`provider` is the third dependency unit kind, not `capability`:** the `[dependencies]` unit kind for target-specific library, SDK, toolchain, runtime, or deployment requirements is named `provider`, matching the vocabulary this RFC already uses pervasively ("provider semantics," "Oven-managed provider operation") rather than inventing a fourth word. `capability` is reserved: RFC 104 already owns it for checked runtime-authority grants, and reusing it here for a build-time provisioning concept created a real three-way terminology collision with RFC 104's runtime capabilities and RFC 075's project-scaffolding descriptor (also renamed, to `mix`, for the same reason). The `[capabilities]` table root this RFC reserved for RFC 075's descriptor-enablement record is renamed to `[mixes]` to match.
+- **Provider-kind dependencies have a full and a bare form:** a `provider`-kind requirement that needs real version or feature constraints is declared as an ordinary `[dependencies]` entry, the same shape as `loaf` and `crate` entries: `vision-runtime = { provider = "vision-runtime", version = ">=2.0" }`. A `provider`-kind requirement that only needs to exist, with no constraints, may instead be referenced bare from the owning domain table that needs it, for example `[interop.c].requires = ["vision-runtime"]`. The bare form is implicit shorthand that resolves against a fuller `[dependencies]` declaration when one is present; the two are not competing syntaxes. This mirrors the "simple shorthand plus full explicit form, both valid" shape RFC 118 uses for its CLI surface.
+- **Detailed environment/action/policy subtable shapes belong to their owning RFCs:** RFC 117 reserves and rehomes the top-level `[envs]`, `[actions]`, and `[policy]` table roots (see "Environments and actions"), but the detailed subtable schema beneath each root is RFC 073's, RFC 078's, and RFC 076's own decision, respectively. RFC 117 does not need to specify those shapes to reach Planned; it only needs the roots and the standard-environment/explicit-effect boundaries it already defines to hold.
+- **Compact `rust.*` exception fields belong to RFC 119:** the core source-root contract (`[incan.source]`, `[rust.source]`, non-overlapping roots, convention-first defaults) is this RFC's own settled surface. The detailed native-Rust facet grammar, including generated-input declarations and the compact `rust.*` exception fields, is RFC 119's work, as this RFC's own "Rust source facet" section already states.
+- **Target declarations use `[targets.<name>]` blocks with a list-only `platforms` field and a toolchain-owned `carrier` field:** `platforms` is always a list of literal Rust target triples (for example `aarch64-apple-ios`), reusing Rust's own target vocabulary instead of inventing a parallel one, and matching this RFC's existing list-only convention for `members`/`targets`. `carrier` is a single value naming the deliverable form (static library, framework, JNI shared library, Python wheel, executable, Rust-host caller projection, or another declared family). Carrier kinds are toolchain-owned and extensible only across releases: a new carrier kind lands through an official RFC (RFC 119 for Rust-hosted carriers, a future RFC for others), never through package-defined extension. Whether a given platform/carrier combination is valid (for example, `framework` only makes sense for Apple platforms) is not this RFC's concern; it is owned by whichever RFC defines that carrier kind. Tooling support for validating combinations and offering editor autocomplete is tracked separately (issue #1064) and is not required for this RFC to reach Planned.
+- **`*.loaf` wire/container format stays out of scope, as already stated in Non-Goals:** this RFC reserves the identity a future artifact-format RFC must carry — project/facet, target, carrier, profile, resolved-graph identity, payload digest, and receipt identity — but does not define the container, registry transport, or multi-asset publication protocol itself. Asking this RFC to also settle the wire format was a category error: Non-Goals already assigns it to a dedicated RFC.
+- **Cold/warm/hot Loaf states stay out of scope, as already stated in Non-Goals and Terminology:** this RFC's Terminology section already flags that their precise state semantics are intentionally not specified here. Giving them normative inspection meaning is a future Oven cache/lifecycle RFC's decision, not a gap in this RFC's own model.
+- **Registry trust distribution/administration is out of scope:** this RFC defines the registration contract — registries are declared in Oven-controlled user or organization configuration outside the project, and a Loaf or workspace may only allow-list from what is already registered, never define, rebind, or weaken trust (see "Registry registration and trust"). That non-overwrite guarantee already holds without any additional distribution mechanism, because a project has no registration authority at all. How an organization gets the same trusted-registry configuration onto every developer machine and CI runner — through existing device-management tooling, a self-hosted convention, or another means the operator chooses — is an operational concern for whoever runs the registry, not a capability this RFC or Oven itself needs to provide. `incan.pub` remains the trusted, secure default origin for the open ecosystem; that trust is RFC 034's responsibility.
+- **Generators are ordinary typed Incan functions, not a bespoke plugin format:** a generator is not a new sandboxed runtime, wire protocol, or component model. It is a typed Incan (or `rust::`-interop) function with a declared input/output signature that Oven resolves and calls as part of planning or baking, reusing the same execution substrate Incan's own interactive and notebook ambitions already require rather than inventing a second one. Its capability needs — network access, filesystem beyond its declared outputs, a live database, or any other ambient authority — are ordinary RFC 104 capability grants like any other code path; there is no generator-specific security model, because RFC 104 already owns "what can this code touch" regardless of who is asking. A generator's output may legitimately vary between two otherwise-identical builds when it consults an external, changing source; that variability is a capability its declaring package consciously requests and its consumer consciously grants, not a defect this RFC needs to guard against. A generator's declared outputs remain generated, ownership-tracked files that an ordinary bake must not overwrite authored source with.
+- **Providers remain closed and toolchain-owned, not a third-party extension point:** unlike generators, providers (compiling Rust, verifying C headers, materializing an SDK component) are deep native toolchain integrations that Oven implements itself, not expressible as a typed function signature. A new provider kind lands only through an official RFC, the same governance already settled for carrier kinds.
+- **Carriers have a shape, and a terminal carrier's bake output is not a `*.loaf`:** found while working RFC 118's command-surface decisions and folded back here, since carrier semantics are this RFC's job, not RFC 118's. A `*.loaf`'s entire value proposition, as this RFC's own "Future registry-supplied warm reuse" section describes it, is reuse by another Oven consumer. A terminal artifact such as an executable — for example a data pipeline's final ETL binary — is never depended on as a package by anything, so packaging it as a reusable `*.loaf` carries no meaning. Every carrier therefore has a fixed **shape**: loaf-shaped carriers (static library, framework, JNI shared library, Python wheel, Rust-host caller projection) bake to a `*.loaf` asset; the terminal carrier (`executable`) bakes to a plain build artifact with no `.loaf` packaging. Both shapes still go through the same plan, policy decision, and receipt; shape changes only downstream-reuse packaging, not plan rigor or audit requirements. See "Carrier shape and bake output."

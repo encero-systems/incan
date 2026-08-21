@@ -1,6 +1,6 @@
 # RFC 119: Oven-native Rust build facets and Cargo interoperation
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-08-04
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,7 +11,7 @@
     - RFC 043 (Rust trait implementation from Incan)
     - RFC 097 (Rust-hosted Incan caller)
     - RFC 114 (compiled providers, SDK components, and package features)
-    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
     - #975 (Oven: Cargo-free Incan/Rust toolchain)
     - #990 (governed `std.process` for Oven execution)
@@ -19,14 +19,14 @@
 - **Issue:** [#1012](https://github.com/encero-systems/incan/issues/1012)
 - **RFC PR:** —
 - **Written against:** v0.5
-- **Target scope:** v0.8 design and implementation planning; this is not a shipment claim.
+- **Target scope:** v0.6 design and implementation planning; this is not a shipment claim.
 - **Shipped in:** —
 
 ## Summary
 
 RFC 117 establishes a language-neutral Loaf project model, but it deliberately does not specify enough Rust build behavior to replace Cargo as the normal authority for an explicitly supported Rust project. This RFC defines that next layer: Oven-native Rust build facets, an Oven-owned crate graph and direct-`rustc` plan, controlled build-time providers, Rust test and IDE projections, and explicit Cargo interoperation.
 
-Oven consumes crates.io and registered Cargo-compatible sources through the typed `crate` provider contract. It does not publish Loaves or `*.loaf` assets to crates.io. `Loaf.toml` remains the sole authored project manifest, `Oven.lock` remains the resolved graph, and a bake emits immutable target-bound `*.loaf` assets plus receipts. Cargo remains runnable only through explicit Cargo-compatibility mode; an existing Cargo project must explicitly opt into Loaf adoption and is never silently merged into an Oven project.
+Oven consumes crates.io and registered Cargo-compatible sources through the typed `crate` provider contract. It does not publish Loaves or `*.loaf` assets to crates.io. `loaf.toml` remains the sole authored project manifest, `Oven.lock` remains the resolved graph, and a bake emits immutable target-bound `*.loaf` assets plus receipts. Cargo remains runnable only through explicit Cargo-compatibility mode; an existing Cargo project must explicitly opt into Loaf adoption and is never silently merged into an Oven project.
 
 ## Core model
 
@@ -38,7 +38,7 @@ Oven consumes crates.io and registered Cargo-compatible sources through the type
 6. **Host and target are different build domains:** build scripts, procedural macros, and compiler plugins execute for the build host; libraries, binaries, test subjects, and carriers are compiled for the selected target. Oven plans and locks both domains separately.
 7. **Rust test work is first-class:** unit tests, integration tests, doctests, examples, and benchmarks are explicit build/run roles, not side effects of a generic `rustc` invocation. They use RFC 117's named environments: `test` by default for test roles and `docs` by default for documentation roles.
 8. **IDE projection is derived and warm-reusing:** Oven materializes a Rust-analyzer-compatible project projection from one explicit inspection selection. It first reuses every receipt-compatible pre-warmed `*.loaf` asset and provider/artifact closure, including across equivalent clean worktrees or implementation slices; the lightweight local projection then describes that selected graph. Switching an editor selection never implies rebuilding every target, dependency, or provider, and the projection does not create or require a synthetic authoritative `Cargo.toml`.
-9. **Cargo is an explicit interoperation boundary:** `oven cargo ...` invokes Cargo as Cargo-authoritative compatibility mode. Explicit adoption may import selected facts into a new `Loaf.toml`, but no directory with both manifests receives mixed semantics.
+9. **Cargo is an explicit interoperation boundary:** `oven cargo ...` invokes Cargo as Cargo-authoritative compatibility mode. Explicit adoption may import selected facts into a new `loaf.toml`, but no directory with both manifests receives mixed semantics.
 10. **The Rust core remains narrow but real:** as decided by RFC 118, Oven's operational core/API owns planning, resolution, policy, stores, leases, provider execution, and crash-safe publication in Rust. Its public API is language-neutral and does not leak Rust borrows.
 11. **Incan-first authoring remains policy:** a Rust facet makes Rust projects and explicitly justified mixed work supportable. It does not authorize new Rust in Incan products without a demonstrated limitation and tracked removal path.
 12. **Native compatibility is proved, not implied:** the supported Rust envelope is defined by an executable conformance corpus. Unsupported Cargo behavior produces a precise diagnostic or requires explicit Cargo mode.
@@ -49,7 +49,7 @@ RFC 117 makes an Oven-native Rust project architecturally possible: it has an au
 
 Cargo is valuable because it solves those practical concerns for a large Rust ecosystem. But it is not a sufficient authority for a project that includes Incan sources, checked interop, target carriers, governed actions, receipts, persistent stores, and Incan package publication. Oven should not hide Cargo under a different command name; it must own its build graph and make any Cargo interoperation explicit.
 
-The right v0.8 objective is therefore neither “emulate every Cargo behavior” nor “rewrite Rust as Incan.” It is a bounded native-Rust contract that builds serious selected Rust Loaves, consumes the ordinary crate ecosystem, produces target-bound `*.loaf` assets, and makes its limits inspectable. Cargo remains available for compatibility while that envelope expands through evidence.
+The right objective is therefore neither “emulate every Cargo behavior” nor “rewrite Rust as Incan.” It is a bounded native-Rust contract that builds serious selected Rust Loaves, consumes the ordinary crate ecosystem, produces target-bound `*.loaf` assets, and makes its limits inspectable. Cargo remains available for compatibility while that envelope expands through evidence.
 
 ## Goals
 
@@ -68,8 +68,8 @@ The right v0.8 objective is therefore neither “emulate every Cargo behavior”
 - Publishing Oven-native Loaves, `*.loaf` assets, or normal Oven packages to crates.io.
 - Making `Cargo.toml`, `Cargo.lock`, Cargo workspace discovery, Cargo build profiles, or arbitrary Cargo command behavior part of ordinary Loaf semantics.
 - Supporting every Cargo crate on day one, or claiming compatibility from source discovery alone.
-- Implicitly importing, merging, or executing a neighbouring Cargo project after `Loaf.toml` exists.
-- Defining the `*.loaf` archive/wire format, Incan registry transport protocol, or whether `bakery.io` becomes an Incan registry endpoint or alias.
+- Implicitly importing, merging, or executing a neighbouring Cargo project after `loaf.toml` exists.
+- Defining the `*.loaf` archive/wire format or Incan registry transport protocol.
 - Redefining RFC 097's Rust-host caller ABI, RFC 116's C ABI safety contract, RFC 117's project authority, or RFC 118's command ownership.
 - Moving Oven's operational core/API into Incan. RFC 118's justified Rust exception remains in force.
 
@@ -77,7 +77,7 @@ The right v0.8 objective is therefore neither “emulate every Cargo behavior”
 
 ### An Oven-native Rust Loaf
 
-An explicitly Rust-authored project adopts Oven by authoring `Loaf.toml`, not by placing Cargo configuration beside Rust sources and hoping it is inferred:
+An explicitly Rust-authored project adopts Oven by authoring `loaf.toml`, not by placing Cargo configuration beside Rust sources and hoping it is inferred:
 
 ```toml
 [project]
@@ -149,18 +149,18 @@ oven cargo test
   Cargo compatibility mode: Cargo.toml is authoritative.
 
 oven adopt cargo --manifest ./Cargo.toml
-  Explicit adoption: inspect/import selected source facts, write or propose Loaf.toml,
+  Explicit adoption: inspect/import selected source facts, write or propose loaf.toml,
   then make future Oven operations Loaf-authoritative.
 
 oven bake
-  Oven-native mode: Loaf.toml and Oven.lock are authoritative; Cargo files are ignored.
+  Oven-native mode: loaf.toml and Oven.lock are authoritative; Cargo files are ignored.
 ```
 
 `oven adopt cargo` is illustrative command spelling. The important rule is explicit re-authoring: a user chooses to cross the boundary, sees the proposed Loaf contract and unsupported Cargo behavior, and accepts the resulting project state. Oven does not treat every checked-out `Cargo.toml` as a latent Loaf.
 
 ### Publishing and consuming
 
-Oven-native packages publish to Incan's registry ecosystem. The configured public endpoint may eventually be branded `bakery.io`, but registry identity and trust remain explicit Oven configuration rather than a hard-coded domain in `Loaf.toml`.
+Oven-native packages publish to Incan's registry ecosystem. `incan.pub` is the public endpoint for the foreseeable future; registry identity and trust remain explicit Oven configuration rather than a hard-coded domain in `loaf.toml`.
 
 Oven can consume a crate from crates.io because Rust libraries are part of the world it interoperates with. That is not reciprocal authority: an Oven-native package is not automatically a crates.io package. If a future product needs a Cargo-consumable publication projection, it must be a separately specified bridge with explicit provenance to a selected `*.loaf` asset.
 
@@ -223,10 +223,10 @@ Oven can consume a crate from crates.io because Rust libraries are part of the w
 
 ### Cargo compatibility and explicit adoption
 
-1. `oven cargo ...` is an explicit compatibility operation for a directory with `Cargo.toml` and no `Loaf.toml`. Cargo remains authoritative for its manifest, lock, build scripts, procedural macros, profiles, workspace discovery, and side effects. Oven records that it ran Cargo mode and may retain a wrapper receipt; it does not reinterpret Cargo results as an Oven-native lock.
-2. A directory that contains `Loaf.toml` is always a Loaf project for normal Oven operations. A neighbouring Cargo manifest is diagnosed and ignored.
-3. Adoption is an explicit user-requested transformation. It may parse Cargo metadata as input, propose a `Loaf.toml`, enumerate unsupported or policy-sensitive behavior, and write project state only after the mutation/policy rules of RFC 076 approve it.
-4. Adoption must never leave an implicit mixed state. Once a user accepts the Loaf contract, future Oven-native operations use `Loaf.toml` and `Oven.lock`; continuing to run Cargo requires an explicit Cargo operation.
+1. `oven cargo ...` is an explicit compatibility operation for a directory with `Cargo.toml` and no `loaf.toml`. Cargo remains authoritative for its manifest, lock, build scripts, procedural macros, profiles, workspace discovery, and side effects. Oven records that it ran Cargo mode and may retain a wrapper receipt; it does not reinterpret Cargo results as an Oven-native lock.
+2. A directory that contains `loaf.toml` is always a Loaf project for normal Oven operations. A neighbouring Cargo manifest is diagnosed and ignored.
+3. Adoption is an explicit user-requested transformation. It may parse Cargo metadata as input, propose a `loaf.toml`, enumerate unsupported or policy-sensitive behavior, and write project state only after the mutation/policy rules of RFC 076 approve it.
+4. Adoption must never leave an implicit mixed state. Once a user accepts the Loaf contract, future Oven-native operations use `loaf.toml` and `Oven.lock`; continuing to run Cargo requires an explicit Cargo operation.
 5. Cargo-compatible caller packages remain RFC 097 interoperability projections. They may consume selected outputs, but must not cause Cargo to resolve, compile, or select the Incan implementation graph.
 
 ### Supported-envelope conformance
@@ -253,7 +253,7 @@ The matrix is a compatibility statement, not a one-time benchmark. It must run o
 
 RFC 117 owns one manifest authority, one typed dependency graph, target policy, registry trust, `Oven.lock`, `*.loaf` identity, and the rule that a discovered Cargo file is ignored in Loaf mode. This RFC supplies the detailed Rust planner and provider contract that RFC 117 intentionally leaves open. It does not create a second Rust manifest or make a Rust facet an exception to workspace authority.
 
-The illustrative `rust.*` tables in this RFC are source-facet data within `Loaf.toml`, not a return to one manifest per implementation language. `[rust.source]` names a mixed or nonstandard Rust root, and other `rust.*` tables carry compact Rust-specific exceptions. No `[oven.rust]` prefix is needed: `Loaf.toml` is already the Oven-managed project document. Incan uses the parallel built-in `[incan.source]` root; C remains behind `[interop.c]` rather than becoming a peer top-level source namespace.
+The illustrative `rust.*` tables in this RFC are source-facet data within `loaf.toml`, not a return to one manifest per implementation language. `[rust.source]` names a mixed or nonstandard Rust root, and other `rust.*` tables carry compact Rust-specific exceptions. No `[oven.rust]` prefix is needed: `loaf.toml` is already the Oven-managed project document. Incan uses the parallel built-in `[incan.source]` root; C remains behind `[interop.c]` rather than becoming a peer top-level source namespace.
 
 ### Relationship to RFC 118
 
@@ -270,7 +270,7 @@ RFC 097 defines a Rust-host caller facet and its stable ABI/package metadata. RF
 
 ### Publication authority
 
-An Oven-native package's publication identity is a Loaf registry identity. `incan.pub` is the current default; a future `bakery.io` endpoint or alias must be registered and trusted through Oven configuration. Crates.io is a Rust crate source, not an Oven-native publish target.
+An Oven-native package's publication identity is a Loaf registry identity. `incan.pub` is the default and only registered endpoint for the foreseeable future. Crates.io is a Rust crate source, not an Oven-native publish target.
 
 ## Alternatives considered
 
@@ -360,12 +360,34 @@ Rejected. It would revive implicit Cargo semantics, surprise build-script/proc-m
 - **Proc-macro compatibility:** a proc macro is a foreign Rust compiler feature. Oven compiles it for the build host and lets the selected `rustc` load and invoke it through the normal ABI, matching Cargo behavior. Oven improves graph/artifact reuse without caching individual expansions or changing macro execution semantics; stricter containment is governed-policy behavior only.
 - **IDE selection, provenance, and warm reuse:** an editor uses one visible Oven inspection selection, defaulting to `dev` and the Loaf-selected or host-native target. Oven first reuses receipt-compatible pre-warmed Loaf/provider/artifact closures across equivalent clean worktrees and implementation slices, then derives a small local standard Rust project descriptor plus an Oven provenance sidecar. The descriptor is a compatibility export, not authority; it neither triggers every target build nor duplicates dependency output.
 - **Editor-side macro execution:** an Oven-owned inspection session may expand procedural macros only under explicit observe, governed, or permissive policy and records session-level macro/toolchain/policy status separately from bake receipts. A third-party editor that consumes the compatibility descriptor is never presented as governed Oven execution.
+- **Splitting a project's declarations across different build outputs is done by physically separating Loaves, not by tagging individual declarations:** this RFC's bake model already lets one compilation unit produce multiple `*.loaf` assets when different carriers are selected (see "Native linkage, carriers, and cross compilation"), but that is the same code packaged multiple ways, not different code per output. A project that genuinely needs different subsets of its own source in different outputs (for example, browser-facing code and server-facing code in one logical project) expresses that as separate Loaves under RFC 117's workspace model — the same idiom Rust uses (separate crates in a workspace) and Python uses (separate sub-packages), not a novel Incan mechanism. This RFC does not add a declaration-level tagging or attribute system for routing individual functions or modules into different carrier outputs from a single Loaf; RFC 117's existing workspace/member model already provides the separation, with a shared common Loaf as a dependency when code needs to be reused across the split. This closes the gap left by RFC 092's rejection using a mechanism this RFC already has, not a new one.
+- **`rust.*` exceptions describe one Loaf's own single compilation unit, never an additional crate:** `[rust.source]`, and any other `rust.*` field, may only describe exceptions for the Rust unit that Loaf's own convention-first root would otherwise identify — a nonstandard root, crate type, edition, or non-default name for that one unit — plus additional *build roles* sharing that same unit, such as extra binaries alongside one library (Cargo's `[[bin]]` pattern). There is no `[rust.crates.<name>]`-style table for declaring a second, independently identified crate inside one Loaf's manifest. A genuinely separate Rust crate — most commonly a procedural-macro crate, which Rust's own compiler requires to be a distinct crate from anything that uses it — is a sibling Loaf under RFC 117's workspace model, referenced as an ordinary `loaf`-kind dependency with a `path` origin override:
 
-## Unresolved questions
+    ```toml
+    # myproject/loaf.toml
+    [workspace]
+    members = ["loaves/incan_derive"]
 
-1. Which compact exception declarations are needed for nonconventional Rust crates, feature-gated targets, and target predicates without turning the convention-first facet into a restatement of Cargo's manifest surface?
-2. Which governed compiler-process containment backends meet the policy/receipt contract on supported build hosts without changing the Cargo-equivalent observe-mode behavior?
-3. What evidence should promote a crate/provider class from Cargo-only compatibility to Oven-native support?
-4. If a public “Bakery” registry endpoint is introduced, should it be an alias of the current Incan registry identity or a separately registered registry kind?
+    [dependencies]
+    incan_derive = { loaf = "incan_derive", path = "loaves/incan_derive" }
+
+    [rust.source]
+    root = "sources/rust"
+    ```
+
+    ```toml
+    # myproject/loaves/incan_derive/loaf.toml
+    [project]
+    name = "incan_derive"
+
+    [rust]
+    crate-type = ["proc-macro"]
+    ```
+
+    The sibling crate is `loaf`-kind, not `crate`-kind, even though its content is entirely Rust: per RFC 117's own language-neutral model, `crate`-kind is for consuming the *external* Rust ecosystem (crates.io or a registered Cargo-compatible source), while `loaf`-kind is for this project's own package graph regardless of implementation language. Target predicates *within* one compilation unit (ordinary `#[cfg(...)]` source-level conditionals) remain native Rust and need no manifest declaration at all; this RFC already commits to passing the selected target through so `rustc`'s own `cfg` evaluation works unmodified.
+- **Governed-mode containment delegates to existing platform-native primitives; Oven does not implement its own sandboxing:** on Linux, containment uses Landlock or delegates to an established userspace sandboxing tool such as bubblewrap rather than hand-rolled namespace/seccomp wiring; on macOS, `sandbox-exec`/Seatbelt profiles; on Windows, AppContainer or Job Objects. These are security-audited, already-existing primitives; Oven integrates with them rather than authoring new OS-level containment code, the same "reuse existing infrastructure" reasoning behind this RFC's proc-macro and generator decisions elsewhere. Where a build host has no viable primitive for a selected policy, governed mode is refused outright rather than silently weakened or emulated, exactly as this RFC's reference text already requires ("if the host cannot enforce the selected policy without changing behavior, Oven denies the governed operation"). Observe mode's Cargo-equivalent behavior is unaffected by this choice: observe mode records effects without enforcing containment, so it has no platform-primitive dependency at all.
+- **The native-mode conformance bar is the price of a real benefit, not friction for its own sake, and that benefit is native-mode-only:** Oven-native's value over plain Cargo is not "compiles any single cold build faster" — a native bake still invokes the same `rustc` Cargo would. The concrete payoff is avoiding *redundant* rebuild work across environments: reusing a receipt-compatible pre-warmed Loaf/provider/artifact closure across equivalent clean worktrees, CI runners, and implementation slices (see "IDE selection, provenance, and warm reuse") gives a significant speed advantage over raw Cargo under warm circumstances, on top of the receipted, auditable, unified Incan+Rust project model Cargo cannot offer at all. Neither benefit is available in Cargo-compatibility mode: `oven cargo ...` is Cargo being fully authoritative over its own manifest, lock, and side effects, with no Oven-owned graph, receipt, or content-addressed store to reuse against. A project keeping `Cargo.toml` and wrapping it with `oven cargo` gets Cargo's own native performance characteristics, not Oven's — the reuse and receipt benefits require adopting `loaf.toml`.
+- **Crate/provider promotion from Cargo-only to Oven-native reuses the existing conformance-corpus mechanism rather than a new process:** a crate or provider class graduates when (1) every build-time directive it emits is covered by the already-known directive vocabulary (see "Build scripts, procedural macros, and generated inputs") with no unknown directive falling back to a passthrough, (2) it is added to the conformance corpus with a passing artifact/receipt-equivalence proof against the same crate built through Cargo-compatibility mode, and (3) governed-mode containment succeeds on every supported build host if its build-time work needs host access at all. This is deliberately the same "compatibility statement, not a one-time benchmark" mechanism this RFC already commits to running on every relevant change, applied at crate/provider grain rather than only at the project-shape grain the existing conformance matrix covers. Most real-world `build.rs` usage (`rerun-if-changed`, `cfg` emission, ordinary link-lib/link-search) is expected to already fall within the known vocabulary; the bar mainly excludes exotic, undemonstrated build-time patterns, not the mainstream ecosystem.
+- **No speculative naming for a future registry endpoint:** `incan.pub` is the registry for the foreseeable future. This RFC does not name, brand, or reserve a hypothetical second public endpoint; an unregistered domain speculatively mentioned in earlier drafts is removed rather than carried forward as a design question.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

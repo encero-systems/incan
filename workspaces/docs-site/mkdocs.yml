@@ -322,6 +322,7 @@ nav:
           - Duckborrowing: contributing/explanation/duckborrowing.md
           - Generated Rust quality: contributing/explanation/generated_rust_quality.md
           - Layering rules: contributing/explanation/layering.md
+          - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - Incapunk docs theme: contributing/explanation/incapunk_docs_theme.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md

@@ -266,7 +266,7 @@ The publisher pays the compatibility cost once. Oven fingerprints the inputs tha
 <p>Alpha boundary</p>
 <h2 id="oven-boundary-title">Early by design. Explicit by default.</h2>
 <span>Oven Alpha proves the maintained Incan workflow and the repository's own compiler suite. It does not yet claim:</span>
-<ul><li>general Cargo compatibility for arbitrary Rust workspaces;</li><li>every build script, procedural macro, target, or platform dependency shape;</li><li>compressed or remotely distributed <code>.loaf</code> bundles;</li><li>the authored <code>Loaf.toml</code>, resolved <code>Oven.lock</code>, workspace, or registry model proposed for later work; or</li><li>broad ecosystem readiness from external-library bake-offs.</li></ul>
+<ul><li>general Cargo compatibility for arbitrary Rust workspaces;</li><li>every build script, procedural macro, target, or platform dependency shape;</li><li>compressed or remotely distributed <code>.loaf</code> bundles;</li><li>the authored <code>loaf.toml</code>, resolved <code>Oven.lock</code>, workspace, or registry model proposed for later work; or</li><li>broad ecosystem readiness from external-library bake-offs.</li></ul>
 <small>Those belong to 0.6-and-later releases and RFC work. If the Alpha envelope cannot authorize a normal command, Oven explains the miss and stops.</small>
 </div>
 <div class="inc-oven-closing__visual" role="img" aria-label="Incus keeping watch beside the glowing Oven">

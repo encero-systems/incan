@@ -56,6 +56,21 @@ Guidelines:
 
 Add the bullet to the appropriate section in `.agents/learnings.md`. Maintain alphabetical or logical ordering within the section.
 
+### Step 3.5: Spot-check 1-2 existing entries in the same section
+
+`.agents/learnings.md` is never mechanically checked against the code it describes — the only thing that catches a stale learning is an agent noticing while already in that section. So do that noticing on purpose, every time:
+
+- While you're in the section from Step 1, pick 1-2 other entries that name a concrete file path, function, struct, or pattern (not every entry does — skip pure-principle ones).
+- Quickly confirm the named thing still exists and the described behavior still matches (a `grep`/`Read` is usually enough — this is a spot-check, not a re-audit).
+- If an entry is stale (the file moved, the function was renamed, the described behavior changed), do **not** silently delete or rewrite it. Mark it in place so the correction itself is visible:
+
+  ```markdown
+  - **Concept in 3-5 words**: ~~Original explanation~~ **[SUPERSEDED YYYY-MM-DD]**: what's true now, and why the original stopped applying (link the RFC/issue/commit that changed it if there is one).
+  ```
+
+  This keeps a record that the learning was wrong and got corrected — which is more useful to a future agent than a silent edit, and is itself worth an `/add-learning` note if the *reason* it went stale is a generalizable lesson on its own.
+- If nothing in your quick check turns out stale, don't add noise — no need to annotate entries that are still accurate.
+
 ### Step 4: Verify
 
 Read back the file to confirm:
@@ -63,3 +78,4 @@ Read back the file to confirm:
 - The new bullet is in the right section
 - It doesn't duplicate an existing learning
 - It's generalizable (would help with future work, not just the current task)
+- Step 3.5 happened — either something got marked `[SUPERSEDED ...]` or you confirmed the spot-checked entries are still accurate

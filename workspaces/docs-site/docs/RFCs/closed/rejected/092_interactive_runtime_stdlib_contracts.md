@@ -1,6 +1,6 @@
 # RFC 092: Interactive Runtime Stdlib Contracts
 
-- **Status:** Draft
+- **Status:** Rejected
 - **Created:** 2026-05-07
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -176,13 +176,12 @@ The recommended internal architecture is to keep the runtime manifest separate f
 - **Stdlib / Runtime (`incan_stdlib`)**: provides runtime target, artifact, host, input/accessibility, and diagnostics contracts.
 - **LSP / Tooling**: surfaces target/capability diagnostics, generated-boundary spans, asset references, and unsupported-host warnings.
 
-## Unresolved questions
+## Rejection rationale
 
-- Are runtime target declarations library calls, project metadata, decorators, or a dedicated syntax form?
-- What is the minimum manifest format that is stable enough for downstream consumers while still allowing compiler internals to evolve?
-- Which host capabilities belong in the first browser target, and which remain target-specific extensions?
-- How should capability denial be reported: compile-time error, build-time target mismatch, runtime diagnostic, or a mix based on target?
-- How much server/client region information must be explicit in source versus derived from imports, handlers, and target configuration?
+RFC 092 set out to define Incan-owned stdlib contracts for interactive runtime consumers -- target manifests, host capability boundaries, execution regions, and packaging metadata. On review, its actual normative surface duplicated or overreached into ground already covered elsewhere:
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Capability authority (browser or otherwise) is already fully covered by RFC 104's general, package-namespaced capability mechanism. No `host.browser.*` or similar toolchain-reserved namespace is needed.
+- Marking functions for different compilation targets (server-side, client-side, or any future split) is already supported by RFC 036's user-defined decorators, combined with existing compiler introspection (`incan inspect codegraph`). No new Incan-core "region" concept is needed.
+- Producing multiple artifacts from one project is already the shape of RFC 117-119's target/carrier/profile model -- a completed bake already emits one or more target-bound `*.loaf` assets according to the selected roles and carriers. Whether a carrier can someday be selected by a declaration-level criterion rather than only by role is a narrow, generic question for that model to answer if and when it becomes concrete, not a reason for a separate interactive-runtime RFC to exist.
+
+This RFC's actual driving motivation -- a native, Omerus-backed interactive runtime target -- remains real, but Omerus does not yet have a concrete API surface to design against. Rejecting this RFC rather than leaving it open avoids Incan's core language and stdlib pre-committing to browser- or native-specific vocabulary before a real downstream consumer's design exists to validate it. This note is the only carried-forward record of that intent; if and when Omerus's own design solidifies, its actual needs should be designed there, not resurrected from this RFC's speculative shape.
