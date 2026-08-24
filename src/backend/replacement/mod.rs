@@ -4,7 +4,8 @@
 //! delegates a requested replacement execution to [`crate::backend::ir`], and rejects every operation outside the
 //! first free-function profile with the original Body-IR source span. The profile is intentionally limited to
 //! scalar arithmetic, compiler-owned string concatenation, branches, normalized loops, assertions, source-local
-//! recursive tuple/list values, and fully supplied source-local plain-model values. It admits one numeric tuple or
+//! recursive tuple/list values, fully supplied source-local plain-model values, and exact source-local RFC 032
+//! value-enum members followed by their generated scalar `.value()` extraction. It admits one numeric tuple or
 //! canonical plain-model field projection and one integer list projection or assignment;
 //! builtin iteration remains limited to `list[tuple[scalar, scalar]]`. The selected entrypoint must produce a scalar
 //! observable, although an admitted sibling may return a structural intermediate to its direct caller. The executor
@@ -26,9 +27,12 @@ use incan_semantics_core::body_ir::{
     AggregateKind, ArgumentBinding, BinOp, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget,
     Callee, ClosureBody, Constant, ConstructorTarget, DefaultComputation, GeneratorBody, HelperOp, IterProtocol,
     LocalCallableTarget, LocalId, LocalOrigin, NamedCallableBuiltin, NamedCallableTarget, NominalDeclaration, Operand,
-    OwnershipFact, Place, PlaceElem, Rvalue, Statement, StatementKind, UnOp,
+    OwnershipFact, Place, PlaceElem, Rvalue, Statement, StatementKind, UnOp, ValueEnumBacking, ValueEnumDeclaration,
+    ValueEnumVariantDeclaration, ValueEnumVariantTarget,
 };
-use incan_semantics_core::{AbiV0RuntimeRequirement, HirSourceSpan, IncanPrimitiveType, IncanType};
+use incan_semantics_core::{
+    AbiV0RuntimeRequirement, CompilerNodeId, CompilerNodeKind, HirSourceSpan, IncanPrimitiveType, IncanType,
+};
 
 use crate::backend::selection::digest_output;
 
@@ -72,6 +76,17 @@ pub enum ReplacementValue {
         direct_declaration_id: incan_semantics_core::CompilerNodeId,
         /// Canonical declared field names and values in declaration order.
         fields: Vec<(String, ReplacementValue)>,
+    },
+    /// An exact source-local RFC 032 value-enum member verified against the Body-IR declaration registry.
+    ///
+    /// The carrier deliberately stores no raw scalar and supports no general enum operations. The scalar literal is
+    /// resolved again only by the admitted compiler-provided `.value()` call, after rechecking both identities and
+    /// their membership in the same module registry.
+    ValueEnum {
+        /// Exact retained source-local owner enum identity.
+        enum_declaration_id: incan_semantics_core::CompilerNodeId,
+        /// Exact retained source-local member identity.
+        variant_declaration_id: incan_semantics_core::CompilerNodeId,
     },
     /// A closure or partial application whose lexical captures were evaluated when the value was constructed.
     Callable(Box<ReplacementCallable>),
@@ -187,6 +202,50 @@ impl GeneratorCursor {
     }
 }
 
+/// Convert one registry-owned value-enum literal to its admitted scalar only after backing-category validation.
+///
+/// This deliberately accepts neither arbitrary `Constant` shapes nor a raw scalar carried by an execution target:
+/// the declaration registry remains the single source of truth for a direct value enum's value representation.
+fn value_enum_scalar_value(
+    declaration: &ValueEnumDeclaration,
+    variant: &ValueEnumVariantDeclaration,
+    span: HirSourceSpan,
+) -> Result<ReplacementValue, ReplacementExecutionError> {
+    match (&declaration.backing, &variant.raw_value) {
+        (ValueEnumBacking::Int, Constant::Int(value)) => Ok(ReplacementValue::Int(*value)),
+        (ValueEnumBacking::Str, Constant::Str(value)) => Ok(ReplacementValue::Str(value.clone())),
+        _ => Err(unsupported(
+            format!(
+                "value enum `{}` member `{}` has a raw literal incompatible with its retained scalar backing",
+                declaration.name, variant.name
+            ),
+            span,
+        )),
+    }
+}
+
+/// Return whether `id` is one canonical span-derived declaration identity owned by `module`.
+///
+/// The registry is supplied alongside executable Body IR, so membership alone cannot establish source locality: a
+/// malformed module could otherwise carry a coherent-looking foreign record and target. Direct value-enum execution
+/// accepts only the exact `CompilerNodeId::declaration_span` shape emitted for this module by lowering.
+fn is_module_value_enum_declaration_id(module: &BodyIrModule, id: &CompilerNodeId) -> bool {
+    if module.module_id.kind() != CompilerNodeKind::Module || id.kind() != CompilerNodeKind::Declaration {
+        return false;
+    }
+    let prefix = format!("{}#decl.", module.module_id.path());
+    let Some(span) = id.path().strip_prefix(&prefix) else {
+        return false;
+    };
+    let Some((start, end)) = span.split_once("..") else {
+        return false;
+    };
+    matches!(
+        (start.parse::<usize>(), end.parse::<usize>()),
+        (Ok(start), Ok(end)) if start <= end
+    )
+}
+
 impl ReplacementValue {
     /// Render a deterministic source-observable result spelling for replacement receipts and CLI output.
     pub fn observable_text(&self) -> String {
@@ -224,6 +283,10 @@ impl ReplacementValue {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::ValueEnum {
+                enum_declaration_id,
+                variant_declaration_id,
+            } => format!("value_enum({enum_declaration_id}::{variant_declaration_id})"),
             Self::Callable(_) => "<callable>".to_string(),
             Self::Generator(_) => "<generator>".to_string(),
             Self::Adapter(_) => "<generator-adapter>".to_string(),
@@ -1186,6 +1249,9 @@ fn validate_call_profile(
             validate_argument_binding_profile(&target.binding)
         }
         Callee::Method(target) if target.name == "collect" => args.len() == 1,
+        // The generated RFC 032 `.value()` surface is admitted only when its receiver becomes an identity-validated
+        // value-enum runtime carrier. Explicit type arguments and ordinary arguments have no retained source fact.
+        Callee::Method(target) if target.name == "value" => target.type_args.is_empty() && args.len() == 1,
         // The compiler currently records the iterator-adapter receiver and callback in source order but leaves
         // their stdlib method signature as `UnresolvedPositional`. That is sufficient for this deliberately
         // positional two-argument profile: neither adapter has named arguments or callable defaults to bind.
@@ -1244,6 +1310,7 @@ fn validate_rvalue_profile(
             scalar_tuple_collection_locals,
             destination,
         ),
+        Rvalue::ValueEnumVariant(target) => validate_value_enum_variant_target(target, span),
         Rvalue::Format(_) => Err(unsupported("f-string", span)),
         Rvalue::Closure {
             params,
@@ -1270,6 +1337,24 @@ fn validate_rvalue_profile(
         }
         Rvalue::Match { .. } => Err(unsupported("match expression", span)),
     }
+}
+
+/// Reject a malformed value-enum rvalue before execution can attempt declaration-name recovery.
+///
+/// Runtime resolution remains responsible for membership and raw-scalar checks because only the Body-IR module
+/// registry contains those source-local facts. This preflight ensures that malformed targets cannot be mistaken for
+/// ordinary unresolved field projections.
+fn validate_value_enum_variant_target(
+    target: &ValueEnumVariantTarget,
+    span: HirSourceSpan,
+) -> Result<(), ReplacementExecutionError> {
+    if target.enum_name.is_empty() || target.variant_name.is_empty() {
+        return Err(unsupported(
+            "value-enum member without a canonical source-local name",
+            span,
+        ));
+    }
+    Ok(())
 }
 
 /// Validate the deferred body carried by an admitted generator-expression rvalue.
@@ -1798,6 +1883,7 @@ impl BodyExecutor {
                 let iterator = self.take_generator_receiver(receiver, span)?;
                 self.collect_generator(iterator, span)?
             }
+            Callee::Method(target) if target.name == "value" => self.extract_value_enum_scalar(target, args, span)?,
             Callee::Method(target) if matches!(target.name.as_str(), "map" | "filter") => {
                 self.construct_generator_adapter(target.name.as_str(), args, span)?
             }
@@ -2053,6 +2139,7 @@ impl BodyExecutor {
             Rvalue::UnaryOp(operator, operand) => self.evaluate_unary(*operator, operand, span),
             Rvalue::BinaryOp(operator, left, right) => self.evaluate_binary(*operator, left, right, span),
             Rvalue::Aggregate(kind, operands) => self.evaluate_aggregate(kind, operands, span),
+            Rvalue::ValueEnumVariant(target) => self.evaluate_value_enum_variant(target, span),
             Rvalue::Format(_) => Err(unsupported("f-string", span)),
             Rvalue::Closure {
                 params,
@@ -2541,6 +2628,135 @@ impl BodyExecutor {
             direct_declaration_id: declaration.direct_declaration_id,
             fields,
         })
+    }
+
+    /// Materialize one exact source-local RFC 032 value-enum member without reducing it to a name or raw scalar.
+    ///
+    /// The scalar stays in the verified declaration registry until the separately admitted generated `.value()`
+    /// call asks for it. Keeping the carrier identity-bearing prevents ordinary enum/member spellings, imported
+    /// lookalikes, and malformed Body IR from acquiring direct execution semantics.
+    fn evaluate_value_enum_variant(
+        &mut self,
+        target: &ValueEnumVariantTarget,
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let (declaration, variant) =
+            self.local_value_enum_variant_by_ids(&target.enum_declaration_id, &target.variant_declaration_id, span)?;
+        if declaration.name != target.enum_name || variant.name != target.variant_name {
+            return Err(unsupported(
+                format!(
+                    "value-enum member `{}::{}` disagrees with its source-local declaration identity",
+                    target.enum_name, target.variant_name
+                ),
+                span,
+            ));
+        }
+        let raw_value = value_enum_scalar_value(&declaration, &variant, span)?;
+        self.record_frame_evidence(format!(
+            "executed value-enum variant name={}::{} enum_id={} variant_id={} raw={}",
+            declaration.name,
+            variant.name,
+            declaration.direct_declaration_id,
+            variant.direct_declaration_id,
+            raw_value.observable_text()
+        ));
+        Ok(ReplacementValue::ValueEnum {
+            enum_declaration_id: declaration.direct_declaration_id,
+            variant_declaration_id: variant.direct_declaration_id,
+        })
+    }
+
+    /// Extract the backing scalar through the only admitted compiler-provided value-enum method.
+    ///
+    /// No ordinary method dispatch occurs here: the call is valid only for a runtime carrier already materialized
+    /// by [`Self::evaluate_value_enum_variant`], and the raw literal is resolved solely from the same Body-IR
+    /// declaration registry after membership verification.
+    fn extract_value_enum_scalar(
+        &mut self,
+        target: &incan_semantics_core::body_ir::MethodTarget,
+        args: &[Operand],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        if !target.type_args.is_empty() {
+            return Err(unsupported("value-enum `.value()` with explicit type arguments", span));
+        }
+        let [receiver] = args else {
+            return Err(unsupported("value-enum `.value()` call arity", span));
+        };
+        let value = self.evaluate_operand(receiver, span)?;
+        let ReplacementValue::ValueEnum {
+            enum_declaration_id,
+            variant_declaration_id,
+        } = value
+        else {
+            return Err(unsupported("`.value()` on a non-value-enum receiver", span));
+        };
+        let (declaration, variant) =
+            self.local_value_enum_variant_by_ids(&enum_declaration_id, &variant_declaration_id, span)?;
+        let raw_value = value_enum_scalar_value(&declaration, &variant, span)?;
+        self.record_frame_evidence(format!(
+            "extracted value-enum scalar name={}::{} enum_id={} variant_id={}",
+            declaration.name, variant.name, declaration.direct_declaration_id, variant.direct_declaration_id
+        ));
+        Ok(raw_value)
+    }
+
+    /// Resolve one enum/member pair through this module's retained source-local value-enum registry.
+    fn local_value_enum_variant_by_ids(
+        &self,
+        enum_declaration_id: &CompilerNodeId,
+        variant_declaration_id: &CompilerNodeId,
+        span: HirSourceSpan,
+    ) -> Result<(ValueEnumDeclaration, ValueEnumVariantDeclaration), ReplacementExecutionError> {
+        if !is_module_value_enum_declaration_id(&self.module, enum_declaration_id)
+            || !is_module_value_enum_declaration_id(&self.module, variant_declaration_id)
+        {
+            return Err(unsupported(
+                "value-enum member declaration identity is not scoped to this Body-IR module",
+                span,
+            ));
+        }
+        let declarations = self
+            .module
+            .value_enum_declarations
+            .iter()
+            .filter(|declaration| declaration.direct_declaration_id == *enum_declaration_id)
+            .collect::<Vec<_>>();
+        let [declaration] = declarations.as_slice() else {
+            return Err(unsupported(
+                "value-enum member targets a declaration outside this Body-IR module",
+                span,
+            ));
+        };
+        let canonical_names = declaration
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<BTreeSet<_>>();
+        if canonical_names.len() != declaration.variants.len() {
+            return Err(unsupported(
+                format!(
+                    "value enum `{}` has a duplicate canonical member layout",
+                    declaration.name
+                ),
+                span,
+            ));
+        }
+        let variants = declaration
+            .variants
+            .iter()
+            .filter(|variant| variant.direct_declaration_id == *variant_declaration_id)
+            .collect::<Vec<_>>();
+        let [variant] = variants.as_slice() else {
+            return Err(unsupported(
+                format!(
+                    "value enum `{}` has no retained selected member identity",
+                    declaration.name
+                ),
+                span,
+            ));
+        };
+        Ok(((*declaration).clone(), (*variant).clone()))
     }
 
     /// Resolve one constructor identity solely through this module's retained plain-model declaration registry.
@@ -3234,6 +3450,7 @@ const fn value_kind(value: &ReplacementValue) -> &'static str {
         ReplacementValue::List { .. } => "list",
         ReplacementValue::Tuple(_) => "tuple",
         ReplacementValue::Nominal { .. } => "nominal",
+        ReplacementValue::ValueEnum { .. } => "value enum",
         ReplacementValue::Callable(_) => "callable",
         ReplacementValue::Generator(_) => "generator",
         ReplacementValue::Adapter(_) => "generator adapter",
@@ -3270,6 +3487,7 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::module("replacement.generator_budget_test"),
             nominal_declarations: Vec::new(),
+            value_enum_declarations: Vec::new(),
             bodies: Vec::new(),
         };
         let mut executor = BodyExecutor::with_locals(&module, BTreeMap::new(), MAX_EXECUTION_STEPS);

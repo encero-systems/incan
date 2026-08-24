@@ -532,6 +532,18 @@ def nominal_values() -> int:
     return score(pair)
 "#;
 
+const REPLACEMENT_BODY_V0_014_SRC: &str = r#"
+enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+def status_code(status: HttpStatus) -> int:
+    return status.value()
+
+def value_enum_values() -> int:
+    return status_code(HttpStatus.NotFound)
+"#;
+
 fn replacement_body_v0_001_arguments() -> Vec<ReplacementValue> {
     vec![ReplacementValue::Int(40), ReplacementValue::Int(2)]
 }
@@ -634,6 +646,14 @@ fn replacement_body_v0_013_arguments() -> Vec<ReplacementValue> {
 
 fn replacement_body_v0_013_expected() -> ReplacementValue {
     ReplacementValue::Int(42)
+}
+
+fn replacement_body_v0_014_arguments() -> Vec<ReplacementValue> {
+    vec![]
+}
+
+fn replacement_body_v0_014_expected() -> ReplacementValue {
+    ReplacementValue::Int(404)
 }
 
 // ============================================================================
@@ -1025,6 +1045,22 @@ fn seed_corpus() -> Vec<ParityCase> {
                 shadow_comparison: false,
             }),
         },
+        ParityCase {
+            id: "replacement-body-v0-014",
+            title: "Source-local RFC 032 value-enum members extract scalar values through Body IR",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1154; tests/replacement_backend_execution_tests.rs::replacement_executes_source_local_value_enum_members_through_a_direct_callable; comparison remains non-green until #1154 produces paired source-observable evidence through #1146's completed route",
+            disposition: Disposition::Preserved,
+            source: REPLACEMENT_BODY_V0_014_SRC,
+            evaluate: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "value_enum_values",
+                arguments: replacement_body_v0_014_arguments,
+                expected: replacement_body_v0_014_expected,
+                shadow_comparison: false,
+            }),
+        },
     ]
 }
 
@@ -1338,8 +1374,8 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
         .collect();
     assert_eq!(
         replacement_rows.len(),
-        13,
-        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, and #1154's structural and nominal value cases must stay stable in #987"
+        14,
+        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, and #1154's structural, nominal, and value-enum cases must stay stable in #987"
     );
     let nominal_row = replacement_rows
         .iter()
@@ -1352,6 +1388,19 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
         body_snapshot.contains("executed nominal constructor name=Pair id=decl:")
             && body_snapshot.contains("fields=[left, right]"),
         "the #1154 nominal row must bind its receipt evidence to the retained declaration identity and canonical layout: {body_snapshot}"
+    );
+    let value_enum_row = replacement_rows
+        .iter()
+        .find(|row| row.id == "replacement-body-v0-014")
+        .ok_or("the #1154 value-enum Body-IR row must remain in the corpus")?;
+    let ReceiptRef::ReplacementExecuted { body_snapshot, .. } = &value_enum_row.receipt else {
+        return Err("the #1154 value-enum Body-IR row must retain a direct execution receipt".into());
+    };
+    assert!(
+        body_snapshot.contains("executed value-enum variant name=HttpStatus::NotFound enum_id=decl:")
+            && body_snapshot.contains("raw=404")
+            && body_snapshot.contains("extracted value-enum scalar name=HttpStatus::NotFound"),
+        "the #1154 value-enum row must bind receipt evidence to retained enum/member identities and scalar extraction: {body_snapshot}"
     );
 
     for row in replacement_rows {

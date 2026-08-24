@@ -60,6 +60,13 @@ pub struct BodyIrModule {
     /// list rather than recovering a constructor identity from a source spelling, import, alias, or typechecker
     /// lookup. Models outside this deliberately narrow value profile are absent and must refuse.
     pub nominal_declarations: Vec<NominalDeclaration>,
+    /// Source-local RFC 032 value-enum declarations whose canonical scalar members are available to direct execution.
+    ///
+    /// This is deliberately separate from [`Self::nominal_declarations`]: a value enum has no model field layout,
+    /// and the direct runtime may extract only a retained member's scalar backing through the compiler-provided
+    /// zero-argument `.value()` surface. Ordinary enums, payload variants, aliases, imports, behavior-bearing
+    /// enums, and generic enums are absent and must refuse rather than being rediscovered by spelling.
+    pub value_enum_declarations: Vec<ValueEnumDeclaration>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
 }
@@ -77,6 +84,21 @@ impl BodyIrModule {
                 declaration.direct_declaration_id,
                 declaration.fields.join(", "),
                 declaration.type_parameter_count
+            );
+        }
+        for declaration in &self.value_enum_declarations {
+            let _ = writeln!(
+                &mut out,
+                "value_enum {} id={} backing={} variants=[{}]",
+                declaration.name,
+                declaration.direct_declaration_id,
+                declaration.backing.as_str(),
+                declaration
+                    .variants
+                    .iter()
+                    .map(ValueEnumVariantDeclaration::render_snapshot)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
         for body in &self.bodies {
@@ -101,6 +123,65 @@ pub struct NominalDeclaration {
     pub fields: Vec<String>,
     /// Number of declared type parameters; this profile admits only zero.
     pub type_parameter_count: usize,
+}
+
+/// The scalar backing category a retained RFC 032 value enum exposes through `.value()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueEnumBacking {
+    /// An integer-backed value enum.
+    Int,
+    /// A string-backed value enum.
+    Str,
+}
+
+impl ValueEnumBacking {
+    /// Render the canonical source-level scalar type name for snapshots and diagnostics.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Int => "int",
+            Self::Str => "str",
+        }
+    }
+}
+
+/// One source-local RFC 032 value enum retained for direct scalar extraction.
+///
+/// The record exists only for undecorated, non-generic declarations with no traits, methods, aliases, or payload
+/// variants. Each member has its own source-span identity, so a direct executor verifies the actual selected member
+/// without treating a qualified `Enum.Member` spelling as an identity.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueEnumDeclaration {
+    /// Exact source-local enum declaration identity, derived from its declaration span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Canonical source declaration name.
+    pub name: String,
+    /// The only scalar carrier exposed by the admitted generated `.value()` operation.
+    pub backing: ValueEnumBacking,
+    /// Canonical value-enum members in source declaration order.
+    pub variants: Vec<ValueEnumVariantDeclaration>,
+}
+
+/// One canonical scalar member of a retained source-local value enum.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueEnumVariantDeclaration {
+    /// Exact source-local variant declaration identity, derived from its declaration span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Canonical member name; aliases are intentionally not retained.
+    pub name: String,
+    /// The checked source literal exposed only through identity-validated `.value()` extraction.
+    pub raw_value: Constant,
+}
+
+impl ValueEnumVariantDeclaration {
+    /// Render the member's identity and raw scalar fact for a deterministic module snapshot.
+    fn render_snapshot(&self) -> String {
+        format!(
+            "variant {} id={} raw={}",
+            self.name,
+            self.direct_declaration_id,
+            self.raw_value.render_snapshot()
+        )
+    }
 }
 
 /// Body IR v0 for a single function or method.
@@ -570,6 +651,12 @@ pub enum Rvalue {
     BinaryOp(BinOp, Operand, Operand),
     /// Build a tuple, list, or nominal-constructor value from its element/field operands.
     Aggregate(AggregateKind, Vec<Operand>),
+    /// Materialize one exact source-local RFC 032 value-enum member.
+    ///
+    /// This stores declaration identities rather than a raw scalar so a direct runtime can revalidate enum/member
+    /// membership against [`BodyIrModule::value_enum_declarations`] before the compiler-provided `.value()` method
+    /// exposes the literal. It never represents an ordinary enum, payload variant, alias, import, or Result value.
+    ValueEnumVariant(ValueEnumVariantTarget),
     /// An f-string interpolation, built from a sequence of literal text chunks and already-lowered embedded
     /// expressions. Mirrors the existing Rust-emission backend's dedicated `IrExprKind::Format { parts }` node
     /// (`src/backend/ir/expr.rs`) rather than a helper-call desugar: an f-string is a compiler-owned structured
@@ -679,6 +766,7 @@ impl Rvalue {
                 let items: Vec<String> = operands.iter().map(Operand::render_snapshot).collect();
                 format!("{}[{}]", kind.as_str(), items.join(", "))
             }
+            Self::ValueEnumVariant(target) => target.render_snapshot(),
             Self::Format(parts) => {
                 let items: Vec<String> = parts.iter().map(FormatPart::render_snapshot).collect();
                 format!("fstring({})", items.join(", "))
@@ -715,6 +803,29 @@ impl Rvalue {
                 format!("match {} {{ {} }}", scrutinee.render_snapshot(), arms_str.join(", "))
             }
         }
+    }
+}
+
+/// Exact source-local enum/member identity selected for one value-enum member expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueEnumVariantTarget {
+    /// Exact source-local owner enum declaration identity.
+    pub enum_declaration_id: CompilerNodeId,
+    /// Exact source-local member declaration identity.
+    pub variant_declaration_id: CompilerNodeId,
+    /// Canonical owner name, retained for malformed-Body-IR cross-checks and diagnostics.
+    pub enum_name: String,
+    /// Canonical member name, retained for malformed-Body-IR cross-checks and diagnostics.
+    pub variant_name: String,
+}
+
+impl ValueEnumVariantTarget {
+    /// Render both retained identities so snapshots cannot mistake a member spelling for its direct target fact.
+    fn render_snapshot(&self) -> String {
+        format!(
+            "value_enum_variant({}::{} enum_id={} variant_id={})",
+            self.enum_name, self.variant_name, self.enum_declaration_id, self.variant_declaration_id
+        )
     }
 }
 
@@ -2699,6 +2810,7 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             nominal_declarations: Vec::new(),
+            value_enum_declarations: Vec::new(),
             bodies: vec![sample_body()],
         };
         let snapshot = module.render_snapshot();

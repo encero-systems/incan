@@ -56,7 +56,7 @@ use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, ResolvedType};
-use crate::frontend::typechecker::{TypeCheckInfo, semantic_type_from_resolved};
+use crate::frontend::typechecker::{IdentKind, TypeCheckInfo, semantic_type_from_resolved};
 
 /// Build Body IR v0 for every top-level function declaration and every non-abstract class/model/trait method in a
 /// typechecked module.
@@ -82,6 +82,11 @@ pub fn build_body_ir_module_v0(
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalNominalDeclarations>();
+    let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity);
+    let local_value_enum_declarations = value_enum_declarations
+        .iter()
+        .map(|declaration| (declaration.name.clone(), declaration.clone()))
+        .collect::<LocalValueEnumDeclarations>();
     let bodies = program
         .declarations
         .iter()
@@ -96,6 +101,7 @@ pub fn build_body_ir_module_v0(
                         &function_default_sources,
                         &local_function_declarations,
                         &local_nominal_declarations,
+                        &local_value_enum_declarations,
                     )]
                 }
                 ast::Declaration::Model(model) => lower_owner_method_bodies(
@@ -107,6 +113,7 @@ pub fn build_body_ir_module_v0(
                     &function_default_sources,
                     &local_function_declarations,
                     &local_nominal_declarations,
+                    &local_value_enum_declarations,
                 ),
                 ast::Declaration::Class(class) => lower_owner_method_bodies(
                     &class.methods,
@@ -117,6 +124,7 @@ pub fn build_body_ir_module_v0(
                     &function_default_sources,
                     &local_function_declarations,
                     &local_nominal_declarations,
+                    &local_value_enum_declarations,
                 ),
                 ast::Declaration::Trait(trait_decl) => lower_owner_method_bodies(
                     &trait_decl.methods,
@@ -127,6 +135,7 @@ pub fn build_body_ir_module_v0(
                     &function_default_sources,
                     &local_function_declarations,
                     &local_nominal_declarations,
+                    &local_value_enum_declarations,
                 ),
                 _ => Vec::new(),
             }
@@ -135,6 +144,7 @@ pub fn build_body_ir_module_v0(
     bir::BodyIrModule {
         module_id,
         nominal_declarations,
+        value_enum_declarations,
         bodies,
     }
 }
@@ -160,6 +170,13 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 /// records are the direct executor's sole layout authority. Classes, trait-adopting models, and models carrying
 /// methods/properties/aliases are absent rather than being approximated as inert field bags.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
+
+/// Source-local RFC 032 value enums whose canonical scalar members are retained for direct execution.
+///
+/// This map is lowering-only. The executor receives `BodyIrModule::value_enum_declarations` and verifies retained
+/// enum/member identities there, so imports, aliases, ordinary enums, and non-retained same-spelling forms never
+/// become direct runtime targets.
+type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
 
 /// Source facts a synthesized local partial needs for one target parameter.
 #[derive(Clone)]
@@ -250,6 +267,89 @@ fn collect_local_nominal_declarations(program: &ast::Program, module_identity: &
         .collect()
 }
 
+/// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
+///
+/// This predicate intentionally excludes aliases and all behavior-bearing forms even when they are source-valid:
+/// the direct executor may validate only a canonical literal member and the compiler-provided `.value()` extraction,
+/// not trait dispatch, custom methods, alias canonicalization, generic substitution, or payload construction.
+pub(crate) fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
+    enum_decl.decorators.is_empty()
+        && enum_decl.type_params.is_empty()
+        && enum_decl.value_type.is_some()
+        && enum_decl.traits.is_empty()
+        && enum_decl.variant_aliases.is_empty()
+        && enum_decl.methods.is_empty()
+        && enum_decl.variants.iter().all(|variant| {
+            variant.node.fields.is_empty()
+                && matches!(
+                    variant.node.value.as_ref().map(|value| &value.node),
+                    Some(ast::ValueEnumLiteral::Int(_) | ast::ValueEnumLiteral::Str(_))
+                )
+        })
+}
+
+/// Retain exact source-local RFC 032 value-enum declaration and canonical literal-member facts in source order.
+///
+/// A later direct executor receives only this Body-IR registry. It does not reopen AST/typechecker state to resolve
+/// a `Name.Member` spelling, so lowering returns no record for imports, aliases, ordinary enums, or declarations
+/// whose shape cannot truthfully support the generated scalar `.value()` surface.
+fn collect_local_value_enum_declarations(
+    program: &ast::Program,
+    module_identity: &str,
+) -> Vec<bir::ValueEnumDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Enum(enum_decl) = &declaration.node else {
+                return None;
+            };
+            if !is_direct_replacement_value_enum(enum_decl) {
+                return None;
+            }
+            let backing = match enum_decl.value_type.as_ref().map(|value| value.node) {
+                Some(ast::ValueEnumType::Int) => bir::ValueEnumBacking::Int,
+                Some(ast::ValueEnumType::Str) => bir::ValueEnumBacking::Str,
+                None => return None,
+            };
+            let variants = enum_decl
+                .variants
+                .iter()
+                .filter_map(|variant| {
+                    let raw_value = match variant.node.value.as_ref().map(|value| &value.node) {
+                        Some(ast::ValueEnumLiteral::Int(value)) if matches!(backing, bir::ValueEnumBacking::Int) => {
+                            bir::Constant::Int(value.value)
+                        }
+                        Some(ast::ValueEnumLiteral::Str(value)) if matches!(backing, bir::ValueEnumBacking::Str) => {
+                            bir::Constant::Str(value.clone())
+                        }
+                        _ => return None,
+                    };
+                    Some(bir::ValueEnumVariantDeclaration {
+                        direct_declaration_id: CompilerNodeId::declaration_span(
+                            module_identity,
+                            variant.span.start,
+                            variant.span.end,
+                        ),
+                        name: variant.node.name.clone(),
+                        raw_value,
+                    })
+                })
+                .collect::<Vec<_>>();
+            (variants.len() == enum_decl.variants.len()).then(|| bir::ValueEnumDeclaration {
+                direct_declaration_id: CompilerNodeId::declaration_span(
+                    module_identity,
+                    declaration.span.start,
+                    declaration.span.end,
+                ),
+                name: enum_decl.name.clone(),
+                backing,
+                variants,
+            })
+        })
+        .collect()
+}
+
 /// Lower every non-abstract method in `methods` (owned by the class/model/trait named `owner_name`) into one
 /// [`bir::Body`] each, skipping abstract methods (`body: None`). `receiver_ty` is the typechecker-equivalent type
 /// for a declared receiver: a concrete nominal type for models/classes or [`IncanType::SelfType`] for trait defaults.
@@ -269,6 +369,7 @@ fn lower_owner_method_bodies(
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
     local_nominal_declarations: &LocalNominalDeclarations,
+    local_value_enum_declarations: &LocalValueEnumDeclarations,
 ) -> Vec<bir::Body> {
     methods
         .iter()
@@ -283,6 +384,7 @@ fn lower_owner_method_bodies(
                 function_default_sources,
                 local_function_declarations,
                 local_nominal_declarations,
+                local_value_enum_declarations,
             )
         })
         .collect()
@@ -312,6 +414,7 @@ fn lower_function_body(
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
     local_nominal_declarations: &LocalNominalDeclarations,
+    local_value_enum_declarations: &LocalValueEnumDeclarations,
 ) -> bir::Body {
     let decl_id = CompilerNodeId::declaration(module_identity, &function.name);
     let direct_call_id = CompilerNodeId::declaration_span(module_identity, decl_span.start, decl_span.end);
@@ -327,6 +430,7 @@ fn lower_function_body(
         function_default_sources,
         local_function_declarations,
         local_nominal_declarations,
+        local_value_enum_declarations,
         module_identity,
     );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -420,6 +524,7 @@ fn lower_method_body(
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
     local_nominal_declarations: &LocalNominalDeclarations,
+    local_value_enum_declarations: &LocalValueEnumDeclarations,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
 
@@ -438,6 +543,7 @@ fn lower_method_body(
         function_default_sources,
         local_function_declarations,
         local_nominal_declarations,
+        local_value_enum_declarations,
         module_identity,
     );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -547,6 +653,8 @@ struct BodyBuilder<'type_info, 'source> {
     local_function_declarations: &'source LocalFunctionDeclarations,
     /// Source-local plain-model declarations, used only to retain an exact constructor target identity.
     local_nominal_declarations: &'source LocalNominalDeclarations,
+    /// Source-local RFC 032 value-enum declarations, used only to retain an exact member target identity.
+    local_value_enum_declarations: &'source LocalValueEnumDeclarations,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
     module_identity: &'source str,
     locals: Vec<bir::LocalDecl>,
@@ -585,6 +693,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         function_default_sources: &'source FunctionDefaultSources,
         local_function_declarations: &'source LocalFunctionDeclarations,
         local_nominal_declarations: &'source LocalNominalDeclarations,
+        local_value_enum_declarations: &'source LocalValueEnumDeclarations,
         module_identity: &'source str,
     ) -> Self {
         Self {
@@ -592,6 +701,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             function_default_sources,
             local_function_declarations,
             local_nominal_declarations,
+            local_value_enum_declarations,
             module_identity,
             locals: Vec::new(),
             scopes: Vec::new(),
@@ -2596,6 +2706,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
             ast::Expr::Field(base, name) => {
+                if let Some(target) = self.local_value_enum_variant_target(base, name) {
+                    return self.push_assign_temp(
+                        bir::Rvalue::ValueEnumVariant(target),
+                        self.resolve_ty(expr.span),
+                        scope,
+                        span,
+                        out,
+                    );
+                }
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Field(name.clone()));
                 let ty = self.resolve_ty(expr.span);
@@ -3149,6 +3268,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Return the exact retained target for a qualified local RFC 032 value-enum member, if this spelling is safe to
+    /// materialize directly.
+    ///
+    /// The source-local registry is deliberately the only lookup used here. A function-local binding wins over a
+    /// same-spelling declaration, and any import, alias, ordinary enum, payload member, or behavior-bearing enum is
+    /// absent from the registry. The resulting rvalue stores both declaration identities for runtime revalidation;
+    /// it does not make the spelling itself an execution authority.
+    fn local_value_enum_variant_target(
+        &self,
+        base: &ast::Spanned<ast::Expr>,
+        variant_name: &str,
+    ) -> Option<bir::ValueEnumVariantTarget> {
+        let ast::Expr::Ident(enum_name) = &base.node else {
+            return None;
+        };
+        if self.bindings.contains_key(enum_name) {
+            return None;
+        }
+        if !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName)) {
+            return None;
+        }
+        let declaration = self.local_value_enum_declarations.get(enum_name)?;
+        let variant = declaration
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)?;
+        Some(bir::ValueEnumVariantTarget {
+            enum_declaration_id: declaration.direct_declaration_id.clone(),
+            variant_declaration_id: variant.direct_declaration_id.clone(),
+            enum_name: declaration.name.clone(),
+            variant_name: variant.name.clone(),
+        })
+    }
+
     /// Lower a call to a locally held callable value, a nominal construction, or a direct named function.
     ///
     /// A bare identifier that resolves to one of this body's locals is deliberately a
@@ -3336,8 +3489,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // receiver place first. Method receivers are treated as borrowed rather than moved/cloned, mirroring how the
         // existing Rust-emission backend's ownership planner treats most method receivers
         // (`src/backend/ir/ownership.rs`) -- see this module's rustdoc for the full precedent discussion.
-        let recv_place = self.lower_expr_to_place(recv, scope, out);
-        let receiver_operand = bir::Operand::place(recv_place, bir::OwnershipFact::Borrow, false);
+        let receiver_operand = if let ast::Expr::Field(base, member) = &recv.node
+            && self.local_value_enum_variant_target(base, member).is_some()
+        {
+            self.lower_expr_to_operand(recv, scope, out)
+        } else {
+            let recv_place = self.lower_expr_to_place(recv, scope, out);
+            bir::Operand::place(recv_place, bir::OwnershipFact::Borrow, false)
+        };
 
         let (mut arg_operands, binding) =
             match self.bind_declared_args(&format!("method `{name}`"), declared, args, scope, out) {
@@ -8354,6 +8513,30 @@ mod tests {
         Ok(())
     }
 
+    /// Retain the exact local value-enum member selected by source lowering rather than recovering it from a
+    /// qualified spelling in a direct runtime.
+    #[test]
+    fn source_local_value_enum_member_retains_exact_enum_and_variant_identities()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "enum HttpStatus(int):\n  Ok = 200\n  NotFound = 404\n\ndef main() -> int:\n  return HttpStatus.NotFound.value()\n";
+        let module = build(source, &["m", "value_enum_identity"])?;
+        let snapshot = module.render_snapshot();
+
+        assert!(
+            snapshot.contains("value_enum HttpStatus id=decl:m::value_enum_identity#decl."),
+            "the module must retain the source-local enum declaration identity: {snapshot}"
+        );
+        assert!(
+            snapshot.contains("variant NotFound id=decl:m::value_enum_identity#decl."),
+            "the module must retain the source-local member declaration identity: {snapshot}"
+        );
+        assert!(
+            snapshot.contains("value_enum_variant(HttpStatus::NotFound"),
+            "the member expression must lower to an identity-bearing rvalue instead of an external field place: {snapshot}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn mixed_positional_and_named_call_arguments_bind_to_declared_parameters() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -9074,11 +9257,13 @@ mod tests {
         let function_default_sources = FunctionDefaultSources::new();
         let local_function_declarations = LocalFunctionDeclarations::new();
         let local_nominal_declarations = LocalNominalDeclarations::new();
+        let local_value_enum_declarations = LocalValueEnumDeclarations::new();
         let mut builder = BodyBuilder::new(
             &type_info,
             &function_default_sources,
             &local_function_declarations,
             &local_nominal_declarations,
+            &local_value_enum_declarations,
             "m",
         );
         let scope = builder.new_scope(None, HirSourceSpan::new(0, 1));
