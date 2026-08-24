@@ -82,6 +82,11 @@ pub fn build_body_ir_module_v0(
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalNominalDeclarations>();
+    let fieldless_enum_declarations = collect_local_fieldless_enum_declarations(program, &module_identity);
+    let local_fieldless_enum_declarations = fieldless_enum_declarations
+        .iter()
+        .map(|declaration| (declaration.name.clone(), declaration.clone()))
+        .collect::<LocalFieldlessEnumDeclarations>();
     let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity);
     let local_value_enum_declarations = value_enum_declarations
         .iter()
@@ -101,6 +106,7 @@ pub fn build_body_ir_module_v0(
                         &function_default_sources,
                         &local_function_declarations,
                         &local_nominal_declarations,
+                        &local_fieldless_enum_declarations,
                         &local_value_enum_declarations,
                     )]
                 }
@@ -113,6 +119,7 @@ pub fn build_body_ir_module_v0(
                     &function_default_sources,
                     &local_function_declarations,
                     &local_nominal_declarations,
+                    &local_fieldless_enum_declarations,
                     &local_value_enum_declarations,
                 ),
                 ast::Declaration::Class(class) => lower_owner_method_bodies(
@@ -124,6 +131,7 @@ pub fn build_body_ir_module_v0(
                     &function_default_sources,
                     &local_function_declarations,
                     &local_nominal_declarations,
+                    &local_fieldless_enum_declarations,
                     &local_value_enum_declarations,
                 ),
                 ast::Declaration::Trait(trait_decl) => lower_owner_method_bodies(
@@ -135,6 +143,7 @@ pub fn build_body_ir_module_v0(
                     &function_default_sources,
                     &local_function_declarations,
                     &local_nominal_declarations,
+                    &local_fieldless_enum_declarations,
                     &local_value_enum_declarations,
                 ),
                 _ => Vec::new(),
@@ -144,6 +153,7 @@ pub fn build_body_ir_module_v0(
     bir::BodyIrModule {
         module_id,
         nominal_declarations,
+        fieldless_enum_declarations,
         value_enum_declarations,
         bodies,
     }
@@ -170,6 +180,12 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 /// records are the direct executor's sole layout authority. Classes, trait-adopting models, and models carrying
 /// methods/properties/aliases are absent rather than being approximated as inert field bags.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
+
+/// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
+///
+/// This map exists only while lowering. The executor receives `BodyIrModule::fieldless_enum_declarations` and
+/// revalidates exact enum/member identities there, so a source spelling never selects an imported or aliased enum.
+type LocalFieldlessEnumDeclarations = HashMap<String, bir::FieldlessEnumDeclaration>;
 
 /// Source-local RFC 032 value enums whose canonical scalar members are retained for direct execution.
 ///
@@ -262,6 +278,63 @@ fn collect_local_nominal_declarations(program: &ast::Program, module_identity: &
                 name: model.name.clone(),
                 fields: model.fields.iter().map(|field| field.node.name.clone()).collect(),
                 type_parameter_count: model.type_params.len(),
+            })
+        })
+        .collect()
+}
+
+/// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.
+///
+/// This excludes every declaration form whose behavior needs additional semantic representation: scalar value enums,
+/// payload construction, aliases, trait dispatch, custom methods, decorators, and generic substitution. The direct
+/// runtime can therefore materialize only a canonical unit carrier and compare its retained identity.
+pub(crate) fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
+    enum_decl.decorators.is_empty()
+        && enum_decl.type_params.is_empty()
+        && enum_decl.value_type.is_none()
+        && enum_decl.traits.is_empty()
+        && enum_decl.variant_aliases.is_empty()
+        && enum_decl.methods.is_empty()
+        && enum_decl
+            .variants
+            .iter()
+            .all(|variant| variant.node.fields.is_empty() && variant.node.value.is_none())
+}
+
+/// Retain exact source-local fieldless normal-enum declaration and unit-member facts in source order.
+///
+/// Only this registry reaches the direct runtime. It deliberately has no payload layouts, aliases, match facts, or
+/// source-symbol lookup facility, so its existence cannot widen into general enum execution by spelling alone.
+fn collect_local_fieldless_enum_declarations(
+    program: &ast::Program,
+    module_identity: &str,
+) -> Vec<bir::FieldlessEnumDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Enum(enum_decl) = &declaration.node else {
+                return None;
+            };
+            is_direct_replacement_fieldless_enum(enum_decl).then(|| bir::FieldlessEnumDeclaration {
+                direct_declaration_id: CompilerNodeId::declaration_span(
+                    module_identity,
+                    declaration.span.start,
+                    declaration.span.end,
+                ),
+                name: enum_decl.name.clone(),
+                variants: enum_decl
+                    .variants
+                    .iter()
+                    .map(|variant| bir::FieldlessEnumVariantDeclaration {
+                        direct_declaration_id: CompilerNodeId::declaration_span(
+                            module_identity,
+                            variant.span.start,
+                            variant.span.end,
+                        ),
+                        name: variant.node.name.clone(),
+                    })
+                    .collect(),
             })
         })
         .collect()
@@ -369,6 +442,7 @@ fn lower_owner_method_bodies(
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
     local_nominal_declarations: &LocalNominalDeclarations,
+    local_fieldless_enum_declarations: &LocalFieldlessEnumDeclarations,
     local_value_enum_declarations: &LocalValueEnumDeclarations,
 ) -> Vec<bir::Body> {
     methods
@@ -384,6 +458,7 @@ fn lower_owner_method_bodies(
                 function_default_sources,
                 local_function_declarations,
                 local_nominal_declarations,
+                local_fieldless_enum_declarations,
                 local_value_enum_declarations,
             )
         })
@@ -414,6 +489,7 @@ fn lower_function_body(
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
     local_nominal_declarations: &LocalNominalDeclarations,
+    local_fieldless_enum_declarations: &LocalFieldlessEnumDeclarations,
     local_value_enum_declarations: &LocalValueEnumDeclarations,
 ) -> bir::Body {
     let decl_id = CompilerNodeId::declaration(module_identity, &function.name);
@@ -430,6 +506,7 @@ fn lower_function_body(
         function_default_sources,
         local_function_declarations,
         local_nominal_declarations,
+        local_fieldless_enum_declarations,
         local_value_enum_declarations,
         module_identity,
     );
@@ -524,6 +601,7 @@ fn lower_method_body(
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
     local_nominal_declarations: &LocalNominalDeclarations,
+    local_fieldless_enum_declarations: &LocalFieldlessEnumDeclarations,
     local_value_enum_declarations: &LocalValueEnumDeclarations,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
@@ -543,6 +621,7 @@ fn lower_method_body(
         function_default_sources,
         local_function_declarations,
         local_nominal_declarations,
+        local_fieldless_enum_declarations,
         local_value_enum_declarations,
         module_identity,
     );
@@ -653,6 +732,8 @@ struct BodyBuilder<'type_info, 'source> {
     local_function_declarations: &'source LocalFunctionDeclarations,
     /// Source-local plain-model declarations, used only to retain an exact constructor target identity.
     local_nominal_declarations: &'source LocalNominalDeclarations,
+    /// Source-local fieldless normal-enum declarations, used only to retain exact unit-member target identities.
+    local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
     /// Source-local RFC 032 value-enum declarations, used only to retain an exact member target identity.
     local_value_enum_declarations: &'source LocalValueEnumDeclarations,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
@@ -693,6 +774,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         function_default_sources: &'source FunctionDefaultSources,
         local_function_declarations: &'source LocalFunctionDeclarations,
         local_nominal_declarations: &'source LocalNominalDeclarations,
+        local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
         local_value_enum_declarations: &'source LocalValueEnumDeclarations,
         module_identity: &'source str,
     ) -> Self {
@@ -701,6 +783,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             function_default_sources,
             local_function_declarations,
             local_nominal_declarations,
+            local_fieldless_enum_declarations,
             local_value_enum_declarations,
             module_identity,
             locals: Vec::new(),
@@ -2706,6 +2789,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
             ast::Expr::Field(base, name) => {
+                if let Some(target) = self.local_fieldless_enum_variant_target(base, name) {
+                    return self.push_assign_temp(
+                        bir::Rvalue::FieldlessEnumVariant(target),
+                        self.resolve_ty(expr.span),
+                        scope,
+                        span,
+                        out,
+                    );
+                }
                 if let Some(target) = self.local_value_enum_variant_target(base, name) {
                     return self.push_assign_temp(
                         bir::Rvalue::ValueEnumVariant(target),
@@ -3266,6 +3358,37 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Return the exact retained target for a qualified local fieldless normal-enum member, if safe to materialize.
+    ///
+    /// A bare type-name receiver and source-local registry membership are both required. This leaves ordinary forms
+    /// not represented by the registry as generic field accesses that the direct executor visibly refuses, while
+    /// preserving exact declaration identities for the one bounded unit-variant carrier profile.
+    fn local_fieldless_enum_variant_target(
+        &self,
+        base: &ast::Spanned<ast::Expr>,
+        variant_name: &str,
+    ) -> Option<bir::FieldlessEnumVariantTarget> {
+        let ast::Expr::Ident(enum_name) = &base.node else {
+            return None;
+        };
+        if self.bindings.contains_key(enum_name)
+            || !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName))
+        {
+            return None;
+        }
+        let declaration = self.local_fieldless_enum_declarations.get(enum_name)?;
+        let variant = declaration
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)?;
+        Some(bir::FieldlessEnumVariantTarget {
+            enum_declaration_id: declaration.direct_declaration_id.clone(),
+            variant_declaration_id: variant.direct_declaration_id.clone(),
+            enum_name: declaration.name.clone(),
+            variant_name: variant.name.clone(),
+        })
     }
 
     /// Return the exact retained target for a qualified local RFC 032 value-enum member, if this spelling is safe to
@@ -8537,6 +8660,30 @@ mod tests {
         Ok(())
     }
 
+    /// Retain the exact local fieldless normal-enum member selected by source lowering rather than treating a
+    /// qualified spelling as a value any backend may recover.
+    #[test]
+    fn source_local_fieldless_enum_member_retains_exact_enum_and_variant_identities()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "enum Signal:\n  Ready\n  Stop\n\ndef main() -> bool:\n  return Signal.Ready == Signal.Stop\n";
+        let module = build(source, &["m", "fieldless_enum_identity"])?;
+        let snapshot = module.render_snapshot();
+
+        assert!(
+            snapshot.contains("fieldless_enum Signal id=decl:m::fieldless_enum_identity#decl."),
+            "the module must retain the source-local enum declaration identity: {snapshot}"
+        );
+        assert!(
+            snapshot.contains("variant Ready id=decl:m::fieldless_enum_identity#decl."),
+            "the module must retain the source-local member declaration identity: {snapshot}"
+        );
+        assert!(
+            snapshot.contains("fieldless_enum_variant(Signal::Ready"),
+            "the member expression must lower to an identity-bearing rvalue instead of an external field place: {snapshot}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn mixed_positional_and_named_call_arguments_bind_to_declared_parameters() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -9257,12 +9404,14 @@ mod tests {
         let function_default_sources = FunctionDefaultSources::new();
         let local_function_declarations = LocalFunctionDeclarations::new();
         let local_nominal_declarations = LocalNominalDeclarations::new();
+        let local_fieldless_enum_declarations = LocalFieldlessEnumDeclarations::new();
         let local_value_enum_declarations = LocalValueEnumDeclarations::new();
         let mut builder = BodyBuilder::new(
             &type_info,
             &function_default_sources,
             &local_function_declarations,
             &local_nominal_declarations,
+            &local_fieldless_enum_declarations,
             &local_value_enum_declarations,
             "m",
         );

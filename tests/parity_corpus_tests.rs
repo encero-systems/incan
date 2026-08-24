@@ -544,6 +544,20 @@ def value_enum_values() -> int:
     return status_code(HttpStatus.NotFound)
 "#;
 
+const REPLACEMENT_BODY_V0_015_SRC: &str = r#"
+enum Signal:
+    Ready
+    Stop
+
+def score(left: Signal, right: Signal) -> int:
+    if left == Signal.Ready and right != Signal.Ready:
+        return 42
+    return 0
+
+def fieldless_enum_values() -> int:
+    return score(Signal.Ready, Signal.Stop)
+"#;
+
 fn replacement_body_v0_001_arguments() -> Vec<ReplacementValue> {
     vec![ReplacementValue::Int(40), ReplacementValue::Int(2)]
 }
@@ -654,6 +668,14 @@ fn replacement_body_v0_014_arguments() -> Vec<ReplacementValue> {
 
 fn replacement_body_v0_014_expected() -> ReplacementValue {
     ReplacementValue::Int(404)
+}
+
+fn replacement_body_v0_015_arguments() -> Vec<ReplacementValue> {
+    vec![]
+}
+
+fn replacement_body_v0_015_expected() -> ReplacementValue {
+    ReplacementValue::Int(42)
 }
 
 // ============================================================================
@@ -1061,6 +1083,22 @@ fn seed_corpus() -> Vec<ParityCase> {
                 shadow_comparison: false,
             }),
         },
+        ParityCase {
+            id: "replacement-body-v0-015",
+            title: "Source-local fieldless normal-enum values compare through retained Body IR identities",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1154; tests/replacement_backend_execution_tests.rs::replacement_executes_source_local_fieldless_enum_values_through_a_direct_callable; comparison remains non-green until #1154 produces paired source-observable evidence through #1146's completed route",
+            disposition: Disposition::Preserved,
+            source: REPLACEMENT_BODY_V0_015_SRC,
+            evaluate: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "fieldless_enum_values",
+                arguments: replacement_body_v0_015_arguments,
+                expected: replacement_body_v0_015_expected,
+                shadow_comparison: false,
+            }),
+        },
     ]
 }
 
@@ -1374,8 +1412,8 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
         .collect();
     assert_eq!(
         replacement_rows.len(),
-        14,
-        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, and #1154's structural, nominal, and value-enum cases must stay stable in #987"
+        15,
+        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, and #1154's structural, nominal, value-enum, and fieldless-enum cases must stay stable in #987"
     );
     let nominal_row = replacement_rows
         .iter()
@@ -1401,6 +1439,18 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
             && body_snapshot.contains("raw=404")
             && body_snapshot.contains("extracted value-enum scalar name=HttpStatus::NotFound"),
         "the #1154 value-enum row must bind receipt evidence to retained enum/member identities and scalar extraction: {body_snapshot}"
+    );
+    let fieldless_enum_row = replacement_rows
+        .iter()
+        .find(|row| row.id == "replacement-body-v0-015")
+        .ok_or("the #1154 fieldless-enum Body-IR row must remain in the corpus")?;
+    let ReceiptRef::ReplacementExecuted { body_snapshot, .. } = &fieldless_enum_row.receipt else {
+        return Err("the #1154 fieldless-enum Body-IR row must retain a direct execution receipt".into());
+    };
+    assert!(
+        body_snapshot.contains("executed fieldless-enum variant name=Signal::Ready enum_id=decl:")
+            && body_snapshot.contains("executed fieldless-enum variant name=Signal::Stop enum_id=decl:"),
+        "the #1154 fieldless-enum row must bind receipt evidence to retained enum/member identities: {body_snapshot}"
     );
 
     for row in replacement_rows {

@@ -238,6 +238,161 @@ def main() -> int:
     Ok(())
 }
 
+/// Execute source-local fieldless normal-enum values only through exact identities and scalar comparison.
+#[test]
+fn replacement_executes_source_local_fieldless_enum_values_through_a_direct_callable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Signal:
+  Ready
+  Stop
+
+def score(left: Signal, right: Signal) -> int:
+  if left == Signal.Ready and right != Signal.Ready:
+    return 42
+  return 0
+
+def normal_enum_values() -> int:
+  return score(Signal.Ready, Signal.Stop)
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "normal_enum_values", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(
+        execution
+            .body_snapshot
+            .contains("executed fieldless-enum variant name=Signal::Ready"),
+        "the direct execution evidence must name the first retained normal-enum member: {}",
+        execution.body_snapshot
+    );
+    assert!(
+        execution
+            .body_snapshot
+            .contains("executed fieldless-enum variant name=Signal::Stop"),
+        "the direct execution evidence must name the second retained normal-enum member: {}",
+        execution.body_snapshot
+    );
+    Ok(())
+}
+
+/// Refuse a removed fieldless-enum registry rather than recovering a member from its source spelling.
+#[test]
+fn replacement_refuses_a_fieldless_enum_member_without_its_retained_identity_at_its_original_source_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Signal:
+  Ready
+  Stop
+
+def main() -> bool:
+  return Signal.Ready == Signal.Stop
+"#;
+    let mut module = lower_typed_body_ir(source)?;
+    module.fieldless_enum_declarations.clear();
+
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "a member without its retained identity must refuse instead of dispatching by name, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let member_start = source
+        .find("Signal.Ready")
+        .ok_or("fixture must contain the rejected member expression")?;
+    let span = error
+        .primary_span()
+        .ok_or("fieldless-enum identity refusal must retain a source span")?;
+    assert_eq!(span.start, member_start);
+    assert_eq!(span.end, member_start + "Signal.Ready".len());
+    assert!(
+        error
+            .to_string()
+            .contains("fieldless-enum member targets a declaration outside this Body-IR module"),
+        "the refusal must name the missing retained identity: {error}"
+    );
+    Ok(())
+}
+
+/// Refuse a coherent-looking fieldless-enum registry whose identities name another Body-IR module.
+#[test]
+fn replacement_refuses_a_foreign_fieldless_enum_identity_at_its_original_source_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Signal:
+  Ready
+  Stop
+
+def main() -> bool:
+  return Signal.Ready == Signal.Stop
+"#;
+    let mut module = lower_typed_body_ir(source)?;
+    let foreign_enum_id = CompilerNodeId::declaration_span("foreign", 0, 32);
+    let foreign_variant_id = CompilerNodeId::declaration_span("foreign", 14, 19);
+    {
+        let declaration = module
+            .fieldless_enum_declarations
+            .first_mut()
+            .ok_or("fixture must retain one source-local fieldless enum")?;
+        declaration.direct_declaration_id = foreign_enum_id.clone();
+        let variant = declaration
+            .variants
+            .iter_mut()
+            .find(|variant| variant.name == "Ready")
+            .ok_or("fixture must retain the selected fieldless-enum member")?;
+        variant.direct_declaration_id = foreign_variant_id.clone();
+    }
+    let target = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .and_then(|body| {
+            body.block
+                .stmts
+                .iter_mut()
+                .find_map(|statement| match &mut statement.kind {
+                    StatementKind::Assign {
+                        rvalue: Rvalue::FieldlessEnumVariant(target),
+                        ..
+                    } => Some(target),
+                    _ => None,
+                })
+        })
+        .ok_or("fixture must lower the selected member as a fieldless-enum rvalue")?;
+    target.enum_declaration_id = foreign_enum_id;
+    target.variant_declaration_id = foreign_variant_id;
+
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "a foreign fieldless-enum identity must refuse instead of executing, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let member_start = source
+        .find("Signal.Ready")
+        .ok_or("fixture must contain the rejected member expression")?;
+    let span = error
+        .primary_span()
+        .ok_or("foreign fieldless-enum identity refusal must retain a source span")?;
+    assert_eq!(span.start, member_start);
+    assert_eq!(span.end, member_start + "Signal.Ready".len());
+    assert!(
+        error
+            .to_string()
+            .contains("fieldless-enum member declaration identity is not scoped to this Body-IR module"),
+        "the refusal must name the foreign declaration identity: {error}"
+    );
+    Ok(())
+}
+
 /// Refuse a removed source-local value-enum registry rather than recovering a member from its spelling.
 #[test]
 fn replacement_refuses_a_value_enum_member_without_its_retained_identity_at_its_original_source_span()
@@ -1926,8 +2081,8 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
             "non-function top-level declaration",
         ),
         (
-            "ordinary-enum",
-            "enum Flag:\n  On\n\ndef main() -> int:\n  return 42\n",
+            "payload-enum",
+            "enum Flag:\n  On(int)\n\ndef main() -> int:\n  return 42\n",
             "non-function top-level declaration",
         ),
     ];
@@ -2178,6 +2333,140 @@ def main() -> int:
     assert!(
         !temporary.path().join("target/incan").exists(),
         "a direct value-enum execution must not create a legacy generated-project directory"
+    );
+    Ok(())
+}
+
+/// Execute source-local fieldless normal-enum equality and publish only replacement evidence.
+#[test]
+fn replacement_cli_executes_a_source_local_fieldless_enum_with_a_replacement_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        r#"enum Signal:
+  Ready
+  Stop
+
+def score(left: Signal, right: Signal) -> int:
+  if left == Signal.Ready and right != Signal.Ready:
+    return 42
+  return 0
+
+def main() -> int:
+  return score(Signal.Ready, Signal.Stop)
+"#,
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+            "--report",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "an admitted source-local fieldless enum must execute directly. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
+    assert!(
+        report["replacement_execution"]["body_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| {
+                snapshot.contains("executed fieldless-enum variant name=Signal::Ready enum_id=decl:main#decl.")
+                    && snapshot.contains("executed fieldless-enum variant name=Signal::Stop enum_id=decl:main#decl.")
+            }),
+        "the direct report must retain exact normal-enum member execution evidence: {report}"
+    );
+    assert!(
+        report.get("generated").is_none() && report.get("oven").is_none(),
+        "a direct fieldless-enum report must not invent generated-Rust or Oven evidence: {report}"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["selection"]["selected_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], "not_needed");
+    assert!(
+        receipt["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:")),
+        "direct fieldless-enum execution must bind an output identity: {receipt}"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "a direct fieldless-enum execution must not create a legacy generated-project directory"
+    );
+    Ok(())
+}
+
+/// Refuse fieldless-enum matching until Body IR represents a direct matcher rather than falling back.
+#[test]
+fn replacement_cli_refuses_fieldless_enum_matching_without_a_receipt() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    let source = r#"enum Signal:
+  Ready
+  Stop
+
+def main() -> int:
+  match Signal.Ready:
+    case Signal.Ready:
+      return 42
+    case Signal.Stop:
+      return 0
+"#;
+    fs::write(&entrypoint, source)?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "an unrepresented fieldless-enum matcher must visibly refuse"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("match expression"),
+        "the refusal must name the unrepresented matcher: {combined}"
+    );
+    let match_start = source
+        .find("match Signal.Ready")
+        .ok_or("fixture must contain the refused match expression")?;
+    assert!(
+        combined.contains(&format!(
+            "primary Incan source location: {}:{}..",
+            entrypoint.display(),
+            match_start
+        )),
+        "the refusal must retain the match expression's original source span: {combined}"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists()
+            && !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "an unrepresented fieldless-enum matcher must not fall back or publish a receipt"
     );
     Ok(())
 }

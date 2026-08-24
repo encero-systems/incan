@@ -25,7 +25,8 @@ use incan_core::{
 };
 use incan_semantics_core::body_ir::{
     AggregateKind, ArgumentBinding, BinOp, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget,
-    Callee, ClosureBody, Constant, ConstructorTarget, DefaultComputation, GeneratorBody, HelperOp, IterProtocol,
+    Callee, ClosureBody, Constant, ConstructorTarget, DefaultComputation, FieldlessEnumDeclaration,
+    FieldlessEnumVariantDeclaration, FieldlessEnumVariantTarget, GeneratorBody, HelperOp, IterProtocol,
     LocalCallableTarget, LocalId, LocalOrigin, NamedCallableBuiltin, NamedCallableTarget, NominalDeclaration, Operand,
     OwnershipFact, Place, PlaceElem, Rvalue, Statement, StatementKind, UnOp, ValueEnumBacking, ValueEnumDeclaration,
     ValueEnumVariantDeclaration, ValueEnumVariantTarget,
@@ -76,6 +77,17 @@ pub enum ReplacementValue {
         direct_declaration_id: incan_semantics_core::CompilerNodeId,
         /// Canonical declared field names and values in declaration order.
         fields: Vec<(String, ReplacementValue)>,
+    },
+    /// An exact source-local fieldless normal-enum member verified against the Body-IR declaration registry.
+    ///
+    /// This carrier has no payload and exposes no methods, matching, collection behavior, or selected-entrypoint
+    /// output. The direct runtime permits only equality or inequality after both operands revalidate their exact
+    /// enum/member identities against the same source-local registry.
+    FieldlessEnum {
+        /// Exact retained source-local owner enum identity.
+        enum_declaration_id: CompilerNodeId,
+        /// Exact retained source-local unit-member identity.
+        variant_declaration_id: CompilerNodeId,
     },
     /// An exact source-local RFC 032 value-enum member verified against the Body-IR declaration registry.
     ///
@@ -229,7 +241,7 @@ fn value_enum_scalar_value(
 /// The registry is supplied alongside executable Body IR, so membership alone cannot establish source locality: a
 /// malformed module could otherwise carry a coherent-looking foreign record and target. Direct value-enum execution
 /// accepts only the exact `CompilerNodeId::declaration_span` shape emitted for this module by lowering.
-fn is_module_value_enum_declaration_id(module: &BodyIrModule, id: &CompilerNodeId) -> bool {
+fn is_module_span_declaration_id(module: &BodyIrModule, id: &CompilerNodeId) -> bool {
     if module.module_id.kind() != CompilerNodeKind::Module || id.kind() != CompilerNodeKind::Declaration {
         return false;
     }
@@ -283,6 +295,10 @@ impl ReplacementValue {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::FieldlessEnum {
+                enum_declaration_id,
+                variant_declaration_id,
+            } => format!("fieldless_enum({enum_declaration_id}::{variant_declaration_id})"),
             Self::ValueEnum {
                 enum_declaration_id,
                 variant_declaration_id,
@@ -1310,6 +1326,7 @@ fn validate_rvalue_profile(
             scalar_tuple_collection_locals,
             destination,
         ),
+        Rvalue::FieldlessEnumVariant(target) => validate_fieldless_enum_variant_target(target, span),
         Rvalue::ValueEnumVariant(target) => validate_value_enum_variant_target(target, span),
         Rvalue::Format(_) => Err(unsupported("f-string", span)),
         Rvalue::Closure {
@@ -1337,6 +1354,23 @@ fn validate_rvalue_profile(
         }
         Rvalue::Match { .. } => Err(unsupported("match expression", span)),
     }
+}
+
+/// Reject a malformed fieldless-enum rvalue before execution can attempt declaration-name recovery.
+///
+/// Runtime resolution remains responsible for module-local identity and membership checks because only the retained
+/// Body-IR registry owns those facts. This preflight rejects an incomplete target at the original source span.
+fn validate_fieldless_enum_variant_target(
+    target: &FieldlessEnumVariantTarget,
+    span: HirSourceSpan,
+) -> Result<(), ReplacementExecutionError> {
+    if target.enum_name.is_empty() || target.variant_name.is_empty() {
+        return Err(unsupported(
+            "fieldless-enum member without a canonical source-local name",
+            span,
+        ));
+    }
+    Ok(())
 }
 
 /// Reject a malformed value-enum rvalue before execution can attempt declaration-name recovery.
@@ -2139,6 +2173,7 @@ impl BodyExecutor {
             Rvalue::UnaryOp(operator, operand) => self.evaluate_unary(*operator, operand, span),
             Rvalue::BinaryOp(operator, left, right) => self.evaluate_binary(*operator, left, right, span),
             Rvalue::Aggregate(kind, operands) => self.evaluate_aggregate(kind, operands, span),
+            Rvalue::FieldlessEnumVariant(target) => self.evaluate_fieldless_enum_variant(target, span),
             Rvalue::ValueEnumVariant(target) => self.evaluate_value_enum_variant(target, span),
             Rvalue::Format(_) => Err(unsupported("f-string", span)),
             Rvalue::Closure {
@@ -2630,6 +2665,119 @@ impl BodyExecutor {
         })
     }
 
+    /// Materialize one exact source-local fieldless normal-enum member without reducing it to a source spelling.
+    ///
+    /// The resulting carrier stores only validated declaration identities. It has no payload and can reach a scalar
+    /// result solely through same-enum equality or inequality, preserving a narrow direct-execution boundary.
+    fn evaluate_fieldless_enum_variant(
+        &mut self,
+        target: &FieldlessEnumVariantTarget,
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let (declaration, variant) = self.local_fieldless_enum_variant_by_ids(
+            &target.enum_declaration_id,
+            &target.variant_declaration_id,
+            span,
+        )?;
+        if declaration.name != target.enum_name || variant.name != target.variant_name {
+            return Err(unsupported(
+                format!(
+                    "fieldless-enum member `{}::{}` disagrees with its source-local declaration identity",
+                    target.enum_name, target.variant_name
+                ),
+                span,
+            ));
+        }
+        self.record_frame_evidence(format!(
+            "executed fieldless-enum variant name={}::{} enum_id={} variant_id={}",
+            declaration.name, variant.name, declaration.direct_declaration_id, variant.direct_declaration_id
+        ));
+        Ok(ReplacementValue::FieldlessEnum {
+            enum_declaration_id: declaration.direct_declaration_id,
+            variant_declaration_id: variant.direct_declaration_id,
+        })
+    }
+
+    /// Resolve one normal-enum/member pair solely through this module's retained fieldless-enum registry.
+    fn local_fieldless_enum_variant_by_ids(
+        &self,
+        enum_declaration_id: &CompilerNodeId,
+        variant_declaration_id: &CompilerNodeId,
+        span: HirSourceSpan,
+    ) -> Result<(FieldlessEnumDeclaration, FieldlessEnumVariantDeclaration), ReplacementExecutionError> {
+        if !is_module_span_declaration_id(&self.module, enum_declaration_id)
+            || !is_module_span_declaration_id(&self.module, variant_declaration_id)
+        {
+            return Err(unsupported(
+                "fieldless-enum member declaration identity is not scoped to this Body-IR module",
+                span,
+            ));
+        }
+        let declarations = self
+            .module
+            .fieldless_enum_declarations
+            .iter()
+            .filter(|declaration| declaration.direct_declaration_id == *enum_declaration_id)
+            .collect::<Vec<_>>();
+        let [declaration] = declarations.as_slice() else {
+            return Err(unsupported(
+                "fieldless-enum member targets a declaration outside this Body-IR module",
+                span,
+            ));
+        };
+        let canonical_names = declaration
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<BTreeSet<_>>();
+        if canonical_names.len() != declaration.variants.len() {
+            return Err(unsupported(
+                format!(
+                    "fieldless enum `{}` has a duplicate canonical member layout",
+                    declaration.name
+                ),
+                span,
+            ));
+        }
+        let variants = declaration
+            .variants
+            .iter()
+            .filter(|variant| variant.direct_declaration_id == *variant_declaration_id)
+            .collect::<Vec<_>>();
+        let [variant] = variants.as_slice() else {
+            return Err(unsupported(
+                format!(
+                    "fieldless enum `{}` has no retained selected member identity",
+                    declaration.name
+                ),
+                span,
+            ));
+        };
+        Ok(((*declaration).clone(), (*variant).clone()))
+    }
+
+    /// Compare two identity-validated fieldless normal-enum carriers without admitting a general enum operation.
+    fn fieldless_enum_values_equal(
+        &self,
+        left_enum_declaration_id: &CompilerNodeId,
+        left_variant_declaration_id: &CompilerNodeId,
+        right_enum_declaration_id: &CompilerNodeId,
+        right_variant_declaration_id: &CompilerNodeId,
+        span: HirSourceSpan,
+    ) -> Result<bool, ReplacementExecutionError> {
+        let (left_declaration, left_variant) =
+            self.local_fieldless_enum_variant_by_ids(left_enum_declaration_id, left_variant_declaration_id, span)?;
+        let (right_declaration, right_variant) =
+            self.local_fieldless_enum_variant_by_ids(right_enum_declaration_id, right_variant_declaration_id, span)?;
+        if left_declaration.direct_declaration_id != right_declaration.direct_declaration_id {
+            return Err(unsupported(
+                "fieldless-enum comparison across distinct source-local enum declarations",
+                span,
+            ));
+        }
+        Ok(left_variant.direct_declaration_id == right_variant.direct_declaration_id)
+    }
+
     /// Materialize one exact source-local RFC 032 value-enum member without reducing it to a name or raw scalar.
     ///
     /// The scalar stays in the verified declaration registry until the separately admitted generated `.value()`
@@ -2708,8 +2856,8 @@ impl BodyExecutor {
         variant_declaration_id: &CompilerNodeId,
         span: HirSourceSpan,
     ) -> Result<(ValueEnumDeclaration, ValueEnumVariantDeclaration), ReplacementExecutionError> {
-        if !is_module_value_enum_declaration_id(&self.module, enum_declaration_id)
-            || !is_module_value_enum_declaration_id(&self.module, variant_declaration_id)
+        if !is_module_span_declaration_id(&self.module, enum_declaration_id)
+            || !is_module_span_declaration_id(&self.module, variant_declaration_id)
         {
             return Err(unsupported(
                 "value-enum member declaration identity is not scoped to this Body-IR module",
@@ -2864,6 +3012,40 @@ impl BodyExecutor {
             (BinOp::Mod, ReplacementValue::Int(left), ReplacementValue::Int(right)) => {
                 Ok(ReplacementValue::Int(python_mod_i64(left, right)))
             }
+            (
+                BinOp::Eq,
+                ReplacementValue::FieldlessEnum {
+                    enum_declaration_id: left_enum_declaration_id,
+                    variant_declaration_id: left_variant_declaration_id,
+                },
+                ReplacementValue::FieldlessEnum {
+                    enum_declaration_id: right_enum_declaration_id,
+                    variant_declaration_id: right_variant_declaration_id,
+                },
+            ) => Ok(ReplacementValue::Bool(self.fieldless_enum_values_equal(
+                &left_enum_declaration_id,
+                &left_variant_declaration_id,
+                &right_enum_declaration_id,
+                &right_variant_declaration_id,
+                span,
+            )?)),
+            (
+                BinOp::Ne,
+                ReplacementValue::FieldlessEnum {
+                    enum_declaration_id: left_enum_declaration_id,
+                    variant_declaration_id: left_variant_declaration_id,
+                },
+                ReplacementValue::FieldlessEnum {
+                    enum_declaration_id: right_enum_declaration_id,
+                    variant_declaration_id: right_variant_declaration_id,
+                },
+            ) => Ok(ReplacementValue::Bool(!self.fieldless_enum_values_equal(
+                &left_enum_declaration_id,
+                &left_variant_declaration_id,
+                &right_enum_declaration_id,
+                &right_variant_declaration_id,
+                span,
+            )?)),
             (BinOp::Eq, left, right) if left.is_collection_scalar() && right.is_collection_scalar() => {
                 Ok(ReplacementValue::Bool(left == right))
             }
@@ -3108,7 +3290,10 @@ impl BodyExecutor {
 impl ReplacementValue {
     /// Return whether a value can honor a Body-IR `Copy` read without duplicating owned state.
     const fn is_copy_shaped(&self) -> bool {
-        matches!(self, Self::Int(_) | Self::Bool(_) | Self::Unit)
+        matches!(
+            self,
+            Self::Int(_) | Self::Bool(_) | Self::Unit | Self::FieldlessEnum { .. }
+        )
     }
 
     /// Return whether this value is one scalar leaf of the source-local structural vocabulary.
@@ -3450,6 +3635,7 @@ const fn value_kind(value: &ReplacementValue) -> &'static str {
         ReplacementValue::List { .. } => "list",
         ReplacementValue::Tuple(_) => "tuple",
         ReplacementValue::Nominal { .. } => "nominal",
+        ReplacementValue::FieldlessEnum { .. } => "fieldless enum",
         ReplacementValue::ValueEnum { .. } => "value enum",
         ReplacementValue::Callable(_) => "callable",
         ReplacementValue::Generator(_) => "generator",
@@ -3487,6 +3673,7 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::module("replacement.generator_budget_test"),
             nominal_declarations: Vec::new(),
+            fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
             bodies: Vec::new(),
         };

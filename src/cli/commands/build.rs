@@ -39,7 +39,8 @@ use crate::frontend::api_metadata::{
 };
 use crate::frontend::ast::{Declaration, Decorator, Expr, ImportKind, Literal, Span, Spanned, Statement, Visibility};
 use crate::frontend::body_ir::{
-    build_body_ir_module_v0, is_direct_replacement_plain_model, is_direct_replacement_value_enum,
+    build_body_ir_module_v0, is_direct_replacement_fieldless_enum, is_direct_replacement_plain_model,
+    is_direct_replacement_value_enum,
 };
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
@@ -2494,6 +2495,7 @@ fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> 
     program.declarations.iter().find_map(|declaration| {
         if matches!(declaration.node, Declaration::Function(_) | Declaration::Docstring(_))
             || matches!(&declaration.node, Declaration::Model(model) if is_direct_replacement_plain_model(model))
+            || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_fieldless_enum(enum_decl))
             || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_value_enum(enum_decl))
         {
             return None;

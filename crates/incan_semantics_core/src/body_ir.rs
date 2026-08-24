@@ -60,6 +60,13 @@ pub struct BodyIrModule {
     /// list rather than recovering a constructor identity from a source spelling, import, alias, or typechecker
     /// lookup. Models outside this deliberately narrow value profile are absent and must refuse.
     pub nominal_declarations: Vec<NominalDeclaration>,
+    /// Source-local fieldless normal-enum declarations whose canonical unit variants are available to direct
+    /// execution.
+    ///
+    /// This is not a general algebraic-data-type registry. The direct profile may materialize only an exact retained
+    /// unit variant and compare two carriers of the same retained enum identity; payload variants, aliases, imports,
+    /// traits, methods, matching, and every Result-shaped form remain absent and must refuse.
+    pub fieldless_enum_declarations: Vec<FieldlessEnumDeclaration>,
     /// Source-local RFC 032 value-enum declarations whose canonical scalar members are available to direct execution.
     ///
     /// This is deliberately separate from [`Self::nominal_declarations`]: a value enum has no model field layout,
@@ -84,6 +91,20 @@ impl BodyIrModule {
                 declaration.direct_declaration_id,
                 declaration.fields.join(", "),
                 declaration.type_parameter_count
+            );
+        }
+        for declaration in &self.fieldless_enum_declarations {
+            let _ = writeln!(
+                &mut out,
+                "fieldless_enum {} id={} variants=[{}]",
+                declaration.name,
+                declaration.direct_declaration_id,
+                declaration
+                    .variants
+                    .iter()
+                    .map(FieldlessEnumVariantDeclaration::render_snapshot)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
         for declaration in &self.value_enum_declarations {
@@ -123,6 +144,37 @@ pub struct NominalDeclaration {
     pub fields: Vec<String>,
     /// Number of declared type parameters; this profile admits only zero.
     pub type_parameter_count: usize,
+}
+
+/// One source-local fieldless normal enum retained for direct identity comparison.
+///
+/// The record exists only for undecorated, non-generic declarations with no traits, methods, aliases, value backing,
+/// or payload variants. A runtime validates these records before materializing a carrier and never treats the enum
+/// spelling itself as an execution authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldlessEnumDeclaration {
+    /// Exact source-local enum declaration identity, derived from the declaration source span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Canonical source declaration name.
+    pub name: String,
+    /// Canonical zero-payload variants in source declaration order.
+    pub variants: Vec<FieldlessEnumVariantDeclaration>,
+}
+
+/// One canonical zero-payload member of a retained fieldless normal enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldlessEnumVariantDeclaration {
+    /// Exact source-local variant declaration identity, derived from the declaration source span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Canonical member name; aliases are intentionally not retained.
+    pub name: String,
+}
+
+impl FieldlessEnumVariantDeclaration {
+    /// Render the member identity for a deterministic module snapshot.
+    fn render_snapshot(&self) -> String {
+        format!("variant {} id={}", self.name, self.direct_declaration_id)
+    }
 }
 
 /// The scalar backing category a retained RFC 032 value enum exposes through `.value()`.
@@ -657,6 +709,12 @@ pub enum Rvalue {
     /// membership against [`BodyIrModule::value_enum_declarations`] before the compiler-provided `.value()` method
     /// exposes the literal. It never represents an ordinary enum, payload variant, alias, import, or Result value.
     ValueEnumVariant(ValueEnumVariantTarget),
+    /// Materialize one exact source-local fieldless normal-enum member.
+    ///
+    /// This stores declaration identities rather than a source spelling so a direct runtime can revalidate the
+    /// unit-variant membership against [`BodyIrModule::fieldless_enum_declarations`]. It never represents payload
+    /// construction, matching, aliases, imports, or Result values.
+    FieldlessEnumVariant(FieldlessEnumVariantTarget),
     /// An f-string interpolation, built from a sequence of literal text chunks and already-lowered embedded
     /// expressions. Mirrors the existing Rust-emission backend's dedicated `IrExprKind::Format { parts }` node
     /// (`src/backend/ir/expr.rs`) rather than a helper-call desugar: an f-string is a compiler-owned structured
@@ -767,6 +825,7 @@ impl Rvalue {
                 format!("{}[{}]", kind.as_str(), items.join(", "))
             }
             Self::ValueEnumVariant(target) => target.render_snapshot(),
+            Self::FieldlessEnumVariant(target) => target.render_snapshot(),
             Self::Format(parts) => {
                 let items: Vec<String> = parts.iter().map(FormatPart::render_snapshot).collect();
                 format!("fstring({})", items.join(", "))
@@ -824,6 +883,29 @@ impl ValueEnumVariantTarget {
     fn render_snapshot(&self) -> String {
         format!(
             "value_enum_variant({}::{} enum_id={} variant_id={})",
+            self.enum_name, self.variant_name, self.enum_declaration_id, self.variant_declaration_id
+        )
+    }
+}
+
+/// Exact source-local enum/member identity selected for one fieldless normal-enum member expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldlessEnumVariantTarget {
+    /// Exact source-local owner enum declaration identity.
+    pub enum_declaration_id: CompilerNodeId,
+    /// Exact source-local member declaration identity.
+    pub variant_declaration_id: CompilerNodeId,
+    /// Canonical owner name, retained for malformed-Body-IR cross-checks and diagnostics.
+    pub enum_name: String,
+    /// Canonical member name, retained for malformed-Body-IR cross-checks and diagnostics.
+    pub variant_name: String,
+}
+
+impl FieldlessEnumVariantTarget {
+    /// Render both retained identities so snapshots cannot mistake a unit-variant spelling for a direct target fact.
+    fn render_snapshot(&self) -> String {
+        format!(
+            "fieldless_enum_variant({}::{} enum_id={} variant_id={})",
             self.enum_name, self.variant_name, self.enum_declaration_id, self.variant_declaration_id
         )
     }
@@ -2810,6 +2892,7 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             nominal_declarations: Vec::new(),
+            fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
             bodies: vec![sample_body()],
         };
