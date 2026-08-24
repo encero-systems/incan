@@ -64,8 +64,9 @@ pub struct BodyIrModule {
     /// execution.
     ///
     /// This is not a general algebraic-data-type registry. The direct profile may materialize only an exact retained
-    /// unit variant and compare two carriers of the same retained enum identity; payload variants, aliases, imports,
-    /// traits, methods, matching, and every Result-shaped form remain absent and must refuse.
+    /// unit variant, compare two carriers of the same retained enum identity, and dispatch a pattern carrying the
+    /// same exact enum/member identities; payload variants, aliases, imports, traits, and methods remain absent and
+    /// must refuse.
     pub fieldless_enum_declarations: Vec<FieldlessEnumDeclaration>,
     /// Source-local RFC 032 value-enum declarations whose canonical scalar members are available to direct execution.
     ///
@@ -713,8 +714,15 @@ pub enum Rvalue {
     ///
     /// This stores declaration identities rather than a source spelling so a direct runtime can revalidate the
     /// unit-variant membership against [`BodyIrModule::fieldless_enum_declarations`]. It never represents payload
-    /// construction, matching, aliases, imports, or Result values.
+    /// construction, aliases, imports, or Result values; matching is represented separately by
+    /// [`Pattern::FieldlessEnumVariant`].
     FieldlessEnumVariant(FieldlessEnumVariantTarget),
+    /// Construct one compiler-owned `Result` variant from one already-lowered payload.
+    ///
+    /// The variant kind and checked payload/error types are explicit Body-IR facts. A direct runtime may therefore
+    /// construct only `Ok` or `Err` without treating an arbitrary same-spelled callable as a Result constructor;
+    /// imported conversions, unresolved types, and cross-error-type propagation remain visible refusals.
+    ResultVariant(ResultVariant),
     /// An f-string interpolation, built from a sequence of literal text chunks and already-lowered embedded
     /// expressions. Mirrors the existing Rust-emission backend's dedicated `IrExprKind::Format { parts }` node
     /// (`src/backend/ir/expr.rs`) rather than a helper-call desugar: an f-string is a compiler-owned structured
@@ -826,6 +834,7 @@ impl Rvalue {
             }
             Self::ValueEnumVariant(target) => target.render_snapshot(),
             Self::FieldlessEnumVariant(target) => target.render_snapshot(),
+            Self::ResultVariant(variant) => variant.render_snapshot(),
             Self::Format(parts) => {
                 let items: Vec<String> = parts.iter().map(FormatPart::render_snapshot).collect();
                 format!("fstring({})", items.join(", "))
@@ -908,6 +917,51 @@ impl FieldlessEnumVariantTarget {
             "fieldless_enum_variant({}::{} enum_id={} variant_id={})",
             self.enum_name, self.variant_name, self.enum_declaration_id, self.variant_declaration_id
         )
+    }
+}
+
+/// One direct compiler-owned `Result` construction with its checked payload and error facts retained.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResultVariant {
+    /// Which intrinsic Result constructor source checking selected.
+    pub kind: ResultVariantKind,
+    /// The one source-order payload operand.
+    pub payload: Operand,
+    /// Checked `Result` success type.
+    pub ok_type: IncanType,
+    /// Checked `Result` error type.
+    pub error_type: IncanType,
+}
+
+impl ResultVariant {
+    /// Render the construction and checked type facts without consulting any target-language Result spelling.
+    fn render_snapshot(&self) -> String {
+        format!(
+            "result_{}({}, ok_type={}, error_type={})",
+            self.kind.as_str(),
+            self.payload.render_snapshot(),
+            self.ok_type,
+            self.error_type
+        )
+    }
+}
+
+/// Intrinsic source-level Result constructor selected by typechecking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultVariantKind {
+    /// `Ok(payload)`.
+    Ok,
+    /// `Err(payload)`.
+    Err,
+}
+
+impl ResultVariantKind {
+    /// Stable lowercase spelling for snapshots and receipts.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Err => "err",
+        }
     }
 }
 
@@ -1220,6 +1274,19 @@ pub enum Pattern {
         name: String,
         fields: Vec<(String, Pattern)>,
     },
+    /// A source-local plain-model pattern whose exact declaration identity is retained alongside canonical named
+    /// fields. This is distinct from [`Self::Struct`], whose name-only fallback remains a visible refusal.
+    Nominal {
+        target: NominalPatternTarget,
+        fields: Vec<(String, Pattern)>,
+    },
+    /// A source-local fieldless normal-enum unit pattern with exact enum/member identities.
+    FieldlessEnumVariant(FieldlessEnumVariantTarget),
+    /// One intrinsic `Result` constructor pattern with its recursively lowered payload patterns.
+    Result {
+        variant: ResultVariantKind,
+        fields: Vec<Pattern>,
+    },
     /// A positional constructor pattern (`Some(x)`, `Ok(value)`, `Shape::Circle(r)`): matches an enum-variant (or
     /// `Option`/`Result`) scrutinee and recursively matches/binds each positional field. `name` is the enum type
     /// name when known, or empty when v0 lowering could not resolve it (matching the existing backend's own
@@ -1256,6 +1323,20 @@ impl Pattern {
                     .collect();
                 format!("{name} {{ {} }}", fields.join(", "))
             }
+            Self::Nominal { target, fields } => {
+                let fields: Vec<String> = fields
+                    .iter()
+                    .map(|(field_name, pat)| format!("{field_name}: {}", pat.render_snapshot()))
+                    .collect();
+                format!("nominal {} {{ {} }}", target.render_snapshot(), fields.join(", "))
+            }
+            Self::FieldlessEnumVariant(target) => {
+                format!("fieldless {}", target.render_snapshot())
+            }
+            Self::Result { variant, fields } => {
+                let fields: Vec<String> = fields.iter().map(Pattern::render_snapshot).collect();
+                format!("Result::{}({})", variant.as_str(), fields.join(", "))
+            }
             Self::Enum { name, variant, fields } => {
                 let label = if name.is_empty() {
                     variant.clone()
@@ -1274,6 +1355,22 @@ impl Pattern {
                 items.join(" | ")
             }
         }
+    }
+}
+
+/// Exact source-local plain-model declaration selected by one structural pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NominalPatternTarget {
+    /// Exact source-local model declaration identity.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Canonical model name retained only for malformed-Body-IR cross-checks and diagnostics.
+    pub name: String,
+}
+
+impl NominalPatternTarget {
+    /// Render the nominal identity explicitly so a snapshot cannot mistake the name for an authority.
+    fn render_snapshot(&self) -> String {
+        format!("{} id={}", self.name, self.direct_declaration_id)
     }
 }
 
@@ -1986,12 +2083,17 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
         StatementKind::Expr { value } => {
             let _ = writeln!(out, "{indent}expr {}", value.render_snapshot());
         }
-        StatementKind::TryPropagate { destination, operand } => {
+        StatementKind::TryPropagate {
+            destination,
+            operand,
+            error_routing,
+        } => {
             let _ = writeln!(
                 out,
-                "{indent}{} = try?({})",
+                "{indent}{} = try?({}, {})",
                 destination.render_snapshot(),
-                operand.render_snapshot()
+                operand.render_snapshot(),
+                error_routing.render_snapshot()
             );
         }
         StatementKind::IterNext {
@@ -2171,7 +2273,13 @@ pub enum StatementKind {
     /// call-target resolution for a manual decomposition is out of scope for v0 (see the module docs). Unlike
     /// [`Callee::Helper`] this needs no runtime-helper requirement: the conversion is Rust's own `From`/`Into`
     /// machinery, not a compiler-provided function call.
-    TryPropagate { destination: Place, operand: Operand },
+    TryPropagate {
+        destination: Place,
+        operand: Operand,
+        /// Checked routing fact for the failure payload. A direct runtime supports only the exact same error type;
+        /// a conversion remains represented so it can refuse without guessing an `Into`/`From` implementation.
+        error_routing: TryErrorRouting,
+    },
     /// Poll one iteration of a general (non-range) `for` loop or comprehension `for` clause, standing in for
     /// `iterator.next_method()` (or a builtin collection's implicit advance) plus the branch on its result -- the
     /// same #653-criterion-3 "compiler-owned semantic gets its own explicit node" treatment as
@@ -2198,6 +2306,35 @@ pub enum StatementKind {
     /// A source construct v0 lowering does not yet model. Keeps the model total over real programs instead of
     /// panicking or silently dropping the construct.
     Unsupported { description: String },
+}
+
+/// Typechecker-proven error routing selected for one `?` operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TryErrorRouting {
+    /// The operand and enclosing Result have the same exact error type, so direct propagation needs no conversion.
+    SameType { error_type: IncanType },
+    /// Source semantics selected a conversion between distinct error types. The direct runtime intentionally does
+    /// not reconstruct that conversion until Body IR retains the conversion authority itself.
+    ConversionRequired {
+        source_error_type: IncanType,
+        destination_error_type: IncanType,
+    },
+    /// Lowering did not retain enough checked Result type information to describe error routing honestly.
+    Unresolved,
+}
+
+impl TryErrorRouting {
+    /// Stable maintainer-facing rendering paired with the `try?` snapshot line.
+    fn render_snapshot(&self) -> String {
+        match self {
+            Self::SameType { error_type } => format!("same_error_type={error_type}"),
+            Self::ConversionRequired {
+                source_error_type,
+                destination_error_type,
+            } => format!("error_conversion={source_error_type}->{destination_error_type}"),
+            Self::Unresolved => "error_routing=unresolved".to_string(),
+        }
+    }
 }
 
 // ============================================================================
@@ -2596,12 +2733,15 @@ mod tests {
                 kind: StatementKind::TryPropagate {
                     destination: Place::from_local(LocalId(2)),
                     operand: Operand::place(Place::from_local(LocalId(0)), OwnershipFact::Move, true),
+                    error_routing: TryErrorRouting::SameType {
+                        error_type: IncanType::Named("E".to_string()),
+                    },
                 },
                 span: HirSourceSpan::new(0, 1),
             },
         );
         let snapshot = body.render_snapshot();
-        assert!(snapshot.contains("_2 = try?(move(_0, last_use))"));
+        assert!(snapshot.contains("_2 = try?(move(_0, last_use), same_error_type=E)"));
     }
 
     #[test]

@@ -12,8 +12,8 @@ use incan::backend::selection::{
 use incan::frontend::body_ir::build_body_ir_module_v0;
 use incan::frontend::typechecker::TypeChecker;
 use incan::frontend::{lexer, parser};
-use incan_semantics_core::CompilerNodeId;
-use incan_semantics_core::body_ir::{BodyIrModule, OwnershipFact, Rvalue, StatementKind};
+use incan_semantics_core::body_ir::{BodyIrModule, OwnershipFact, Rvalue, StatementKind, TryErrorRouting};
+use incan_semantics_core::{CompilerNodeId, IncanType};
 
 /// Lower one self-contained, typechecked source module into the Body IR the replacement backend consumes.
 fn lower_typed_body_ir(source: &str) -> Result<BodyIrModule, Box<dyn std::error::Error>> {
@@ -166,6 +166,201 @@ def main() -> int:
         execution.body_snapshot.contains(&constructor_evidence),
         "the direct evidence must bind Pair to its retained declaration identity and canonical layout: {}",
         execution.body_snapshot
+    );
+    Ok(())
+}
+
+/// Execute source-local nominal and normal-enum pattern dispatch without recovering declarations from spellings.
+#[test]
+fn replacement_executes_identity_selected_nominal_and_fieldless_enum_match_patterns()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Pair:
+  left: int
+  right: int
+
+enum Signal:
+  Ready
+  Stop
+
+def classify(pair: Pair, signal: Signal) -> int:
+  match pair:
+    case Pair(left=40, right=2):
+      match signal:
+        case Signal.Ready:
+          return 42
+        case Signal.Stop:
+          return 0
+    case _:
+      return 0
+  return 0
+
+def main() -> int:
+    return classify(Pair(left=40, right=2), Signal.Ready)
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(
+        execution.body_snapshot.contains("executed direct match arm"),
+        "direct execution must retain selected pattern-arm evidence: {}",
+        execution.body_snapshot
+    );
+    Ok(())
+}
+
+/// Execute intrinsic Result construction, same-error `?` routing, and the checked `Ok`/`Err` pattern facts.
+#[test]
+fn replacement_executes_same_error_result_routing_and_pattern_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Failure:
+  Odd
+
+def half(value: int) -> Result[int, Failure]:
+  if value % 2 != 0:
+    return Err(Failure.Odd)
+  return Ok(value // 2)
+
+def quarter(value: int) -> Result[int, Failure]:
+  half_value = half(value)?
+  return half(half_value)
+
+def main() -> int:
+  match quarter(8):
+    case Ok(value):
+      return value
+    case Err(_):
+      return 0
+  return 0
+
+def failed() -> int:
+  match quarter(5):
+    case Ok(value):
+      return value
+    case Err(_):
+      return 0
+  return 0
+
+def pair_result() -> Result[tuple[int, int], Failure]:
+  return Ok((20, 22))
+
+def tuple_payload() -> int:
+  match pair_result():
+    case Ok(_):
+      return 42
+    case Err(_):
+      return 0
+  return 0
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(2));
+    assert!(
+        execution.body_snapshot.contains("executed Result::ok construction")
+            && execution.body_snapshot.contains("executed Result try route=ok"),
+        "receipt-bound evidence must name direct Result construction and same-error routing: {}",
+        execution.body_snapshot
+    );
+    let propagated = execute_free_function(&module, "failed", &[])?;
+    assert!(
+        propagated.value == ReplacementValue::Int(0)
+            && propagated.body_snapshot.contains("executed Result try route=err"),
+        "an Err must return from `?` directly into the enclosing Result caller: {}",
+        propagated.body_snapshot
+    );
+    let tuple_payload = execute_free_function(&module, "tuple_payload", &[])?;
+    assert_eq!(
+        tuple_payload.value,
+        ReplacementValue::Int(42),
+        "a recursively structural tuple Result payload must retain its checked direct type"
+    );
+
+    let mut conversion_required = module.clone();
+    let mut try_span = None;
+    for statement in &mut conversion_required
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "quarter")
+        .ok_or("fixture must retain the quarter body")?
+        .block
+        .stmts
+    {
+        if let StatementKind::TryPropagate { error_routing, .. } = &mut statement.kind {
+            try_span = Some(statement.span);
+            *error_routing = TryErrorRouting::ConversionRequired {
+                source_error_type: IncanType::Named("Failure".to_string()),
+                destination_error_type: IncanType::Named("OtherFailure".to_string()),
+            };
+        }
+    }
+    let try_span = try_span.ok_or("fixture must lower a try-propagate statement")?;
+    let error = match execute_free_function(&conversion_required, "failed", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "cross-error Result propagation must refuse directly, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    assert!(
+        matches!(
+            error,
+            incan::backend::replacement::ReplacementExecutionError::Unsupported {
+                ref description,
+                span,
+                ..
+            } if description == "cross-error-type try propagation" && span == try_span
+        ),
+        "conversion-required Result routing must refuse at its original `?` span: {error:?}"
+    );
+
+    let mut mismatched_payload = module.clone();
+    let mut result_span = None;
+    for statement in &mut mismatched_payload
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "half")
+        .ok_or("fixture must retain the half body")?
+        .block
+        .stmts
+    {
+        let StatementKind::Assign {
+            rvalue: Rvalue::ResultVariant(variant),
+            ..
+        } = &mut statement.kind
+        else {
+            continue;
+        };
+        if variant.kind == incan_semantics_core::body_ir::ResultVariantKind::Ok {
+            result_span = Some(statement.span);
+            variant.ok_type = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str);
+        }
+    }
+    let result_span = result_span.ok_or("fixture must lower an Ok Result construction")?;
+    let error = match execute_free_function(&mismatched_payload, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "a Result payload that disagrees with its retained checked type must refuse, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    assert!(
+        matches!(
+            error,
+            incan::backend::replacement::ReplacementExecutionError::Unsupported {
+                ref description,
+                span,
+                ..
+            } if description.contains("payload incompatible with retained type `str`") && span == result_span
+        ),
+        "a malformed Result payload type must refuse at its original constructor span: {error:?}"
     );
     Ok(())
 }
@@ -2411,9 +2606,10 @@ def main() -> int:
     Ok(())
 }
 
-/// Refuse fieldless-enum matching until Body IR represents a direct matcher rather than falling back.
+/// Execute fieldless-enum pattern dispatch directly and publish a replacement-only receipt.
 #[test]
-fn replacement_cli_refuses_fieldless_enum_matching_without_a_receipt() -> Result<(), Box<dyn std::error::Error>> {
+fn replacement_cli_executes_fieldless_enum_matching_with_a_replacement_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let entrypoint = temporary.path().join("main.incn");
     let source = r#"enum Signal:
@@ -2421,7 +2617,10 @@ fn replacement_cli_refuses_fieldless_enum_matching_without_a_receipt() -> Result
   Stop
 
 def main() -> int:
-  match Signal.Ready:
+  return classify(Signal.Ready)
+
+def classify(signal: Signal) -> int:
+  match signal:
     case Signal.Ready:
       return 42
     case Signal.Stop:
@@ -2437,36 +2636,123 @@ def main() -> int:
             "replacement",
             "--backend-fallback",
             "refuse",
+            "--report",
+            "json",
         ])
         .output()?;
     assert!(
-        !output.status.success(),
-        "an unrepresented fieldless-enum matcher must visibly refuse"
-    );
-    let combined = format!(
-        "{}\n{}",
+        output.status.success(),
+        "an exact source-local fieldless-enum matcher must execute directly. stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
-        combined.contains("match expression"),
-        "the refusal must name the unrepresented matcher: {combined}"
-    );
-    let match_start = source
-        .find("match Signal.Ready")
-        .ok_or("fixture must contain the refused match expression")?;
-    assert!(
-        combined.contains(&format!(
-            "primary Incan source location: {}:{}..",
-            entrypoint.display(),
-            match_start
-        )),
-        "the refusal must retain the match expression's original source span: {combined}"
+        report["replacement_execution"]["body_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| {
+                snapshot.contains("fieldless fieldless_enum_variant(Signal::Ready")
+                    && snapshot.contains("executed direct match arm")
+            }),
+        "the direct report must bind the selected fieldless pattern to its retained identity: {report}"
     );
     assert!(
-        !temporary.path().join("target/incan").exists()
-            && !temporary.path().join(".incan/backend/receipt.json").exists(),
-        "an unrepresented fieldless-enum matcher must not fall back or publish a receipt"
+        report.get("generated").is_none() && report.get("oven").is_none(),
+        "a direct fieldless-enum matcher must not invent generated-Rust or Oven evidence: {report}"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert!(
+        receipt["executed_backend"] == "replacement" && receipt["fallback_outcome"] == "not_needed",
+        "the matcher must publish only an admitted replacement receipt: {receipt}"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "a direct fieldless-enum matcher must not create a legacy generated-project directory"
+    );
+    Ok(())
+}
+
+/// Execute intrinsic Result construction, exact same-error routing, and `Ok` matching through a replacement receipt.
+#[test]
+fn replacement_cli_executes_same_error_result_routing_with_a_replacement_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        r#"enum Failure:
+  Odd
+
+def half(value: int) -> Result[int, Failure]:
+  if value % 2 != 0:
+    return Err(Failure.Odd)
+  return Ok(value // 2)
+
+def quarter(value: int) -> Result[int, Failure]:
+  half_value = half(value)?
+  return half(half_value)
+
+def main() -> int:
+  match quarter(8):
+    case Ok(value):
+      return value
+    case Err(_):
+      return 0
+  return 0
+"#,
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+            "--report",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "an exact same-error Result path must execute directly. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["replacement_execution"]["result"], "2");
+    assert!(
+        report["replacement_execution"]["body_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| {
+                snapshot.contains("result_ok(")
+                    && snapshot.contains("same_error_type=Failure")
+                    && snapshot.contains("executed Result try route=ok")
+            }),
+        "the direct report must retain intrinsic Result construction and exact routing evidence: {report}"
+    );
+    assert!(
+        report.get("generated").is_none() && report.get("oven").is_none(),
+        "a direct Result report must not invent generated-Rust or Oven evidence: {report}"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert!(
+        receipt["executed_backend"] == "replacement"
+            && receipt["fallback_outcome"] == "not_needed"
+            && receipt["identity"]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("sha256:")),
+        "direct Result execution must bind a replacement receipt identity: {receipt}"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "a direct Result execution must not create a legacy generated-project directory"
     );
     Ok(())
 }

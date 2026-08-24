@@ -52,6 +52,7 @@ use incan_semantics_core::{
     IncanPrimitiveType, IncanType, rust_tuple_arity,
 };
 
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 use crate::frontend::ast;
@@ -480,6 +481,37 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
     HirSourceSpan::new(span.start, span.end)
 }
 
+/// Return the checked payload types of an intrinsic `Result[ok, error]` carrier.
+///
+/// This is deliberately a narrow query over the typechecker-owned semantic type. The Body-IR lowerer uses it only
+/// to retain facts which direct execution cannot reconstruct: which intrinsic constructor is being formed, which
+/// pattern payload is being bound, and whether `?` preserves the enclosing error type exactly. It does not infer
+/// a conversion or admit a differently shaped generic carrier.
+fn result_type_parts(ty: &IncanType) -> Option<(&IncanType, &IncanType)> {
+    let IncanType::Generic { base, args } = ty else {
+        return None;
+    };
+    (collections::from_str(base) == Some(CollectionTypeId::Result)).then_some(())?;
+    match args.as_slice() {
+        [ok_type, error_type] => Some((ok_type, error_type)),
+        _ => None,
+    }
+}
+
+/// Return just the checked error channel for an intrinsic `Result` carrier.
+fn result_error_type(ty: &IncanType) -> Option<&IncanType> {
+    result_type_parts(ty).map(|(_, error_type)| error_type)
+}
+
+/// Map only the compiler-owned intrinsic constructor spellings to Body-IR result variants.
+fn result_variant_kind(name: &str) -> Option<bir::ResultVariantKind> {
+    match constructors::from_str(name) {
+        Some(ConstructorId::Ok) => Some(bir::ResultVariantKind::Ok),
+        Some(ConstructorId::Err) => Some(bir::ResultVariantKind::Err),
+        _ => None,
+    }
+}
+
 /// Lower one function declaration's body into Body IR v0.
 fn lower_function_body(
     function: &ast::FunctionDecl,
@@ -500,6 +532,9 @@ fn lower_function_body(
         .declarations
         .function_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
+    let owner_return_type = binding
+        .map(|binding| semantic_type_from_resolved(&binding.return_type))
+        .unwrap_or(IncanType::Unknown);
 
     let mut builder = BodyBuilder::new(
         type_info,
@@ -509,6 +544,7 @@ fn lower_function_body(
         local_fieldless_enum_declarations,
         local_value_enum_declarations,
         module_identity,
+        owner_return_type,
     );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
@@ -615,6 +651,9 @@ fn lower_method_body(
         .declarations
         .method_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
+    let owner_return_type = binding
+        .map(|binding| semantic_type_from_resolved(&binding.return_type))
+        .unwrap_or(IncanType::Unknown);
 
     let mut builder = BodyBuilder::new(
         type_info,
@@ -624,6 +663,7 @@ fn lower_method_body(
         local_fieldless_enum_declarations,
         local_value_enum_declarations,
         module_identity,
+        owner_return_type,
     );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
@@ -738,6 +778,8 @@ struct BodyBuilder<'type_info, 'source> {
     local_value_enum_declarations: &'source LocalValueEnumDeclarations,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
     module_identity: &'source str,
+    /// Checked return type of the function/method currently being lowered, used only to retain `?` error routing.
+    owner_return_type: IncanType,
     locals: Vec<bir::LocalDecl>,
     scopes: Vec<bir::ScopeInfo>,
     /// Current source-name -> local binding. Later bindings of the same name (new `let`/`mut` assignments) shadow
@@ -777,6 +819,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
         local_value_enum_declarations: &'source LocalValueEnumDeclarations,
         module_identity: &'source str,
+        owner_return_type: IncanType,
     ) -> Self {
         Self {
             type_info,
@@ -786,6 +829,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             local_fieldless_enum_declarations,
             local_value_enum_declarations,
             module_identity,
+            owner_return_type,
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
@@ -3467,6 +3511,47 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.lower_nominal_construction(&name, args, span, scope, out);
         }
 
+        // `Ok` and `Err` are intrinsic Result constructors, not ordinary direct calls. Retain that checked
+        // distinction explicitly: a same-spelled local function or imported target must remain on the normal call
+        // path and refuse unless its own direct callable facts are available. The direct runtime never resolves a
+        // constructor name dynamically.
+        if !self.local_function_declarations.contains_key(&name)
+            && self.type_info.source_target(span).is_none()
+            && type_args.is_empty()
+            && let Some(kind) = result_variant_kind(&name)
+        {
+            let result_ty = self.resolve_ty(span);
+            let Some((ok_type, error_type)) = result_type_parts(&result_ty) else {
+                return self.unsupported_operand(
+                    format!("intrinsic Result constructor `{name}` without a resolved Result carrier"),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
+            };
+            let [ast::CallArg::Positional(payload)] = args else {
+                return self.unsupported_operand(
+                    format!("intrinsic Result constructor `{name}` requires one positional payload"),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
+            };
+            let payload = self.lower_expr_to_operand(payload, scope, out);
+            return self.push_assign_temp(
+                bir::Rvalue::ResultVariant(bir::ResultVariant {
+                    kind,
+                    payload,
+                    ok_type: ok_type.clone(),
+                    error_type: error_type.clone(),
+                }),
+                result_ty,
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
             Err(description) => {
@@ -3790,6 +3875,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(outer_span);
+        let operand_result_type = self.resolve_ty(inner.span);
+        let error_routing = match (
+            result_error_type(&operand_result_type),
+            result_error_type(&self.owner_return_type),
+        ) {
+            (Some(source_error_type), Some(destination_error_type)) if source_error_type == destination_error_type => {
+                bir::TryErrorRouting::SameType {
+                    error_type: source_error_type.clone(),
+                }
+            }
+            (Some(source_error_type), Some(destination_error_type)) => bir::TryErrorRouting::ConversionRequired {
+                source_error_type: source_error_type.clone(),
+                destination_error_type: destination_error_type.clone(),
+            },
+            _ => bir::TryErrorRouting::Unresolved,
+        };
         let operand = self.lower_expr_to_operand(inner, scope, out);
         let ty = self.resolve_ty(outer_span);
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);
@@ -3797,6 +3898,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             kind: bir::StatementKind::TryPropagate {
                 destination: bir::Place::from_local(destination),
                 operand,
+                error_routing,
             },
             span: hir_span_value,
         });
@@ -4542,6 +4644,76 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Pattern::Tuple(fields)
             }
             ast::Pattern::Constructor(name, args) => {
+                // Preserve exact source-local pattern targets instead of asking the executor to recover a
+                // declaration from the printed constructor spelling. The direct profile accepts only canonical
+                // named fields of a plain model; every other structurally lowered constructor remains the
+                // name-only fallback below and is visibly refused by replacement execution.
+                if let Some(declaration) = self.local_nominal_declarations.get(name)
+                    && matches!(expected_ty, IncanType::Named(type_name) if type_name == name)
+                    && args.iter().all(|arg| matches!(arg, ast::PatternArg::Named(_, _)))
+                {
+                    let fields = args
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            ast::PatternArg::Named(field, pat) => {
+                                let mut field_place = place.clone();
+                                field_place.projection.push(bir::PlaceElem::Field(field.clone()));
+                                Some((
+                                    field.clone(),
+                                    self.lower_match_pattern(
+                                        pat,
+                                        &IncanType::Unknown,
+                                        &field_place,
+                                        arm_scope,
+                                        arm,
+                                        seen,
+                                        saved_bindings,
+                                    ),
+                                ))
+                            }
+                            ast::PatternArg::Positional(_) => None,
+                        })
+                        .collect();
+                    return bir::Pattern::Nominal {
+                        target: bir::NominalPatternTarget {
+                            direct_declaration_id: declaration.direct_declaration_id.clone(),
+                            name: declaration.name.clone(),
+                        },
+                        fields,
+                    };
+                }
+
+                if let Some((enum_name, variant_name)) = name.rsplit_once("::").or_else(|| name.rsplit_once('.'))
+                    && args.is_empty()
+                    && matches!(expected_ty, IncanType::Named(type_name) if type_name == enum_name)
+                    && let Some(declaration) = self.local_fieldless_enum_declarations.get(enum_name)
+                    && let Some(variant) = declaration.variants.iter().find(|variant| variant.name == variant_name)
+                {
+                    return bir::Pattern::FieldlessEnumVariant(bir::FieldlessEnumVariantTarget {
+                        enum_declaration_id: declaration.direct_declaration_id.clone(),
+                        variant_declaration_id: variant.direct_declaration_id.clone(),
+                        enum_name: declaration.name.clone(),
+                        variant_name: variant.name.clone(),
+                    });
+                }
+
+                if let Some(variant) = result_variant_kind(name)
+                    && let Some((ok_type, error_type)) = result_type_parts(expected_ty)
+                    && args.len() == 1
+                    && let [ast::PatternArg::Positional(payload)] = args.as_slice()
+                {
+                    let payload_type = match variant {
+                        bir::ResultVariantKind::Ok => ok_type,
+                        bir::ResultVariantKind::Err => error_type,
+                    };
+                    let lowered_payload =
+                        self.lower_match_pattern(payload, payload_type, place, arm_scope, arm, seen, saved_bindings);
+                    return bir::Pattern::Result {
+                        variant,
+                        fields: vec![lowered_payload],
+                    };
+                }
+
                 // Mirrors the existing Rust-emission backend's own `lower_pattern` (non-union-aware) mapping
                 // exactly: a mix of named and positional arguments (unusual, likely non-representative source)
                 // still lowers every sub-pattern's own bindings for side effects, but only the named fields survive
@@ -7342,6 +7514,12 @@ mod tests {
             snapshot.contains("= try?("),
             "`?` should lower to an explicit try-propagate statement: {snapshot}"
         );
+        assert!(
+            snapshot.contains("same_error_type=E")
+                && snapshot.contains("result_ok(")
+                && snapshot.contains("result_err("),
+            "Result constructors and exact error routing must stay explicit in Body IR: {snapshot}"
+        );
         Ok(())
     }
 
@@ -9414,6 +9592,7 @@ mod tests {
             &local_fieldless_enum_declarations,
             &local_value_enum_declarations,
             "m",
+            IncanType::Unknown,
         );
         let scope = builder.new_scope(None, HirSourceSpan::new(0, 1));
         let mut out = Vec::new();
