@@ -73,6 +73,14 @@ impl BodyIrModule {
 pub struct Body {
     /// Identity of the owning declaration, matching the [`crate::HirDeclaration::id`] this body was lowered from.
     pub decl_id: CompilerNodeId,
+    /// Exact source-local identity used to dispatch a direct named Body-IR call.
+    ///
+    /// [`Self::decl_id`] intentionally stays correlated with declaration-level HIR, whose named identity is useful
+    /// to existing consumers but is not collision-safe for same-name overloads. This span-based declaration identity
+    /// is retained separately so a direct executor can select precisely the declaration the typechecker chose,
+    /// without reconstructing name resolution or consulting generated Rust. It is always scoped to this
+    /// [`BodyIrModule`] and must never stand in for an imported callable identity.
+    pub direct_call_id: CompilerNodeId,
     /// Source-level function/method name.
     pub name: String,
     /// Full source span of the declaration this body was lowered from.
@@ -1446,6 +1454,17 @@ pub struct LocalCallableTarget {
     pub binding: ArgumentBinding,
 }
 
+/// One compiler-recognized named callable with an explicit direct-runtime rule.
+///
+/// This is intentionally distinct from an absent same-module declaration identity. An absent identity means the
+/// source target is unresolved, imported, or otherwise unavailable to this Body-IR module and must refuse; only a
+/// checked builtin fact may select a compiler-owned direct-runtime behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NamedCallableBuiltin {
+    /// The compiler-owned `range` iterator constructor.
+    Range,
+}
+
 /// A direct call to a named function, with its resolved call-site identity.
 ///
 /// Explicit call-site type arguments are part of that identity rather than decoration: `decode_rows[Order](path)`
@@ -1456,6 +1475,16 @@ pub struct LocalCallableTarget {
 pub struct NamedCallableTarget {
     /// Source-level function name.
     pub name: String,
+    /// Exact same-module declaration selected for this call, when Body IR can retain one.
+    ///
+    /// `None` is never permission for an executor to guess an imported, unresolved, or otherwise non-local target
+    /// from [`Self::name`]. A compiler-owned callable uses [`Self::builtin`] instead.
+    pub direct_call_id: Option<CompilerNodeId>,
+    /// Compiler-recognized builtin target, if the typechecker proved this call did not resolve to a source binding.
+    ///
+    /// This is `None` for every same-module, imported, unresolved, or otherwise external target. Consumers must
+    /// reject an absent `direct_call_id` and absent `builtin` rather than using [`Self::name`] as a dispatch key.
+    pub builtin: Option<NamedCallableBuiltin>,
     /// Resolved explicit call-site type arguments, in declared type-parameter order. Empty when the call site wrote
     /// none.
     pub type_args: Vec<IncanType>,
@@ -1984,11 +2013,13 @@ mod tests {
 
     fn sample_body() -> Body {
         let decl_id = CompilerNodeId::declaration("m", "add");
+        let direct_call_id = CompilerNodeId::declaration_span("m", 0, 30);
         let local_x = LocalId(0);
         let local_y = LocalId(1);
         let local_tmp = LocalId(2);
         Body {
             decl_id: decl_id.clone(),
+            direct_call_id,
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             locals: vec![

@@ -101,19 +101,71 @@ def main() -> int:
     Ok(())
 }
 
-/// Reject a list aggregate before the first replacement profile can execute a compound local value.
+/// Execute source-local structural values through an identity-selected sibling without widening the result profile.
+#[test]
+fn replacement_executes_source_local_tuple_list_index_and_mutation_through_a_direct_callable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def score(mut values: list[int]) -> int:
+  values[0] = 40
+  pair = (values[0], 2)
+  return pair.0 + pair.1
+
+def main() -> int:
+  values = [1, 2]
+  return score(values)
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(
+        execution.body_snapshot.contains("call fn:score("),
+        "the result must come from direct Body-IR sibling execution: {}",
+        execution.body_snapshot
+    );
+    Ok(())
+}
+
+/// Dispatch overloads using the declaration identity retained by Body IR, never a name scan at runtime.
+#[test]
+fn replacement_executes_the_exact_same_module_overload_selected_by_the_typechecker()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def pick(a: int, b: int) -> int:
+  return a - b
+
+def pick(b: str, a: str) -> str:
+  return a
+
+def main() -> int:
+  return pick(a=42, b=1)
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(41));
+    assert!(
+        execution.body_snapshot.contains("body pick"),
+        "the selected declaration must execute as a direct Body-IR frame: {}",
+        execution.body_snapshot
+    );
+    Ok(())
+}
+
+/// Refuse an unimplemented dict aggregate at its original source span.
 #[test]
 fn replacement_refuses_unsupported_body_ir_with_the_original_source_span() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
-  values = [1, 2]
+  values = {"first": 1}
   return 0
 "#;
     let module = lower_typed_body_ir(source)?;
     let error = match execute_free_function(&module, "main", &[]) {
         Ok(execution) => {
             return Err(format!(
-                "list aggregates are outside #988's core profile but executed as {:?}",
+                "dict aggregates must remain outside the source-local structural profile but executed as {:?}",
                 execution.value
             )
             .into());
@@ -126,24 +178,24 @@ def main() -> int:
         "unsupported execution must retain an Incan source span: {error}"
     );
     let expected_start = source
-        .find("[1, 2]")
-        .ok_or("aggregate fixture must contain its list assignment")?;
-    let expected_end = expected_start + "[1, 2]".len();
+        .find("{\"first\": 1}")
+        .ok_or("aggregate fixture must contain its dict assignment")?;
+    let expected_end = expected_start + "{\"first\": 1}".len();
     let span = error
         .primary_span()
         .ok_or("aggregate refusal must retain its original source span")?;
     assert_eq!(span.start, expected_start);
     assert_eq!(span.end, expected_end);
     assert!(
-        error.to_string().contains("list aggregate"),
+        error.to_string().contains("dict aggregate"),
         "unsupported operation must be named visibly: {error}"
     );
     Ok(())
 }
 
-/// Refuse a list aggregate even when it appears directly in the return expression.
+/// Keep aggregate return values outside the scalar source-observable result profile.
 #[test]
-fn replacement_refuses_list_aggregate_return_values() -> Result<(), Box<dyn std::error::Error>> {
+fn replacement_refuses_structural_aggregate_return_values() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> list[int]:
   return [1]
@@ -152,7 +204,7 @@ def main() -> list[int]:
     let error = match execute_free_function(&module, "main", &[]) {
         Ok(execution) => {
             return Err(format!(
-                "a list aggregate is outside #988's scalar profile but executed as {:?}",
+                "an aggregate return is outside the scalar result profile but executed as {:?}",
                 execution.value
             )
             .into());
@@ -162,11 +214,11 @@ def main() -> list[int]:
 
     assert!(
         error.primary_span().is_some(),
-        "list aggregate refusal must retain an Incan source span: {error}"
+        "aggregate-return refusal must retain an Incan source span: {error}"
     );
     assert!(
-        error.to_string().contains("list aggregate"),
-        "list aggregate must be named visibly: {error}"
+        error.to_string().contains("returning list"),
+        "aggregate return must be named visibly: {error}"
     );
     Ok(())
 }
@@ -301,20 +353,20 @@ def main() -> int:
         Err(error) => error,
     };
     let expected_start = source
-        .find("[]")
-        .ok_or("fixture must contain the sibling list literal")?;
+        .find("for value in values")
+        .ok_or("fixture must contain the unsupported scalar-list iteration")?;
     let span = error
         .primary_span()
         .ok_or("sibling refusal must retain a source span")?;
     assert_eq!(span.start, expected_start);
-    assert!(error.to_string().contains("list[tuple[scalar, scalar]]"));
+    assert!(error.to_string().contains("builtin collection iteration destination"));
     Ok(())
 }
 
-/// An unresolved Body-IR `range` spelling cannot silently choose between the builtin and a same-module declaration.
+/// A same-module `range` declaration retains an exact direct-call identity instead of being confused with the builtin.
 #[test]
-fn replacement_refuses_a_same_module_range_declaration_at_its_original_span() -> Result<(), Box<dyn std::error::Error>>
-{
+fn replacement_executes_a_same_module_range_declaration_by_its_direct_call_identity()
+-> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def range(start: int, end: int) -> int:
   return start + end
@@ -323,22 +375,72 @@ def main() -> int:
   return range(20, 22)
 "#;
     let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(execution.body_snapshot.contains("body range"));
+    Ok(())
+}
+
+/// Refuse an id-less `range` call unless lowering retained the explicit compiler-builtin target fact.
+#[test]
+fn replacement_refuses_an_idless_range_call_without_the_explicit_builtin_fact() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"
+def count(values: list[int]) -> int:
+  return 42
+
+def main() -> int:
+  return count(range(1, 3))
+"#;
+    let mut module = lower_typed_body_ir(source)?;
+    let main = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .ok_or("fixture must lower the main Body-IR body")?;
+    let target =
+        main.block
+            .stmts
+            .iter_mut()
+            .find_map(|statement| match &mut statement.kind {
+                incan_semantics_core::body_ir::StatementKind::Call {
+                    callee:
+                        incan_semantics_core::body_ir::Callee::Function(
+                            incan_semantics_core::body_ir::CallableTarget::Named(target),
+                        ),
+                    ..
+                } if target.name == "range" => Some(target),
+                _ => None,
+            })
+            .ok_or("fixture must lower its range call as a named Body-IR target")?;
+    assert!(
+        target.builtin.is_some(),
+        "an unshadowed range call must retain an explicit builtin target fact"
+    );
+    target.builtin = None;
+
     let error = match execute_free_function(&module, "main", &[]) {
         Ok(execution) => {
             return Err(format!(
-                "the unresolved range target must not choose a source declaration as a builtin, got {:?}",
+                "an id-less range target without a builtin fact must refuse, got {:?}",
                 execution.value
             )
             .into());
         }
         Err(error) => error,
     };
-    let expected_start = source
-        .find("def range")
-        .ok_or("fixture must contain the range declaration")?;
-    let span = error.primary_span().ok_or("range refusal must retain a source span")?;
-    assert_eq!(span.start, expected_start);
-    assert!(error.to_string().contains("canonical builtin target identity"));
+    let range_start = source
+        .find("range(1, 3)")
+        .ok_or("fixture must contain the range call")?;
+    let span = error
+        .primary_span()
+        .ok_or("an id-less range refusal must retain the original call span")?;
+    assert_eq!(span.start, range_start);
+    assert_eq!(span.end, range_start + "range(1, 3)".len());
+    assert!(
+        error.to_string().contains("call to function `range`"),
+        "the refusal must name the unavailable call target: {error}"
+    );
     Ok(())
 }
 
@@ -614,65 +716,32 @@ def main() -> int:
     Ok(())
 }
 
-/// Refuse ordinary collection indexing; only generator `.collect()` values admit one index projection.
+/// Execute a one-level source-local list index and numeric tuple projection directly.
 #[test]
-fn replacement_refuses_plain_collection_index_projection_with_the_original_source_span()
--> Result<(), Box<dyn std::error::Error>> {
+fn replacement_executes_plain_collection_index_projection() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
   pairs = [(1, 2)]
   pair = pairs[0]
-  return 0
+  return pair.0
 "#;
     let module = lower_typed_body_ir(source)?;
-    let error = match execute_free_function(&module, "main", &[]) {
-        Ok(execution) => {
-            return Err(format!("plain collection index executed as {:?}", execution.value).into());
-        }
-        Err(error) => error,
-    };
-    let expected_start = source
-        .find("pair = pairs[0]")
-        .ok_or("plain collection index fixture must contain its source assignment")?;
-    let span = error
-        .primary_span()
-        .ok_or("plain collection index refusal must retain its source span")?;
-    assert_eq!(span.start, expected_start);
-    assert!(
-        error
-            .to_string()
-            .contains("outside the generator-expression collect profile"),
-        "plain collection index must stay outside the generator collect profile: {error}"
-    );
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(1));
     Ok(())
 }
 
-/// Refuse a standalone tuple before it can be used outside the selected collection profile.
+/// Execute a standalone numeric tuple projection directly.
 #[test]
-fn replacement_refuses_standalone_tuple_with_the_original_source_span() -> Result<(), Box<dyn std::error::Error>> {
+fn replacement_executes_standalone_tuple_projection() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
   pair = (1, 2)
   return pair.0
 "#;
     let module = lower_typed_body_ir(source)?;
-    let error = match execute_free_function(&module, "main", &[]) {
-        Ok(execution) => return Err(format!("standalone tuple executed as {:?}", execution.value).into()),
-        Err(error) => error,
-    };
-    let expected_start = source
-        .find("(1, 2)")
-        .ok_or("standalone-tuple fixture must contain its source tuple")?;
-    let span = error
-        .primary_span()
-        .ok_or("standalone tuple refusal must retain its source span")?;
-    assert_eq!(span.start, expected_start);
-    assert!(
-        error
-            .to_string()
-            .contains("tuple aggregate outside the two-scalar collection-element profile"),
-        "standalone tuple must remain visibly outside the selected collection profile: {error}"
-    );
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(1));
     Ok(())
 }
 
@@ -1051,7 +1120,7 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
     fs::write(
         &entrypoint,
         r#"def main() -> int:
-  values = [1, 2]
+  values = {"first": 1}
   return 0
 "#,
     )?;
@@ -1076,7 +1145,7 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("list aggregate"),
+        combined.contains("dict aggregate"),
         "unsupported construct must be visible: {combined}"
     );
     assert!(
@@ -1084,12 +1153,12 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
         "refusal must retain source authority: {combined}"
     );
     let expected_start = r#"def main() -> int:
-  values = [1, 2]
+  values = {"first": 1}
   return 0
 "#
-    .find("[1, 2]")
-    .ok_or("aggregate fixture must contain its list literal")?;
-    let expected_end = expected_start + "[1, 2]".len();
+    .find("{\"first\": 1}")
+    .ok_or("aggregate fixture must contain its dict literal")?;
+    let expected_end = expected_start + "{\"first\": 1}".len();
     assert!(
         combined.contains(&format!(
             "primary Incan source location: {}:{expected_start}..{expected_end}",
@@ -1144,7 +1213,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("list[tuple[scalar, scalar]]") && combined.contains("original Incan source span"),
+        combined.contains("builtin collection iteration destination")
+            && combined.contains("original Incan source span"),
         "the sibling refusal must preserve its direct profile boundary: {combined}"
     );
     assert!(
@@ -1212,6 +1282,99 @@ def main() -> int:
     Ok(())
 }
 
+/// Refuse an empty default whose compiler-owned aggregate type lies outside the structural vocabulary.
+#[test]
+fn replacement_cli_refuses_typed_empty_non_structural_callable_default_without_a_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    let source = r#"def keep(items: list[float] = []) -> int:
+  return 1
+
+def main() -> int:
+  return keep()
+"#;
+    fs::write(&entrypoint, source)?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "an empty non-structural default must visibly refuse instead of executing vacuously"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let aggregate_start = source.find("[]").ok_or("fixture must contain the empty aggregate")?;
+    assert!(
+        combined.contains("structural aggregate destination has unsupported Body-IR type `List[float]`"),
+        "refusal must identify the unavailable aggregate type: {combined}"
+    );
+    assert!(
+        combined.contains(&format!(
+            "primary Incan source location: {}:{aggregate_start}..{}",
+            entrypoint.display(),
+            aggregate_start + "[]".len()
+        )),
+        "refusal must retain the empty default's original source span: {combined}"
+    );
+    assert!(
+        !combined.contains("Generated Rust project")
+            && !temporary.path().join("target/incan").exists()
+            && !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "an unsupported deferred aggregate must not generate legacy output or publish a replacement receipt"
+    );
+    Ok(())
+}
+
+/// Apply the same aggregate type gate to a partial's synthesized deferred closure frame.
+#[test]
+fn replacement_refuses_typed_empty_non_structural_default_inside_a_partial_closure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def keep(prefix: int, items: list[float] = []) -> int:
+  return prefix
+
+def main() -> int:
+  deferred = partial keep(prefix=1)
+  return deferred()
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "a partial closure must not execute a typed-empty non-structural default, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let aggregate_start = source.find("[]").ok_or("fixture must contain the empty aggregate")?;
+    let span = error
+        .primary_span()
+        .ok_or("a partial-closure aggregate refusal must retain the default source span")?;
+    assert_eq!(span.start, aggregate_start);
+    assert_eq!(span.end, aggregate_start + "[]".len());
+    assert!(
+        error
+            .to_string()
+            .contains("structural aggregate destination has unsupported Body-IR type `List[float]`"),
+        "the deferred closure refusal must name the unavailable aggregate type: {error}"
+    );
+    Ok(())
+}
+
 /// Refuse a typed empty scalar list before replacement can publish a success receipt.
 #[test]
 fn replacement_cli_refuses_typed_empty_scalar_list_without_a_receipt() -> Result<(), Box<dyn std::error::Error>> {
@@ -1247,8 +1410,8 @@ fn replacement_cli_refuses_typed_empty_scalar_list_without_a_receipt() -> Result
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("list[tuple[scalar, scalar]]"),
-        "refusal must name the selected list profile: {combined}"
+        combined.contains("builtin collection iteration destination"),
+        "refusal must name the unsupported scalar-list iteration profile: {combined}"
     );
     assert!(
         combined.contains("original Incan source span"),
@@ -1397,8 +1560,9 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
             "refusal must retain the first unsupported source span: {combined}"
         );
         assert!(
-            !temporary.path().join("target/incan").exists(),
-            "{name} refusal must not create a legacy generated-project directory"
+            !temporary.path().join("target/incan").exists()
+                && !temporary.path().join(".incan/backend/receipt.json").exists(),
+            "{name} refusal must not create legacy output or a replacement receipt"
         );
     }
     Ok(())

@@ -8,7 +8,7 @@
 //!
 //! Run with: `cargo test --test parity_corpus_tests`
 //!
-//! ## Why these twelve cases
+//! ## Why these cases
 //!
 //! Per #987's own plan step 3 ("add a narrow source-only seed corpus before public package or Rust-interop
 //! rows"), every seed case here uses a direct-parser/typechecker, generated-project-run, or codegen-snapshot
@@ -508,6 +508,17 @@ def generator_adapters() -> int:
     return values[0] * 10 + values[1]
 "#;
 
+const REPLACEMENT_BODY_V0_012_SRC: &str = r#"
+def score(mut values: list[int]) -> int:
+    values[0] = 40
+    pair = (values[0], 2)
+    return pair.0 + pair.1
+
+def structural_values() -> int:
+    values = [1, 2]
+    return score(values)
+"#;
+
 fn replacement_body_v0_001_arguments() -> Vec<ReplacementValue> {
     vec![ReplacementValue::Int(40), ReplacementValue::Int(2)]
 }
@@ -594,6 +605,14 @@ fn replacement_body_v0_011_arguments() -> Vec<ReplacementValue> {
 
 fn replacement_body_v0_011_expected() -> ReplacementValue {
     ReplacementValue::Int(34)
+}
+
+fn replacement_body_v0_012_arguments() -> Vec<ReplacementValue> {
+    vec![]
+}
+
+fn replacement_body_v0_012_expected() -> ReplacementValue {
+    ReplacementValue::Int(42)
 }
 
 // ============================================================================
@@ -953,6 +972,22 @@ fn seed_corpus() -> Vec<ParityCase> {
                 shadow_comparison: false,
             }),
         },
+        ParityCase {
+            id: "replacement-body-v0-012",
+            title: "Source-local tuple/list values and exact sibling dispatch execute through Body IR",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1154; tests/replacement_backend_execution_tests.rs::replacement_executes_source_local_tuple_list_index_and_mutation_through_a_direct_callable; comparison remains non-green until #1154 produces paired source-observable evidence through #1146's completed route",
+            disposition: Disposition::Preserved,
+            source: REPLACEMENT_BODY_V0_012_SRC,
+            evaluate: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "structural_values",
+                arguments: replacement_body_v0_012_arguments,
+                expected: replacement_body_v0_012_expected,
+                shadow_comparison: false,
+            }),
+        },
     ]
 }
 
@@ -1266,8 +1301,8 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
         .collect();
     assert_eq!(
         replacement_rows.len(),
-        11,
-        "the six #988 cases, #1123's lazy-generator case, and #1152's four callable/runtime cases must stay stable in #987"
+        12,
+        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, and #1154's structural-value case must stay stable in #987"
     );
 
     for row in replacement_rows {

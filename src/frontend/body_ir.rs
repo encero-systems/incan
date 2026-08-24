@@ -76,6 +76,7 @@ pub fn build_body_ir_module_v0(
     let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program);
+    let local_function_declarations = collect_local_function_declarations(program);
     let bodies = program
         .declarations
         .iter()
@@ -88,6 +89,7 @@ pub fn build_body_ir_module_v0(
                         &module_identity,
                         type_info,
                         &function_default_sources,
+                        &local_function_declarations,
                     )]
                 }
                 ast::Declaration::Model(model) => lower_owner_method_bodies(
@@ -97,6 +99,7 @@ pub fn build_body_ir_module_v0(
                     &module_identity,
                     type_info,
                     &function_default_sources,
+                    &local_function_declarations,
                 ),
                 ast::Declaration::Class(class) => lower_owner_method_bodies(
                     &class.methods,
@@ -105,6 +108,7 @@ pub fn build_body_ir_module_v0(
                     &module_identity,
                     type_info,
                     &function_default_sources,
+                    &local_function_declarations,
                 ),
                 ast::Declaration::Trait(trait_decl) => lower_owner_method_bodies(
                     &trait_decl.methods,
@@ -113,6 +117,7 @@ pub fn build_body_ir_module_v0(
                     &module_identity,
                     type_info,
                     &function_default_sources,
+                    &local_function_declarations,
                 ),
                 _ => Vec::new(),
             }
@@ -127,6 +132,13 @@ pub fn build_body_ir_module_v0(
 /// closure: the checked callable signature retains availability but not the executable default expression. The map
 /// never leaves this frontend boundary; the resulting [`bir::CallableParamDefault::Source`] stores only Body IR.
 type FunctionDefaultSources = HashMap<String, Vec<FunctionDefaultSource>>;
+
+/// Exact spans of this source module's top-level function declarations, grouped by source spelling.
+///
+/// The typechecker exposes an intentionally wider overload surface that can include imports and aliases. Direct
+/// Body-IR dispatch only admits a declaration physically represented by this module, so lowering retains this
+/// small source-local map long enough to attach the chosen declaration identity to each named call.
+type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
 /// Source facts a synthesized local partial needs for one target parameter.
 #[derive(Clone)]
@@ -159,6 +171,20 @@ fn collect_function_default_sources(program: &ast::Program) -> FunctionDefaultSo
         .collect()
 }
 
+/// Collect the exact source spans eligible for same-module direct named-call dispatch.
+fn collect_local_function_declarations(program: &ast::Program) -> LocalFunctionDeclarations {
+    let mut declarations = LocalFunctionDeclarations::new();
+    for declaration in &program.declarations {
+        if let ast::Declaration::Function(function) = &declaration.node {
+            declarations
+                .entry(function.name.clone())
+                .or_default()
+                .push(declaration.span);
+        }
+    }
+    declarations
+}
+
 /// Lower every non-abstract method in `methods` (owned by the class/model/trait named `owner_name`) into one
 /// [`bir::Body`] each, skipping abstract methods (`body: None`). `receiver_ty` is the typechecker-equivalent type
 /// for a declared receiver: a concrete nominal type for models/classes or [`IncanType::SelfType`] for trait defaults.
@@ -176,6 +202,7 @@ fn lower_owner_method_bodies(
     module_identity: &str,
     type_info: &TypeCheckInfo,
     function_default_sources: &FunctionDefaultSources,
+    local_function_declarations: &LocalFunctionDeclarations,
 ) -> Vec<bir::Body> {
     methods
         .iter()
@@ -188,6 +215,7 @@ fn lower_owner_method_bodies(
                 module_identity,
                 type_info,
                 function_default_sources,
+                local_function_declarations,
             )
         })
         .collect()
@@ -215,11 +243,23 @@ fn lower_function_body(
     module_identity: &str,
     type_info: &TypeCheckInfo,
     function_default_sources: &FunctionDefaultSources,
+    local_function_declarations: &LocalFunctionDeclarations,
 ) -> bir::Body {
     let decl_id = CompilerNodeId::declaration(module_identity, &function.name);
-    let binding = type_info.declarations.function_bindings.get(&function.name);
+    let direct_call_id = CompilerNodeId::declaration_span(module_identity, decl_span.start, decl_span.end);
+    // The bare-name map is a compatibility projection and collapses top-level overloads. A body is one physical
+    // declaration, so its parameter types must come from the same span-keyed fact the direct-call identity uses.
+    let binding = type_info
+        .declarations
+        .function_bindings_by_span
+        .get(&(decl_span.start, decl_span.end));
 
-    let mut builder = BodyBuilder::new(type_info, function_default_sources);
+    let mut builder = BodyBuilder::new(
+        type_info,
+        function_default_sources,
+        local_function_declarations,
+        module_identity,
+    );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
     let mut param_locals = Vec::with_capacity(function.params.len());
@@ -265,6 +305,7 @@ fn lower_function_body(
 
     bir::Body {
         decl_id,
+        direct_call_id,
         name: function.name.clone(),
         span: hir_span(decl_span),
         locals: builder.locals,
@@ -308,6 +349,7 @@ fn lower_method_body(
     module_identity: &str,
     type_info: &TypeCheckInfo,
     function_default_sources: &FunctionDefaultSources,
+    local_function_declarations: &LocalFunctionDeclarations,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
 
@@ -315,12 +357,18 @@ fn lower_method_body(
     // declare a method named `new`), so the method's CompilerNodeId is scoped under its owning declaration's name
     // rather than reusing `CompilerNodeId::declaration(module_identity, &method.name)` directly.
     let decl_id = CompilerNodeId::declaration(module_identity, &format!("{owner_name}::{}", method.name));
+    let direct_call_id = CompilerNodeId::declaration_span(module_identity, decl_span.start, decl_span.end);
     let binding = type_info
         .declarations
         .method_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
 
-    let mut builder = BodyBuilder::new(type_info, function_default_sources);
+    let mut builder = BodyBuilder::new(
+        type_info,
+        function_default_sources,
+        local_function_declarations,
+        module_identity,
+    );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
     let mut params = Vec::with_capacity(method.params.len() + 1);
@@ -381,6 +429,7 @@ fn lower_method_body(
 
     Some(bir::Body {
         decl_id,
+        direct_call_id,
         name: method.name.clone(),
         span: hir_span(decl_span),
         locals: builder.locals,
@@ -423,6 +472,10 @@ struct BodyBuilder<'type_info, 'source> {
     type_info: &'type_info TypeCheckInfo,
     /// Source defaults for top-level partial targets, retained only until they lower into Body IR.
     function_default_sources: &'source FunctionDefaultSources,
+    /// Exact declarations physically present in this module, used only to retain same-module call identities.
+    local_function_declarations: &'source LocalFunctionDeclarations,
+    /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
+    module_identity: &'source str,
     locals: Vec<bir::LocalDecl>,
     scopes: Vec<bir::ScopeInfo>,
     /// Current source-name -> local binding. Later bindings of the same name (new `let`/`mut` assignments) shadow
@@ -454,10 +507,17 @@ struct BodyBuilder<'type_info, 'source> {
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Start a fresh builder for one function body, with no locals, scopes, or accumulated facts yet.
-    fn new(type_info: &'type_info TypeCheckInfo, function_default_sources: &'source FunctionDefaultSources) -> Self {
+    fn new(
+        type_info: &'type_info TypeCheckInfo,
+        function_default_sources: &'source FunctionDefaultSources,
+        local_function_declarations: &'source LocalFunctionDeclarations,
+        module_identity: &'source str,
+    ) -> Self {
         Self {
             type_info,
             function_default_sources,
+            local_function_declarations,
+            module_identity,
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
@@ -2759,10 +2819,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
-    /// Resolve the declared parameter surface for a direct named call, or describe why it cannot be represented.
+    /// Resolve the declaration surface and exact local identity for a direct named call.
     ///
-    /// `Ok(None)` means "no resolved signature" — a builtin or any callee this module carries no declaration for.
-    /// That is not an error: positional arguments still lower faithfully, they simply carry no declared-slot claim.
+    /// A direct executable target must be physically represented by this Body-IR module. Imports and unresolved
+    /// names deliberately retain their existing call representation with no direct declaration identity, so this
+    /// frontend does not turn a source-representation gap into a new source diagnostic. The replacement executor
+    /// then refuses those targets at the original call span; only compiler-recognized `range` has a separate
+    /// explicit Body-IR builtin target fact.
     ///
     /// Overloads are why this is resolved per call site rather than per name. `function_bindings` is keyed by bare
     /// source name, so for two same-name declarations it holds only one of them; binding a call against the wrong
@@ -2770,10 +2833,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// answer. The typechecker already records which overload it selected for this call span, so this follows that
     /// decision to the declaration and reads that declaration's own signature. If a name is overloaded but no
     /// selection was recorded, this fails closed rather than picking one.
-    fn declared_slots_for_direct_call(&self, name: &str, span: ast::Span) -> Result<Option<Vec<DeclaredSlot>>, String> {
+    fn declared_slots_for_direct_call(&self, name: &str, span: ast::Span) -> Result<DirectCallDeclaration, String> {
         let declarations = &self.type_info.declarations;
-        let overloads = declarations.function_overloads.get(name);
-        let is_overloaded = overloads.is_some_and(|candidates| candidates.len() > 1);
+        let local_declarations = self.local_function_declarations.get(name);
+        let Some(local_declarations) = local_declarations else {
+            return Ok(DirectCallDeclaration {
+                slots: declarations
+                    .function_bindings
+                    .get(name)
+                    .map(|binding| binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
+                direct_call_id: None,
+                builtin: (name == "range"
+                    && self.type_info.source_target(span).is_none()
+                    && !declarations.function_bindings.contains_key(name)
+                    && !declarations.function_overloads.contains_key(name))
+                .then_some(bir::NamedCallableBuiltin::Range),
+            });
+        };
+        let is_overloaded = local_declarations.len() > 1;
 
         if is_overloaded {
             let Some(selected) = self.type_info.selected_function_emitted_name(span) else {
@@ -2781,20 +2858,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     "call to overloaded function `{name}` whose selected declaration was not resolved"
                 ));
             };
-            let Some(candidates) = overloads else {
-                return Err(format!(
-                    "call to overloaded function `{name}` with no candidate declarations"
-                ));
-            };
-            let selected_span = candidates
-                .iter()
-                .map(|candidate| candidate.span)
-                .find(|candidate_span| {
-                    declarations
-                        .function_emitted_names
-                        .get(&(candidate_span.start, candidate_span.end))
-                        .is_some_and(|emitted| emitted == selected)
-                });
+            let selected_span = local_declarations.iter().find(|candidate_span| {
+                declarations
+                    .function_emitted_names
+                    .get(&(candidate_span.start, candidate_span.end))
+                    .is_some_and(|emitted| emitted == selected)
+            });
             let Some(selected_span) = selected_span else {
                 return Err(format!(
                     "call to overloaded function `{name}` whose selected declaration could not be located"
@@ -2808,15 +2877,39 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     "call to overloaded function `{name}` whose selected declaration has no checked signature"
                 ));
             };
-            return Ok(Some(
-                binding.params.iter().map(DeclaredSlot::from_checked_param).collect(),
-            ));
+            return Ok(DirectCallDeclaration {
+                slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
+                direct_call_id: Some(CompilerNodeId::declaration_span(
+                    self.module_identity,
+                    selected_span.start,
+                    selected_span.end,
+                )),
+                builtin: None,
+            });
         }
 
-        Ok(declarations
-            .function_bindings
-            .get(name)
-            .map(|binding| binding.params.iter().map(DeclaredSlot::from_checked_param).collect()))
+        let [declaration_span] = local_declarations.as_slice() else {
+            return Err(format!(
+                "direct call to `{name}` has no unambiguous same-module declaration identity"
+            ));
+        };
+        let Some(binding) = declarations
+            .function_bindings_by_span
+            .get(&(declaration_span.start, declaration_span.end))
+        else {
+            return Err(format!(
+                "same-module declaration `{name}` has no checked callable signature"
+            ));
+        };
+        Ok(DirectCallDeclaration {
+            slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
+            direct_call_id: Some(CompilerNodeId::declaration_span(
+                self.module_identity,
+                declaration_span.start,
+                declaration_span.end,
+            )),
+            builtin: None,
+        })
     }
 
     /// Bind a call's arguments against a declared parameter surface, falling back to positional lowering when there
@@ -3073,14 +3166,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
-        let declared = match self.declared_slots_for_direct_call(&name, span) {
-            Ok(declared) => declared,
+        let declaration = match self.declared_slots_for_direct_call(&name, span) {
+            Ok(declaration) => declaration,
             Err(description) => {
                 return self.unsupported_operand(description, scope, hir_span_value, out);
             }
         };
         let (operands, binding) =
-            match self.bind_declared_args(&format!("function `{name}`"), declared, args, scope, out) {
+            match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
                 Ok(bound) => bound,
                 Err(description) => {
                     return self.unsupported_operand(description, scope, hir_span_value, out);
@@ -3091,6 +3184,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 name,
+                direct_call_id: declaration.direct_call_id,
+                builtin: declaration.builtin,
                 type_args: resolved_type_args,
                 binding,
             })),
@@ -3752,6 +3847,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
         let target_name = target_name.clone();
+        let direct_call_id = self
+            .local_function_declarations
+            .get(&target_name)
+            .and_then(|candidates| match candidates.as_slice() {
+                [target_span] => Some(CompilerNodeId::declaration_span(
+                    self.module_identity,
+                    target_span.start,
+                    target_span.end,
+                )),
+                _ => None,
+            });
         let target_default_sources = self.function_default_sources.get(&target_name).cloned();
         let closure_scope = self.new_scope(Some(scope), hir_span_value);
 
@@ -3835,6 +3941,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let result = self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 name: target_name,
+                direct_call_id,
+                builtin: None,
                 type_args: Vec::new(),
                 binding: forwarding_binding,
             })),
@@ -4260,6 +4368,17 @@ fn count_reads_in_comprehension_clauses(name: &str, clauses: &[ast::Comprehensio
 // ============================================================================
 // Free helper functions
 // ============================================================================
+
+/// One resolved direct-call declaration narrowed to the executor-relevant facts.
+///
+/// `direct_call_id` is present only for a declaration physically represented by this module. Keeping the target
+/// separate from its parameter slots prevents a future consumer from treating a successfully planned argument list
+/// as proof that an imported callable is executable here.
+struct DirectCallDeclaration {
+    slots: Option<Vec<DeclaredSlot>>,
+    direct_call_id: Option<CompilerNodeId>,
+    builtin: Option<bir::NamedCallableBuiltin>,
+}
 
 /// One declared callable parameter or nominal field, reduced to the facts call-site binding actually needs.
 ///
@@ -6361,7 +6480,7 @@ mod tests {
         // A source default can construct a closure or generator, or evaluate a match, whose structured Body IR owns
         // more statements than the outer assignment exposes. Those statement sequences are still part of the direct
         // default contract: a consumer must receive their original refusal span instead of a misleading `Source`.
-        let unsupported = |span, description| bir::Statement {
+        let unsupported = |span: HirSourceSpan, description: &str| bir::Statement {
             kind: bir::StatementKind::Unsupported {
                 description: description.to_string(),
             },
@@ -6481,7 +6600,7 @@ mod tests {
         let second = choose
             .locals
             .iter()
-            .find(|local| local.name == "second")
+            .find(|local| local.name.as_deref() == Some("second"))
             .ok_or("expected second binding after refused default")?;
         assert!(
             choose.block.stmts.iter().any(|statement| matches!(
@@ -7802,13 +7921,23 @@ mod tests {
             "a non-Copy element read through a projection borrows rather than moving: {snapshot}"
         );
 
-        // Neither binding is ever moved out -- `tail` is never read at all and `head` is only read as a call
-        // argument -- so both owe an explicit scope-exit drop on every iteration.
-        assert_eq!(
-            snapshot.matches("drop _").count(),
-            2,
-            "each non-Copy loop binding owes exactly one scope-exit drop: {snapshot}"
-        );
+        // `head` is its call argument's recorded last use and therefore moves; unread `tail` remains live and owes
+        // one loop-scope drop. Count exact ids so the enclosing parameter's root-scope drop is not conflated with
+        // either binding.
+        let body = module.bodies.first().ok_or("expected the widths Body IR")?;
+        let head = body
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some("head"))
+            .ok_or("missing loop binding `head`")?;
+        let tail = body
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some("tail"))
+            .ok_or("missing loop binding `tail`")?;
+        assert!(snapshot.contains(&format!("move(_{}", head.id.0)));
+        assert_eq!(snapshot.matches(&format!("drop _{}", head.id.0)).count(), 0);
+        assert_eq!(snapshot.matches(&format!("drop _{}", tail.id.0)).count(), 1);
         Ok(())
     }
 
@@ -8327,6 +8456,38 @@ mod tests {
     }
 
     #[test]
+    fn an_overloaded_call_retains_the_typechecker_selected_same_module_declaration_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def pick(a: int, b: int) -> int:\n  return a - b\n\ndef pick(b: str, a: str) -> str:\n  return a\n\ndef use() -> int:\n  return pick(a=10, b=1)\n";
+        let module = build(source, &["m", "overload_identity"])?;
+        let use_body = body_named(&module, "use")?;
+        let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = single_call(use_body)?
+        else {
+            return Err("expected an identity-selected named function call".into());
+        };
+        let target_id = target
+            .direct_call_id
+            .as_ref()
+            .ok_or("same-module overloaded call must retain a direct declaration identity")?;
+        let selected = module
+            .bodies
+            .iter()
+            .find(|body| body.direct_call_id == *target_id)
+            .ok_or("direct call identity must select a Body-IR declaration")?;
+
+        assert_eq!(selected.name, "pick");
+        assert!(
+            selected.render_snapshot().contains("local 0 a : int [param]"),
+            "the direct identity must select the integer overload: {}",
+            selected.render_snapshot()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn an_overload_set_that_changes_arity_does_not_refuse_a_valid_call() -> Result<(), Box<dyn std::error::Error>> {
         // The other half of the same defect: with the two-parameter declaration written first, a name-keyed lookup
         // could resolve `pick(1, 2)` against the one-parameter overload and refuse a call the typechecker accepted.
@@ -8773,7 +8934,9 @@ mod tests {
         // registered today. Dispatching on the payload alone would silently lower a future prefix keyword as a
         // suspension point, so lowering matches the surface *key*. This pins that.
         let type_info = TypeCheckInfo::default();
-        let mut builder = BodyBuilder::new(&type_info);
+        let function_default_sources = FunctionDefaultSources::new();
+        let local_function_declarations = LocalFunctionDeclarations::new();
+        let mut builder = BodyBuilder::new(&type_info, &function_default_sources, &local_function_declarations, "m");
         let scope = builder.new_scope(None, HirSourceSpan::new(0, 1));
         let mut out = Vec::new();
         let surface = ast::SurfaceExpr {
