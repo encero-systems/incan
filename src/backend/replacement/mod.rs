@@ -3,8 +3,9 @@
 //! This module consumes [`BodyIrModule`] directly. It never reads generated Rust, never
 //! delegates a requested replacement execution to [`crate::backend::ir`], and rejects every operation outside the
 //! first free-function profile with the original Body-IR source span. The profile is intentionally limited to
-//! scalar arithmetic, compiler-owned string concatenation, branches, normalized loops, assertions, and source-local
-//! recursive tuple/list values. It admits one numeric tuple projection and one integer list projection or assignment;
+//! scalar arithmetic, compiler-owned string concatenation, branches, normalized loops, assertions, source-local
+//! recursive tuple/list values, and fully supplied source-local plain-model values. It admits one numeric tuple or
+//! canonical plain-model field projection and one integer list projection or assignment;
 //! builtin iteration remains limited to `list[tuple[scalar, scalar]]`. The selected entrypoint must produce a scalar
 //! observable, although an admitted sibling may return a structural intermediate to its direct caller. The executor
 //! also consumes the retained callable vocabulary directly: captured local closures, partial presets,
@@ -23,9 +24,9 @@ use incan_core::{
 };
 use incan_semantics_core::body_ir::{
     AggregateKind, ArgumentBinding, BinOp, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget,
-    Callee, ClosureBody, Constant, DefaultComputation, GeneratorBody, HelperOp, IterProtocol, LocalCallableTarget,
-    LocalId, LocalOrigin, NamedCallableBuiltin, NamedCallableTarget, Operand, OwnershipFact, Place, PlaceElem, Rvalue,
-    Statement, StatementKind, UnOp,
+    Callee, ClosureBody, Constant, ConstructorTarget, DefaultComputation, GeneratorBody, HelperOp, IterProtocol,
+    LocalCallableTarget, LocalId, LocalOrigin, NamedCallableBuiltin, NamedCallableTarget, NominalDeclaration, Operand,
+    OwnershipFact, Place, PlaceElem, Rvalue, Statement, StatementKind, UnOp,
 };
 use incan_semantics_core::{AbiV0RuntimeRequirement, HirSourceSpan, IncanPrimitiveType, IncanType};
 
@@ -60,6 +61,18 @@ pub enum ReplacementValue {
     },
     /// A source-local structural tuple whose elements remain direct replacement values.
     Tuple(Vec<ReplacementValue>),
+    /// A source-local plain-model instance whose declaration identity and canonical field layout were verified.
+    ///
+    /// This is neither a generic object nor a name-based map. Construction resolves `direct_declaration_id` against
+    /// `BodyIrModule::nominal_declarations`, and field reads repeat that verification before returning a stored
+    /// canonical field. Nested nominal values, methods, field writes, aliases, and nominal entrypoint results stay
+    /// outside this phase's profile.
+    Nominal {
+        /// Exact declaration identity retained from the source-local Body-IR nominal registry.
+        direct_declaration_id: incan_semantics_core::CompilerNodeId,
+        /// Canonical declared field names and values in declaration order.
+        fields: Vec<(String, ReplacementValue)>,
+    },
     /// A closure or partial application whose lexical captures were evaluated when the value was constructed.
     Callable(Box<ReplacementCallable>),
     /// A generator expression or generator function whose frame remains deferred until an admitted consumer polls
@@ -197,6 +210,17 @@ impl ReplacementValue {
                 elements
                     .iter()
                     .map(Self::observable_text)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Nominal {
+                direct_declaration_id,
+                fields,
+            } => format!(
+                "nominal({direct_declaration_id}){{{}}}",
+                fields
+                    .iter()
+                    .map(|(field, value)| format!("{field}={}", value.observable_text()))
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
@@ -1304,7 +1328,10 @@ fn validate_generator_statements_profile(
     Ok(())
 }
 
-/// Validate the source-local tuple/list aggregate vocabulary without admitting dict or set semantics.
+/// Validate source-local tuple/list aggregates plus the constrained plain-model constructor vocabulary.
+///
+/// Dict and set semantics remain unavailable. Constructor admission is limited further by retained declaration
+/// identity, complete checked bindings, and structural field values before the executor materializes a model value.
 fn validate_aggregate_profile(
     kind: &AggregateKind,
     operands: &[Operand],
@@ -1320,8 +1347,53 @@ fn validate_aggregate_profile(
             }
             Ok(())
         }
+        AggregateKind::Constructor(target) => validate_nominal_constructor_target(target, operands.len(), span),
         _ => Err(unsupported(format!("{} aggregate", aggregate_label(kind)), span)),
     }
+}
+
+/// Check that a constructor shape carries the minimal checked facts required before direct materialization.
+///
+/// The module registry and canonical field layout are verified at execution time, where the executor has the exact
+/// `BodyIrModule`; this preflight rejects missing identity/default/binding claims before any constructor operand can
+/// produce a successful replacement receipt.
+fn validate_nominal_constructor_target(
+    target: &ConstructorTarget,
+    operand_count: usize,
+    span: HirSourceSpan,
+) -> Result<(), ReplacementExecutionError> {
+    if target.direct_declaration_id.is_none() {
+        return Err(unsupported(
+            format!(
+                "constructor `{}` without a source-local declaration identity",
+                target.name
+            ),
+            span,
+        ));
+    }
+    let ArgumentBinding::Resolved {
+        arguments,
+        defaulted_slots,
+    } = &target.binding
+    else {
+        return Err(unsupported(
+            format!("constructor `{}` with unresolved field binding", target.name),
+            span,
+        ));
+    };
+    if !defaulted_slots.is_empty() {
+        return Err(unsupported(
+            format!("constructor `{}` with an omitted field default", target.name),
+            span,
+        ));
+    }
+    if arguments.len() != operand_count || !validate_argument_binding_profile(&target.binding) {
+        return Err(unsupported(
+            format!("constructor `{}` with invalid field binding", target.name),
+            span,
+        ));
+    }
+    Ok(())
 }
 
 /// Validate a single operand's place shape and compiler-owned ownership decision.
@@ -1345,7 +1417,7 @@ fn validate_bare_local(place: &Place, span: HirSourceSpan) -> Result<(), Replace
     bare_local(place, span).map(|_| ())
 }
 
-/// Admit one-level numeric tuple fields and one-level indexes over source-local structural values.
+/// Admit one-level tuple/model fields and one-level indexes over source-local structural values.
 fn validate_read_place(
     place: &Place,
     span: HirSourceSpan,
@@ -1353,8 +1425,7 @@ fn validate_read_place(
 ) -> Result<(), ReplacementExecutionError> {
     match place.projection.as_slice() {
         [] => Ok(()),
-        [PlaceElem::Field(field)] if field.parse::<usize>().is_ok() => Ok(()),
-        [PlaceElem::Field(_)] => Err(unsupported("non-numeric tuple field projection", span)),
+        [PlaceElem::Field(_)] => Ok(()),
         [PlaceElem::Index(index)] => validate_operand_profile(index, span, tuple_iteration_locals),
         [PlaceElem::Slice { .. }] => Err(unsupported("slice projection", span)),
         _ => Err(unsupported("nested place projection", span)),
@@ -1370,7 +1441,7 @@ fn validate_write_place(
     match place.projection.as_slice() {
         [] => Ok(()),
         [PlaceElem::Index(index)] => validate_operand_profile(index, span, tuple_iteration_locals),
-        [PlaceElem::Field(_)] => Err(unsupported("tuple field assignment", span)),
+        [PlaceElem::Field(_)] => Err(unsupported("field assignment", span)),
         [PlaceElem::Slice { .. }] => Err(unsupported("slice assignment", span)),
         _ => Err(unsupported("nested place assignment", span)),
     }
@@ -2352,13 +2423,17 @@ impl BodyExecutor {
         Ok(())
     }
 
-    /// Materialize source-local recursive tuples and lists without inventing dict or set behavior.
+    /// Materialize source-local tuples/lists or a retained plain-model constructor without inventing dict or set
+    /// behavior.
     fn evaluate_aggregate(
         &mut self,
         kind: &AggregateKind,
         operands: &[Operand],
         span: HirSourceSpan,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        if let AggregateKind::Constructor(target) = kind {
+            return self.evaluate_nominal_constructor(target, operands, span);
+        }
         let values = operands
             .iter()
             .map(|operand| self.evaluate_operand(operand, span))
@@ -2377,6 +2452,150 @@ impl BodyExecutor {
             AggregateKind::List => Err(unsupported("list aggregate with a non-structural element", span)),
             _ => Err(unsupported(format!("{} aggregate", aggregate_label(kind)), span)),
         }
+    }
+
+    /// Materialize a fully supplied source-local plain model from checked constructor binding facts.
+    ///
+    /// `ArgumentBinding` orders operand storage by declaration slot but records source written positions separately.
+    /// Evaluating through that written order is essential: evaluating the surrounding operand vector directly would
+    /// reverse source effects for an out-of-order named constructor call.
+    fn evaluate_nominal_constructor(
+        &mut self,
+        target: &ConstructorTarget,
+        operands: &[Operand],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let declaration = self.local_nominal_declaration(target, span)?;
+        let ArgumentBinding::Resolved {
+            arguments,
+            defaulted_slots,
+        } = &target.binding
+        else {
+            return Err(unsupported(
+                format!("constructor `{}` with unresolved field binding", target.name),
+                span,
+            ));
+        };
+        if !defaulted_slots.is_empty() {
+            return Err(unsupported(
+                format!("constructor `{}` with an omitted field default", target.name),
+                span,
+            ));
+        }
+        if operands.len() != declaration.fields.len() || arguments.len() != operands.len() {
+            return Err(unsupported(
+                format!("constructor `{}` with incomplete field binding", target.name),
+                span,
+            ));
+        }
+
+        let mut field_values = vec![None; declaration.fields.len()];
+        let mut argument_indices = (0..arguments.len()).collect::<Vec<_>>();
+        argument_indices.sort_by_key(|index| arguments[*index].written_position);
+        for index in argument_indices {
+            let argument = arguments[index];
+            if argument.slot >= field_values.len()
+                || field_values[argument.slot].is_some()
+                || arguments
+                    .iter()
+                    .filter(|other| other.written_position == argument.written_position)
+                    .count()
+                    != 1
+            {
+                return Err(unsupported(
+                    format!("constructor `{}` with invalid field binding", target.name),
+                    span,
+                ));
+            }
+            let value = self.evaluate_operand(&operands[index], span)?;
+            if !value.is_direct_structural() {
+                return Err(unsupported(
+                    format!("constructor `{}` with a non-structural field value", target.name),
+                    span,
+                ));
+            }
+            field_values[argument.slot] = Some(value);
+        }
+        let fields = declaration
+            .fields
+            .iter()
+            .cloned()
+            .zip(field_values)
+            .map(|(field, value)| match value {
+                Some(value) => Ok((field, value)),
+                None => Err(unsupported(
+                    format!("constructor `{}` omitted field `{field}`", target.name),
+                    span,
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.record_frame_evidence(format!(
+            "executed nominal constructor name={} id={} fields=[{}] call_span={}..{}",
+            declaration.name,
+            declaration.direct_declaration_id,
+            declaration.fields.join(", "),
+            span.start,
+            span.end
+        ));
+        Ok(ReplacementValue::Nominal {
+            direct_declaration_id: declaration.direct_declaration_id,
+            fields,
+        })
+    }
+
+    /// Resolve one constructor identity solely through this module's retained plain-model declaration registry.
+    fn local_nominal_declaration(
+        &self,
+        target: &ConstructorTarget,
+        span: HirSourceSpan,
+    ) -> Result<NominalDeclaration, ReplacementExecutionError> {
+        let direct_declaration_id = target.direct_declaration_id.as_ref().ok_or_else(|| {
+            unsupported(
+                format!(
+                    "constructor `{}` without a source-local declaration identity",
+                    target.name
+                ),
+                span,
+            )
+        })?;
+        let declaration = self
+            .module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.direct_declaration_id == *direct_declaration_id)
+            .cloned()
+            .ok_or_else(|| {
+                unsupported(
+                    format!(
+                        "constructor `{}` targets a declaration outside this Body-IR module",
+                        target.name
+                    ),
+                    span,
+                )
+            })?;
+        if declaration.name != target.name {
+            return Err(unsupported(
+                format!(
+                    "constructor `{}` disagrees with its source-local declaration identity",
+                    target.name
+                ),
+                span,
+            ));
+        }
+        if declaration.type_parameter_count != 0 {
+            return Err(unsupported(
+                format!("generic model constructor `{}`", target.name),
+                span,
+            ));
+        }
+        let fields = declaration.fields.iter().collect::<BTreeSet<_>>();
+        if fields.len() != declaration.fields.len() {
+            return Err(unsupported(
+                format!("constructor `{}` has a duplicate canonical field layout", target.name),
+                span,
+            ));
+        }
+        Ok(declaration)
     }
 
     /// Evaluate a scalar unary operation.
@@ -2503,7 +2722,7 @@ impl BodyExecutor {
         }
     }
 
-    /// Move a complete local while refusing the partial moves Body IR v0 does not model for collection tuples.
+    /// Move a complete local while refusing unrepresented partial moves through a projected place.
     fn read_moved_place(
         &mut self,
         place: &Place,
@@ -2511,7 +2730,7 @@ impl BodyExecutor {
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         if !place.projection.is_empty() {
             return Err(unsupported(
-                "move through a tuple field projection outside the scalar tuple collection profile",
+                "move through a place projection outside the direct replacement profile",
                 span,
             ));
         }
@@ -2520,7 +2739,7 @@ impl BodyExecutor {
             .ok_or_else(|| runtime_failure("read of a moved or dropped local".to_string(), span))
     }
 
-    /// Apply one source-local tuple field or list index projection while retaining the original source span.
+    /// Apply one source-local tuple/model field or list index projection while retaining the original source span.
     fn project_place(
         &mut self,
         value: ReplacementValue,
@@ -2528,7 +2747,9 @@ impl BodyExecutor {
         span: HirSourceSpan,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         match place.projection.as_slice() {
-            [] | [PlaceElem::Field(_)] => project_tuple_field(value, place, span),
+            [] => Ok(value),
+            [PlaceElem::Field(field)] if field.parse::<usize>().is_ok() => project_tuple_field(value, place, span),
+            [PlaceElem::Field(field)] => self.project_nominal_field(value, field, span),
             [PlaceElem::Index(index)] => {
                 let index = self.evaluate_operand(index, span)?;
                 let ReplacementValue::Int(index) = index else {
@@ -2554,6 +2775,57 @@ impl BodyExecutor {
                 span,
             )),
         }
+    }
+
+    /// Read a canonical field from a nominal value after revalidating its retained declaration layout.
+    fn project_nominal_field(
+        &self,
+        value: ReplacementValue,
+        field: &str,
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let ReplacementValue::Nominal {
+            direct_declaration_id,
+            fields,
+        } = value
+        else {
+            return Err(unsupported(
+                format!("named field projection `.{field}` using a non-nominal value"),
+                span,
+            ));
+        };
+        let declaration = self
+            .module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.direct_declaration_id == direct_declaration_id)
+            .ok_or_else(|| {
+                unsupported(
+                    "nominal field projection with an unavailable declaration identity",
+                    span,
+                )
+            })?;
+        if declaration.fields.len() != fields.len()
+            || declaration
+                .fields
+                .iter()
+                .zip(&fields)
+                .any(|(declared, (stored, _))| declared != stored)
+        {
+            return Err(unsupported(
+                "nominal field projection with a mismatched canonical field layout",
+                span,
+            ));
+        }
+        fields
+            .into_iter()
+            .find_map(|(stored, value)| (stored == field).then_some(value))
+            .ok_or_else(|| {
+                unsupported(
+                    format!("named field projection `.{field}` outside the source-local nominal layout"),
+                    span,
+                )
+            })
     }
 
     /// Assign a complete local or one source-local list element without permitting nested writes.
@@ -2961,6 +3233,7 @@ const fn value_kind(value: &ReplacementValue) -> &'static str {
         ReplacementValue::Range { .. } => "range",
         ReplacementValue::List { .. } => "list",
         ReplacementValue::Tuple(_) => "tuple",
+        ReplacementValue::Nominal { .. } => "nominal",
         ReplacementValue::Callable(_) => "callable",
         ReplacementValue::Generator(_) => "generator",
         ReplacementValue::Adapter(_) => "generator adapter",
@@ -2996,6 +3269,7 @@ mod tests {
         let span = HirSourceSpan::new(0, 1);
         let module = BodyIrModule {
             module_id: CompilerNodeId::module("replacement.generator_budget_test"),
+            nominal_declarations: Vec::new(),
             bodies: Vec::new(),
         };
         let mut executor = BodyExecutor::with_locals(&module, BTreeMap::new(), MAX_EXECUTION_STEPS);

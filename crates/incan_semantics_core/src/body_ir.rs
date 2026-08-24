@@ -47,11 +47,19 @@ use crate::{AbiV0RuntimeRequirement, CompilerNodeId, HirSourceSpan, IncanType};
 // Module / body containers
 // ============================================================================
 
-/// One module's worth of lowered function/method bodies.
+/// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BodyIrModule {
     /// Identity of the owning module, matching [`crate::HirModule::id`].
     pub module_id: CompilerNodeId,
+    /// Source-local plain-model declarations whose construction layout is available to a direct runtime.
+    ///
+    /// This is not a general nominal symbol table. It contains only the source-local model declarations lowering
+    /// has explicitly retained for direct execution, and each record carries its declaration-span identity and
+    /// canonical field order. A consumer must resolve a [`ConstructorTarget::direct_declaration_id`] against this
+    /// list rather than recovering a constructor identity from a source spelling, import, alias, or typechecker
+    /// lookup. Models outside this deliberately narrow value profile are absent and must refuse.
+    pub nominal_declarations: Vec<NominalDeclaration>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
 }
@@ -61,11 +69,38 @@ impl BodyIrModule {
     pub fn render_snapshot(&self) -> String {
         let mut out = String::new();
         let _ = writeln!(&mut out, "body_ir_module {}", self.module_id);
+        for declaration in &self.nominal_declarations {
+            let _ = writeln!(
+                &mut out,
+                "nominal {} id={} fields=[{}] type_params={}",
+                declaration.name,
+                declaration.direct_declaration_id,
+                declaration.fields.join(", "),
+                declaration.type_parameter_count
+            );
+        }
         for body in &self.bodies {
             out.push_str(&body.render_snapshot());
         }
         out
     }
+}
+
+/// The exact local declaration and canonical field layout for one direct-executable plain model.
+///
+/// The record is module-scoped and deliberately excludes classes, enums, imported nominals, generic models, and
+/// behavior-bearing models. Its field order is the checked constructor-slot order; a direct runtime must pair it
+/// with [`ConstructorTarget::binding`] rather than treating constructor argument spelling as layout evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NominalDeclaration {
+    /// Exact source-local declaration identity, derived from the declaration source span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Canonical source declaration name, checked again by consumers as a defence against malformed Body IR.
+    pub name: String,
+    /// Canonical declared field names in declaration order.
+    pub fields: Vec<String>,
+    /// Number of declared type parameters; this profile admits only zero.
+    pub type_parameter_count: usize,
 }
 
 /// Body IR v0 for a single function or method.
@@ -1560,6 +1595,11 @@ impl std::fmt::Display for MethodTarget {
 pub struct ConstructorTarget {
     /// Source-level nominal type name.
     pub name: String,
+    /// Exact source-local nominal declaration selected for this construction, when the module retained one.
+    ///
+    /// An absent identity is not permission to look up [`Self::name`] in another compiler structure: imports,
+    /// aliases, classes, generic models, and any unretained nominal target must refuse at the constructor span.
+    pub direct_declaration_id: Option<CompilerNodeId>,
     /// Resolved binding of the surrounding aggregate's operands to the type's declared fields.
     pub binding: ArgumentBinding,
 }
@@ -2658,6 +2698,7 @@ mod tests {
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
+            nominal_declarations: Vec::new(),
             bodies: vec![sample_body()],
         };
         let snapshot = module.render_snapshot();

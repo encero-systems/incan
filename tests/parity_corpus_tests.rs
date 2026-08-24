@@ -519,6 +519,19 @@ def structural_values() -> int:
     return score(values)
 "#;
 
+const REPLACEMENT_BODY_V0_013_SRC: &str = r#"
+model Pair:
+    left: int
+    right: int
+
+def score(pair: Pair) -> int:
+    return pair.left + pair.right
+
+def nominal_values() -> int:
+    pair = Pair(right=2, left=40)
+    return score(pair)
+"#;
+
 fn replacement_body_v0_001_arguments() -> Vec<ReplacementValue> {
     vec![ReplacementValue::Int(40), ReplacementValue::Int(2)]
 }
@@ -612,6 +625,14 @@ fn replacement_body_v0_012_arguments() -> Vec<ReplacementValue> {
 }
 
 fn replacement_body_v0_012_expected() -> ReplacementValue {
+    ReplacementValue::Int(42)
+}
+
+fn replacement_body_v0_013_arguments() -> Vec<ReplacementValue> {
+    vec![]
+}
+
+fn replacement_body_v0_013_expected() -> ReplacementValue {
     ReplacementValue::Int(42)
 }
 
@@ -988,6 +1009,22 @@ fn seed_corpus() -> Vec<ParityCase> {
                 shadow_comparison: false,
             }),
         },
+        ParityCase {
+            id: "replacement-body-v0-013",
+            title: "Source-local plain model values and canonical field reads execute through Body IR",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1154; tests/replacement_backend_execution_tests.rs::replacement_executes_source_local_nominal_model_values_through_a_direct_callable; comparison remains non-green until #1154 produces paired source-observable evidence through #1146's completed route",
+            disposition: Disposition::Preserved,
+            source: REPLACEMENT_BODY_V0_013_SRC,
+            evaluate: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "nominal_values",
+                arguments: replacement_body_v0_013_arguments,
+                expected: replacement_body_v0_013_expected,
+                shadow_comparison: false,
+            }),
+        },
     ]
 }
 
@@ -1301,8 +1338,20 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
         .collect();
     assert_eq!(
         replacement_rows.len(),
-        12,
-        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, and #1154's structural-value case must stay stable in #987"
+        13,
+        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, and #1154's structural and nominal value cases must stay stable in #987"
+    );
+    let nominal_row = replacement_rows
+        .iter()
+        .find(|row| row.id == "replacement-body-v0-013")
+        .ok_or("the #1154 nominal Body-IR row must remain in the corpus")?;
+    let ReceiptRef::ReplacementExecuted { body_snapshot, .. } = &nominal_row.receipt else {
+        return Err("the #1154 nominal Body-IR row must retain a direct execution receipt".into());
+    };
+    assert!(
+        body_snapshot.contains("executed nominal constructor name=Pair id=decl:")
+            && body_snapshot.contains("fields=[left, right]"),
+        "the #1154 nominal row must bind its receipt evidence to the retained declaration identity and canonical layout: {body_snapshot}"
     );
 
     for row in replacement_rows {

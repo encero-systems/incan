@@ -77,6 +77,11 @@ pub fn build_body_ir_module_v0(
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
+    let nominal_declarations = collect_local_nominal_declarations(program, &module_identity);
+    let local_nominal_declarations = nominal_declarations
+        .iter()
+        .map(|declaration| (declaration.name.clone(), declaration.clone()))
+        .collect::<LocalNominalDeclarations>();
     let bodies = program
         .declarations
         .iter()
@@ -90,6 +95,7 @@ pub fn build_body_ir_module_v0(
                         type_info,
                         &function_default_sources,
                         &local_function_declarations,
+                        &local_nominal_declarations,
                     )]
                 }
                 ast::Declaration::Model(model) => lower_owner_method_bodies(
@@ -100,6 +106,7 @@ pub fn build_body_ir_module_v0(
                     type_info,
                     &function_default_sources,
                     &local_function_declarations,
+                    &local_nominal_declarations,
                 ),
                 ast::Declaration::Class(class) => lower_owner_method_bodies(
                     &class.methods,
@@ -109,6 +116,7 @@ pub fn build_body_ir_module_v0(
                     type_info,
                     &function_default_sources,
                     &local_function_declarations,
+                    &local_nominal_declarations,
                 ),
                 ast::Declaration::Trait(trait_decl) => lower_owner_method_bodies(
                     &trait_decl.methods,
@@ -118,12 +126,17 @@ pub fn build_body_ir_module_v0(
                     type_info,
                     &function_default_sources,
                     &local_function_declarations,
+                    &local_nominal_declarations,
                 ),
                 _ => Vec::new(),
             }
         })
         .collect();
-    bir::BodyIrModule { module_id, bodies }
+    bir::BodyIrModule {
+        module_id,
+        nominal_declarations,
+        bodies,
+    }
 }
 
 /// Source-declared ordinary default expressions for each top-level function in this module.
@@ -139,6 +152,14 @@ type FunctionDefaultSources = HashMap<String, Vec<FunctionDefaultSource>>;
 /// Body-IR dispatch only admits a declaration physically represented by this module, so lowering retains this
 /// small source-local map long enough to attach the chosen declaration identity to each named call.
 type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
+
+/// Plain source-local models whose checked declaration layout is retained for direct nominal execution.
+///
+/// This frontend map intentionally contains only non-generic, behavior-free models. It is used only while lowering
+/// a checked constructor call to attach an exact declaration identity; the resulting [`bir::NominalDeclaration`]
+/// records are the direct executor's sole layout authority. Classes, trait-adopting models, and models carrying
+/// methods/properties/aliases are absent rather than being approximated as inert field bags.
+type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source facts a synthesized local partial needs for one target parameter.
 #[derive(Clone)]
@@ -185,6 +206,50 @@ fn collect_local_function_declarations(program: &ast::Program) -> LocalFunctionD
     declarations
 }
 
+/// Determine whether a model can carry the small direct-replacement declaration fact.
+///
+/// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
+/// runtime cannot execute model decorators, trait behavior, methods, field aliases, or generic substitution without
+/// facts that Body IR does not retain. Field defaults remain represented by each construction's checked binding, so a
+/// fully supplied construction may execute while any omitted default still refuses at that constructor's span.
+pub(crate) fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
+    model.decorators.is_empty()
+        && model.type_params.is_empty()
+        && model.traits.is_empty()
+        && model.method_aliases.is_empty()
+        && model.method_partials.is_empty()
+        && model.properties.is_empty()
+        && model.methods.is_empty()
+        && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+}
+
+/// Retain directly executable model declarations in source order.
+///
+/// Constructor argument binding already comes from the typechecker; this adds only the source-local declaration
+/// identity and canonical raw field order the direct runtime otherwise could not establish without reopening AST or
+/// typechecker state. This deliberately does not retain a general nominal registry.
+fn collect_local_nominal_declarations(program: &ast::Program, module_identity: &str) -> Vec<bir::NominalDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Model(model) = &declaration.node else {
+                return None;
+            };
+            is_direct_replacement_plain_model(model).then(|| bir::NominalDeclaration {
+                direct_declaration_id: CompilerNodeId::declaration_span(
+                    module_identity,
+                    declaration.span.start,
+                    declaration.span.end,
+                ),
+                name: model.name.clone(),
+                fields: model.fields.iter().map(|field| field.node.name.clone()).collect(),
+                type_parameter_count: model.type_params.len(),
+            })
+        })
+        .collect()
+}
+
 /// Lower every non-abstract method in `methods` (owned by the class/model/trait named `owner_name`) into one
 /// [`bir::Body`] each, skipping abstract methods (`body: None`). `receiver_ty` is the typechecker-equivalent type
 /// for a declared receiver: a concrete nominal type for models/classes or [`IncanType::SelfType`] for trait defaults.
@@ -203,6 +268,7 @@ fn lower_owner_method_bodies(
     type_info: &TypeCheckInfo,
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
+    local_nominal_declarations: &LocalNominalDeclarations,
 ) -> Vec<bir::Body> {
     methods
         .iter()
@@ -216,6 +282,7 @@ fn lower_owner_method_bodies(
                 type_info,
                 function_default_sources,
                 local_function_declarations,
+                local_nominal_declarations,
             )
         })
         .collect()
@@ -244,6 +311,7 @@ fn lower_function_body(
     type_info: &TypeCheckInfo,
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
+    local_nominal_declarations: &LocalNominalDeclarations,
 ) -> bir::Body {
     let decl_id = CompilerNodeId::declaration(module_identity, &function.name);
     let direct_call_id = CompilerNodeId::declaration_span(module_identity, decl_span.start, decl_span.end);
@@ -258,6 +326,7 @@ fn lower_function_body(
         type_info,
         function_default_sources,
         local_function_declarations,
+        local_nominal_declarations,
         module_identity,
     );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -350,6 +419,7 @@ fn lower_method_body(
     type_info: &TypeCheckInfo,
     function_default_sources: &FunctionDefaultSources,
     local_function_declarations: &LocalFunctionDeclarations,
+    local_nominal_declarations: &LocalNominalDeclarations,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
 
@@ -367,6 +437,7 @@ fn lower_method_body(
         type_info,
         function_default_sources,
         local_function_declarations,
+        local_nominal_declarations,
         module_identity,
     );
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -474,6 +545,8 @@ struct BodyBuilder<'type_info, 'source> {
     function_default_sources: &'source FunctionDefaultSources,
     /// Exact declarations physically present in this module, used only to retain same-module call identities.
     local_function_declarations: &'source LocalFunctionDeclarations,
+    /// Source-local plain-model declarations, used only to retain an exact constructor target identity.
+    local_nominal_declarations: &'source LocalNominalDeclarations,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
     module_identity: &'source str,
     locals: Vec<bir::LocalDecl>,
@@ -511,12 +584,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         type_info: &'type_info TypeCheckInfo,
         function_default_sources: &'source FunctionDefaultSources,
         local_function_declarations: &'source LocalFunctionDeclarations,
+        local_nominal_declarations: &'source LocalNominalDeclarations,
         module_identity: &'source str,
     ) -> Self {
         Self {
             type_info,
             function_default_sources,
             local_function_declarations,
+            local_nominal_declarations,
             module_identity,
             locals: Vec::new(),
             scopes: Vec::new(),
@@ -3051,10 +3126,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         };
         let ty = self.resolve_ty(span);
+        // A constructor field binding proves argument slots, but not that this constructor names one of the plain
+        // source-local models this Body-IR module retained. Preserve an identity only from that local registry;
+        // imports, aliases, classes, generic models, and absent/malformed names remain represented with `None` so
+        // a direct executor can refuse at this construction span rather than guessing from `name`.
+        let direct_declaration_id = self.local_nominal_declarations.get(name).and_then(|declaration| {
+            (declaration.fields.len() == field_binding.field_count).then(|| declaration.direct_declaration_id.clone())
+        });
         self.push_assign_temp(
             bir::Rvalue::Aggregate(
                 bir::AggregateKind::Constructor(bir::ConstructorTarget {
                     name: name.to_string(),
+                    direct_declaration_id,
                     binding,
                 }),
                 operands,
@@ -8217,6 +8300,60 @@ mod tests {
         Ok(())
     }
 
+    /// Retain the exact local model layout a direct executor needs instead of treating a constructor spelling as an
+    /// identity.
+    #[test]
+    fn source_local_model_construction_retains_its_declaration_identity_and_canonical_field_layout()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "model Pair:\n  left: int\n  right: int\n\ndef main() -> int:\n  pair = Pair(right=2, left=40)\n  return pair.left + pair.right\n";
+        let module = build(source, &["m", "nominal_identity"])?;
+        let declaration = match module.nominal_declarations.as_slice() {
+            [declaration] => declaration,
+            declarations => {
+                return Err(format!("expected one retained local model declaration, found {declarations:?}").into());
+            }
+        };
+        assert_eq!(declaration.name, "Pair");
+        assert_eq!(declaration.fields, vec!["left", "right"]);
+        assert_eq!(declaration.type_parameter_count, 0);
+
+        let body = body_named(&module, "main")?;
+        let target = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .ok_or("the local model construction must lower as a constructor aggregate")?;
+        assert_eq!(target.name, "Pair");
+        assert_eq!(
+            target.direct_declaration_id.as_ref(),
+            Some(&declaration.direct_declaration_id)
+        );
+        let bir::ArgumentBinding::Resolved {
+            arguments,
+            defaulted_slots,
+        } = &target.binding
+        else {
+            return Err("local model construction must retain its resolved field binding".into());
+        };
+        assert!(defaulted_slots.is_empty());
+        assert_eq!(
+            arguments
+                .iter()
+                .map(|argument| (argument.slot, argument.written_position))
+                .collect::<Vec<_>>(),
+            vec![(0, 1), (1, 0)],
+            "constructor operands retain declaration slots while written positions retain source evaluation order"
+        );
+        Ok(())
+    }
+
     #[test]
     fn mixed_positional_and_named_call_arguments_bind_to_declared_parameters() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -8936,7 +9073,14 @@ mod tests {
         let type_info = TypeCheckInfo::default();
         let function_default_sources = FunctionDefaultSources::new();
         let local_function_declarations = LocalFunctionDeclarations::new();
-        let mut builder = BodyBuilder::new(&type_info, &function_default_sources, &local_function_declarations, "m");
+        let local_nominal_declarations = LocalNominalDeclarations::new();
+        let mut builder = BodyBuilder::new(
+            &type_info,
+            &function_default_sources,
+            &local_function_declarations,
+            &local_nominal_declarations,
+            "m",
+        );
         let scope = builder.new_scope(None, HirSourceSpan::new(0, 1));
         let mut out = Vec::new();
         let surface = ast::SurfaceExpr {

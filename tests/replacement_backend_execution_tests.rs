@@ -127,6 +127,197 @@ def main() -> int:
     Ok(())
 }
 
+/// Execute a fully supplied source-local model through direct storage, canonical field reads, and sibling dispatch.
+#[test]
+fn replacement_executes_source_local_nominal_model_values_through_a_direct_callable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Pair:
+  left: int
+  right: int = 2
+
+def score(pair: Pair) -> int:
+  return pair.left + pair.right
+
+def main() -> int:
+  pair = Pair(right=2, left=40)
+  return score(pair)
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let declaration = module
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.name == "Pair")
+        .ok_or("fixture must retain the source-local Pair declaration")?;
+    let constructor_evidence = format!(
+        "executed nominal constructor name=Pair id={} fields=[left, right]",
+        declaration.direct_declaration_id
+    );
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(
+        execution.body_snapshot.contains("body score"),
+        "the nominal value must cross an exact same-module direct call: {}",
+        execution.body_snapshot
+    );
+    assert!(
+        execution.body_snapshot.contains(&constructor_evidence),
+        "the direct evidence must bind Pair to its retained declaration identity and canonical layout: {}",
+        execution.body_snapshot
+    );
+    Ok(())
+}
+
+/// Refuse a constructor whose source-local declaration identity is absent instead of recovering it from its name.
+#[test]
+fn replacement_refuses_an_idless_nominal_constructor_at_its_original_source_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Pair:
+  left: int
+  right: int
+
+def main() -> int:
+  pair = Pair(right=2, left=40)
+  return pair.left + pair.right
+"#;
+    let mut module = lower_typed_body_ir(source)?;
+    let main = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .ok_or("fixture must lower the main Body-IR body")?;
+    let target = main
+        .block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            incan_semantics_core::body_ir::StatementKind::Assign {
+                rvalue:
+                    incan_semantics_core::body_ir::Rvalue::Aggregate(
+                        incan_semantics_core::body_ir::AggregateKind::Constructor(target),
+                        _,
+                    ),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("fixture must lower its model construction as a constructor aggregate")?;
+    assert!(
+        target.direct_declaration_id.is_some(),
+        "a source-local model construction must retain an explicit declaration identity"
+    );
+    target.direct_declaration_id = None;
+
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "an id-less nominal constructor must refuse instead of dispatching by name, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let constructor_start = source
+        .find("Pair(right=2, left=40)")
+        .ok_or("fixture must contain the model constructor")?;
+    let span = error
+        .primary_span()
+        .ok_or("id-less nominal constructor refusal must retain a source span")?;
+    assert_eq!(span.start, constructor_start);
+    assert_eq!(span.end, constructor_start + "Pair(right=2, left=40)".len());
+    assert!(
+        error
+            .to_string()
+            .contains("constructor `Pair` without a source-local declaration identity"),
+        "the refusal must name the missing nominal fact: {error}"
+    );
+    Ok(())
+}
+
+/// Refuse a nominal field default until Body IR retains its declaration-owned computation.
+#[test]
+fn replacement_refuses_an_omitted_nominal_field_default_at_the_constructor_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Pair:
+  left: int
+  right: int = 2
+
+def main() -> int:
+  pair = Pair(left=40)
+  return pair.left
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "a nominal construction with an omitted field default must refuse, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let constructor_start = source
+        .find("Pair(left=40)")
+        .ok_or("fixture must contain the defaulted model constructor")?;
+    let span = error
+        .primary_span()
+        .ok_or("defaulted nominal constructor refusal must retain a source span")?;
+    assert_eq!(span.start, constructor_start);
+    assert_eq!(span.end, constructor_start + "Pair(left=40)".len());
+    assert!(
+        error
+            .to_string()
+            .contains("constructor `Pair` with an omitted field default"),
+        "the refusal must name the unrepresented default: {error}"
+    );
+    Ok(())
+}
+
+/// Keep nominal field writes outside the read-only direct model profile.
+#[test]
+fn replacement_refuses_nominal_field_assignment_at_the_original_source_span() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"
+model Pair:
+  left: int
+  right: int
+
+def main() -> int:
+  pair = Pair(left=40, right=2)
+  pair.left = 41
+  return pair.left
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "a nominal field assignment must refuse in the read-only profile, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let assignment_start = source
+        .find("pair.left = 41")
+        .ok_or("fixture must contain the nominal field assignment")?;
+    let span = error
+        .primary_span()
+        .ok_or("nominal field assignment refusal must retain a source span")?;
+    assert_eq!(span.start, assignment_start);
+    assert_eq!(span.end, assignment_start + "pair.left = 41".len());
+    assert!(
+        error.to_string().contains("field assignment"),
+        "the refusal must name the unavailable write: {error}"
+    );
+    Ok(())
+}
+
 /// Dispatch overloads using the declaration identity retained by Body IR, never a name scan at runtime.
 #[test]
 fn replacement_executes_the_exact_same_module_overload_selected_by_the_typechecker()
@@ -1523,6 +1714,31 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
             "rust.module(\"incan_stdlib::testing\")\n\ndef main() -> int:\n  return 42\n",
             "Rust interop `rust.module` directive",
         ),
+        (
+            "generic-model",
+            "model Box[T]:\n  value: T\n\ndef main() -> int:\n  return 42\n",
+            "non-function top-level declaration",
+        ),
+        (
+            "class",
+            "class Pair:\n  left: int\n\ndef main() -> int:\n  return 42\n",
+            "non-function top-level declaration",
+        ),
+        (
+            "model-method",
+            "model Pair:\n  left: int\n  def score(self) -> int:\n    return self.left\n\ndef main() -> int:\n  return 42\n",
+            "non-function top-level declaration",
+        ),
+        (
+            "model-property",
+            "model Pair:\n  left: int\n  property score -> int:\n    return self.left\n\ndef main() -> int:\n  return 42\n",
+            "non-function top-level declaration",
+        ),
+        (
+            "model-field-alias",
+            "model Pair:\n  left [alias=\"wire_left\"]: int\n\ndef main() -> int:\n  return 42\n",
+            "non-function top-level declaration",
+        ),
     ];
     for (name, source, expected_boundary) in cases {
         let temporary = tempfile::tempdir()?;
@@ -1622,6 +1838,240 @@ def main() -> int:
     assert!(
         !temporary.path().join("target/incan").exists(),
         "direct callable execution must not create a legacy generated-project directory"
+    );
+    Ok(())
+}
+
+/// Execute a source-local plain model through Body IR and publish only the replacement selection receipt.
+#[test]
+fn replacement_cli_executes_a_source_local_nominal_model_with_a_replacement_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        r#"model Pair:
+  left: int
+  right: int = 2
+
+def score(pair: Pair) -> int:
+  return pair.left + pair.right
+
+def main() -> int:
+  pair = Pair(right=2, left=40)
+  return score(pair)
+"#,
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+            "--report",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "an admitted source-local model must execute directly. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert!(
+        report["replacement_execution"]["result"] == "42",
+        "the direct result must be source-observable in the replacement report: {report}"
+    );
+    assert!(
+        report["replacement_execution"]["body_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| {
+                snapshot.contains("executed nominal constructor name=Pair id=decl:main#decl.")
+                    && snapshot.contains("fields=[left, right]")
+            }),
+        "the direct report must retain the exact nominal identity/layout execution evidence: {report}"
+    );
+    assert!(
+        report.get("generated").is_none() && report.get("oven").is_none(),
+        "a direct nominal report must not invent legacy generated-Rust or Oven evidence: {report}"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["selection"]["selected_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], "not_needed");
+    assert!(
+        receipt["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:")),
+        "direct nominal execution must bind an output identity: {receipt}"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "a direct nominal execution must not create a legacy generated-project directory"
+    );
+    Ok(())
+}
+
+/// Refuse non-structural nominal fields and nested nominal projections without creating fallback artifacts or receipts.
+#[test]
+fn replacement_cli_refuses_nonstructural_and_nested_nominal_profiles_without_a_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        (
+            "non-structural-field",
+            r#"model FloatBox:
+  value: float
+
+def main() -> int:
+  boxed = FloatBox(value=1.5)
+  return 42
+"#,
+            "constructor `FloatBox` with a non-structural field value",
+            "FloatBox(value=1.5)",
+        ),
+        (
+            "nested-index",
+            r#"model Bucket:
+  values: list[int]
+
+def main() -> int:
+  bucket = Bucket(values=[40, 2])
+  return bucket.values[0]
+"#,
+            "nested place projection",
+            "return bucket.values[0]",
+        ),
+        (
+            "nested-slice",
+            r#"model Bucket:
+  values: list[int]
+
+def main() -> list[int]:
+  bucket = Bucket(values=[40, 2])
+  return bucket.values[0:1]
+"#,
+            "nested place projection",
+            "return bucket.values[0:1]",
+        ),
+        (
+            "plain-slice",
+            r#"def main() -> list[int]:
+  values = [40, 2]
+  return values[0:1]
+"#,
+            "slice projection",
+            "return values[0:1]",
+        ),
+    ];
+    for (name, source, expected_boundary, source_expression) in cases {
+        let temporary = tempfile::tempdir()?;
+        let entrypoint = temporary.path().join(format!("{name}.incn"));
+        fs::write(&entrypoint, source)?;
+        let output = Command::new(incan_binary())
+            .args([
+                "build",
+                entrypoint.to_string_lossy().as_ref(),
+                "--backend",
+                "replacement",
+                "--backend-fallback",
+                "refuse",
+            ])
+            .output()?;
+        assert!(
+            !output.status.success(),
+            "{name} must visibly refuse outside the nominal profile"
+        );
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let start = source
+            .find(source_expression)
+            .ok_or("fixture must contain its rejected source expression")?;
+        let end = start + source_expression.len();
+        assert!(
+            combined.contains(expected_boundary),
+            "{name} must name its direct-profile boundary: {combined}"
+        );
+        assert!(
+            combined.contains(&format!(
+                "primary Incan source location: {}:{start}..{end}",
+                entrypoint.display()
+            )),
+            "{name} must retain the exact rejected source span: {combined}"
+        );
+        assert!(
+            !combined.contains("Generated Rust project")
+                && !temporary.path().join("target/incan").exists()
+                && !temporary.path().join(".incan/backend/receipt.json").exists(),
+            "{name} must not fall back or publish a replacement receipt"
+        );
+    }
+    Ok(())
+}
+
+/// Refuse an omitted nominal field default before a replacement execution receipt can be written.
+#[test]
+fn replacement_cli_refuses_an_omitted_nominal_field_default_without_a_receipt() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    let source = r#"model Pair:
+  left: int
+  right: int = 2
+
+def main() -> int:
+  pair = Pair(left=40)
+  return pair.left
+"#;
+    fs::write(&entrypoint, source)?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "a model default without retained declaration computation must visibly refuse"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let constructor_start = source
+        .find("Pair(left=40)")
+        .ok_or("fixture must contain its defaulted constructor")?;
+    let constructor_end = constructor_start + "Pair(left=40)".len();
+    assert!(
+        combined.contains("constructor `Pair` with an omitted field default"),
+        "the refusal must identify the unavailable nominal default: {combined}"
+    );
+    assert!(
+        combined.contains(&format!(
+            "primary Incan source location: {}:{constructor_start}..{constructor_end}",
+            entrypoint.display()
+        )),
+        "the refusal must retain the constructor source span: {combined}"
+    );
+    assert!(
+        !combined.contains("Generated Rust project")
+            && !temporary.path().join("target/incan").exists()
+            && !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "an unavailable nominal default must not fall back or publish a receipt"
     );
     Ok(())
 }
