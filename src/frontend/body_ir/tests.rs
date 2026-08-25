@@ -63,12 +63,10 @@ fn build_with_nested_for_pattern(
         .declarations
         .iter_mut()
         .find_map(|decl| match &mut decl.node {
-            ast::Declaration::Function(function) => {
-                function.body.iter_mut().find_map(|stmt| match &mut stmt.node {
-                    ast::Statement::For(for_stmt) => Some(for_stmt),
-                    _ => None,
-                })
-            }
+            ast::Declaration::Function(function) => function.body.iter_mut().find_map(|stmt| match &mut stmt.node {
+                ast::Statement::For(for_stmt) => Some(for_stmt),
+                _ => None,
+            }),
             _ => None,
         })
         .ok_or("expected a top-level function containing a `for` statement")?;
@@ -112,12 +110,10 @@ fn build_with_for_pattern_widened_after_typecheck(
         .declarations
         .iter_mut()
         .find_map(|decl| match &mut decl.node {
-            ast::Declaration::Function(function) => {
-                function.body.iter_mut().find_map(|stmt| match &mut stmt.node {
-                    ast::Statement::For(for_stmt) => Some(for_stmt),
-                    _ => None,
-                })
-            }
+            ast::Declaration::Function(function) => function.body.iter_mut().find_map(|stmt| match &mut stmt.node {
+                ast::Statement::For(for_stmt) => Some(for_stmt),
+                _ => None,
+            }),
             _ => None,
         })
         .ok_or("expected a top-level function containing a `for` statement")?;
@@ -151,8 +147,8 @@ fn lowers_arithmetic_with_a_copy_last_use_and_a_move_return() -> Result<(), Box<
 }
 
 #[test]
-fn lowers_string_concat_as_an_explicit_helper_call_with_runtime_requirements()
--> Result<(), Box<dyn std::error::Error>> {
+fn lowers_string_concat_as_an_explicit_helper_call_with_runtime_requirements() -> Result<(), Box<dyn std::error::Error>>
+{
     let source = "def greet(name: str) -> str:\n  return \"hi \" + name\n";
     let module = build(source, &["m", "strs"])?;
     let snapshot = module.render_snapshot();
@@ -333,8 +329,7 @@ fn lowers_for_over_a_user_defined_iteration_protocol() -> Result<(), Box<dyn std
 }
 
 #[test]
-fn lowers_fallible_for_iteration_with_an_implicit_try_propagate_semantic() -> Result<(), Box<dyn std::error::Error>>
-{
+fn lowers_fallible_for_iteration_with_an_implicit_try_propagate_semantic() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model ChunkStream:\n  def __iter__(self) -> ChunkStream:\n    return self\n\n  def __next__(self) -> Result[Option[int], str]:\n    return Ok(None)\n\ndef total() -> Result[int, str]:\n  mut acc = 0\n  for chunk in ChunkStream()?:\n    acc = acc + chunk\n  return Ok(acc)\n";
     let module = build(source, &["m", "fallible_for"])?;
     let snapshot = module.render_snapshot();
@@ -386,8 +381,7 @@ fn lowers_a_filtered_list_comprehension_with_a_guarding_if() -> Result<(), Box<d
 
 #[test]
 fn comprehension_bindings_do_not_escape_the_expression_scope() -> Result<(), Box<dyn std::error::Error>> {
-    let source =
-        "def keep_outer(x: int, items: list[int]) -> int:\n  doubled = [x * 2 for x in items]\n  return x\n";
+    let source = "def keep_outer(x: int, items: list[int]) -> int:\n  doubled = [x * 2 for x in items]\n  return x\n";
     let module = build(source, &["m", "comprehension_scope"])?;
     let snapshot = module.render_snapshot();
 
@@ -516,8 +510,8 @@ fn generator_expression_keeps_its_multi_clause_body_lazy_and_captures_its_enviro
 }
 
 #[test]
-fn generator_expression_evaluates_only_its_outer_source_before_construction()
--> Result<(), Box<dyn std::error::Error>> {
+fn generator_expression_evaluates_only_its_outer_source_before_construction() -> Result<(), Box<dyn std::error::Error>>
+{
     let source = concat!(
         "def source() -> list[int]:\n",
         "  return [1, 2]\n\n",
@@ -610,8 +604,7 @@ fn lowers_a_slice_expression_as_a_slice_projected_place_read() -> Result<(), Box
 }
 
 #[test]
-fn lowers_tuple_unpack_into_field_projected_reads_off_a_materialized_tuple()
--> Result<(), Box<dyn std::error::Error>> {
+fn lowers_tuple_unpack_into_field_projected_reads_off_a_materialized_tuple() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def sum_pair() -> int:\n  pair = (1, 2)\n  a, b = pair\n  return a + b\n";
     let module = build(source, &["m", "tuple_unpack"])?;
     let snapshot = module.render_snapshot();
@@ -660,7 +653,8 @@ fn lowers_tuple_assign_swap_with_correct_evaluation_order() -> Result<(), Box<dy
     // = ...`) always parses as `TupleUnpackStmt` instead (new bindings, possibly shadowing) -- lvalue index/
     // field targets are what actually reaches `TupleAssignStmt`, matching the parser's own routing
     // (`crates/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`).
-    let source = "def swap(mut arr: list[int], i: int, j: int) -> int:\n  arr[i], arr[j] = (arr[j], arr[i])\n  return arr[i]\n";
+    let source =
+        "def swap(mut arr: list[int], i: int, j: int) -> int:\n  arr[i], arr[j] = (arr[j], arr[i])\n  return arr[i]\n";
     let module = build(source, &["m", "tuple_assign"])?;
     let snapshot = module.render_snapshot();
 
@@ -723,8 +717,7 @@ fn static_method_lowers_like_a_free_function_with_no_receiver_local() -> Result<
 }
 
 #[test]
-fn method_parameter_type_is_recorded_from_the_checked_callable_signature() -> Result<(), Box<dyn std::error::Error>>
-{
+fn method_parameter_type_is_recorded_from_the_checked_callable_signature() -> Result<(), Box<dyn std::error::Error>> {
     let source =
         "model Counter:\n  value: int\n\n  def add(self, amount: int) -> int:\n    return self.value + amount\n";
     let module = build(source, &["m", "method_param"])?;
@@ -818,8 +811,7 @@ fn top_level_defaults_lower_to_deferred_source_computations() -> Result<(), Box<
 }
 
 #[test]
-fn generic_method_defaults_use_the_shared_parameter_contract_after_self() -> Result<(), Box<dyn std::error::Error>>
-{
+fn generic_method_defaults_use_the_shared_parameter_contract_after_self() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def fallback() -> str:\n  return \"label\"\n\nmodel Shelf[T]:\n  def label[U](self, owner_items: list[T] = [], method_items: list[U] = [], suffix: str = \"\", fallback_label: str = fallback()) -> str:\n    return suffix\n";
     let module = build(source, &["m", "method_default"])?;
     let label = module
@@ -1099,14 +1091,12 @@ fn invalid_default_is_rejected_before_body_ir_is_built() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn refused_default_restores_ownership_state_before_local_ids_are_reused() -> Result<(), Box<dyn std::error::Error>>
-{
+fn refused_default_restores_ownership_state_before_local_ids_are_reused() -> Result<(), Box<dyn std::error::Error>> {
     // Lowering the partial moves one of its synthesized forwarding locals before the bytes literal refuses.
     // The transaction must discard that move before `second` reuses the local id in the normal body, or the
     // required root-scope drop would silently disappear.
     let source = "def route(method: str) -> str:\n  return method\n\ndef choose(value: str = (partial route(method=\"GET\")) + b\"x\") -> str:\n  first = \"first\"\n  second = \"second\"\n  return first\n";
-    let (module, _diagnostics) =
-        build_after_expected_typecheck_errors(source, &["m", "default_ownership_rollback"])?;
+    let (module, _diagnostics) = build_after_expected_typecheck_errors(source, &["m", "default_ownership_rollback"])?;
     let choose = module
         .bodies
         .iter()
@@ -1210,9 +1200,7 @@ fn validated_newtype_default_remains_a_visible_body_ir_refusal() -> Result<(), B
         .ok_or("expected the choose Body IR")?;
     let value = choose.params.first().ok_or("expected the newtype default parameter")?;
     let bir::CallableParamDefault::Unsupported { span, description } = &value.default else {
-        return Err(
-            "a default requiring validated-newtype coercion must not become a raw source computation".into(),
-        );
+        return Err("a default requiring validated-newtype coercion must not become a raw source computation".into());
     };
     let default_start = source.rfind("3)").ok_or("missing newtype default spelling")?;
     assert_eq!(*span, HirSourceSpan::new(default_start, default_start + 1));
@@ -1270,7 +1258,8 @@ fn generic_method_parameter_type_retains_the_owner_type_variable() -> Result<(),
 
 #[test]
 fn static_method_parameter_types_are_recorded_like_ordinary_methods() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Counter:\n  value: int\n\n  def from_value(amount: int) -> Counter:\n    return Counter(value=amount)\n";
+    let source =
+        "model Counter:\n  value: int\n\n  def from_value(amount: int) -> Counter:\n    return Counter(value=amount)\n";
     let module = build(source, &["m", "static_param"])?;
     let snapshot = module.render_snapshot();
 
@@ -1378,7 +1367,8 @@ fn lowers_compound_string_assignment_through_the_string_concat_helper() -> Resul
 
 #[test]
 fn lowers_field_assignment_on_a_mutable_model_parameter() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Counter:\n  count: int\n\ndef bump(mut c: Counter) -> int:\n  c.count = c.count + 1\n  return c.count\n";
+    let source =
+        "model Counter:\n  count: int\n\ndef bump(mut c: Counter) -> int:\n  c.count = c.count + 1\n  return c.count\n";
     let module = build(source, &["m", "field_assign"])?;
     let snapshot = module.render_snapshot();
 
@@ -1472,8 +1462,8 @@ fn lowers_loop_expression_break_value_into_a_merged_result_place() -> Result<(),
 }
 
 #[test]
-fn nested_while_break_inside_a_loop_expression_does_not_target_the_outer_loop()
--> Result<(), Box<dyn std::error::Error>> {
+fn nested_while_break_inside_a_loop_expression_does_not_target_the_outer_loop() -> Result<(), Box<dyn std::error::Error>>
+{
     // A plain `break` inside a nested `while` must exit the `while`, not accidentally get rewritten into an
     // assignment to the outer `loop:` expression's result place.
     let source = "def find(limit: int) -> int:\n  return loop:\n    mut i = 0\n    while i < limit:\n      if i == 5:\n        break\n      i = i + 1\n    break i\n";
@@ -1498,9 +1488,7 @@ fn lowers_try_into_an_explicit_try_propagate_statement() -> Result<(), Box<dyn s
         "`?` should lower to an explicit try-propagate statement: {snapshot}"
     );
     assert!(
-        snapshot.contains("same_error_type=E")
-            && snapshot.contains("result_ok(")
-            && snapshot.contains("result_err("),
+        snapshot.contains("same_error_type=E") && snapshot.contains("result_ok(") && snapshot.contains("result_err("),
         "Result constructors and exact error routing must stay explicit in Body IR: {snapshot}"
     );
     Ok(())
@@ -1532,8 +1520,7 @@ fn a_local_callable_named_ok_shadows_the_intrinsic_result_constructor() -> Resul
 }
 
 #[test]
-fn lowers_an_fstring_into_a_format_rvalue_with_literal_and_display_parts() -> Result<(), Box<dyn std::error::Error>>
-{
+fn lowers_an_fstring_into_a_format_rvalue_with_literal_and_display_parts() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def greet(name: str) -> str:\n  return f\"hello {name}\"\n";
     let module = build(source, &["m", "fstring_display"])?;
     let snapshot = module.render_snapshot();
@@ -1563,8 +1550,7 @@ fn lowers_an_fstring_debug_interpolation_using_the_debug_style() -> Result<(), B
 }
 
 #[test]
-fn fstring_records_the_fstring_runtime_helper_and_allocator_requirements() -> Result<(), Box<dyn std::error::Error>>
-{
+fn fstring_records_the_fstring_runtime_helper_and_allocator_requirements() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def label(x: int) -> str:\n  return f\"x={x}\"\n";
     let module = build(source, &["m", "fstring_reqs"])?;
     let snapshot = module.render_snapshot();
@@ -1890,8 +1876,7 @@ fn stored_partial_refuses_too_few_or_too_many_residual_arguments() -> Result<(),
     );
 
     let too_many = "def add3(a: int, b: int, c: int) -> int:\n  return a + b + c\n\ndef make() -> int:\n  add_with_one = partial add3(a=1)\n  return add_with_one(9, 2, 3)\n";
-    let (too_many_module, diagnostics) =
-        build_after_expected_typecheck_errors(too_many, &["m", "partial_too_many"])?;
+    let (too_many_module, diagnostics) = build_after_expected_typecheck_errors(too_many, &["m", "partial_too_many"])?;
     let too_many_snapshot = too_many_module.render_snapshot();
     assert!(
         diagnostics
@@ -2015,7 +2000,8 @@ fn lowers_a_single_yield_and_marks_the_body_a_generator() -> Result<(), Box<dyn 
 
 #[test]
 fn lowers_multiple_yields_across_control_flow_inside_a_loop() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def counter(n: int) -> Generator[int]:\n  mut i = 0\n  while i < n:\n    yield i\n    i = i + 1\n  yield -1\n";
+    let source =
+        "def counter(n: int) -> Generator[int]:\n  mut i = 0\n  while i < n:\n    yield i\n    i = i + 1\n  yield -1\n";
     let module = build(source, &["m", "loop_yield"])?;
     let snapshot = module.render_snapshot();
 
@@ -2353,8 +2339,8 @@ fn tuple_for_pattern_bindings_are_readable_inside_the_loop_body() -> Result<(), 
     let snapshot = module.render_snapshot();
 
     for name in ["a", "b"] {
-        let local = local_for_binding(&snapshot, name)
-            .ok_or_else(|| format!("expected a local for `{name}`: {snapshot}"))?;
+        let local =
+            local_for_binding(&snapshot, name).ok_or_else(|| format!("expected a local for `{name}`: {snapshot}"))?;
         assert!(
             snapshot.contains(&format!("copy({local})")),
             "the loop body must read `{name}` through its own binding {local}: {snapshot}"
@@ -2444,7 +2430,8 @@ fn nested_tuple_for_patterns_have_no_source_spelling_yet() -> Result<(), Box<dyn
 
 #[test]
 fn destructured_for_pattern_bindings_do_not_escape_the_loop_scope() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def keep_outer(a: int, pairs: list[tuple[int, int]]) -> int:\n  for a, b in pairs:\n    pass\n  return a\n";
+    let source =
+        "def keep_outer(a: int, pairs: list[tuple[int, int]]) -> int:\n  for a, b in pairs:\n    pass\n  return a\n";
     let module = build(source, &["m", "tuple_for_scope"])?;
     let snapshot = module.render_snapshot();
 
@@ -2493,8 +2480,7 @@ fn destructured_for_pattern_bindings_carry_ownership_and_drop_facts() -> Result<
 }
 
 #[test]
-fn a_closure_does_not_capture_names_a_nested_destructuring_pattern_binds() -> Result<(), Box<dyn std::error::Error>>
-{
+fn a_closure_does_not_capture_names_a_nested_destructuring_pattern_binds() -> Result<(), Box<dyn std::error::Error>> {
     // `a` and `b` are bound by the comprehension's own `for` clause, so they are *not* free variables of the
     // enclosing closure and must never be captured from the enclosing scope -- where they do not exist at all.
     // Before #1125 the free-variable walk only treated a plain `Pattern::Binding` as binding a name, so a
@@ -2537,8 +2523,7 @@ fn a_tuple_for_pattern_over_a_non_tuple_item_type_is_a_type_error() -> Result<()
 }
 
 #[test]
-fn a_tuple_for_pattern_over_a_mismatched_arity_item_type_is_a_type_error() -> Result<(), Box<dyn std::error::Error>>
-{
+fn a_tuple_for_pattern_over_a_mismatched_arity_item_type_is_a_type_error() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def total(pairs: list[tuple[int, int]]) -> int:\n  for a, b, c in pairs:\n    pass\n  return 0\n";
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
     let program = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
@@ -2558,8 +2543,7 @@ fn a_tuple_for_pattern_over_a_mismatched_arity_item_type_is_a_type_error() -> Re
 }
 
 #[test]
-fn lowering_fails_closed_on_a_tuple_pattern_whose_item_type_is_not_a_tuple()
--> Result<(), Box<dyn std::error::Error>> {
+fn lowering_fails_closed_on_a_tuple_pattern_whose_item_type_is_not_a_tuple() -> Result<(), Box<dyn std::error::Error>> {
     // Defence in depth for the same P1: the typechecker rejects this program, so lowering should only ever see
     // it from a hand-built AST -- and must refuse rather than project `.0`/`.1` out of an `int`.
     let source = "def total(items: list[int]) -> int:\n  for value in items:\n    pass\n  return 0\n";
@@ -2582,8 +2566,7 @@ fn lowering_fails_closed_on_a_tuple_pattern_whose_item_type_is_not_a_tuple()
 }
 
 #[test]
-fn a_tuple_for_pattern_over_an_unconstrained_type_variable_is_a_type_error()
--> Result<(), Box<dyn std::error::Error>> {
+fn a_tuple_for_pattern_over_an_unconstrained_type_variable_is_a_type_error() -> Result<(), Box<dyn std::error::Error>> {
     // An unconstrained `T` can be instantiated as `int`, and Incan has no tuple-shaped bound that could
     // promise otherwise, so this can never be proven safe.
     let source = "def total[T](items: list[T]) -> int:\n  for left, right in items:\n    pass\n  return 0\n";
@@ -2731,8 +2714,8 @@ fn named_construction_lowers_to_a_constructor_aggregate_with_a_resolved_field_bi
 }
 
 #[test]
-fn out_of_order_named_construction_binds_by_field_and_records_written_order()
--> Result<(), Box<dyn std::error::Error>> {
+fn out_of_order_named_construction_binds_by_field_and_records_written_order() -> Result<(), Box<dyn std::error::Error>>
+{
     let source = "model P:\n  x: int\n  y: int\n\ndef make() -> P:\n  return P(y=2, x=1)\n";
     let module = build(source, &["m", "ctor_order"])?;
     let snapshot = module.render_snapshot();
@@ -2825,8 +2808,8 @@ fn source_local_model_construction_retains_its_declaration_identity_and_canonica
 /// Retain the exact local value-enum member selected by source lowering rather than recovering it from a
 /// qualified spelling in a direct runtime.
 #[test]
-fn source_local_value_enum_member_retains_exact_enum_and_variant_identities()
--> Result<(), Box<dyn std::error::Error>> {
+fn source_local_value_enum_member_retains_exact_enum_and_variant_identities() -> Result<(), Box<dyn std::error::Error>>
+{
     let source = "enum HttpStatus(int):\n  Ok = 200\n  NotFound = 404\n\ndef main() -> int:\n  return HttpStatus.NotFound.value()\n";
     let module = build(source, &["m", "value_enum_identity"])?;
     let snapshot = module.render_snapshot();
@@ -2871,8 +2854,7 @@ fn source_local_fieldless_enum_member_retains_exact_enum_and_variant_identities(
 }
 
 #[test]
-fn mixed_positional_and_named_call_arguments_bind_to_declared_parameters() -> Result<(), Box<dyn std::error::Error>>
-{
+fn mixed_positional_and_named_call_arguments_bind_to_declared_parameters() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def add(a: int, b: int) -> int:\n  return a + b\n\ndef use() -> int:\n  return add(1, b=2)\n";
     let module = build(source, &["m", "mixed"])?;
     let snapshot = module.render_snapshot();
@@ -2948,8 +2930,7 @@ fn an_omitted_defaulted_argument_is_recorded_as_a_defaulted_slot() -> Result<(),
 }
 
 #[test]
-fn an_omitted_interior_default_binds_without_compacting_later_arguments() -> Result<(), Box<dyn std::error::Error>>
-{
+fn an_omitted_interior_default_binds_without_compacting_later_arguments() -> Result<(), Box<dyn std::error::Error>> {
     // #1124 had to refuse this: a flat operand vector could not say that `9` fills slot 2 rather than slot 1.
     // The recorded binding is exactly that sparse argument map, so the call is now representable.
     let source = "def at(a: int, b: int = 2, c: int = 3) -> int:\n  return a + b + c\n\ndef use() -> int:\n  return at(1, c=9)\n";
@@ -3031,7 +3012,8 @@ fn explicit_method_call_type_arguments_survive_lowering() -> Result<(), Box<dyn 
     // The other half of `CallSiteGenerics`' canonical surface: `session.read_csv[Order](path)`. The typechecker
     // substitutes the receiver's generics before recording the signature, so the method's slots are already
     // concrete here and the resolved type argument still has to reach the callee.
-    let source = "class S:\n  def read[T](self, v: T) -> T:\n    return v\n\ndef use(s: S) -> int:\n  return s.read[int](1)\n";
+    let source =
+        "class S:\n  def read[T](self, v: T) -> T:\n    return v\n\ndef use(s: S) -> int:\n  return s.read[int](1)\n";
     let module = build(source, &["m", "generic_method"])?;
     let snapshot = module.render_snapshot();
 
@@ -3080,8 +3062,8 @@ fn direct_and_local_named_binding_go_through_one_mechanism() -> Result<(), Box<d
 }
 
 #[test]
-fn an_overloaded_call_binds_against_the_declaration_the_typechecker_selected()
--> Result<(), Box<dyn std::error::Error>> {
+fn an_overloaded_call_binds_against_the_declaration_the_typechecker_selected() -> Result<(), Box<dyn std::error::Error>>
+{
     // Regression: `function_bindings` is keyed by bare name, so it holds only one of two same-name
     // declarations. Binding against the wrong overload's parameter *names* silently swaps the arguments --
     // a wrong answer where the previous refusal was at least honest.
@@ -3175,13 +3157,12 @@ fn a_rest_parameter_callee_still_lowers_its_positional_arguments() -> Result<(),
 }
 
 #[test]
-fn argument_ownership_facts_are_sequenced_by_written_order_not_operand_index()
--> Result<(), Box<dyn std::error::Error>> {
+fn argument_ownership_facts_are_sequenced_by_written_order_not_operand_index() -> Result<(), Box<dyn std::error::Error>>
+{
     // The invariant `ArgumentBinding` documents: operands are reordered into declaration order, but their
     // ownership facts were decided in written order. Read left to right this vector moves `_0` and then clones
     // it; `written=[1, 0]` is what tells a consumer the clone happened first.
-    let source =
-        "def two(p: str, q: str) -> str:\n  return p + q\n\ndef use(a: str) -> str:\n  return two(q=a, p=a)\n";
+    let source = "def two(p: str, q: str) -> str:\n  return p + q\n\ndef use(a: str) -> str:\n  return two(q=a, p=a)\n";
     let module = build(source, &["m", "own_order"])?;
     let rendered = body_named(&module, "use")?.render_snapshot();
 
@@ -3212,8 +3193,8 @@ fn class_construction_binds_inherited_fields_in_declared_layout_order() -> Resul
 }
 
 #[test]
-fn a_construction_the_checker_declined_to_bind_is_refused_as_a_construction()
--> Result<(), Box<dyn std::error::Error>> {
+fn a_construction_the_checker_declined_to_bind_is_refused_as_a_construction() -> Result<(), Box<dyn std::error::Error>>
+{
     // A duplicate field leaves no recorded binding. Falling through to the direct-call path would refuse this as
     // a call to an unknown function, naming the wrong construct entirely.
     let source = "model P:\n  x: int = 1\n  y: int = 2\n\ndef make() -> P:\n  return P(x=1, x=2)\n";
@@ -3420,8 +3401,8 @@ fn await_inside_a_loop_stays_inside_the_loop_body() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-fn lowers_a_two_arm_race_with_per_arm_bindings_and_pre_selection_awaitables()
--> Result<(), Box<dyn std::error::Error>> {
+fn lowers_a_two_arm_race_with_per_arm_bindings_and_pre_selection_awaitables() -> Result<(), Box<dyn std::error::Error>>
+{
     let source = format!(
         "{ASYNC_PRELUDE}async def f() -> int:\n  race for value:\n    await fast() => value\n    await slow() => value\n"
     );
@@ -3541,8 +3522,7 @@ fn a_race_arm_block_body_lowers_its_statements_and_trailing_value() -> Result<()
 }
 
 #[test]
-fn an_unsupported_construct_in_a_race_arm_does_not_collapse_the_whole_race()
--> Result<(), Box<dyn std::error::Error>> {
+fn an_unsupported_construct_in_a_race_arm_does_not_collapse_the_whole_race() -> Result<(), Box<dyn std::error::Error>> {
     // The issue's explicit requirement: a construct Body IR cannot represent keeps its own node *inside* a
     // represented race, so a consumer loses only that construct rather than the entire expression.
     let source = format!(
@@ -3892,8 +3872,7 @@ fn set_literals_have_no_spread_spelling_to_represent() -> Result<(), Box<dyn std
 const VEC2_SRC: &str = "@derive(Debug)\nmodel Vec2:\n  x: int\n  y: int\n\n  def __add__(self, other: Vec2) -> Vec2:\n    return Vec2(x=self.x + other.x, y=self.y + other.y)\n\n";
 
 #[test]
-fn a_user_defined_operator_lowers_to_the_method_the_typechecker_resolved() -> Result<(), Box<dyn std::error::Error>>
-{
+fn a_user_defined_operator_lowers_to_the_method_the_typechecker_resolved() -> Result<(), Box<dyn std::error::Error>> {
     // Representing this as `BinOp::Add` would claim a primitive machine operation where the source calls a
     // method -- a wrong representation rather than an honest refusal, with no marker for a consumer to notice.
     let source = format!("{VEC2_SRC}def f(a: Vec2, b: Vec2) -> Vec2:\n  return a + b\n");
