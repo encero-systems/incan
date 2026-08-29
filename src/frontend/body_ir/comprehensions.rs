@@ -2,7 +2,9 @@
 
 use super::args::*;
 use super::free_vars::*;
+use super::reads::PatternReadScope;
 use super::reads::*;
+use super::refusals::unsupported_for_pattern;
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
@@ -343,27 +345,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 });
             }
             ast::ComprehensionClause::For { pattern, iter } => {
-                let ast::Pattern::Binding(var_name) = &pattern.node else {
-                    self.push_unsupported_stmt(
-                        "comprehension for-clause pattern is not a simple binding".to_string(),
-                        span,
-                        out,
-                    );
+                // A comprehension's `for` clause binds exactly like the statement `for` #1125 settled: same accepted
+                // pattern shapes, same arity and shape refusals, same per-name last-use countdown. Only the region the
+                // bindings are live for differs -- a terminal plus the remaining clauses rather than a statement body
+                // -- which is what `PatternReadScope` names, so both go through one walk (#1161).
+                let item_ty = self.resolve_ty(pattern.span);
+                if let Some(reason) = unsupported_for_pattern(&pattern.node, &item_ty) {
+                    self.push_unsupported_stmt(reason, span, out);
                     return;
-                };
-                let var_ty = self.resolve_ty(pattern.span);
+                }
                 let loop_scope = self.new_scope(Some(scope), span);
-                let total_reads = terminal.count_reads(var_name) + count_reads_in_comprehension_clauses(var_name, tail);
-                let pattern_local =
-                    self.declare_new_local_with_reads(var_name.clone(), var_ty, loop_scope, span, total_reads);
+                let item_local = self.declare_for_item_local(
+                    pattern,
+                    &item_ty,
+                    loop_scope,
+                    span,
+                    &PatternReadScope::Comprehension { terminal, tail },
+                );
+                let bound_ty = item_ty.clone();
                 self.lower_general_iteration(
                     iter,
-                    pattern_local,
+                    item_local,
                     scope,
                     loop_scope,
                     span,
                     out,
                     move |builder, loop_scope, body_stmts| {
+                        builder.bind_for_pattern(
+                            pattern,
+                            &bound_ty,
+                            item_local,
+                            loop_scope,
+                            &PatternReadScope::Comprehension { terminal, tail },
+                            body_stmts,
+                        );
                         builder.lower_comprehension_clauses(tail, terminal, loop_scope, span, body_stmts);
                         builder.insert_scope_drops(body_stmts, loop_scope);
                     },
@@ -459,7 +474,7 @@ impl ComprehensionTerminal<'_> {
     /// Count `name` occurrences in this terminal's own expression(s), for seeding a comprehension `for`-clause
     /// binding's last-use countdown (see [`BodyBuilder::declare_new_local_with_reads`]'s doc for why comprehension
     /// bindings cannot reuse the statement-suffix-based [`count_reads_in_stmts`]).
-    fn count_reads(&self, name: &str) -> usize {
+    pub(super) fn count_reads(&self, name: &str) -> usize {
         match self {
             Self::ListPush { element, .. } => count_reads_in_expr(name, &element.node),
             Self::DictInsert { key, value, .. } => {

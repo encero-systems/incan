@@ -2548,10 +2548,17 @@ fn a_closure_does_not_capture_names_a_nested_destructuring_pattern_binds() -> Re
     let module = build(source, &["m", "closure_pattern_capture"])?;
     let snapshot = module.render_snapshot();
 
-    assert!(
-        !snapshot.contains(" a : ") && !snapshot.contains(" b : "),
-        "clause-bound names must not become captured locals of the enclosing closure: {snapshot}"
-    );
+    // Since #1161 the clause's destructuring pattern lowers, so `a` and `b` do exist -- as its own bindings. The
+    // property that matters is unchanged and is what this asserts: they are bound by the clause, never captured from
+    // an enclosing scope where they do not exist.
+    for name in [" a : ", " b : "] {
+        let declared: Vec<&str> = snapshot.lines().filter(|line| line.contains(name)).collect();
+        assert!(!declared.is_empty(), "the clause pattern must bind{name}: {snapshot}");
+        assert!(
+            declared.iter().all(|line| line.contains("[binding]")),
+            "clause-bound names must be bindings, never captures: {declared:?}"
+        );
+    }
     assert!(
         snapshot.contains("[captured]"),
         "the closure should still capture the one name it really reads from the enclosing scope: {snapshot}"

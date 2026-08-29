@@ -1,6 +1,7 @@
 //! Lowering for conditional and looping control flow, and the iteration protocol behind `for`.
 
 use super::args::*;
+use super::reads::PatternReadScope;
 use super::reads::*;
 use super::refusals::*;
 use super::*;
@@ -234,7 +235,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_bindings = self.bindings.clone();
         let ast::Expr::Range { start, end, inclusive } = &for_stmt.iter.node else {
             let loop_scope = self.new_scope(Some(scope), span);
-            let item_local = self.declare_for_item_local(&for_stmt.pattern, &item_ty, loop_scope, span, &for_stmt.body);
+            let item_local = self.declare_for_item_local(
+                &for_stmt.pattern,
+                &item_ty,
+                loop_scope,
+                span,
+                &PatternReadScope::Body(&for_stmt.body),
+            );
             self.lower_general_iteration(
                 &for_stmt.iter,
                 item_local,
@@ -248,7 +255,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         &item_ty,
                         item_local,
                         loop_scope,
-                        &for_stmt.body,
+                        &PatternReadScope::Body(&for_stmt.body),
                         body_stmts,
                     );
                     builder.lower_block_into(&for_stmt.body, loop_scope, body_stmts);
@@ -305,7 +312,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // per-iteration item local at all -- unlike the general path, where `IterNext` must still write the polled
         // item somewhere for the poll itself to happen.
         if !matches!(for_stmt.pattern.node, ast::Pattern::Wildcard) {
-            let item_local = self.declare_for_item_local(&for_stmt.pattern, &item_ty, loop_scope, span, &for_stmt.body);
+            let item_local = self.declare_for_item_local(
+                &for_stmt.pattern,
+                &item_ty,
+                loop_scope,
+                span,
+                &PatternReadScope::Body(&for_stmt.body),
+            );
             body_stmts.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
                     place: bir::Place::from_local(item_local),
@@ -322,7 +335,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 &item_ty,
                 item_local,
                 loop_scope,
-                &for_stmt.body,
+                &PatternReadScope::Body(&for_stmt.body),
                 &mut body_stmts,
             );
         }
@@ -373,11 +386,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         item_ty: &IncanType,
         loop_scope: bir::ScopeId,
         span: HirSourceSpan,
-        body: &[ast::Spanned<ast::Statement>],
+        reads: &PatternReadScope<'_>,
     ) -> bir::LocalId {
         match &pattern.node {
             ast::Pattern::Binding(name) => {
-                let total_reads = count_reads_in_stmts(name, body);
+                let total_reads = reads.count_reads(name);
                 self.declare_new_local_with_reads(name.clone(), item_ty.clone(), loop_scope, span, total_reads)
             }
             _ => self.new_temp(item_ty.clone(), loop_scope, span),
@@ -397,14 +410,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         item_ty: &IncanType,
         item_local: bir::LocalId,
         loop_scope: bir::ScopeId,
-        body: &[ast::Spanned<ast::Statement>],
+        reads: &PatternReadScope<'_>,
         out: &mut Vec<bir::Statement>,
     ) {
         if matches!(pattern.node, ast::Pattern::Binding(_)) {
             return;
         }
         let item_place = bir::Place::from_local(item_local);
-        self.bind_for_pattern_fields(pattern, item_ty, &item_place, loop_scope, body, out);
+        self.bind_for_pattern_fields(pattern, item_ty, &item_place, loop_scope, reads, out);
     }
 
     /// Recursively bind one `for`-pattern node against `place`, the (already projected) part of the produced item
@@ -435,7 +448,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         expected_ty: &IncanType,
         place: &bir::Place,
         loop_scope: bir::ScopeId,
-        body: &[ast::Spanned<ast::Statement>],
+        reads: &PatternReadScope<'_>,
         out: &mut Vec<bir::Statement>,
     ) {
         let span = hir_span(pattern.span);
@@ -444,7 +457,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Pattern::Binding(name) => {
                 let (fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
                 let element = bir::Operand::place(place.clone(), fact, last_use);
-                let total_reads = count_reads_in_stmts(name, body);
+                let total_reads = reads.count_reads(name);
                 let local =
                     self.declare_new_local_with_reads(name.clone(), expected_ty.clone(), loop_scope, span, total_reads);
                 out.push(bir::Statement {
@@ -460,7 +473,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 for (index, (item, element_ty)) in items.iter().zip(&element_types).enumerate() {
                     let mut field_place = place.clone();
                     field_place.projection.push(bir::PlaceElem::Field(index.to_string()));
-                    self.bind_for_pattern_fields(item, element_ty, &field_place, loop_scope, body, out);
+                    self.bind_for_pattern_fields(item, element_ty, &field_place, loop_scope, reads, out);
                 }
             }
             ast::Pattern::Literal(_) | ast::Pattern::Constructor(..) | ast::Pattern::Group(_) | ast::Pattern::Or(_) => {

@@ -1,5 +1,6 @@
 //! Read-count analysis: how many times a name is read, which seeds each binding's last-use countdown.
 
+use super::comprehensions::ComprehensionTerminal;
 use super::*;
 
 /// Count `name` occurrences across a tail of comprehension/generator clauses, for seeding a `for`-clause binding's
@@ -267,5 +268,36 @@ pub(super) fn count_reads_in_call_arg(name: &str, arg: &ast::CallArg) -> usize {
         | ast::CallArg::Named(_, e)
         | ast::CallArg::PositionalUnpack(e)
         | ast::CallArg::KeywordUnpack(e) => count_reads_in_expr(name, &e.node),
+    }
+}
+
+/// Where lowering counts reads of a name bound by a `for` pattern.
+///
+/// The pattern-binding walk seeds each bound name's last-use countdown from how many times that name is read in the
+/// region the binding is live for. That region is a statement body for `for x in xs:`, but a terminal expression plus
+/// the remaining clauses for `[f(x) for x in xs]`. Naming the two shapes here lets one walk serve both instead of the
+/// comprehension path keeping its own simple-binding-only copy, which is what left a destructuring comprehension
+/// refusing while the equivalent statement `for` lowered (#1161).
+pub(super) enum PatternReadScope<'a> {
+    /// Reads inside a statement `for` loop's body.
+    Body(&'a [ast::Spanned<ast::Statement>]),
+    /// Reads inside a comprehension's terminal expression and the clauses that follow this one.
+    Comprehension {
+        /// The comprehension's element/entry expression, or the generator's yielded element.
+        terminal: &'a ComprehensionTerminal<'a>,
+        /// The clauses nested inside this one, which the binding is also live across.
+        tail: &'a [ast::ComprehensionClause],
+    },
+}
+
+impl PatternReadScope<'_> {
+    /// Count the reads of `name` across this scope.
+    pub(super) fn count_reads(&self, name: &str) -> usize {
+        match self {
+            Self::Body(body) => count_reads_in_stmts(name, body),
+            Self::Comprehension { terminal, tail } => {
+                terminal.count_reads(name) + count_reads_in_comprehension_clauses(name, tail)
+            }
+        }
     }
 }
