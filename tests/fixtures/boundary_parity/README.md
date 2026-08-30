@@ -14,11 +14,11 @@ When adding boundary coverage, extend these fixture families before adding anoth
 
 ## #989 public-boundary fixture plan
 
-This is a fixture-planning inventory for [#989](https://github.com/encero-systems/incan/issues/989), not a claim that the replacement backend already executes package, import, facade, metadata, or Rust-interop rows. The backend behavior inventory identifies this README as the repository anchor for package/import, facade, and checked-API evidence; the executable parity corpus deliberately keeps its `PackageImportBoundary` and `RustInteropBehavior` lanes unused until the required public-boundary and execution work exists.
+This is a fixture-planning inventory for [#989](https://github.com/encero-systems/incan/issues/989), not a claim that the replacement backend already executes package, import, facade, metadata, or Rust-interop rows. Its three future packets are now independently tracked as [#1260](https://github.com/encero-systems/incan/issues/1260), [#1261](https://github.com/encero-systems/incan/issues/1261), and [#1262](https://github.com/encero-systems/incan/issues/1262). The backend behavior inventory identifies this README as the repository anchor for package/import, facade, and checked-API evidence; the executable parity corpus deliberately keeps its `PackageImportBoundary` and `RustInteropBehavior` lanes unused until the required public-boundary and execution work exists.
 
 The existing regressions below are legacy-path evidence. Several build generated Rust, materialize a legacy `.incnlib`, or invoke a Cargo-compatible consumer artifact. They remain valuable characterization tests, but no row may be called replacement parity merely because one of them passes.
 
-### Future packet 1 — package and local-module import execution
+### Future packet 1 — [#1260 package and local-module import execution](https://github.com/encero-systems/incan/issues/1260)
 
 | Existing evidence | What it characterizes today | Later #989 fixture needed |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ The existing regressions below are legacy-path evidence. Several build generated
 | `build_lib_artifacts_and_consumer_alias_typecheck` and the `check_reports_*pub_*` cases in `tests/integration_tests.rs` | Legacy `.incnlib` manifest lookup, `pub::` import acceptance, and current missing-library/export/artifact diagnostics. | A package-consumer case with checked public metadata and a public diagnostic/source-map record for an unavailable package, export, or version/profile incompatibility. |
 | `generated_library_and_pub_dependency_consumer_artifacts_match_baseline` in `tests/generated_rust_artifact_tests.rs` and `examples/advanced/library_package/` | The current producer/consumer artifact shape and a normal package-consumer flow. | A receipt-bound package fixture that proves the consumer used the selected caller/package contract, not generated project layout or executor-local import lookup. |
 
-### Future packet 2 — facade/re-export and checked public metadata
+### Future packet 2 — [#1261 facade/re-export and checked public metadata](https://github.com/encero-systems/incan/issues/1261)
 
 | Existing evidence | What it characterizes today | Later #989 fixture needed |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ The existing regressions below are legacy-path evidence. Several build generated
 | `build_pub_consumer_imports_public_alias_of_imported_item_issue617`, `build_lib_materializes_facade_decorator_metadata_projection_issue695`, and `tools_metadata_api_reports_public_import_aliases` in `tests/cli_integration.rs` | Current public-alias projection and checked API metadata derived from source. | A metadata assertion over the versioned package/caller-facet contract, including export identity, supported type projection, and explicit unsupported states rather than generated-Rust names or private compiler structures. |
 | `workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md` | The current source-checked metadata command and its explicit separation from `.incnlib` artifact inspection. | A contract check that distinguishes source/project metadata from the later caller/package metadata without making either generated Rust or private HIR/Body IR a public interface. |
 
-### Future packet 3 — Rust-interop call and diagnostic parity
+### Future packet 3 — [#1262 Rust-interop call and diagnostic parity](https://github.com/encero-systems/incan/issues/1262)
 
 | Existing evidence | What it characterizes today | Later #989 fixture needed |
 | --- | --- | --- |
