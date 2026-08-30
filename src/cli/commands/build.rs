@@ -24,8 +24,9 @@ use crate::backend::replacement::{
     ReplacementExecutionError, execute_prevalidated_free_function, prepare_free_function_execution,
 };
 use crate::backend::selection::{
-    BackendExecutionReceipt, BackendKind, BackendSelection, FallbackOutcome, FallbackPolicy, ShadowComparisonState,
-    digest_output, finalize_receipt, resolve_execution, select_backend, unavailable_shadow_comparison,
+    BackendExecutionReceipt, BackendKind, BackendSelection, FallbackOutcome, FallbackPolicy, SemanticModuleProvenance,
+    ShadowComparisonState, digest_output, finalize_receipt, finalize_receipt_with_semantic_module, resolve_execution,
+    select_backend, unavailable_shadow_comparison,
 };
 use crate::backend::shadow::PROGRAM_ENTRYPOINT_UNAVAILABLE_REASON;
 use crate::backend::{IrCodegen, ProjectGenerator};
@@ -57,7 +58,7 @@ use crate::frontend::registry_metadata::{
     collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
-use crate::frontend::{body_ir, diagnostics, lexer, parser, typechecker};
+use crate::frontend::{diagnostics, typechecker};
 use crate::generated_cache::resolve_generated_cargo_target;
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
@@ -128,12 +129,12 @@ use super::build_report::{
 use super::common::dependency_specs_match;
 use super::common::{
     CargoPolicy, CompilationSession, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map,
-    cargo_command_flags, collect_incan_source_files, collect_project_requirements, collect_rust_dependency_uses,
-    discover_effective_project_manifest, effective_project_manifest_for_exact_root,
-    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
-    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
-    render_module_warnings, resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies,
-    validate_output_dir,
+    cargo_command_flags, collect_incan_source_files, collect_modules_detailed_with_session,
+    collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
+    effective_project_manifest_for_exact_root, enforce_project_toolchain_constraint,
+    extend_requirements_with_provider_plan, format_dependency_error, imported_module_deps_for_with_index,
+    merge_project_requirement_dependencies, module_key_index, render_module_warnings, resolve_project_root,
+    resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{
@@ -2565,20 +2566,68 @@ fn resolve_available_replacement_execution(selection: &BackendSelection) -> CliR
     }
 }
 
-/// Refuse package-feature selections the manifest-free replacement profile cannot resolve faithfully.
+/// Checked entry facts the direct replacement executor may consume from one compilation session.
 ///
-/// Ordinary builds derive the active closure from `CompilationSession` and the project's manifest. The bounded
-/// direct Body-IR profile deliberately does neither: it accepts one source module with no package graph. Its shared
-/// input-contract helper therefore uses the empty projection, so accepting a caller-supplied feature selection here
-/// would silently compile a different program. A future project-aware replacement profile may consume the canonical
-/// session projection; this source-only profile must refuse it until then.
-fn reject_replacement_package_feature_selection(package_features: &FeatureSelection) -> CliResult<()> {
-    if package_features != &FeatureSelection::default() {
-        return Err(CliError::failure(
-            "the source-only replacement backend supports only the default package feature selection; remove `--features`, `--no-default-features`, or `--all-features`",
-        ));
-    }
-    Ok(())
+/// This private bundle is the replacement CLI's authority boundary: no later stage may lex, parse, re-resolve, or
+/// typecheck the source again. `TypeCheckInfo` is retained only as Body IR's transitional lowering bridge; semantic
+/// provenance comes from the sibling portable snapshot produced by that same analysis pass.
+struct ReplacementSessionInputs {
+    program: crate::frontend::ast::Program,
+    module_path: Vec<String>,
+    type_info: typechecker::TypeCheckInfo,
+    semantic_module: SemanticModuleProvenance,
+}
+
+/// Collect and analyze the replacement entrypoint once through the project-selected compilation session.
+///
+/// The entry AST, Body-IR lowering bridge, and semantic provenance are extracted as one product. This is deliberately
+/// the only constructor for [`ReplacementSessionInputs`], making an independent replacement CLI typecheck impossible
+/// without crossing this explicit boundary.
+fn replacement_session_inputs(
+    entrypoint: &Path,
+    compilation_session: &CompilationSession,
+) -> CliResult<ReplacementSessionInputs> {
+    let modules = collect_modules_detailed_with_session(entrypoint.to_path_buf(), compilation_session)
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let analysis = compilation_session
+        .analyze_modules(
+            &modules,
+            #[cfg(feature = "rust_inspect")]
+            None,
+        )
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let entry_module = modules
+        .iter()
+        .find(|module| module.file_path == entrypoint)
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "replacement session did not collect entrypoint {}",
+                entrypoint.display()
+            ))
+        })?;
+    let entry_analysis = analysis
+        .module_analysis_for_path(&entry_module.file_path)
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "replacement session did not retain checked analysis for entrypoint {}",
+                entrypoint.display()
+            ))
+        })?;
+    let semantic_snapshot = entry_analysis.semantic_snapshot();
+    let semantic_snapshot_rendering = semantic_snapshot.render_snapshot();
+    let source_identity = digest_output(&[entry_module.source.as_str()]);
+
+    Ok(ReplacementSessionInputs {
+        program: entry_module.ast.clone(),
+        module_path: entry_module.path_segments.clone(),
+        type_info: entry_analysis.type_info().clone(),
+        semantic_module: SemanticModuleProvenance::new(
+            semantic_snapshot.hir.id.to_string(),
+            semantic_snapshot.hir.path.clone(),
+            source_identity,
+            digest_output(&[semantic_snapshot_rendering.as_str()]),
+        ),
+    })
 }
 
 /// Execute the first #988 replacement-backend profile directly from typed Body IR.
@@ -2588,19 +2637,16 @@ fn reject_replacement_package_feature_selection(package_features: &FeatureSelect
 /// requested replacement build therefore either records a replacement receipt over a real Body-IR result or fails
 /// visibly at the original Incan span; it can never reach `IrCodegen` as an implicit compatibility fallback.
 ///
-/// The pipeline is lex, parse, [`apply_body_ir_input_contract`], module-profile gate, typecheck, then
-/// [`build_body_ir_module_v0`]. The contract step is not optional sequencing: without it this path would hand
-/// lowering a program the legacy path would never have produced, which is the divergence #1166 closes.
-/// This deliberately accepts only the default package-feature selection. A non-default selection needs the
-/// project-aware `CompilationSession` projection and is refused before parsing rather than silently treated as
-/// featureless source.
+/// The pipeline constructs one [`CompilationSession`], collects and analyzes the selected module graph through it,
+/// applies the module-profile gate to its projected entry AST, and lowers only from the resulting checked facts. The
+/// session owns parsing, vocab desugaring, feature projection, and typechecking; this CLI path must never derive a
+/// second authority for the same source.
 fn build_replacement_file_report(
     file_path: &str,
     options: BuildCommandOptions,
     report_options: &BuildReportOptions,
 ) -> CliResult<serde_json::Value> {
     reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-    reject_replacement_package_feature_selection(&options.package_features)?;
     let start = Instant::now();
     let entrypoint = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
@@ -2609,56 +2655,27 @@ fn build_replacement_file_report(
             .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
             .join(file_path)
     };
-    let source = fs::read_to_string(&entrypoint).map_err(|error| {
-        CliError::failure(format!(
-            "failed to read replacement entrypoint {}: {error}",
-            entrypoint.display()
-        ))
-    })?;
-    let tokens = lexer::lex(&source).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not lex {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
-    let program = parser::parse(&tokens).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not parse {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
-    let program = body_ir::apply_body_ir_input_contract(program, &entrypoint).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not desugar {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
+    let compilation_session = CompilationSession::discover_for_collection_with_selections(
+        &entrypoint,
+        &options.package_features,
+        options.sdk_profile.as_deref(),
+    )?;
+    let session_inputs = replacement_session_inputs(&entrypoint, &compilation_session)?;
     let selection = select_backend(
         options.backend.requested,
         options.backend.explicit,
         options.backend.shadow,
-        digest_output(&[source.as_str()]),
+        session_inputs.semantic_module.source_identity(),
         options.backend.fallback_policy,
     );
-    if let Some(error) = replacement_module_profile_error(&program) {
+    if let Some(error) = replacement_module_profile_error(&session_inputs.program) {
         return refuse_replacement_profile(&selection, error, &entrypoint);
     }
-    let module_path = vec![
-        entrypoint
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("main")
-            .to_string(),
-    ];
-    let mut checker = typechecker::TypeChecker::new();
-    checker.set_current_module_path(Some(module_path.clone()));
-    checker.check_program(&program).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not typecheck {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
-    let body_ir = build_body_ir_module_v0(&program, &module_path, checker.type_info());
+    let body_ir = build_body_ir_module_v0(
+        &session_inputs.program,
+        &session_inputs.module_path,
+        &session_inputs.type_info,
+    );
     let execution_plan = match prepare_free_function_execution(&body_ir, "main", &[]) {
         Ok(plan) => plan,
         Err(error) => return refuse_replacement_profile(&selection, error, &entrypoint),
@@ -2667,12 +2684,13 @@ fn build_replacement_file_report(
     let execution = execute_prevalidated_free_function(execution_plan)
         .map_err(|error| replacement_profile_cli_error(error, &entrypoint))?;
     let shadow_comparison = backend_shadow_comparison(&selection);
-    let backend_receipt = finalize_receipt(
+    let backend_receipt = finalize_receipt_with_semantic_module(
         &selection,
         executed,
         execution.output_identity.clone(),
         shadow_comparison,
         diagnostics::DIAGNOSTIC_SCHEMA_VERSION,
+        Some(session_inputs.semantic_module.clone()),
     )
     .map_err(|error| CliError::failure(error.to_string()))?;
     let project_root = resolve_project_root(&entrypoint);
@@ -2698,6 +2716,7 @@ fn build_replacement_file_report(
         "mode": "executable",
         "entrypoint": entrypoint,
         "backend": backend_receipt,
+        "semantic_module": session_inputs.semantic_module,
         "replacement_execution": {
             "result": execution.value.observable_text(),
             "output_identity": execution.output_identity,
@@ -14084,6 +14103,7 @@ fn run_oven_prepared_project(prepared: OvenPreparedProject, profile: &str) -> Cl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::body_ir;
     use crate::frontend::lexer;
     use crate::frontend::library_exports::CheckedExportIdentity;
     use crate::frontend::parser;
@@ -19197,34 +19217,26 @@ pub model Nested:
     }
 
     #[test]
-    fn the_replacement_build_refuses_nondefault_package_feature_selection() -> Result<(), Box<dyn std::error::Error>> {
+    fn the_replacement_build_uses_the_session_selected_package_feature_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        let entrypoint = project.path().join("main.incn");
-        fs::write(&entrypoint, "def main() -> int:\n    return 7\n")?;
-        let feature_selections = [
-            FeatureSelection::new(["beta"]),
-            FeatureSelection {
-                no_default_features: true,
-                ..FeatureSelection::default()
-            },
-        ];
+        let entrypoint = project.path().join("src/main.incn");
+        fs::create_dir_all(entrypoint.parent().ok_or("fixture entrypoint has no parent")?)?;
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"replacement_features\"\n\n[project.features]\nbeta = []\n",
+        )?;
+        fs::write(
+            &entrypoint,
+            "when feature(\"beta\"):\n    def main() -> int:\n        return 7\n",
+        )?;
 
-        for package_features in feature_selections {
-            let mut options = replacement_build_options();
-            options.package_features = package_features;
-            let error =
-                build_replacement_file_report(&entrypoint.to_string_lossy(), options, &BuildReportOptions::default())
-                    .err()
-                    .ok_or(
-                        "a non-default package feature selection must not enter the source-only replacement profile",
-                    )?;
-            assert!(
-                error
-                    .to_string()
-                    .contains("supports only the default package feature selection"),
-                "unexpected replacement feature-selection refusal: {error}"
-            );
-        }
+        let mut options = replacement_build_options();
+        options.package_features = FeatureSelection::new(["beta"]);
+        let report =
+            build_replacement_file_report(&entrypoint.to_string_lossy(), options, &BuildReportOptions::default())?;
+        assert_eq!(report["replacement_execution"]["result"], "7");
+        assert_eq!(report["semantic_module"]["module_path"], "main");
         Ok(())
     }
 

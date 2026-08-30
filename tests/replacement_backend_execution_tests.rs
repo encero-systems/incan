@@ -2235,6 +2235,97 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
     Ok(())
 }
 
+/// Execute only the session-projected `beta` entry and bind its semantic module to both report and receipt evidence.
+#[test]
+fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_provenance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let source_root = temporary.path().join("src");
+    fs::create_dir_all(&source_root)?;
+    let entrypoint = source_root.join("main.incn");
+    fs::write(
+        temporary.path().join("incan.toml"),
+        "[project]\nname = \"replacement_session_projection\"\n\n[project.features]\nbeta = []\n",
+    )?;
+    fs::write(
+        &entrypoint,
+        "when feature(\"beta\"):\n  def main() -> int:\n    return 42\n",
+    )?;
+
+    let inactive = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !inactive.status.success(),
+        "an inactive session projection must not execute its gated entrypoint"
+    );
+    assert!(
+        !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "a refused inactive entrypoint must not publish a replacement receipt"
+    );
+
+    let enabled = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+            "--features",
+            "beta",
+            "--report",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        enabled.status.success(),
+        "the selected session feature must execute directly. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&enabled.stdout),
+        String::from_utf8_lossy(&enabled.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&enabled.stdout)?;
+    let provenance = &report["semantic_module"];
+    assert_eq!(report["replacement_execution"]["result"], "42");
+    assert_eq!(provenance["module_id"], "module:main");
+    assert_eq!(provenance["module_path"], "main");
+    assert!(
+        provenance["source_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+            && provenance["semantic_snapshot_identity"]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("sha256:")),
+        "the report must name stable source and semantic-snapshot identities: {report}"
+    );
+    assert!(
+        report["replacement_execution"]["body_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| snapshot.contains("span="))
+            && report["replacement_execution"]["ownership_reads"].is_array()
+            && report["replacement_execution"]["runtime_requirements"].is_array(),
+        "the execution evidence must stay attached to the session-owned semantic module: {report}"
+    );
+
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["semantic_module"], *provenance);
+    assert_eq!(receipt["selection"]["source_identity"], provenance["source_identity"]);
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "a session-projected replacement execution must not create legacy generated output"
+    );
+    Ok(())
+}
+
 /// The only admitted import is `std.async` activation; its direct execution projects receipt-bound task evidence
 /// without creating generated Rust or claiming a source-observable comparison.
 #[test]

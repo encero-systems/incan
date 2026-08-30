@@ -119,9 +119,9 @@ use crate::provider::ProviderPlan;
 /// Those refusals are a safety net, never the normal path; the desugar pass keeps ownership of the real diagnostic
 /// when a vocabulary's library manifest is unavailable.
 ///
-/// The bounded replacement and comparison profiles have no project manifest or feature graph, so they deliberately
-/// use [`apply_body_ir_input_contract`]'s empty feature projection. A command that receives a non-default package
-/// feature selection must reject it before reaching this boundary rather than silently treating it as featureless.
+/// Manifest-free comparison helpers deliberately use [`apply_body_ir_input_contract`]'s empty feature projection. The
+/// direct replacement CLI instead receives an already desugared, feature-projected program and its checked lowering
+/// bridge from `CompilationSession`; it must not apply a second projection or recreate the typecheck authority here.
 pub fn build_body_ir_module_v0(
     program: &ast::Program,
     module_path: &[String],
@@ -133,8 +133,8 @@ pub fn build_body_ir_module_v0(
 /// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
 ///
 /// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller
-/// owes Body IR the same debt. The replacement CLI, parity corpus, and source-observable comparison route use this
-/// helper; a caller that skips it hands lowering a program the legacy path would never have produced, which is the
+/// owes Body IR the same debt. The parity corpus and source-observable comparison route use this helper; a caller that
+/// skips it hands lowering a program the legacy path would never have produced, which is the
 /// divergence #1166 closes.
 ///
 /// The legacy pipeline owes Body IR a desugared, feature-projected program, and it pays that debt at parse time:

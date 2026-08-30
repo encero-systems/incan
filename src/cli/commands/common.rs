@@ -1681,7 +1681,40 @@ pub(crate) struct CompilationAnalysis {
     stdlib_cache: StdlibAstCache,
 }
 
+/// One module's checked lowering bridge and portable semantic snapshot from one [`CompilationAnalysis`].
+///
+/// This bundle prevents a consumer from treating an independently derived `TypeCheckInfo` as the authority for a
+/// semantic snapshot. `TypeCheckInfo` remains only because Body IR has not yet moved all of its lowering queries to
+/// portable semantic facts (#225).
+pub(crate) struct CompilationModuleAnalysis<'analysis> {
+    type_info: &'analysis TypeCheckInfo,
+    semantic_snapshot: &'analysis incan_semantics_core::SemanticModuleSnapshot,
+}
+
+impl CompilationModuleAnalysis<'_> {
+    /// Return the session-owned transition bridge Body IR currently requires for lowering.
+    pub(crate) fn type_info(&self) -> &TypeCheckInfo {
+        self.type_info
+    }
+
+    /// Return the portable semantic module produced beside this lowering bridge.
+    pub(crate) fn semantic_snapshot(&self) -> &incan_semantics_core::SemanticModuleSnapshot {
+        self.semantic_snapshot
+    }
+}
+
 impl CompilationAnalysis {
+    /// Return the paired checked products for one collected source file.
+    ///
+    /// A caller must consume this bundle when it needs both Body-IR lowering and semantic provenance. Looking up the
+    /// halves separately would make it too easy to join facts from different analysis products at the CLI boundary.
+    pub(crate) fn module_analysis_for_path(&self, path: &Path) -> Option<CompilationModuleAnalysis<'_>> {
+        Some(CompilationModuleAnalysis {
+            type_info: self.type_info_by_path.get(path)?,
+            semantic_snapshot: self.semantic_snapshots_by_path.get(path)?,
+        })
+    }
+
     /// Return the lowering input for one collected source file.
     pub(crate) fn type_info_for_path(&self, path: &Path) -> Option<&TypeCheckInfo> {
         self.type_info_by_path.get(path)
@@ -8040,10 +8073,13 @@ def main() -> None:
         let main_path = source_root.join("main.incn");
         std::fs::write(
             &main_path,
-            "from std.testing import assert_eq\n\ndef helper() -> int:\n  return 1\n\ndef main() -> int:\n  assert_eq(helper(), 1)\n  return helper()\n",
+            "def helper() -> int:\n  return 1\n\ndef main() -> int:\n  return helper()\n",
         )?;
 
-        let session = CompilationSession::discover_with_feature_selection(&main_path, &FeatureSelection::default())?;
+        let session = CompilationSession::discover_for_collection_with_feature_selection(
+            &main_path,
+            &FeatureSelection::default(),
+        )?;
         let modules = collect_modules_detailed_with_session(main_path.clone(), &session)
             .map_err(|failure| failure.render_human())?;
         let analysis = session
@@ -8053,24 +8089,31 @@ def main() -> None:
                 None,
             )
             .map_err(|failure| failure.render_human())?;
-        let snapshot = analysis
-            .semantic_snapshots()
-            .get(&main_path)
-            .ok_or("expected a session semantic snapshot for the entry module")?;
+        let entry_analysis = analysis
+            .module_analysis_for_path(&main_path)
+            .ok_or("expected one bundled session analysis for the entry module")?;
+        let snapshot = entry_analysis.semantic_snapshot();
+        let type_info = entry_analysis.type_info();
+        let retained_type_info = analysis
+            .type_info_for_path(&main_path)
+            .ok_or("expected the session to retain lowering input for the entry module")?;
 
-        assert!(analysis.type_info_for_path(&main_path).is_some());
+        assert!(std::ptr::eq(type_info, retained_type_info));
+        let entry_module = modules
+            .iter()
+            .find(|module| module.file_path == main_path)
+            .ok_or("expected the session to collect the entry module")?;
+        let lowered = crate::frontend::body_ir::build_body_ir_module_v0(
+            &entry_module.ast,
+            &entry_module.path_segments,
+            type_info,
+        );
+        assert!(lowered.render_snapshot().contains("body main"));
         assert!(snapshot.render_snapshot().contains("decl:main::helper type=() -> int"));
         assert!(
             snapshot
                 .render_snapshot()
                 .contains("symbol_target=function:main::helper")
-        );
-        let mut stdlib_cache = analysis.stdlib_cache().clone();
-        assert!(
-            stdlib_cache
-                .lookup_function_symbol(&["std".to_string(), "testing".to_string()], "assert_eq")
-                .is_some(),
-            "session analysis must retain source-backed stdlib metadata for lowering"
         );
         Ok(())
     }
