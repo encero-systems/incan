@@ -3,6 +3,8 @@
 //! This module contains functions for source file reading, module collection, project root resolution,
 //! dependency helpers, and Cargo flag construction.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -92,6 +94,56 @@ const INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV: &str = "INCAN_INTERNAL_SDK_DISTRIBU
 pub(crate) const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CARGO_LOCK_PAYLOAD_PATH";
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
 pub(crate) const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
+
+#[cfg(test)]
+thread_local! {
+    static COMPILATION_SESSION_ANALYSIS_INVOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+/// Scoped, current-thread instrumentation for calls to [`CompilationSession::analyze_modules`].
+///
+/// The counter is inactive unless this scope is constructed, and it restores any enclosing scope when dropped. This
+/// keeps structural command-path assertions isolated from Rust's parallel test execution while leaving production
+/// analysis behavior unchanged.
+#[cfg(test)]
+#[must_use = "keep the scope alive while observing compilation-session analysis invocations"]
+pub(crate) struct CompilationSessionAnalysisInvocationScope {
+    previous_count: Option<usize>,
+}
+
+/// Count compilation-session analysis invocations within a scope on the current test thread.
+#[cfg(test)]
+pub(crate) fn scoped_compilation_session_analysis_invocations() -> CompilationSessionAnalysisInvocationScope {
+    let previous_count = COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|count| count.replace(Some(0)));
+    CompilationSessionAnalysisInvocationScope { previous_count }
+}
+
+#[cfg(test)]
+impl CompilationSessionAnalysisInvocationScope {
+    /// Return the analysis calls observed since this scope was constructed.
+    #[cfg(test)]
+    pub(crate) fn invocation_count(&self) -> usize {
+        COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|count| count.get().unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+impl Drop for CompilationSessionAnalysisInvocationScope {
+    fn drop(&mut self) {
+        COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|count| count.set(self.previous_count));
+    }
+}
+
+/// Record one invocation when the current test thread has explicitly enabled the analysis counter.
+#[cfg(test)]
+fn record_compilation_session_analysis_invocation() {
+    COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|counter| {
+        let Some(count) = counter.get() else {
+            return;
+        };
+        counter.set(Some(count.saturating_add(1)));
+    });
+}
 
 /// One compiler diagnostic with enough source context for either human or machine-readable rendering.
 #[derive(Debug, Clone)]
@@ -2074,6 +2126,8 @@ impl CompilationSession {
         modules: &[ParsedModule],
         #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
+        #[cfg(test)]
+        record_compilation_session_analysis_invocation();
         let provider_plan = self.provider_plan_for_modules(modules).map_err(|error| {
             let module = modules.last();
             CliDiagnosticFailure::single(

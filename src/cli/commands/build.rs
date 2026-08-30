@@ -19241,6 +19241,36 @@ pub model Nested:
     }
 
     #[test]
+    fn the_replacement_build_pipeline_analyzes_its_session_exactly_once() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::create_dir_all(entrypoint.parent().ok_or("fixture entrypoint has no parent")?)?;
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"replacement_one_analysis\"\n",
+        )?;
+        fs::write(
+            &entrypoint,
+            "def helper() -> int:\n    return 1\n\ndef main() -> int:\n    return helper()\n",
+        )?;
+
+        let analysis_scope = super::super::common::scoped_compilation_session_analysis_invocations();
+        let report = build_replacement_file_report(
+            &entrypoint.to_string_lossy(),
+            replacement_build_options(),
+            &BuildReportOptions::default(),
+        )?;
+
+        assert_eq!(report["replacement_execution"]["result"], "1");
+        assert_eq!(
+            analysis_scope.invocation_count(),
+            1,
+            "the actual replacement build pipeline must analyze its compilation session exactly once"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn the_replacement_build_never_executes_a_main_behind_an_inactive_feature() -> Result<(), Box<dyn std::error::Error>>
     {
         // The end-to-end consequence, through the real CLI entry point: with no active feature there is no `main`
