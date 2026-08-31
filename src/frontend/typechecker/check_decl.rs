@@ -2187,15 +2187,36 @@ impl TypeChecker {
             Declaration::Import(_) => {} // Already handled
             Declaration::Const(konst) => self.check_const(konst, decl.span),
             Declaration::Static(static_decl) => self.check_static(static_decl, decl.span),
-            Declaration::Model(model) => self.check_model(model),
-            Declaration::Class(class) => self.check_class(class),
-            Declaration::Trait(tr) => self.check_trait(tr),
+            Declaration::Model(model) => {
+                self.validate_protected_type_param_bindings(&model.type_params, decl.span);
+                self.check_model(model);
+            }
+            Declaration::Class(class) => {
+                self.validate_protected_type_param_bindings(&class.type_params, decl.span);
+                self.check_class(class);
+            }
+            Declaration::Trait(tr) => {
+                self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
+                self.check_trait(tr);
+            }
             Declaration::Alias(_) => {} // Alias targets are validated during collection.
             Declaration::Partial(partial) => self.check_partial_decl(partial),
-            Declaration::TypeAlias(alias) => self.check_type_alias(alias),
-            Declaration::Newtype(nt) => self.check_newtype(nt),
-            Declaration::Enum(en) => self.check_enum(en),
-            Declaration::Function(func) => self.check_function(func, decl.span),
+            Declaration::TypeAlias(alias) => {
+                self.validate_protected_type_param_bindings(&alias.type_params, decl.span);
+                self.check_type_alias(alias);
+            }
+            Declaration::Newtype(nt) => {
+                self.validate_protected_type_param_bindings(&nt.type_params, decl.span);
+                self.check_newtype(nt);
+            }
+            Declaration::Enum(en) => {
+                self.validate_protected_type_param_bindings(&en.type_params, decl.span);
+                self.check_enum(en);
+            }
+            Declaration::Function(func) => {
+                self.validate_protected_type_param_bindings(&func.type_params, decl.span);
+                self.check_function(func, decl.span);
+            }
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::VocabBlock(_) => self.errors.push(CompileError::syntax(
                 "raw vocabulary declarations must be desugared before type checking".to_string(),
@@ -2203,6 +2224,17 @@ impl TypeChecker {
             )),
             Declaration::Capability(cap) => self.check_capability_decl(cap, decl.span),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
+        }
+    }
+
+    /// Reject protected builtin spellings in a declaration-owned generic parameter list.
+    ///
+    /// Generic parameters are inserted into the ordinary lexical symbol table, so they can displace a bare callable
+    /// root even though their source role is type-only. [`TypeParam`] retains no individual source span; callers pass
+    /// the nearest enclosing declaration or method span rather than fabricating a byte range.
+    fn validate_protected_type_param_bindings(&mut self, type_params: &[TypeParam], owner_span: Span) {
+        for type_param in type_params {
+            self.validate_protected_builtin_binding(&type_param.name, owner_span);
         }
     }
 
@@ -5515,6 +5547,7 @@ impl TypeChecker {
         // binding. The function body still receives its ordinary parameter locals below.
         for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
             let ty = local_type_for_param(param.node.kind, resolved_ty);
+            self.validate_protected_builtin_binding(&param.node.name, param.span);
             self.symbols.define(Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
@@ -5807,6 +5840,7 @@ impl TypeChecker {
         owner_type_params: &[String],
         owner_params: &[TypeParam],
     ) {
+        self.validate_protected_type_param_bindings(&method.type_params, method_span);
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
@@ -5880,6 +5914,7 @@ impl TypeChecker {
                 param.node.default.is_some(),
             ));
             let ty = local_type_for_param(param.node.kind, resolved_ty);
+            self.validate_protected_builtin_binding(&param.node.name, param.span);
             self.symbols.define(Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {

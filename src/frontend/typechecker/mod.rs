@@ -100,7 +100,6 @@ use incan_core::interop::{
     metadata_free_method_signature, render_rust_type_shape_path, rust_display_is_owned_string,
     split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
-use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::errors as runtime_errors;
 use incan_core::lang::stdlib;
@@ -112,6 +111,7 @@ use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_core::lang::types::stringlike::StringLikeId;
+use incan_core::lang::{builtins, conventions};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
 /// Type checker state.
@@ -643,6 +643,25 @@ impl TypeChecker {
             #[cfg(feature = "rust_inspect")]
             rust_inspect_registry_source_authority: RustInspectRegistrySourceAuthority::default(),
         }
+    }
+
+    /// Reject a source binding that would replace a protected builtin spelling.
+    ///
+    /// The registry resolves canonical and alias spellings to one stable builtin identity, while the protected policy
+    /// deliberately selects only the identities that must remain globally available.
+    ///
+    /// Returns whether this call emitted the protected-binding diagnostic, allowing callers with further name-collision
+    /// recovery to avoid obscuring the primary error.
+    pub(in crate::frontend::typechecker) fn validate_protected_builtin_binding(
+        &mut self,
+        name: &str,
+        span: Span,
+    ) -> bool {
+        let Some(builtin) = builtins::protected_binding_builtin(name) else {
+            return false;
+        };
+        self.errors.push(errors::protected_builtin_binding(name, builtin, span));
+        true
     }
 
     /// Push a new loop context before checking a loop body.

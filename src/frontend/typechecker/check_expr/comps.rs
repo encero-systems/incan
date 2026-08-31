@@ -150,6 +150,7 @@ impl TypeChecker {
             .iter()
             .map(|p| {
                 let ty = self.resolve_type_checked(&p.node.ty);
+                self.validate_protected_builtin_binding(&p.node.name, p.span);
                 self.symbols.define(Symbol {
                     name: p.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
@@ -202,6 +203,7 @@ impl TypeChecker {
             .zip(expected_params.iter())
             .map(|(param, expected)| {
                 let ty = expected.ty.clone();
+                self.validate_protected_builtin_binding(&param.node.name, param.span);
                 self.symbols.define(Symbol {
                     name: param.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {

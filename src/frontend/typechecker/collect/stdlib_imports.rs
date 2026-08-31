@@ -202,8 +202,9 @@ impl StdlibFromImportContext {
 }
 
 impl TypeChecker {
-    /// Reject names that shadow reserved root namespaces.
+    /// Reject source names that shadow reserved root namespaces or protected builtin bindings.
     pub(super) fn validate_root_namespace(&mut self, name: &str, span: Span) {
+        self.validate_protected_builtin_binding(name, span);
         if name == stdlib::STDLIB_ROOT || name == "rust" {
             self.errors.push(errors::reserved_root_namespace(name, span));
         }
@@ -264,6 +265,8 @@ impl TypeChecker {
         let same_root = path.segments.first().map(|segment| segment.as_str()) == Some(&name);
         if !same_root {
             self.validate_root_namespace(&name, span);
+        } else {
+            self.validate_protected_builtin_binding(&name, span);
         }
         let normalized_path = canonicalize_source_module_segments(&path.segments);
         self.define_import_symbol(name, normalized_path, false, span);
@@ -1372,6 +1375,9 @@ impl TypeChecker {
 
         for item in items {
             let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+            if self.validate_protected_builtin_binding(&local_name, span) {
+                continue;
+            }
             self.validate_root_namespace(&local_name, span);
             if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
                 self.errors.push(errors::pub_library_import_name_collision(

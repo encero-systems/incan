@@ -367,6 +367,7 @@ impl TypeChecker {
             .zip(signature.params.iter())
             .map(|(param, expected)| {
                 let ty = expected.resolved_ty.clone();
+                self.validate_protected_builtin_binding(&param.node.name, param.span);
                 self.symbols.define(Symbol {
                     name: param.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {

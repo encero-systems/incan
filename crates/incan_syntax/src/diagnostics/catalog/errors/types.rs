@@ -4,6 +4,7 @@
 //! field/alias validation, mutability, and pattern matching.
 
 use crate::ast::Span;
+use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::derives::{self, DeriveId};
 
 use crate::diagnostics::CompileError;
@@ -17,6 +18,22 @@ pub fn unknown_symbol(name: &str, span: Span) -> CompileError {
 
 pub fn duplicate_definition(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Duplicate definition of '{}'", name), span)
+}
+
+/// Report a source binding that attempts to replace a protected builtin spelling.
+pub fn protected_builtin_binding(name: &str, builtin: BuiltinFnId, span: Span) -> CompileError {
+    let canonical = builtins::as_str(builtin);
+    CompileError::type_error(
+        format!(
+            "Cannot bind '{}': it is a protected builtin binding for '{}'",
+            name, canonical
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Choose a different name; '{}' and its registered aliases remain globally available",
+        canonical
+    ))
 }
 
 /// Report a value enum declaration that attempts to use type parameters.

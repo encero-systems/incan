@@ -747,6 +747,7 @@ impl TypeChecker {
             value_ty
         };
 
+        self.validate_protected_builtin_binding(&assign.name, span);
         self.symbols.define(Symbol {
             name: assign.name.clone(),
             kind: SymbolKind::Variable(VariableInfo {
@@ -839,6 +840,7 @@ impl TypeChecker {
         }
 
         let is_mutable = matches!(binding, BindingKind::Mutable);
+        self.validate_protected_builtin_binding(name, statement_span);
         self.symbols.define(Symbol {
             name: name.to_string(),
             kind: SymbolKind::Variable(VariableInfo {
@@ -1473,6 +1475,7 @@ impl TypeChecker {
     ) {
         match &pattern.node {
             Pattern::Binding(name) => {
+                self.validate_protected_builtin_binding(name, pattern.span);
                 self.symbols.define(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
@@ -1647,6 +1650,7 @@ impl TypeChecker {
                 AssertIsPatternKind::Err => scrutinee_ty.result_err_type().cloned().unwrap_or(ResolvedType::Unknown),
                 AssertIsPatternKind::None => ResolvedType::Unit,
             };
+            self.validate_protected_builtin_binding(&name, span);
             self.symbols.define(Symbol {
                 name,
                 kind: SymbolKind::Variable(VariableInfo {

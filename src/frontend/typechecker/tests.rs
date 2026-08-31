@@ -18416,6 +18416,31 @@ def build() -> LibWidget:
     assert!(result.is_ok(), "expected alias recovery to typecheck, got: {result:?}");
 }
 
+/// #1249: a public import cannot introduce either spelling of the protected print builtin.
+#[test]
+fn test_pub_import_alias_cannot_replace_protected_print_builtin_issue1249() -> Result<(), String> {
+    for alias in ["print", "println"] {
+        let source = format!("from pub::mylib import make_widget as {alias}\n");
+        let errors = check_str_with_library_index_err(
+            &source,
+            library_index_with_mylib_exports(),
+            "public import aliases must not replace protected print bindings",
+        )?;
+        assert_eq!(
+            errors.len(),
+            1,
+            "protected public import alias `{alias}` should report only its primary diagnostic, got {errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("protected builtin binding")),
+            "expected protected-binding diagnostic for `{alias}`, got {errors:?}"
+        );
+    }
+    Ok(())
+}
+
 /// Regression for #892: callable signatures retain provider identity across separate import statements.
 #[test]
 fn test_pub_from_split_import_alias_preserves_provider_identity_issue892() {

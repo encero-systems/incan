@@ -52,7 +52,7 @@ import utils::format_currency as fmt
 
 ### Imported names and core builtin functions
 
-An explicit import creates a normal binding in the importing module. If it has the same spelling as an ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision.
+An explicit import normally creates a binding in the importing module. `print` and its registered `println` alias are protected output bindings, so an import cannot use either spelling. Other ambient core builtin functions remain ordinary bindings: an import with the same spelling wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid an unrelated builtin collision.
 
 ```incan
 # aggregates.incn
@@ -68,7 +68,7 @@ def report() -> int:
   return local_total + builtin_total
 ```
 
-`std.builtins.<name>` is the explicit escape hatch when an unqualified builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.
+`std.builtins.<name>` is the explicit escape hatch when an unprotected builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.
 
 ## Published library namespaces
 
@@ -267,7 +267,9 @@ set()               # Empty Set
 set(iterable)       # Convert to Set
 ```
 
-Every core builtin function is also reachable through `std.builtins.<name>`. This is an explicit escape path for code that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:
+Every core builtin function is also reachable through `std.builtins.<name>`. This is an explicit escape path for code that needs an unprotected core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning. `print` and `println` cannot be rebound, so they remain globally available.
+
+Source declarations, imports, local bindings, value parameters, and generic type parameters cannot use either protected spelling as a binding. Fields and methods may still be named `print` or `println`, because selecting a member does not replace the bare builtin name.
 
 ```incan
 def total(values: list[int]) -> int:

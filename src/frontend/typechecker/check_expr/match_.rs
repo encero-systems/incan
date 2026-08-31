@@ -213,6 +213,7 @@ impl TypeChecker {
         match &pattern.node {
             Pattern::Wildcard => {}
             Pattern::Binding(name) => {
+                self.validate_protected_builtin_binding(name, pattern.span);
                 self.symbols.define(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {

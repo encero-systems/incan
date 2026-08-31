@@ -4300,11 +4300,9 @@ fn both_backends_render_a_multi_argument_print_the_same_way() -> Result<(), Box<
     Ok(())
 }
 
+/// Protected output bindings must be rejected before a replacement Body-IR module can be constructed.
 #[test]
-fn replacement_print_respects_a_source_declaration_that_shadows_the_builtin() -> Result<(), Box<dyn std::error::Error>>
-{
-    // Resolving the builtin from a registry must not steal a name the source declared. A module defining its own
-    // `print` means that declaration, and lowering only marks the builtin when nothing in source took the spelling.
+fn replacement_frontend_refuses_a_source_declaration_named_print() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def print(value: int) -> int:
   return value + 1
@@ -4312,14 +4310,12 @@ def print(value: int) -> int:
 def main() -> int:
   return print(41)
 "#;
-    let module = lower_typed_body_ir(source)?;
-    let execution = execute_free_function(&module, "main", &[])?;
-
-    assert_eq!(execution.value, ReplacementValue::Int(42));
+    let error = lower_typed_body_ir(source)
+        .err()
+        .ok_or("redefining print must fail typechecking")?;
     assert!(
-        execution.emitted_output().is_empty(),
-        "a shadowing declaration must not emit builtin output: {:?}",
-        execution.emitted_output()
+        error.to_string().contains("protected builtin binding"),
+        "the frontend must report the protected output binding: {error}"
     );
     Ok(())
 }

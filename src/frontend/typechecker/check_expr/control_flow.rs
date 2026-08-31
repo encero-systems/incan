@@ -221,6 +221,7 @@ impl TypeChecker {
         race: &RaceForExpr,
         span: Span,
     ) -> ResolvedType {
+        self.validate_protected_builtin_binding(&race.binding, span);
         if !self.in_async_body {
             self.errors.push(errors::await_outside_async(span));
             return ResolvedType::Unknown;
