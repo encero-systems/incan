@@ -2286,6 +2286,12 @@ fn validate_nominal_constructor_target(
             span,
         ));
     }
+    if target.canonical_field_layout.is_none() {
+        return Err(unsupported(
+            format!("constructor `{}` without a checked canonical field layout", target.name),
+            span,
+        ));
+    }
     let ArgumentBinding::Resolved {
         arguments,
         defaulted_slots,
@@ -4641,6 +4647,18 @@ impl BodyExecutor {
                     "constructor `{}` disagrees with its source-local declaration identity",
                     target.name
                 ),
+                span,
+            ));
+        }
+        let canonical_field_layout = target.canonical_field_layout.as_deref().ok_or_else(|| {
+            unsupported(
+                format!("constructor `{}` without a checked canonical field layout", target.name),
+                span,
+            )
+        })?;
+        if declaration.fields != canonical_field_layout {
+            return Err(unsupported(
+                "canonical field layout disagrees with checked constructor facts",
                 span,
             ));
         }

@@ -346,17 +346,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let ty = self.resolve_ty(span);
         // A constructor field binding proves argument slots, but not that this constructor names one of the plain
-        // source-local models this Body-IR module retained. Preserve an identity only from that local registry;
-        // imports, aliases, classes, generic models, and absent/malformed names remain represented with `None` so
-        // a direct executor can refuse at this construction span rather than guessing from `name`.
-        let direct_declaration_id = self.local_nominal_declarations.get(name).and_then(|declaration| {
-            (declaration.fields.len() == field_binding.field_count).then(|| declaration.direct_declaration_id.clone())
-        });
+        // source-local models this Body-IR module retained. Preserve the selected declaration's identity and layout
+        // together; imports, aliases, classes, generic models, and absent/malformed names retain neither fact, so a
+        // direct executor can refuse at this construction span rather than guessing from `name`.
+        let (direct_declaration_id, canonical_field_layout) = self
+            .local_nominal_declarations
+            .get(name)
+            .filter(|declaration| declaration.fields.len() == field_binding.field_count)
+            .map(|declaration| {
+                (
+                    Some(declaration.direct_declaration_id.clone()),
+                    Some(declaration.fields.clone()),
+                )
+            })
+            .unwrap_or((None, None));
         self.push_assign_temp(
             bir::Rvalue::Aggregate(
                 bir::AggregateKind::Constructor(bir::ConstructorTarget {
                     name: name.to_string(),
                     direct_declaration_id,
+                    canonical_field_layout,
                     binding,
                 }),
                 fixed_elements(operands),

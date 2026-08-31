@@ -12,7 +12,9 @@ use incan::backend::selection::{
 use incan::frontend::body_ir::build_body_ir_module_v0;
 use incan::frontend::typechecker::TypeChecker;
 use incan::frontend::{lexer, parser};
-use incan_semantics_core::body_ir::{BodyIrModule, OwnershipFact, Rvalue, StatementKind, TryErrorRouting};
+use incan_semantics_core::body_ir::{
+    BodyIrModule, ConstructorTarget, OwnershipFact, Rvalue, StatementKind, TryErrorRouting,
+};
 use incan_semantics_core::{CompilerNodeId, IncanType};
 
 /// Lower one self-contained, typechecked source module into the Body IR the replacement backend consumes.
@@ -26,6 +28,72 @@ fn lower_typed_body_ir(source: &str) -> Result<BodyIrModule, Box<dyn std::error:
         .check_program(&program)
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+}
+
+/// Legal source used to isolate malformed retained constructor facts after checked lowering.
+const PAIR_CONSTRUCTION_SOURCE: &str = r#"
+model Pair:
+  left: int
+  right: int
+
+def main() -> int:
+  pair = Pair(left=40, right=2)
+  return pair.left
+"#;
+
+/// Locate the one Pair construction whose post-lowering facts each malformed-IR test changes deliberately.
+fn pair_constructor_target_mut(
+    module: &mut BodyIrModule,
+) -> Result<&mut ConstructorTarget, Box<dyn std::error::Error>> {
+    let main = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .ok_or("fixture must lower the main Body-IR body")?;
+    main.block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::Aggregate(incan_semantics_core::body_ir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("fixture must lower its model construction as a constructor aggregate".into())
+}
+
+/// Require malformed retained Pair facts to refuse before direct execution can yield a result or receipt input.
+///
+/// The public command cannot accept malformed internal Body IR, so this direct-executor seam is the honest proof:
+/// an `Err` has no `ReplacementExecution` result that a command could bind into a successful receipt.
+fn assert_malformed_pair_constructor_refusal(
+    module: &BodyIrModule,
+    expected_description: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let error = match execute_free_function(module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "malformed retained Pair facts must refuse instead of executing, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let constructor_start = PAIR_CONSTRUCTION_SOURCE
+        .find("Pair(left=40, right=2)")
+        .ok_or("fixture must contain the model constructor")?;
+    let span = error
+        .primary_span()
+        .ok_or("malformed retained Pair facts must retain a source span")?;
+    assert_eq!(span.start, constructor_start);
+    assert_eq!(span.end, constructor_start + "Pair(left=40, right=2)".len());
+    assert!(
+        error.to_string().contains(expected_description),
+        "the refusal must name the malformed retained fact: {error}"
+    );
+    Ok(())
 }
 
 /// Locate the compiler binary built for this integration-test invocation.
@@ -703,6 +771,94 @@ def main() -> int:
         "the refusal must name the foreign declaration identity: {error}"
     );
     Ok(())
+}
+
+/// Refuse a constructor when its retained declaration layout no longer matches checked constructor slots.
+///
+/// This injects malformed Body IR after lowering; valid source cannot reorder the retained declaration. The direct
+/// executor must fail at the original construction rather than return a value with fields shifted by the mutation.
+#[test]
+fn replacement_refuses_a_reordered_nominal_declaration_layout_at_the_original_constructor_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    let declaration = module
+        .nominal_declarations
+        .iter_mut()
+        .find(|declaration| declaration.name == "Pair")
+        .ok_or("fixture must retain the source-local Pair declaration")?;
+    let [left, right] = declaration.fields.as_mut_slice() else {
+        return Err("fixture must retain Pair's two canonical fields".into());
+    };
+    std::mem::swap(left, right);
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "canonical field layout disagrees with checked constructor facts",
+    )
+}
+
+/// Refuse a constructor missing the checked layout that pairs its numeric slots with retained field names.
+#[test]
+fn replacement_refuses_a_nominal_constructor_missing_checked_field_layout_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    pair_constructor_target_mut(&mut module)?.canonical_field_layout = None;
+
+    assert_malformed_pair_constructor_refusal(&module, "constructor `Pair` without a checked canonical field layout")
+}
+
+/// Refuse a constructor whose independently retained layout omits one checked field slot.
+#[test]
+fn replacement_refuses_a_nominal_constructor_with_a_short_checked_field_layout_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    let layout = pair_constructor_target_mut(&mut module)?
+        .canonical_field_layout
+        .as_mut()
+        .ok_or("fixture must retain Pair's checked canonical field layout")?;
+    let removed = layout
+        .pop()
+        .ok_or("fixture must retain the right field in Pair's checked layout")?;
+    assert_eq!(removed, "right");
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "canonical field layout disagrees with checked constructor facts",
+    )
+}
+
+/// Refuse a constructor whose independently retained layout changes one canonical field name.
+#[test]
+fn replacement_refuses_a_nominal_constructor_with_a_renamed_checked_field_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    let layout = pair_constructor_target_mut(&mut module)?
+        .canonical_field_layout
+        .as_mut()
+        .ok_or("fixture must retain Pair's checked canonical field layout")?;
+    let first = layout
+        .first_mut()
+        .ok_or("fixture must retain the left field in Pair's checked layout")?;
+    *first = "renamed".to_string();
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "canonical field layout disagrees with checked constructor facts",
+    )
+}
+
+/// Refuse a constructor whose retained declaration identity points outside the current Body-IR module.
+#[test]
+fn replacement_refuses_a_foreign_nominal_constructor_identity_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    pair_constructor_target_mut(&mut module)?.direct_declaration_id =
+        Some(CompilerNodeId::declaration_span("foreign", 0, 12));
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "constructor `Pair` targets a declaration outside this Body-IR module",
+    )
 }
 
 /// Refuse a constructor whose source-local declaration identity is absent instead of recovering it from its name.

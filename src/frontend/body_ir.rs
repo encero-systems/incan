@@ -331,9 +331,10 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 /// Plain source-local models whose checked declaration layout is retained for direct nominal execution.
 ///
 /// This frontend map intentionally contains only non-generic, behavior-free models. It is used only while lowering
-/// a checked constructor call to attach an exact declaration identity; the resulting [`bir::NominalDeclaration`]
-/// records are the direct executor's sole layout authority. Classes, trait-adopting models, and models carrying
-/// methods/properties/aliases are absent rather than being approximated as inert field bags.
+/// a checked constructor call to attach the exact declaration identity and selected field layout. The direct executor
+/// compares that target snapshot with the resulting [`bir::NominalDeclaration`] before binding slots. Classes,
+/// trait-adopting models, and models carrying methods/properties/aliases are absent rather than being approximated
+/// as inert field bags.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.

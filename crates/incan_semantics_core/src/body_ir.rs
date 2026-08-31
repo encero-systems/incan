@@ -159,8 +159,9 @@ impl BodyIrModule {
 /// The exact local declaration and canonical field layout for one direct-executable plain model.
 ///
 /// The record is module-scoped and deliberately excludes classes, enums, imported nominals, generic models, and
-/// behavior-bearing models. Its field order is the checked constructor-slot order; a direct runtime must pair it
-/// with [`ConstructorTarget::binding`] rather than treating constructor argument spelling as layout evidence.
+/// behavior-bearing models. Its field order is the checked constructor-slot order; a direct runtime must compare it
+/// with [`ConstructorTarget::canonical_field_layout`] before applying [`ConstructorTarget::binding`], rather than
+/// treating constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NominalDeclaration {
     /// Exact source-local declaration identity, derived from the declaration source span.
@@ -2330,6 +2331,12 @@ pub struct ConstructorTarget {
     /// An absent identity is not permission to look up [`Self::name`] in another compiler structure: imports,
     /// aliases, classes, generic models, and any unretained nominal target must refuse at the constructor span.
     pub direct_declaration_id: Option<CompilerNodeId>,
+    /// Canonical declared field names retained with the exact source-local declaration selected for this call.
+    ///
+    /// This is present only beside [`Self::direct_declaration_id`] and comes from the same checked Body-IR
+    /// declaration snapshot. Consumers compare it with the module declaration before binding operands, so a
+    /// malformed declaration cannot shift values merely by changing field order or names after lowering.
+    pub canonical_field_layout: Option<Vec<String>>,
     /// Resolved binding of the surrounding aggregate's operands to the type's declared fields.
     pub binding: ArgumentBinding,
 }

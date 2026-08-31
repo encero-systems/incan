@@ -3311,6 +3311,11 @@ fn source_local_model_construction_retains_its_declaration_identity_and_canonica
         target.direct_declaration_id.as_ref(),
         Some(&declaration.direct_declaration_id)
     );
+    assert_eq!(
+        target.canonical_field_layout.as_deref(),
+        Some(declaration.fields.as_slice()),
+        "the constructor must retain the checked layout independently from the mutable module declaration"
+    );
     let bir::ArgumentBinding::Resolved {
         arguments,
         defaulted_slots,
