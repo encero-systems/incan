@@ -41,18 +41,18 @@ const EXAMPLE_SOURCE_BASELINE: usize = 68;
 ///
 /// It moved from zero to four when `print` gained a represented builtin identity and an executed implementation:
 /// 25 of the 68 examples had been stopping at their first call.
+/// Canonical string helpers then admitted `examples/simple/strings.incn`, raising execution to five.
 ///
-/// The remaining blockers have owners, and two of them are sequenced rather than merely unstarted. #1250 owns model
-/// construction and method dispatch; #989 owns imports and multi-module execution. Reassignment belongs to #1072
-/// (plain assignment must walk enclosing scopes) followed by RFC 120's Slice 5, which replaces Body IR's flat
-/// name-to-local map with identity-keyed resolution — the map is interim by the RFC's own account, so a fix built
-/// on it inside Body IR would be resolving bindings in the one place the RFC says must not decide them.
+/// Remaining model/default profiles are tracked under #1250; #989 owns imports and multi-module execution. The
+/// selected #1256 string helpers are no longer a blocker for the committed strings example. Repeated-binding
+/// limitations remain dependent on RFC 120's Slice 5 identity-keyed resolution; the frontend's #1072 reassignment
+/// repair does not replace Body IR's interim flat name-to-local map.
 ///
 /// #1252 owns the other half of the problem, and it is the one that decides what this number is worth: the corpus
 /// covers roughly a third of the capability surface the v0.5 catalogue documents, so reaching 68 here would still
 /// leave `if let`, generators, iterator adapters, value enums and most of the standard library unexecuted. Both
 /// sit under Slice 1 (#1137), because execution evidence has to be trustworthy before anything is cut over to it.
-const EXECUTED_BASELINE: usize = 4;
+const EXECUTED_BASELINE: usize = 5;
 
 /// How far one example got through the replacement pipeline.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]

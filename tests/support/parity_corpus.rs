@@ -741,6 +741,7 @@ impl ComparisonOutcome {
 /// `evaluate` is a function pointer rather than a pre-computed result: the corpus must be executable, not just
 /// metadata, so each case proves its own claim by actually lexing/parsing/typechecking/generating against the
 /// current compiler at test-run time.
+#[derive(Clone)]
 pub(crate) struct ParityCase {
     /// Stable case identity. Once assigned, an ID must never be reused for a different case — renumbering breaks
     /// the "stable case ID" contract #987 and #655 both depend on. Delete and re-add rather than renumber.
@@ -1006,7 +1007,10 @@ pub(crate) const SCHEMA_VERSION: u32 = 5;
 /// `non_green_behavior > 0` (an unexpected regression, as opposed to a case whose disposition already expects a
 /// non-green mismatch) into a test failure.
 pub(crate) fn summarize(cases: &[ParityCase]) -> CorpusSummary {
-    let reports: Vec<CaseReport> = cases.iter().map(evaluate_case).collect();
+    // Source compilation needs the same stack provision as the CLI, not the smaller Rust test-thread default.
+    let cases = cases.to_vec();
+    let reports: Vec<CaseReport> =
+        incan::compiler_stack::run_on_compiler_stack(move || cases.iter().map(evaluate_case).collect());
     let green = reports
         .iter()
         .filter(|r| r.overall_state == OverallState::Green)

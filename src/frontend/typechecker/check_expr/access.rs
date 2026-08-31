@@ -11,7 +11,7 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{
     collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
-    option_ty, render_resolved_type_as_rust_arg, string_method_return,
+    option_ty, render_resolved_type_as_rust_arg, string_method_identity_and_return, string_method_return,
 };
 use crate::frontend::typechecker::type_info::{CBindingEnumAccess, RustMethodTraitImportUse, RustTraitImportInfo};
 use crate::frontend::typechecker::{IdentKind, canonical_public_library_type_name};
@@ -22,6 +22,7 @@ use incan_core::interop::{
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::result_methods::ResultMethodId;
+use incan_core::lang::surface::string_methods::{self, SelectedStringMethodArgumentKind, StringMethodId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
@@ -33,6 +34,7 @@ use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::NumericFamily;
 use incan_core::lang::{conventions, stdlib};
 use incan_core::lang::{enum_helpers, surface::option_methods};
+use incan_semantics_core::body_ir::HelperOp;
 use quote::ToTokens;
 use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 
@@ -807,6 +809,80 @@ impl TypeChecker {
             span,
         ));
         false
+    }
+
+    /// Validate an ordinary positional call before retaining a selected string-helper identity.
+    ///
+    /// The canonical signature comes from [`StringMethodId::selected_helper_signature`], while this frontend layer
+    /// projects its language-level argument kinds into [`ResolvedType`] values. Named and unpacked forms intentionally
+    /// do not acquire a helper identity: the string-method registry gives them neither parameter names nor unpacking
+    /// semantics, and assigning either here would make a frontend guess into a language contract.
+    fn validate_selected_string_helper_call(
+        &mut self,
+        method: StringMethodId,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> bool {
+        let Some(signature) = method.selected_helper_signature() else {
+            return false;
+        };
+
+        // Named and unpacked arguments have no selected-helper binding contract yet.
+        if !args.iter().all(|arg| matches!(arg, CallArg::Positional(_))) {
+            return false;
+        }
+
+        // The optional `split` separator is represented by a smaller required count than its positional shape.
+        let callee = format!("str.{}", string_methods::as_str(method));
+        let supplied = args.len();
+        let maximum = signature.positional_arguments.len();
+        if supplied < signature.required_positional_arguments {
+            self.errors.push(errors::builtin_arity(
+                callee.as_str(),
+                signature.required_positional_arguments,
+                supplied,
+                span,
+            ));
+            return false;
+        }
+        if supplied > maximum {
+            if signature.required_positional_arguments == maximum {
+                self.errors
+                    .push(errors::builtin_arity(callee.as_str(), maximum, supplied, span));
+            } else {
+                self.errors
+                    .push(errors::builtin_max_arity(callee.as_str(), maximum, supplied, span));
+            }
+            return false;
+        }
+
+        // Each admitted positional slot is checked against the source-owned helper signature.
+        let mut valid = true;
+        for ((arg, actual), expected_kind) in args
+            .iter()
+            .zip(arg_types.iter())
+            .zip(signature.positional_arguments.iter())
+        {
+            let expected = match expected_kind {
+                SelectedStringMethodArgumentKind::Str => ResolvedType::Str,
+                SelectedStringMethodArgumentKind::ListOfStr => list_ty(ResolvedType::Str),
+            };
+            let CallArg::Positional(expr) = arg else {
+                continue;
+            };
+            if !self.types_compatible(actual, &expected) {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    callee.as_str(),
+                    None,
+                    &expected.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+                valid = false;
+            }
+        }
+        valid
     }
 
     /// Build a resolved callable type from parameter and return types for adapter diagnostics.
@@ -4360,8 +4436,14 @@ impl TypeChecker {
         }
 
         if matches!(base_ty, ResolvedType::Str)
-            && let Some(ret) = string_method_return(method, false)
+            && let Some((id, ret)) = string_method_identity_and_return(method, false)
         {
+            if type_args.is_empty()
+                && HelperOp::for_selected_string_method(id).is_some()
+                && self.validate_selected_string_helper_call(id, args, &arg_types, span)
+            {
+                self.type_info.record_resolved_string_helper_call(span, id);
+            }
             return ret;
         }
 

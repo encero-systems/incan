@@ -1799,6 +1799,7 @@ fn registered_parity_corpus_case_id(case_id: &str) -> bool {
             | "replacement-body-v0-007"
             | "replacement-body-v0-018"
             | "replacement-body-v0-019"
+            | "replacement-body-v0-021"
     )
 }
 
@@ -2434,7 +2435,7 @@ fn migration_bootstrap_compatibility_features() -> Vec<CompatibilityFeature> {
             "language.strings-and-format",
             "String operators and formatting preserve interpolation order, conversions, and runtime failures.",
             1101,
-            "String concatenation is boundedly executable; f-strings and general formatting remain explicit refusals.",
+            "String concatenation, bounded scalar interpolation and selected canonical string helpers execute directly. The separate replacement-body-v0-021 corpus case proves the selected helpers, not this full formatting contract; broad feature parity remains non-green.",
         ),
         planned_feature(
             "module.identity-and-aliases",

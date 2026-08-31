@@ -5024,7 +5024,7 @@
         },
         "disposition": "Planned",
         "owner_issue": 1101,
-        "migration_or_blocker": "String concatenation is boundedly executable; f-strings and general formatting remain explicit refusals."
+        "migration_or_blocker": "String concatenation, bounded scalar interpolation and selected canonical string helpers execute directly. The separate replacement-body-v0-021 corpus case proves the selected helpers, not this full formatting contract; broad feature parity remains non-green."
       },
       {
         "id": "module.identity-and-aliases",

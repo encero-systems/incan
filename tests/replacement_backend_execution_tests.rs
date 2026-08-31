@@ -2664,10 +2664,10 @@ fn replacement_cli_refuses_new_operator_forms_without_artifacts_or_receipts() ->
 {
     let cases = [
         (
-            "string-membership",
-            "def main() -> bool:\n  return \"a\" in \"abc\"\n",
-            "\"a\" in \"abc\"",
-            "call to runtime helper `str_contains`",
+            "string-nonmembership",
+            "def main() -> bool:\n  return \"a\" not in \"abc\"\n",
+            "\"a\" not in \"abc\"",
+            "call to runtime helper `str_not_contains`",
         ),
         (
             "power",

@@ -138,6 +138,33 @@ fn registry_covers_the_baseline_without_claiming_parity() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// A selected-helper corpus match must not invent a frozen capability relation or promote broad formatting parity.
+#[test]
+fn selected_string_helper_evidence_does_not_invent_a_frozen_capability() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = replacement_compatibility_registry();
+    assert!(
+        registry
+            .feature_links
+            .iter()
+            .all(|link| link.feature_id != "language.string-helpers"),
+        "the frozen public baseline has no string-helper capability; do not invent a numeric or formatter crosswalk"
+    );
+    let broad = registry
+        .features
+        .iter()
+        .find(|feature| feature.id == "language.strings-and-format")
+        .ok_or("missing wider string feature")?;
+    assert!(!broad.evidence.is_parity_green());
+    assert!(broad.evidence.surfaces.scoped_comparisons.is_empty());
+    assert!(
+        broad
+            .migration_or_blocker
+            .as_deref()
+            .is_some_and(|note| note.contains("replacement-body-v0-021"))
+    );
+    Ok(())
+}
+
 #[test]
 fn joined_projection_is_deterministic_and_exposes_the_callable_boundary() -> Result<(), Box<dyn std::error::Error>> {
     let baseline = checked_v0_5_public_capability_baseline()?;

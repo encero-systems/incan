@@ -1920,6 +1920,19 @@ fn validate_call_profile(
         ));
     };
     let supported = match callee {
+        Callee::Helper(HelperOp::StrUpper | HelperOp::StrLower | HelperOp::StrStrip) => args.len() == 1,
+        Callee::Helper(HelperOp::StrReplace) => args.len() == 3,
+        Callee::Helper(
+            HelperOp::StrJoin
+            | HelperOp::StrContains
+            | HelperOp::StrEq
+            | HelperOp::StrNe
+            | HelperOp::StrLt
+            | HelperOp::StrLe
+            | HelperOp::StrGt
+            | HelperOp::StrGe,
+        ) => args.len() == 2,
+        Callee::Helper(HelperOp::StrSplit) => matches!(args.len(), 1 | 2),
         Callee::Helper(
             HelperOp::StrConcat | HelperOp::ListConcat | HelperOp::ListContains | HelperOp::ListNotContains,
         ) => true,
@@ -2978,6 +2991,21 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         let destination = destination.ok_or_else(|| unsupported("discarded string-concatenation result", span))?;
         let local = bare_local(destination, span)?;
         let value = match callee {
+            Callee::Helper(
+                helper @ (HelperOp::StrUpper
+                | HelperOp::StrLower
+                | HelperOp::StrStrip
+                | HelperOp::StrReplace
+                | HelperOp::StrJoin
+                | HelperOp::StrSplit
+                | HelperOp::StrContains
+                | HelperOp::StrEq
+                | HelperOp::StrNe
+                | HelperOp::StrLt
+                | HelperOp::StrLe
+                | HelperOp::StrGt
+                | HelperOp::StrGe),
+            ) => self.execute_string_helper(*helper, args, span)?,
             Callee::Helper(HelperOp::StrConcat) => {
                 let [left, right] = args else {
                     return Err(unsupported("string-concatenation call arity", span));
@@ -4951,7 +4979,96 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         }
     }
 
-    /// Read one constant or local place while applying its recorded ownership decision.
+    /// Execute one compiler-selected string helper through the existing shared string semantics.
+    ///
+    /// Operands are receiver-first and evaluated in their retained order. Split creates a fresh structural list;
+    /// its absent separator and empty separator deliberately retain the semantic core's distinct behavior.
+    fn execute_string_helper(
+        &mut self,
+        helper: HelperOp,
+        args: &[&Operand],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let value = match (helper, args) {
+            (
+                comparison @ (HelperOp::StrEq
+                | HelperOp::StrNe
+                | HelperOp::StrLt
+                | HelperOp::StrLe
+                | HelperOp::StrGt
+                | HelperOp::StrGe),
+                [left, right],
+            ) => {
+                let left = self.evaluate_operand(left, span)?.into_string(span)?;
+                let right = self.evaluate_operand(right, span)?.into_string(span)?;
+                let ordering = incan_core::strings::str_cmp(&left, &right);
+                let matches = match comparison {
+                    HelperOp::StrEq => ordering.is_eq(),
+                    HelperOp::StrNe => ordering.is_ne(),
+                    HelperOp::StrLt => ordering.is_lt(),
+                    HelperOp::StrLe => ordering.is_le(),
+                    HelperOp::StrGt => ordering.is_gt(),
+                    HelperOp::StrGe => ordering.is_ge(),
+                    _ => return Err(unsupported("non-comparison string helper", span)),
+                };
+                ReplacementValue::Bool(matches)
+            }
+            (HelperOp::StrUpper, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_upper(&receiver))
+            }
+            (HelperOp::StrLower, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_lower(&receiver))
+            }
+            (HelperOp::StrStrip, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_strip(&receiver))
+            }
+            (HelperOp::StrReplace, [receiver, from, to]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                let from = self.evaluate_operand(from, span)?.into_string(span)?;
+                let to = self.evaluate_operand(to, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_replace(&receiver, &from, &to))
+            }
+            (HelperOp::StrJoin, [separator, items]) => {
+                let separator = self.evaluate_operand(separator, span)?.into_string(span)?;
+                let items = self.evaluate_list_elements(items, span)?;
+                let items = items
+                    .into_iter()
+                    .map(|item| item.into_string(span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                ReplacementValue::Str(incan_core::strings::str_join(&separator, &items))
+            }
+            (HelperOp::StrSplit, [receiver, rest @ ..]) if rest.len() <= 1 => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                let separator = rest
+                    .first()
+                    .map(|separator| self.evaluate_operand(separator, span)?.into_string(span))
+                    .transpose()?;
+                ReplacementValue::List {
+                    elements: incan_core::strings::str_split(&receiver, separator.as_deref())
+                        .into_iter()
+                        .map(ReplacementValue::Str)
+                        .collect(),
+                    next: 0,
+                }
+            }
+            (HelperOp::StrContains, [haystack, needle]) => {
+                let haystack = self.evaluate_operand(haystack, span)?.into_string(span)?;
+                let needle = self.evaluate_operand(needle, span)?.into_string(span)?;
+                ReplacementValue::Bool(incan_core::strings::str_contains(&haystack, &needle))
+            }
+            _ => {
+                return Err(unsupported(
+                    format!("string helper {} call arity", helper.as_str()),
+                    span,
+                ));
+            }
+        };
+        Ok(value)
+    }
+
     /// Evaluate an operand that must be a list, returning its elements.
     ///
     /// Accepts a collected generator alongside a list because both carry the same materialized element vector, and
@@ -4969,6 +5086,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         }
     }
 
+    /// Read one constant or local place while applying its recorded ownership decision.
     fn evaluate_operand(
         &mut self,
         operand: &Operand,
@@ -5486,24 +5604,7 @@ fn callee_label(callee: &Callee) -> String {
 
 /// Render a compiler-owned helper name without depending on generated-Rust spellings.
 const fn helper_label(helper: HelperOp) -> &'static str {
-    match helper {
-        HelperOp::StrConcat => "str_concat",
-        HelperOp::StrEq => "str_eq",
-        HelperOp::StrNe => "str_ne",
-        HelperOp::StrLt => "str_lt",
-        HelperOp::StrLe => "str_le",
-        HelperOp::StrGt => "str_gt",
-        HelperOp::StrGe => "str_ge",
-        HelperOp::StrContains => "str_contains",
-        HelperOp::StrNotContains => "str_not_contains",
-        HelperOp::ListConcat => "list_concat",
-        HelperOp::ListContains => "list_contains",
-        HelperOp::ListNotContains => "list_not_contains",
-        HelperOp::SetContains => "set_contains",
-        HelperOp::SetNotContains => "set_not_contains",
-        HelperOp::DictContainsKey => "dict_contains_key",
-        HelperOp::DictNotContainsKey => "dict_not_contains_key",
-    }
+    helper.as_str()
 }
 
 /// Render an aggregate kind as a compact source-level diagnostic label.

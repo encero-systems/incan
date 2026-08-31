@@ -59,6 +59,72 @@ pub mod string_methods {
         IsEmpty,
     }
 
+    /// One positional argument shape shared by the selected canonical string-helper subset.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum SelectedStringMethodArgumentKind {
+        /// A runtime Incan `str` value.
+        Str,
+        /// A runtime Incan `list[str]` value.
+        ListOfStr,
+    }
+
+    /// Canonical positional-call contract for one selected runtime string helper.
+    ///
+    /// Parameter names deliberately do not appear here. The ordinary documented forms use positional arguments, and
+    /// assigning names would create keyword-call language semantics that this metadata does not yet establish.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct SelectedStringMethodSignature {
+        /// Positional argument shapes in source order, excluding the string receiver.
+        pub positional_arguments: &'static [SelectedStringMethodArgumentKind],
+        /// Number of leading positional arguments that callers must supply.
+        pub required_positional_arguments: usize,
+    }
+
+    impl StringMethodId {
+        /// Return the positional-call contract for one string method admitted as a canonical helper operation.
+        ///
+        /// `None` deliberately keeps registered methods outside the selected helper subset from acquiring a direct
+        /// execution contract just because they share the string-method vocabulary.
+        pub const fn selected_helper_signature(self) -> Option<SelectedStringMethodSignature> {
+            const NO_ARGUMENTS: &[SelectedStringMethodArgumentKind] = &[];
+            const ONE_STR: &[SelectedStringMethodArgumentKind] = &[SelectedStringMethodArgumentKind::Str];
+            const TWO_STRINGS: &[SelectedStringMethodArgumentKind] = &[
+                SelectedStringMethodArgumentKind::Str,
+                SelectedStringMethodArgumentKind::Str,
+            ];
+            const ONE_LIST_OF_STR: &[SelectedStringMethodArgumentKind] = &[SelectedStringMethodArgumentKind::ListOfStr];
+
+            match self {
+                Self::Upper | Self::Lower | Self::Strip => Some(SelectedStringMethodSignature {
+                    positional_arguments: NO_ARGUMENTS,
+                    required_positional_arguments: 0,
+                }),
+                Self::Replace => Some(SelectedStringMethodSignature {
+                    positional_arguments: TWO_STRINGS,
+                    required_positional_arguments: 2,
+                }),
+                Self::Join => Some(SelectedStringMethodSignature {
+                    positional_arguments: ONE_LIST_OF_STR,
+                    required_positional_arguments: 1,
+                }),
+                Self::Split => Some(SelectedStringMethodSignature {
+                    positional_arguments: ONE_STR,
+                    required_positional_arguments: 0,
+                }),
+                Self::Contains => Some(SelectedStringMethodSignature {
+                    positional_arguments: ONE_STR,
+                    required_positional_arguments: 1,
+                }),
+                Self::ToString
+                | Self::SplitWhitespace
+                | Self::StartsWith
+                | Self::EndsWith
+                | Self::Len
+                | Self::IsEmpty => None,
+            }
+        }
+    }
+
     pub type StringMethodInfo = LangItemInfo<StringMethodId>;
 
     /// Registry of all string methods.

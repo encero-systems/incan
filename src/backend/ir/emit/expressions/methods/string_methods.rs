@@ -23,7 +23,7 @@ pub(super) fn emit_string_method(
                 let a = emitter.emit_expr(arg)?;
                 quote! { Some(&#a) }
             } else {
-                quote! { None }
+                quote! { None::<&str> }
             };
             Ok(quote! { incan_stdlib::strings::str_split(#r_borrow, #sep) })
         }

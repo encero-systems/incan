@@ -692,6 +692,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
+            Ok(helper) => helper,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
             Err(_) => {
@@ -735,6 +739,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         call_args.push(bir::ArgumentElement::One(receiver_operand));
         call_args.append(&mut arg_operands);
         let ty = self.resolve_ty(span);
+        if let Some(helper) = helper {
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+            return self.push_call_temp(
+                bir::Callee::Helper(helper),
+                call_args,
+                ty,
+                scope,
+                hir_span_value,
+                false,
+                out,
+            );
+        }
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
@@ -749,6 +766,47 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             out,
         )
     }
+
+    /// Return the helper operation selected by a checked string-method call, or a source-span-preserving refusal.
+    ///
+    /// Body IR only maps the retained [`StringMethodId`](incan_core::lang::surface::string_methods::StringMethodId)
+    /// to a [`bir::HelperOp`]. The source registry is consulted solely to validate that an admitted spelling still
+    /// agrees with the checked identity, so a missing or corrupted fact cannot turn a raw method name into runtime
+    /// dispatch.
+    fn checked_string_helper_for_method_call(
+        &self,
+        receiver: &ast::Spanned<ast::Expr>,
+        name: &str,
+        span: ast::Span,
+    ) -> Result<Option<bir::HelperOp>, String> {
+        let checked = self.type_info.resolved_string_helper_call(span);
+        let runtime_string_receiver = matches!(
+            self.resolve_ty(receiver.span),
+            IncanType::Primitive(IncanPrimitiveType::Str)
+        );
+        if !runtime_string_receiver {
+            return match checked {
+                Some(_) => Err("checked string helper identity has a non-string receiver".to_string()),
+                None => Ok(None),
+            };
+        }
+        let source = incan_core::lang::surface::string_methods::from_str(name);
+        match checked {
+            Some(method) => {
+                let Some(helper) = bir::HelperOp::for_selected_string_method(method) else {
+                    return Err(format!("unadmitted checked string helper identity `{method:?}`"));
+                };
+                if source != Some(method) {
+                    return Err("checked string helper identity does not match the source method".to_string());
+                }
+                Ok(Some(helper))
+            }
+            None if source.and_then(bir::HelperOp::for_selected_string_method).is_some() => {
+                Err("selected string helper call is missing its checked string helper identity".to_string())
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 /// Resolve a called name to the canonical builtin it names, when nothing in source has taken that spelling.
@@ -760,7 +818,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 /// call, indistinguishable to a consumer from a user-declared function of the same name.
 ///
 /// `unshadowed` carries the caller's proof that the name is not a declared, imported, or overloaded function. A
-/// module that declares its own `print` means that declaration, and resolving the builtin there would silently
+/// module that declares its own `range` means that declaration, and resolving the builtin there would silently
 /// redirect the call to something the source never named.
 fn resolved_builtin(name: &str, unshadowed: bool) -> Option<incan_core::lang::builtins::BuiltinFnId> {
     unshadowed.then(|| incan_core::lang::builtins::from_str(name)).flatten()

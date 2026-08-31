@@ -48,6 +48,11 @@ mod shadow_capability;
 /// The original scalar case that exercises the reusable paired-comparison route.
 const SHADOW_COMPARED_CASE_ID: &str = "replacement-body-v0-001";
 
+/// Selected checked string helpers have a separate case; wider string/format behavior stays non-green.
+const STRING_HELPER_SHADOW_CASE_ID: &str = "replacement-body-v0-021";
+const SHADOW_COMPARED_CASE_IDS: [&str; 2] = [SHADOW_COMPARED_CASE_ID, STRING_HELPER_SHADOW_CASE_ID];
+const STRING_HELPER_SOURCE: &str = include_str!("fixtures/replacement/string_helpers.incn");
+
 use parity_corpus::{
     BehaviorCategory, ComparisonOutcome, Disposition, EvidenceLane, OverallState, ParityCase, ReceiptRef,
     validate_corpus,
@@ -2289,6 +2294,22 @@ fn seed_corpus() -> Vec<ParityCase> {
             }),
         },
         ParityCase {
+            id: STRING_HELPER_SHADOW_CASE_ID,
+            title: "Canonical selected string helpers agree across independent routes",
+            category: BehaviorCategory::StdlibRuntimeBehavior,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1256; tests/replacement_string_helper_shadow_tests.rs::selected_string_helpers_match_the_receipt_backed_native_route; seven retained helper identities, shared Unicode and separator behavior, exact stdout and a separate boolean result",
+            disposition: Disposition::Preserved,
+            source: STRING_HELPER_SOURCE,
+            evaluate: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "string_helpers",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Bool(true),
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
             id: "parity-987-1156-provider-allowed",
             title: "An allowed provider operation executes and its backend receipt references the RFC 104 receipt",
             category: BehaviorCategory::SupportedLanguageContract,
@@ -2575,8 +2596,8 @@ fn seed_corpus_every_case_confirms_its_documented_current_behavior() {
 #[test]
 fn only_a_row_with_a_real_two_route_comparison_can_be_green() -> Result<(), Box<dyn std::error::Error>> {
     // This is the corpus's core promise: direct replacement execution does not become green parity merely because
-    // it has a receipt, and generated Rust never counts as proof. Exactly one row declares the bounded #1146
-    // comparison profile; it is green only when that comparison actually ran through Oven and agreed.
+    // it has a receipt, and generated Rust never counts as proof. Only the two explicitly selected rows declare
+    // the bounded comparison profile; they are green only when their comparisons ran through Oven and agreed.
     //
     // The branch is taken on what the summary reports, not on whether a capability could be *resolved*: a staged
     // capability whose Oven build then fails has run no comparison, and must not be treated as if it had.
@@ -2597,12 +2618,14 @@ fn only_a_row_with_a_real_two_route_comparison_can_be_green() -> Result<(), Box<
 
     if summary.source_observable_comparison_available {
         assert_eq!(
-            green,
-            vec![SHADOW_COMPARED_CASE_ID],
-            "exactly the one row with a proven two-route comparison may be green"
+            green, SHADOW_COMPARED_CASE_IDS,
+            "each selected row needs its own proven comparison; one matched row must not hide another unavailable row"
         );
-        assert_eq!(summary.green, 1);
-        assert_eq!(summary.non_green_shadow_unavailable, summary.total_cases - 1);
+        assert_eq!(summary.green, SHADOW_COMPARED_CASE_IDS.len());
+        assert_eq!(
+            summary.non_green_shadow_unavailable,
+            summary.total_cases - SHADOW_COMPARED_CASE_IDS.len()
+        );
     } else {
         // No comparison ran, so nothing may be green — including the row that declares one.
         require_staging_when_demanded(&summary)?;
@@ -2635,7 +2658,7 @@ fn require_staging_when_demanded(summary: &parity_corpus::CorpusSummary) -> Resu
     Ok(())
 }
 
-/// The one row that declares the bounded #1146 comparison profile.
+/// The original scalar row that declares the bounded #1146 comparison profile.
 fn compared_row(summary: &parity_corpus::CorpusSummary) -> Option<&parity_corpus::CaseReport> {
     summary.cases.iter().find(|case| case.id == SHADOW_COMPARED_CASE_ID)
 }
@@ -2699,6 +2722,60 @@ fn the_compared_row_carries_two_route_receipts_and_its_oven_authority() -> Resul
     Ok(())
 }
 
+/// The selected string row binds the typed result and both exact streams to independent no-fallback receipts.
+#[test]
+fn the_string_helper_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == STRING_HELPER_SHADOW_CASE_ID)
+        .ok_or("missing selected string-helper row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!("string helpers need matched two-route evidence, got {:?}", row.receipt).into());
+    };
+    let stdout = b"string helper checks\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Bool, \"true\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
 /// A comparison that could not run still leaves the row the replacement execution it really performed.
 #[test]
 fn an_unavailable_comparison_keeps_the_rows_replacement_evidence() -> Result<(), Box<dyn std::error::Error>> {
@@ -2744,8 +2821,8 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
         .collect();
     assert_eq!(
         replacement_rows.len(),
-        19,
-        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, #1154's structural/value cases, and #1155's direct async cases must stay stable in #987"
+        20,
+        "the nineteen original direct cases and selected string helpers must stay stable in #987"
     );
     let nominal_row = replacement_rows
         .iter()
@@ -2814,7 +2891,7 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
 
     for row in replacement_rows {
         assert_eq!(row.lane, EvidenceLane::DirectReplacementBodyIr);
-        if row.id == SHADOW_COMPARED_CASE_ID && summary.source_observable_comparison_available {
+        if SHADOW_COMPARED_CASE_IDS.contains(&row.id) && summary.source_observable_comparison_available {
             // When the comparison ran, this row's evidence is the comparison itself, covered by
             // `the_compared_row_carries_two_route_receipts_and_its_oven_authority`.
             continue;
@@ -2860,7 +2937,7 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
                 // Rows that never declared a comparison say so; the declaring row, when its comparison could
                 // not run, names the boundary that stopped it instead. Neither may imply generated Rust proved
                 // anything.
-                let expected_reason = if row.id == SHADOW_COMPARED_CASE_ID {
+                let expected_reason = if SHADOW_COMPARED_CASE_IDS.contains(&row.id) {
                     "the legacy route did not execute"
                 } else {
                     "does not declare the bounded #1146 source-observable"

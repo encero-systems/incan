@@ -435,7 +435,7 @@ String operators and formatting preserve interpolation order, conversions, and r
 - Body IR: Planned `src/frontend/body_ir.rs::fn lower_binary`; owner #1101
 - Replacement executor: Planned `src/backend/replacement/mod.rs::fn evaluate_binary`; owner #1101
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1101: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Blocker/migration: String concatenation is boundedly executable; f-strings and general formatting remain explicit refusals.
+- Blocker/migration: String concatenation, bounded scalar interpolation and selected canonical string helpers execute directly. The separate replacement-body-v0-021 corpus case proves the selected helpers, not this full formatting contract; broad feature parity remains non-green.
 
 ### `module.identity-and-aliases`
 

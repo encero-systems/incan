@@ -44,6 +44,7 @@ use std::fmt::Write as _;
 use incan_core::errors::ErrorKind;
 use incan_core::lang::builtins::BuiltinFnId;
 use incan_core::lang::errors;
+use incan_core::lang::surface::string_methods::StringMethodId;
 
 use crate::{
     AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, module_identity_for_path,
@@ -2400,6 +2401,18 @@ pub enum HelperOp {
     StrLe,
     StrGt,
     StrGe,
+    /// `str.upper()` over a checked runtime string receiver.
+    StrUpper,
+    /// `str.lower()` over a checked runtime string receiver.
+    StrLower,
+    /// `str.strip()` over a checked runtime string receiver.
+    StrStrip,
+    /// `str.replace(from, to)` over a checked runtime string receiver.
+    StrReplace,
+    /// `separator.join(items)` over a checked runtime string receiver.
+    StrJoin,
+    /// `str.split(separator)` over a checked runtime string receiver.
+    StrSplit,
     /// `needle in haystack` on two strings: substring containment, not element membership.
     ///
     /// Membership is the one operator whose meaning genuinely changes with its operand types — substring for `str`,
@@ -2475,6 +2488,29 @@ pub enum HelperOp {
 }
 
 impl HelperOp {
+    /// Return the canonical Body-IR operation admitted for one checked string-method identity.
+    ///
+    /// The `StringMethodId` originates in the typechecker, so this projection deliberately accepts an identity
+    /// rather than a source spelling. `None` keeps every string method outside the selected #1256 subset from
+    /// acquiring a helper operation merely because a later stage recognizes its text.
+    pub const fn for_selected_string_method(method: StringMethodId) -> Option<Self> {
+        match method {
+            StringMethodId::Upper => Some(Self::StrUpper),
+            StringMethodId::Lower => Some(Self::StrLower),
+            StringMethodId::Strip => Some(Self::StrStrip),
+            StringMethodId::Replace => Some(Self::StrReplace),
+            StringMethodId::Join => Some(Self::StrJoin),
+            StringMethodId::Split => Some(Self::StrSplit),
+            StringMethodId::Contains => Some(Self::StrContains),
+            StringMethodId::ToString
+            | StringMethodId::SplitWhitespace
+            | StringMethodId::StartsWith
+            | StringMethodId::EndsWith
+            | StringMethodId::Len
+            | StringMethodId::IsEmpty => None,
+        }
+    }
+
     /// Compact snapshot spelling for this helper operation, also used as the [`AbiV0RuntimeRequirement::RuntimeHelper`]
     /// name so callers building runtime-requirement facts stay on the same helper naming as the snapshot renderer.
     pub const fn as_str(self) -> &'static str {
@@ -2486,6 +2522,12 @@ impl HelperOp {
             Self::StrLe => "str_le",
             Self::StrGt => "str_gt",
             Self::StrGe => "str_ge",
+            Self::StrUpper => "str_upper",
+            Self::StrLower => "str_lower",
+            Self::StrStrip => "str_strip",
+            Self::StrReplace => "str_replace",
+            Self::StrJoin => "str_join",
+            Self::StrSplit => "str_split",
             Self::StrContains => "str_contains",
             Self::StrNotContains => "str_not_contains",
             Self::ListConcat => "list_concat",

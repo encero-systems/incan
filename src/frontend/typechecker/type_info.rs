@@ -15,6 +15,7 @@ use crate::frontend::symbols::{
 use crate::frontend::testing_markers::TestingFixtureScope;
 use incan_core::interop::{CoercionPolicy, RustFunctionSig};
 use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as_str, scalar_type_as_str};
+use incan_core::lang::surface::string_methods::StringMethodId;
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::{
     CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType,
@@ -1154,6 +1155,11 @@ pub struct CallArtifacts {
     /// Lowering consumes this decision instead of interpreting a source spelling such as `set(...)` as an ordinary
     /// function call or independently guessing whether a same-named binding shadows the collection constructor.
     pub resolved_collection_constructors: HashMap<(usize, usize), CollectionTypeId>,
+    /// Selected runtime-string helper methods, keyed by full call expression span.
+    ///
+    /// This carries the typechecker's canonical [`StringMethodId`] through Body IR so a consumer can select an
+    /// admitted helper operation from a resolved identity rather than rediscovering a method target from source text.
+    pub resolved_string_helper_calls: HashMap<(usize, usize), StringMethodId>,
     /// Direct closures whose contextual parameter types came from a canonical source `CallableN` bound.
     pub source_callable_closures: HashSet<(usize, usize)>,
 }
@@ -1850,6 +1856,21 @@ impl TypeCheckInfo {
         self.calls
             .resolved_collection_constructors
             .insert((span.start, span.end), constructor);
+    }
+
+    /// Return the selected runtime-string helper identity for one source call, if it is in the admitted subset.
+    pub fn resolved_string_helper_call(&self, span: Span) -> Option<StringMethodId> {
+        self.calls
+            .resolved_string_helper_calls
+            .get(&(span.start, span.end))
+            .copied()
+    }
+
+    /// Record a selected runtime-string helper identity for later Body-IR lowering.
+    pub(crate) fn record_resolved_string_helper_call(&mut self, span: Span, method: StringMethodId) {
+        self.calls
+            .resolved_string_helper_calls
+            .insert((span.start, span.end), method);
     }
 
     /// Record the overloaded Rust emitted callee selected for one source call expression.
