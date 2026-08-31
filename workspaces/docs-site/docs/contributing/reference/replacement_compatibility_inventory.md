@@ -44,7 +44,7 @@ The `v0.5.0` source is a frozen migration baseline, not the beginning of a versi
 | `language.control-flow` | Checked | Unknown | Represented | Executable | registered replacement-body-v0-004, replacement-body-v0-005, replacement-body-v0-006 | NonGreenShadowUnavailable | - | Preserved | - |
 | `language.control-flow-complete` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.control-flow-complete | NonGreenShadowUnavailable | - | Planned | #1154 |
 | `language.match-and-patterns` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.match-and-patterns | NonGreenShadowUnavailable | - | Planned | #1154 |
-| `language.numeric-and-scalar` | Checked | Unknown | Represented | Executable | registered replacement-body-v0-001, replacement-body-v0-002, replacement-body-v0-003, replacement-body-v0-005 | NonGreenShadowUnavailable | replacement-body-v0-001: ComparedMatch | Preserved | - |
+| `language.numeric-and-scalar` | Checked | Unknown | Represented | Executable | registered replacement-body-v0-001, replacement-body-v0-002, replacement-body-v0-003, replacement-body-v0-005, replacement-body-v0-022 | NonGreenShadowUnavailable | replacement-body-v0-001: ComparedMatch, replacement-body-v0-022: ComparedMatch | Preserved | - |
 | `language.numeric-complete` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.numeric-complete | NonGreenShadowUnavailable | - | Planned | #1154 |
 | `language.strings-and-format` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.strings-and-format | NonGreenShadowUnavailable | - | Planned | #1101 |
 | `module.identity-and-aliases` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-module.identity-and-aliases | NonGreenShadowUnavailable | - | Planned | #1042 |
@@ -407,7 +407,8 @@ Bounded scalar arithmetic, comparisons, boolean operators, and strings execute d
 - Body IR: Observed `src/frontend/body_ir.rs::fn lower_binary`
 - Replacement executor: Observed `src/backend/replacement/mod.rs::fn evaluate_binary`
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
-- Completed #1146 case `replacement-body-v0-001` (ComparedMatch) comparison: paired Observed `tests/parity_corpus_tests.rs::legacy_receipt_identity`; Observed `tests/parity_corpus_tests.rs::replacement_receipt_identity`; Observed `tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority`
+- Case `replacement-body-v0-001` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::legacy_receipt_identity`; Observed `tests/parity_corpus_tests.rs::replacement_receipt_identity`; Observed `tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority`
+- Case `replacement-body-v0-022` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`
 
 ### `language.numeric-complete`
 

@@ -186,9 +186,9 @@ fn a_non_scalar_needle_refuses_even_over_an_empty_container() {
 
 #[test]
 fn float_stays_outside_the_hashed_key_domain() {
-    // Float is outside `is_collection_scalar`, and its textual carrier makes equality-by-hash a lie waiting to
-    // happen; it refuses as an element, a key, and a needle alike.
-    let float = ReplacementValue::Float("1.5".to_string());
+    // Float remains outside the admitted hashed-key domain even though its carrier is normalized; it refuses as an
+    // element, a key, and a needle alike.
+    let float = ReplacementValue::Float(1.5);
     assert_eq!(
         ReplacementSet::from_elements([float.clone()]),
         Err(NonScalarKey { kind: "float" })
@@ -213,7 +213,7 @@ fn key_domain_stays_in_lockstep_with_is_collection_scalar() {
         ReplacementValue::Bool(true),
         str_value("a"),
         ReplacementValue::Unit,
-        ReplacementValue::Float("1.5".to_string()),
+        ReplacementValue::Float(1.5),
         ReplacementValue::Range {
             next: 0,
             end: 3,

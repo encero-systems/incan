@@ -3370,7 +3370,8 @@
                   "replacement-body-v0-001",
                   "replacement-body-v0-002",
                   "replacement-body-v0-003",
-                  "replacement-body-v0-005"
+                  "replacement-body-v0-005",
+                  "replacement-body-v0-022"
                 ],
                 "anchor": {
                   "surface": "ParityCorpus",
@@ -3431,6 +3432,38 @@
                       "selector": "fn the_compared_row_carries_two_route_receipts_and_its_oven_authority",
                       "owner_issue": null,
                       "note": "#1146 records the matched two-route source observable for replacement-body-v0-001."
+                    }
+                  }
+                }
+              },
+              {
+                "case_id": "replacement-body-v0-022",
+                "state": "ComparedMatch",
+                "evidence": {
+                  "Paired": {
+                    "legacy_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-022."
+                    },
+                    "replacement_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-022."
+                    },
+                    "comparison_record": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 records the matched typed result and exact streams for replacement-body-v0-022."
                     }
                   }
                 }

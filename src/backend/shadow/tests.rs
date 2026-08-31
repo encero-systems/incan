@@ -487,6 +487,55 @@ fn an_overflow_is_not_classified_as_a_division_by_zero() -> Result<(), ShadowUna
     Ok(())
 }
 
+/// Keep canonical conversion identity ahead of unrelated words in the rejected input.
+#[test]
+fn canonical_conversion_failures_precede_incidental_diagnostic_words() -> Result<(), ShadowUnavailable> {
+    for input in [
+        "AssertionError overflow division by zero",
+        "assertion",
+        "overflow",
+        "division by zero",
+        "",
+        "é\n' to float",
+    ] {
+        for (payload, expected_label) in [
+            (
+                incan_core::errors::IncanError::cannot_convert_to_int(input).to_string(),
+                "conversion-int",
+            ),
+            (
+                incan_core::errors::IncanError::cannot_convert_to_float(input).to_string(),
+                "conversion-float",
+            ),
+        ] {
+            assert_eq!(classify_replacement_failure(&payload)?.label(), expected_label);
+            assert_eq!(
+                classify_legacy_failure(&format!("{payload}\n"))?.label(),
+                expected_label
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A similar-looking message is not canonical conversion evidence without its complete framing.
+#[test]
+fn canonical_conversion_classification_requires_the_complete_payload() {
+    for detail in [
+        "cannot convert 'abc' to int",
+        "ValueError: cannot convert 'abc' to integer",
+        "ValueError: cannot convert 'abc' to float trailing",
+        "ValueError: cannot convert 'abc to int",
+        "valueerror: cannot convert 'abc' to int",
+        "prefix ValueError: cannot convert 'abc' to int",
+        "ValueError: cannot convert 'abc' to int\ntrailing",
+        "ValueError: cannot convert 'abc' to int\n\n",
+    ] {
+        assert!(classify_replacement_failure(detail).is_err(), "{detail:?}");
+        assert!(classify_legacy_failure(detail).is_err(), "{detail:?}");
+    }
+}
+
 #[test]
 fn an_unclassifiable_failure_stays_unavailable_on_both_routes() {
     assert!(classify_legacy_failure("Segmentation fault").is_err());

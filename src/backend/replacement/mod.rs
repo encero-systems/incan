@@ -36,6 +36,7 @@ use std::{
 
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::{
+    errors::IncanError,
     lang::surface::constructors::{ConstructorId, as_str as constructor_name},
     lang::types::collections::{self, CollectionTypeId},
     python_floor_div_i64, python_mod_i64,
@@ -75,8 +76,10 @@ pub enum ReplacementValue {
     Bool(bool),
     /// An owned Incan `str` value.
     Str(String),
-    /// An Incan floating-point literal, retained so unsupported float operations refuse honestly.
-    Float(String),
+    /// An ordinary Incan binary float, normalized to the `f64` carrier the Rust-emission path uses.
+    ///
+    /// Checked f32/f64/sized numeric values remain outside this carrier and are refused before execution.
+    Float(f64),
     /// An Incan `None`/unit value.
     Unit,
     /// A normalized runtime range iterator for the selected `range` source-spelling control-flow case.
@@ -346,7 +349,7 @@ impl ReplacementValue {
             Self::Int(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),
             Self::Str(value) => value.clone(),
-            Self::Float(value) => value.clone(),
+            Self::Float(value) => value.to_string(),
             Self::Unit => constructor_name(ConstructorId::None).to_string(),
             Self::Range { next, end, step } => format!("range({next}, {end}, {step})"),
             Self::List { elements, .. } => format!(
@@ -740,6 +743,7 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
         });
     }
     validate_scalar_arguments(args, body.span)?;
+    validate_selected_float_parameter_arguments(&body.params, args)?;
     validate_direct_body_profile(body, providers.map(Rc::as_ref))?;
     Ok(ValidatedFreeFunctionExecution {
         module,
@@ -758,6 +762,7 @@ fn validate_direct_body_profile(
     body: &Body,
     providers: Option<&ProviderRuntime>,
 ) -> Result<(), ReplacementExecutionError> {
+    validate_nonordinary_numeric_locals(body)?;
     validate_provider_operation_hosts(&body.block.stmts, providers)?;
     // An `async def` produces an awaitable even when its body has no explicit `await`. Executing its statements as
     // an ordinary scalar body would erase task construction, suspension, wake, cancellation, and receipt semantics
@@ -1078,6 +1083,30 @@ fn validate_scalar_arguments(args: &[ReplacementValue], span: HirSourceSpan) -> 
     Ok(())
 }
 
+/// Keep a direct API caller from supplying an untyped carrier to a checked ordinary-float parameter.
+///
+/// The selected replacement entrypoint accepts only direct profile carriers, not a source typechecker context. A
+/// supplied `Int` or `Str` therefore cannot stand in for a checked `float` parameter merely because the executor
+/// can materialize that carrier. This is deliberately an entrypoint-only boundary: source-resolved sibling calls
+/// keep their own checked call contract and must not be rejected by a whole-body parameter scan.
+fn validate_selected_float_parameter_arguments(
+    params: &[CallableParam],
+    args: &[ReplacementValue],
+) -> Result<(), ReplacementExecutionError> {
+    for (parameter, _) in params.iter().zip(args) {
+        if matches!(&parameter.ty, IncanType::Primitive(IncanPrimitiveType::Float)) {
+            return Err(unsupported(
+                format!(
+                    "direct argument supplied to checked float parameter `{}` outside the scalar replacement profile",
+                    parameter.name
+                ),
+                parameter.span,
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Refuse repeated user-binding spellings until Body IR carries an explicit binding-equivalence fact.
 ///
 /// A local id is sufficient to address an already-selected value, but it is not enough to prove that every later
@@ -1097,6 +1126,26 @@ fn validate_binding_identity(body: &Body) -> Result<(), ReplacementExecutionErro
                 format!(
                     "repeated user binding `{name}` (lexical shadowing or reassignment); Body IR does not yet carry binding-equivalence facts for direct execution"
                 ),
+                local.span,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Keep compiler-distinguished numeric locals outside the ordinary `int`/`float` carrier.
+///
+/// Body IR retains `f32`, `f64`, aliases such as `real`, and sized integers as
+/// [`IncanPrimitiveType::Numeric`] rather than collapsing them into the language's ordinary `int` or `float`.
+/// The replacement value model has no carrier that can preserve those distinctions. Refusing at the declaration's
+/// retained source span prevents a nested closure, generator, print, f-string, or scalar-conversion call from
+/// observing an accidentally widened value. The predicate consumes the checked enum fact directly; the rendered
+/// type appears only in the diagnostic.
+fn validate_nonordinary_numeric_locals(body: &Body) -> Result<(), ReplacementExecutionError> {
+    for local in &body.locals {
+        if matches!(local.ty, IncanType::Primitive(IncanPrimitiveType::Numeric(_))) {
+            return Err(unsupported(
+                format!("checked nonordinary numeric local has Body-IR type `{}`", local.ty),
                 local.span,
             ));
         }
@@ -1558,6 +1607,7 @@ fn format_interpolation(
         (ReplacementValue::Bool(value), _) => Ok(value.to_string()),
         (ReplacementValue::Str(text), FormatStyle::Display) => Ok(text.clone()),
         (ReplacementValue::Str(text), FormatStyle::Debug) => Ok(format!("{text:?}")),
+        (ReplacementValue::Float(value), FormatStyle::Display) => Ok(value.to_string()),
         (other, _) => Err(unsupported(
             format!("f-string interpolation of {}", value_kind(other)),
             span,
@@ -1669,6 +1719,9 @@ fn explicit_builtin(target: &NamedCallableTarget) -> Option<BuiltinFnId> {
 /// opinion. `len` over a `str` is the instructive exclusion — see [`BodyExecutor::execute_builtin`].
 const EXECUTABLE_BUILTINS: &[BuiltinFnId] = &[
     BuiltinFnId::Print,
+    BuiltinFnId::Str,
+    BuiltinFnId::Int,
+    BuiltinFnId::Float,
     BuiltinFnId::Len,
     BuiltinFnId::Abs,
     BuiltinFnId::Sum,
@@ -3603,6 +3656,29 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 ReplacementValue::Int(value) => Ok(ReplacementValue::Int(value.abs())),
                 other => Err(unsupported(format!("`abs` of {}", value_kind(&other)), span)),
             },
+            // These pairs mirror the existing Rust emitter's narrowly evidenced scalar conversions. The checked
+            // Body-IR type gate rejects f32/f64/sized numeric locals before this value dispatch can flatten them
+            // into the ordinary `int`/`float` carriers.
+            BuiltinFnId::Str => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Str(value)),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Str(value.to_string())),
+                other => Err(unsupported(format!("`str` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::Int => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Int(value)),
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Int(i64::from(value))),
+                ReplacementValue::Str(value) => parse_int_conversion(&value, span),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Int(value as i64)),
+                other => Err(unsupported(format!("`int` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::Float => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Float(value as f64)),
+                ReplacementValue::Str(value) => parse_float_conversion(&value, span),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Float(value)),
+                other => Err(unsupported(format!("`float` of {}", value_kind(&other)), span)),
+            },
             // `iter().sum::<i64>()`, with bools counted as 1/0 exactly as the emitted Rust does.
             BuiltinFnId::Sum => {
                 let elements = integer_elements(&value, "sum", span)?;
@@ -3665,8 +3741,8 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// Body IR represents an f-string as its own structured node rather than a desugared concatenation, so this
     /// walks the parts directly. Only the scalar kinds whose rendering provably matches the Rust-emission backend
     /// are interpolated; anything else refuses by name rather than inventing a spelling the two backends would
-    /// disagree on. `float` is deliberately among the refusals: this runtime retains the source literal while the
-    /// other backend formats an `f64`, so `1.0` would render differently on each side.
+    /// disagree on. Ordinary Float Display uses the same normalized `f64` rendering as the Rust-emission backend;
+    /// Float Debug remains a refusal until that distinct formatting contract has direct parity evidence.
     fn evaluate_format(
         &mut self,
         parts: &[FormatPart],
@@ -5306,7 +5382,7 @@ impl ReplacementValue {
     const fn is_copy_shaped(&self) -> bool {
         matches!(
             self,
-            Self::Int(_) | Self::Bool(_) | Self::Unit | Self::FieldlessEnum { .. } | Self::Task(_)
+            Self::Int(_) | Self::Bool(_) | Self::Float(_) | Self::Unit | Self::FieldlessEnum { .. } | Self::Task(_)
         )
     }
 
@@ -5810,9 +5886,43 @@ fn constant_value(constant: &Constant, span: HirSourceSpan) -> Result<Replacemen
         Constant::Bool(value) => Ok(ReplacementValue::Bool(*value)),
         Constant::Str(value) => Ok(ReplacementValue::Str(value.clone())),
         Constant::Unit | Constant::None => Ok(ReplacementValue::Unit),
-        Constant::Float(value) => Ok(ReplacementValue::Float(value.clone())),
+        Constant::Float(value) => binary_float_literal_value(value, span),
         Constant::Bytes(_) => Err(unsupported("byte-string literal", span)),
     }
+}
+
+/// Materialize an ordinary binary-float Body-IR literal with the same value normalization as Rust emission.
+///
+/// Body IR deliberately retains the lexical representation for diagnostics and snapshots. The lexer has already
+/// accepted that spelling as a binary float, but direct execution needs the value rather than its source text so
+/// `str(1_000.50)` and `str(1.0)` use ordinary `f64` Display. Decimal literals share this Body-IR constant variant
+/// but carry a `d` suffix; they remain outside the direct carrier rather than being silently parsed as binary
+/// floats.
+fn binary_float_literal_value(repr: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    if repr.ends_with('d') {
+        return Err(unsupported("decimal literal", span));
+    }
+    let normalized = repr.replace('_', "");
+    normalized
+        .parse::<f64>()
+        .map(ReplacementValue::Float)
+        .map_err(|_| unsupported("binary float literal outside the direct f64 carrier", span))
+}
+
+/// Execute the legacy `int_from_str` parse policy without exposing its panic-based API to direct execution.
+fn parse_int_conversion(value: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    value
+        .parse::<i64>()
+        .map(ReplacementValue::Int)
+        .map_err(|_| runtime_failure(IncanError::cannot_convert_to_int(value).to_string(), span))
+}
+
+/// Execute the legacy `float_from_str` parse policy without changing runtime input spelling.
+fn parse_float_conversion(value: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    value
+        .parse::<f64>()
+        .map(ReplacementValue::Float)
+        .map_err(|_| runtime_failure(IncanError::cannot_convert_to_float(value).to_string(), span))
 }
 
 /// Convert only scalar/unit Body-IR constants to a direct pattern comparison value.

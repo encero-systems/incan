@@ -42,6 +42,8 @@ const EXAMPLE_SOURCE_BASELINE: usize = 68;
 /// It moved from zero to four when `print` gained a represented builtin identity and an executed implementation:
 /// 25 of the 68 examples had been stopping at their first call.
 /// Hashed set membership then admitted `examples/advanced/membership_ops.incn`, raising execution to five.
+/// Canonical scalar conversions admit the unchanged `examples/advanced/type_conversions.incn`, raising execution to
+/// six.
 ///
 /// The remaining blockers have owners, and two of them are sequenced rather than merely unstarted. #1250 owns model
 /// construction and method dispatch; #989 owns imports and multi-module execution. Reassignment belongs to #1072
@@ -53,7 +55,7 @@ const EXAMPLE_SOURCE_BASELINE: usize = 68;
 /// covers roughly a third of the capability surface the v0.5 catalogue documents, so reaching 68 here would still
 /// leave `if let`, generators, iterator adapters, value enums and most of the standard library unexecuted. Both
 /// sit under Slice 1 (#1137), because execution evidence has to be trustworthy before anything is cut over to it.
-const EXECUTED_BASELINE: usize = 5;
+const EXECUTED_BASELINE: usize = 6;
 
 /// How far one example got through the replacement pipeline.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]

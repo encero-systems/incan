@@ -49,10 +49,10 @@ pub struct NonScalarKey {
 
 /// One hashed-container key in the replacement profile's collection-scalar domain.
 ///
-/// The variants mirror `ReplacementValue::is_collection_scalar` exactly, and the lockstep is pinned by test.
-/// `Float` stays out deliberately: it sits outside that guard, and its textual carrier makes equality-by-hash a
-/// lie waiting to happen. The derived `Ord` exists only so rendering can sort entries deterministically; a
-/// well-typed program never holds keys of mixed kinds, and ordering is never observable through membership.
+/// The variants mirror `ReplacementValue::is_collection_scalar` exactly, and the lockstep is pinned by test. `Float`
+/// stays outside that domain: admitting binary float values would require a separate checked equality and hashing
+/// contract. The derived `Ord` exists only so rendering can sort entries deterministically; a well-typed program never
+/// holds keys of mixed kinds, and ordering is never observable through membership.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum HashedKey {
     /// An Incan `int` key.

@@ -4167,10 +4167,8 @@ def main() -> str:
 
 #[test]
 fn replacement_refuses_f_string_interpolation_it_cannot_render_identically() -> Result<(), Box<dyn std::error::Error>> {
-    // Interpolation is deliberately narrow. A value renders only when this runtime and the Rust-emission backend
-    // provably agree on the spelling; a list does not, and neither does `float`, where this runtime keeps the source
-    // literal while the other formats an `f64` and turns `1.0` into `1`. A divergence there would be invisible in
-    // the value itself, which is exactly what the parity corpus exists to catch, so refusing is the honest answer.
+    // Interpolation is deliberately narrow: structural list Display remains outside the shared rendering profile.
+    // Ordinary float Display now uses the same normalized f64 value as native emission; Float Debug still refuses.
     let source = r#"
 def main() -> str:
   values = [1, 2]

@@ -557,6 +557,10 @@ pub enum RuntimeFailureClass {
     DivisionByZero,
     /// An integer operation produced a result the type cannot represent.
     ArithmeticOverflow,
+    /// The canonical `int(str)` parser rejected its input.
+    IntConversion,
+    /// The canonical `float(str)` parser rejected its input.
+    FloatConversion,
 }
 
 impl RuntimeFailureClass {
@@ -567,6 +571,8 @@ impl RuntimeFailureClass {
             Self::Assertion => "assertion-failed",
             Self::DivisionByZero => "division-by-zero",
             Self::ArithmeticOverflow => "arithmetic-overflow",
+            Self::IntConversion => "conversion-int",
+            Self::FloatConversion => "conversion-float",
         }
     }
 }
@@ -1314,11 +1320,14 @@ fn result_transport_failure_reason(exit_code: Option<i32>) -> Option<&'static st
 
 /// Classify a legacy process failure into a class the replacement route can also report.
 ///
-/// Generated programs install a panic hook that prints the panic payload, so the panic message is the
-/// source-level evidence here. Overflow is tested before division, because Rust's overflow panic for a division
-/// also names division and would otherwise be misfiled as a division by zero. An unrecognized failure is
-/// unavailable, not a shared failure observation.
+/// Generated programs install a panic hook that prints the panic payload, so the panic message is the source-level
+/// evidence here. Canonical conversion payloads are recognized first because their rejected input may contain any
+/// diagnostic words. Overflow is tested before division because a division-overflow panic also names division.
+/// An unrecognized failure is unavailable, not a shared failure observation.
 fn classify_legacy_failure(stderr: &str) -> Result<RuntimeFailureClass, ShadowUnavailable> {
+    if let Some(failure) = classify_canonical_conversion_failure(stderr) {
+        return Ok(failure);
+    }
     let lowered = stderr.to_lowercase();
     if lowered.contains("assertionerror") || lowered.contains("assertion failed") {
         return Ok(RuntimeFailureClass::Assertion);
@@ -1340,9 +1349,13 @@ fn classify_legacy_failure(stderr: &str) -> Result<RuntimeFailureClass, ShadowUn
 
 /// Classify a direct-execution runtime failure into the same class vocabulary as the legacy route.
 ///
-/// Overflow is tested first for the same reason as on the legacy route: the executor spells an unrepresentable
-/// quotient as an "integer division overflow", which is an overflow, not a division by zero.
+/// Canonical conversion payloads are recognized before inspecting their rejected inputs for diagnostic words.
+/// Other failures retain the same ordering as the legacy route: an "integer division overflow" is an overflow,
+/// not a division by zero.
 fn classify_replacement_failure(detail: &str) -> Result<RuntimeFailureClass, ShadowUnavailable> {
+    if let Some(failure) = classify_canonical_conversion_failure(detail) {
+        return Ok(failure);
+    }
     let lowered = detail.to_lowercase();
     if lowered.contains("assertion") {
         return Ok(RuntimeFailureClass::Assertion);
@@ -1357,6 +1370,24 @@ fn classify_replacement_failure(detail: &str) -> Result<RuntimeFailureClass, Sha
         "the replacement route failed in a way this profile cannot classify, so agreement cannot be claimed: \
          {detail}"
     )))
+}
+
+/// Recognize one complete canonical scalar-conversion payload before inspecting its rejected input for heuristic words.
+///
+/// The native panic hook appends one line feed to the payload while the direct executor retains the payload itself.
+/// Removing at most that one framing byte lets both routes use the same exact grammar without trimming source data.
+/// The input between the fixed prefix and suffix remains opaque: words such as `AssertionError`, `overflow`, and
+/// `division by zero` describe the rejected string, not the failure class.
+fn classify_canonical_conversion_failure(detail: &str) -> Option<RuntimeFailureClass> {
+    let message = detail.strip_suffix('\n').unwrap_or(detail);
+    let rejected_input = message.strip_prefix("ValueError: cannot convert '")?;
+    if rejected_input.strip_suffix("' to int").is_some() {
+        return Some(RuntimeFailureClass::IntConversion);
+    }
+    if rejected_input.strip_suffix("' to float").is_some() {
+        return Some(RuntimeFailureClass::FloatConversion);
+    }
+    None
 }
 
 // ============================================================================

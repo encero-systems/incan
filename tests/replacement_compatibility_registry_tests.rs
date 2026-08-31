@@ -123,11 +123,25 @@ fn registry_covers_the_baseline_without_claiming_parity() -> Result<(), Box<dyn 
         .find(|feature| feature.id == "language.numeric-and-scalar")
         .ok_or("missing scalar direct-profile feature")?;
     assert!(!scalar.evidence.is_parity_green());
-    assert_eq!(scalar.evidence.surfaces.scoped_comparisons.len(), 1);
-    let compared_case = &scalar.evidence.surfaces.scoped_comparisons[0];
-    assert_eq!(compared_case.case_id, "replacement-body-v0-001");
-    assert!(matches!(compared_case.state, IndependentComparisonState::ComparedMatch));
-    assert!(matches!(&compared_case.evidence, ComparisonEvidence::Paired { .. }));
+    assert!(matches!(
+        scalar.evidence.independent_comparison,
+        IndependentComparisonState::NonGreenShadowUnavailable
+    ));
+    let compared_case_ids = scalar
+        .evidence
+        .surfaces
+        .scoped_comparisons
+        .iter()
+        .map(|comparison| comparison.case_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        compared_case_ids,
+        vec!["replacement-body-v0-001", "replacement-body-v0-022"]
+    );
+    assert!(scalar.evidence.surfaces.scoped_comparisons.iter().all(|comparison| {
+        matches!(comparison.state, IndependentComparisonState::ComparedMatch)
+            && matches!(&comparison.evidence, ComparisonEvidence::Paired { .. })
+    }));
     assert!(
         registry
             .features
@@ -187,6 +201,11 @@ fn joined_projection_is_deterministic_and_exposes_the_callable_boundary() -> Res
     assert!(projection.contains("outstanding evidence owner #1152"));
     assert!(projection.contains("unscheduled evidence debt"));
     assert!(!projection.contains("unavailable via #1146"));
+    assert!(
+        projection
+            .contains("Case `replacement-body-v0-022` (ComparedMatch) using completed comparison infrastructure #1146")
+    );
+    assert!(!projection.contains("Completed #1146 case"));
 
     let machine: serde_json::Value = serde_json::from_str(&render_machine_readable_inventory(&baseline, &registry)?)?;
     assert!(machine.is_object());
