@@ -24,7 +24,7 @@ use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
     ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FieldExport, FieldVisibilityExport, FunctionExport,
-    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryContractMetadata, LibraryExports, LibraryIdentityGraph,
+    LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryContractMetadata, LibraryExports, LibraryIdentityGraph,
     LibraryManifest, LibraryRustAbi, MethodExport, ModelExport, ParamDefaultCallArgExport,
     ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport, PartialExport,
     PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport, TraitExport,
@@ -96,6 +96,7 @@ fn empty_trait_stub_recovers_its_method_contract_from_provider_metadata() {
     provider_methods.insert(
         "materialize".to_string(),
         MethodInfo {
+            identity: None,
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),
             type_param_bound_details: HashMap::new(),
@@ -1002,7 +1003,7 @@ pub default_config = partial configure(profile=Profile(name="ops"))
 }
 
 #[test]
-fn test_import_module_collects_public_partial_as_callable() {
+fn test_check_with_imports_collects_explicit_public_partial_as_callable() -> Result<(), String> {
     let library = parse_program(
         r#"
 pub def route(method: str, path: str) -> str:
@@ -1014,6 +1015,8 @@ pub get = partial route(method="GET")
     );
     let consumer = parse_program(
         r#"
+from routes import get
+
 def use() -> str:
   return get(path="/health")
 "#,
@@ -1021,10 +1024,10 @@ def use() -> str:
     );
 
     let mut checker = TypeChecker::new();
-    checker.import_module(&library, "routes");
     checker
-        .check_program(&consumer)
-        .unwrap_or_else(|errs| panic!("consumer should import public partial callable: {errs:?}"));
+        .check_with_imports(&consumer, &[("routes", &library)])
+        .map_err(|errs| format!("consumer should import public partial callable: {errs:?}"))?;
+    Ok(())
 }
 
 #[test]
@@ -2748,6 +2751,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 methods: vec![MethodExport {
                     alias_of: None,
                     name: "label".to_string(),
+                    canonical: None,
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
@@ -2768,11 +2772,13 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 variants: vec![
                     EnumVariantExport {
                         name: "Active".to_string(),
+                        canonical: None,
                         fields: Vec::new(),
                         value: Some(EnumValueExport::Str("active".to_string())),
                     },
                     EnumVariantExport {
                         name: "Disabled".to_string(),
+                        canonical: None,
                         fields: Vec::new(),
                         value: Some(EnumValueExport::Str("disabled".to_string())),
                     },
@@ -2781,6 +2787,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 methods: vec![MethodExport {
                     alias_of: None,
                     name: "label".to_string(),
+                    canonical: None,
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
@@ -2822,13 +2829,14 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         rust_abi: None,
     };
     manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
-        schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+        schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
         exports: vec![ExportIdentity {
             public_name: "Widget".to_string(),
             public_path: vec!["mylib".to_string(), "Widget".to_string()],
             source_path: vec!["widgets".to_string(), "Widget".to_string()],
             kind: ExportIdentityKind::Model,
             projection: ExportIdentityProjection::Direct,
+            canonical: None,
         }],
     };
 
@@ -2863,6 +2871,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             derives: Vec::new(),
             fields: vec![FieldExport {
                 name: "widget".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "Widget".to_string(),
                 },
@@ -2905,6 +2914,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             ordinal_type_identity: None,
             variants: vec![EnumVariantExport {
                 name: "WithWidget".to_string(),
+                canonical: None,
                 fields: vec![TypeRef::Named {
                     name: "Widget".to_string(),
                 }],
@@ -2915,7 +2925,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             derives: Vec::new(),
         });
         manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
-            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
             exports: vec![
                 ExportIdentity {
                     public_name: "Widget".to_string(),
@@ -2923,6 +2933,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                     source_path: vec!["widgets".to_string(), "Widget".to_string()],
                     kind: ExportIdentityKind::Model,
                     projection: ExportIdentityProjection::Direct,
+                    canonical: None,
                 },
                 ExportIdentity {
                     public_name: "Envelope".to_string(),
@@ -2930,6 +2941,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                     source_path: vec!["widgets".to_string(), "Envelope".to_string()],
                     kind: ExportIdentityKind::Enum,
                     projection: ExportIdentityProjection::Direct,
+                    canonical: None,
                 },
                 ExportIdentity {
                     public_name: "Factory".to_string(),
@@ -2937,6 +2949,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                     source_path: vec!["widgets".to_string(), "Factory".to_string()],
                     kind: ExportIdentityKind::Model,
                     projection: ExportIdentityProjection::Direct,
+                    canonical: None,
                 },
             ],
         };
@@ -2981,6 +2994,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
         fields: vec![
             FieldExport {
                 name: "secret".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },
@@ -2993,6 +3007,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
             },
             FieldExport {
                 name: "label".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },
@@ -3025,6 +3040,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
             },
             FieldExport {
                 name: "computed_secret".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "int".to_string(),
                 },
@@ -3188,7 +3204,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
             }),
             registry: None,
             identity_graph: LibraryIdentityGraph {
-                schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+                schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
                 exports: vec![ExportIdentity {
                     public_name: "safe_cast".to_string(),
                     public_path: vec!["mylib".to_string(), "safe_cast".to_string()],
@@ -3197,6 +3213,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
                     projection: ExportIdentityProjection::Alias {
                         target_path: vec!["helpers".to_string(), "cast".to_string()],
                     },
+                    canonical: None,
                 }],
             },
             provider: Default::default(),
@@ -3298,6 +3315,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3310,6 +3328,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3335,6 +3354,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 methods: vec![MethodExport {
                     alias_of: None,
                     name: "convert".to_string(),
+                    canonical: None,
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
@@ -3352,6 +3372,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 ordinal_type_identity: None,
                 variants: vec![EnumVariantExport {
                     name: "Number".to_string(),
+                    canonical: None,
                     fields: Vec::new(),
                     value: None,
                 }],
@@ -3360,6 +3381,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3372,6 +3394,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3445,6 +3468,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         MethodExport {
                             alias_of: None,
                             name: "default".to_string(),
+                            canonical: None,
                             type_params: Vec::new(),
                             receiver: None,
                             params: Vec::new(),
@@ -3457,6 +3481,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         MethodExport {
                             alias_of: None,
                             name: "read_csv".to_string(),
+                            canonical: None,
                             type_params: vec![type_param_t.clone()],
                             receiver: Some(ReceiverExport::Mutable),
                             params: vec![
@@ -3497,6 +3522,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         MethodExport {
                             alias_of: None,
                             name: "collect".to_string(),
+                            canonical: None,
                             type_params: vec![type_param_t.clone()],
                             receiver: Some(ReceiverExport::Immutable),
                             params: vec![ParamExport {
@@ -3559,6 +3585,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     methods: vec![MethodExport {
                         alias_of: None,
                         name: "collect".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -9159,6 +9186,188 @@ class Account:
 }
 
 #[test]
+fn test_all_member_binding_kinds_share_source_ordered_first_wins_registration() -> Result<(), String> {
+    let source = r#"
+class Surface:
+  clash: int
+
+  def source(self) -> int:
+    return 1
+
+  def clash(self) -> int:
+    return 2
+
+  property clash -> int:
+    return 3
+
+  clash = source
+  clash = partial source()
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("member collision source should lex: {errors:?}"))?;
+    let program =
+        parser::parse(&tokens).map_err(|errors| format!("member collision source should parse: {errors:?}"))?;
+    let Some(Declaration::Class(class)) = program.declarations.first().map(|declaration| &declaration.node) else {
+        return Err("expected class declaration".to_string());
+    };
+    let first_span = class.fields[0].span;
+    let rejected_spans = [
+        class
+            .methods
+            .iter()
+            .find(|method| method.node.name == "clash")
+            .ok_or("missing clashing method")?
+            .span,
+        class.properties[0].span,
+        class.method_aliases[0].span,
+        class.method_partials[0].span,
+    ];
+
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_program(&program) {
+        Ok(()) => return Err("cross-kind member collisions should fail".to_string()),
+        Err(errors) => errors,
+    };
+    let collision_errors = errors
+        .iter()
+        .filter(|error| {
+            error.message.starts_with("Duplicate member")
+                || error.message.starts_with("Duplicate method alias")
+                || error.message.starts_with("Duplicate method partial")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        collision_errors.len(),
+        4,
+        "method, property, alias, and partial must each collide with the first field: {errors:?}"
+    );
+    let first_note = format!("First declaration span: {}..{}", first_span.start, first_span.end);
+    assert!(
+        collision_errors
+            .iter()
+            .all(|error| error.notes.iter().any(|note| note == &first_note)),
+        "every collision must retain the source-first field: {collision_errors:?}"
+    );
+
+    let exported = &checker.type_info().declarations.member_declaration_identities;
+    assert!(
+        exported.contains_key(&(first_span.start, first_span.end)),
+        "the accepted field declaration must be exported"
+    );
+    assert!(
+        rejected_spans
+            .iter()
+            .all(|span| !exported.contains_key(&(span.start, span.end))),
+        "rejected member bindings must not be exported as declarations"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_duplicate_enum_variants_keep_first_metadata_and_export_only_the_accepted_declaration() -> Result<(), String> {
+    let source = r#"
+enum Status:
+  Ready
+  Ready
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("duplicate enum source should lex: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("duplicate enum source should parse: {errors:?}"))?;
+    let Some(Declaration::Enum(en)) = program.declarations.first().map(|declaration| &declaration.node) else {
+        return Err("expected enum declaration".to_string());
+    };
+    let first_span = en.variants[0].span;
+    let rejected_span = en.variants[1].span;
+
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_program(&program) {
+        Ok(()) => return Err("duplicate enum variant was accepted".to_string()),
+        Err(errors) => errors,
+    };
+    let duplicates = errors
+        .iter()
+        .filter(|error| error.message == "Duplicate definition of 'Ready'")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        duplicates.len(),
+        1,
+        "expected one shared-registry diagnostic: {errors:?}"
+    );
+    assert_eq!(duplicates[0].span, rejected_span);
+    assert_eq!(
+        duplicates[0].related_spans().first().map(|related| related.span),
+        Some(first_span)
+    );
+
+    let status_id = checker.symbols.lookup("Status").ok_or("missing Status symbol")?;
+    let status = checker.symbols.get(status_id).ok_or("missing Status metadata")?;
+    let SymbolKind::Type(TypeInfo::Enum(info)) = &status.kind else {
+        return Err("Status should retain enum metadata".to_string());
+    };
+    assert_eq!(info.variants, vec!["Ready"]);
+    let retained = info
+        .variant_identities
+        .get("Ready")
+        .ok_or("accepted Ready variant has no canonical identity")?;
+    assert_eq!(retained.declaration_span.start, first_span.start);
+    assert_eq!(retained.declaration_span.end, first_span.end);
+
+    let exported = &checker.type_info().declarations.member_declaration_identities;
+    assert!(exported.contains_key(&(first_span.start, first_span.end)));
+    assert!(!exported.contains_key(&(rejected_span.start, rejected_span.end)));
+    Ok(())
+}
+
+#[test]
+fn test_enum_variant_method_collision_keeps_the_source_first_variant() -> Result<(), String> {
+    let source = r#"
+enum Signal:
+  Ready
+
+  def Ready(self) -> int:
+    return 1
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("enum collision source should lex: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("enum collision source should parse: {errors:?}"))?;
+    let Some(Declaration::Enum(en)) = program.declarations.first().map(|declaration| &declaration.node) else {
+        return Err("expected enum declaration".to_string());
+    };
+    let variant_span = en.variants[0].span;
+    let method_span = en.methods[0].span;
+
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_program(&program) {
+        Ok(()) => return Err("enum variant/method collision was accepted".to_string()),
+        Err(errors) => errors,
+    };
+    let collisions = errors
+        .iter()
+        .filter(|error| {
+            error
+                .message
+                .contains("Duplicate member 'Signal.Ready' declared as both variant and method")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        collisions.len(),
+        1,
+        "expected one cross-kind member diagnostic: {errors:?}"
+    );
+    assert_eq!(collisions[0].span, method_span);
+
+    let signal_id = checker.symbols.lookup("Signal").ok_or("missing Signal symbol")?;
+    let signal = checker.symbols.get(signal_id).ok_or("missing Signal metadata")?;
+    let SymbolKind::Type(TypeInfo::Enum(info)) = &signal.kind else {
+        return Err("Signal should retain enum metadata".to_string());
+    };
+    assert!(info.variant_identities.contains_key("Ready"));
+    assert!(!info.method_overloads.contains_key("Ready"));
+
+    let exported = &checker.type_info().declarations.member_declaration_identities;
+    assert!(exported.contains_key(&(variant_span.start, variant_span.end)));
+    assert!(!exported.contains_key(&(method_span.start, method_span.end)));
+    Ok(())
+}
+
+#[test]
 fn test_alias_self_keyword() {
     let source = r#"
 model Data:
@@ -10516,6 +10725,10 @@ def main() -> Result[None, SessionError]:
     checker
         .check_with_imports(&consumer_ast, &[("dataset", &dataset_ast), ("session", &session_ast)])
         .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    let mut reverse_checker = TypeChecker::new();
+    reverse_checker
+        .check_with_imports(&consumer_ast, &[("session", &session_ast), ("dataset", &dataset_ast)])
+        .map_err(|errs| format!("reverse-order typecheck failed: {errs:?}"))?;
     Ok(())
 }
 
@@ -15033,6 +15246,46 @@ module tests:
 }
 
 #[test]
+fn test_testing_decorator_alias_uses_checked_import_binding_in_either_source_order() -> Result<(), String> {
+    let sources = [
+        r#"
+resource = alias fixture
+from std.testing import fixture
+
+@resource
+def database() -> int:
+  return 1
+"#,
+        r#"
+from std.testing import fixture
+resource = alias fixture
+
+@resource
+def database() -> int:
+  return 1
+"#,
+    ];
+
+    for source in sources {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        assert_eq!(
+            checker.type_info().import_binding_path("resource"),
+            Some(["std".to_string(), "testing".to_string(), "fixture".to_string()].as_slice())
+        );
+        if checker.type_info().testing_fixture("database").is_none() {
+            return Err("decorator alias did not record database as a fixture".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_async_fixture_records_frontend_metadata() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 import std.async
@@ -15438,6 +15691,25 @@ def unwrap_err(value: Result[int, str]) -> str:
   return message
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_is_binding_uses_shared_duplicate_registration() {
+    let source = r#"
+import std.testing
+
+def unwrap_name(value: Option[str]) -> str:
+  let name = "fallback"
+  assert value is Some(name)
+  return name
+"#;
+    let errors = check_str_err(source, "an assert pattern cannot silently replace an active local");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message == "Duplicate definition of 'name'"),
+        "expected shared duplicate-binding diagnostic, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -16075,16 +16347,16 @@ fn test_rust_generic_argument_retains_imported_public_provider_identity_issue885
         "Payload".to_string(),
         PublicLibraryTypeIdentity::new("compiled_parent", &["classes".to_string(), "Payload".to_string()]),
     );
-    checker.import_aliases.insert(
-        "Payload".to_string(),
+    checker.symbols.define_import_binding_at_path(
+        Symbol {
+            name: "Payload".to_string(),
+            kind: SymbolKind::Type(TypeInfo::TypeAlias),
+            span: Span::default(),
+            scope: 0,
+        },
+        None,
         vec!["pub".to_string(), "compiled_parent".to_string(), "Payload".to_string()],
     );
-    checker.symbols.define(Symbol {
-        name: "Payload".to_string(),
-        kind: SymbolKind::Type(TypeInfo::TypeAlias),
-        span: Span::default(),
-        scope: 0,
-    });
     checker.symbols.define(Symbol {
         name: "RustEnvelope".to_string(),
         kind: SymbolKind::RustItem(RustItemInfo {
@@ -17868,12 +18140,19 @@ enum Token with Convert[int], Convert[int]:
     let Err(errs) = check_str(source) else {
         panic!("expected duplicate enum trait instantiation diagnostic");
     };
-    assert!(
-        errs.iter().any(|err| err
-            .message
-            .contains("Trait 'Convert' is adopted more than once with type arguments [int]")),
-        "expected duplicate enum trait instantiation diagnostic, got: {errs:?}"
+    let duplicate = errs
+        .iter()
+        .find(|err| {
+            err.message
+                .contains("Trait 'Convert' is adopted more than once with type arguments [int]")
+        })
+        .unwrap_or_else(|| panic!("expected duplicate enum trait instantiation diagnostic, got: {errs:?}"));
+    assert_eq!(
+        duplicate.related_spans().len(),
+        1,
+        "duplicate trait adoption must retain the first adoption site"
     );
+    assert_ne!(duplicate.related_spans()[0].span, duplicate.span);
 }
 
 #[test]
@@ -22355,7 +22634,7 @@ fn checked_c_string_view_copy_requires_unsafe_and_a_named_bound() {
             "copy_utf8".to_string(),
             Vec::new(),
             vec![CallArg::Named(
-                "max_bytes".to_string(),
+                Spanned::new("max_bytes".to_string(), span),
                 Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(64))), span),
             )],
         ),

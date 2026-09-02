@@ -165,7 +165,7 @@ impl AstLowering {
                 }
             }
             ast::Pattern::Constructor(name, args) => {
-                let field_tys = self.constructor_field_types_for_pattern(name, expected_ty, args.len());
+                let field_tys = self.constructor_field_types_for_pattern(&name.node, expected_ty, args.len());
                 for (idx, arg) in args.iter().enumerate() {
                     let field_ty = field_tys.get(idx).cloned().unwrap_or(IrType::Unknown);
                     match arg {
@@ -201,8 +201,8 @@ impl AstLowering {
     /// Remove union members covered by a pattern from the remaining-arm accumulator.
     fn remove_covered_union_members(&self, remaining: &mut Vec<IrType>, pattern: &ast::Pattern, subject_ty: &IrType) {
         match pattern {
-            ast::Pattern::Constructor(name, _) if !name.contains("::") => {
-                if let Some(target) = self.union_pattern_target(subject_ty, name) {
+            ast::Pattern::Constructor(name, _) if !name.node.contains("::") => {
+                if let Some(target) = self.union_pattern_target(subject_ty, &name.node) {
                     remaining.retain(|member| {
                         !target
                             .variants
@@ -470,8 +470,8 @@ impl AstLowering {
 
             if !capture_bindings.is_empty() {
                 let target = match &a.node.pattern.node {
-                    ast::Pattern::Constructor(name, _) if !name.contains("::") => self
-                        .union_pattern_target(scrutinee_ty, name)
+                    ast::Pattern::Constructor(name, _) if !name.node.contains("::") => self
+                        .union_pattern_target(scrutinee_ty, &name.node)
                         .filter(|target| target.target_ty.is_union()),
                     ast::Pattern::Binding(_) => narrowed_subject_ty
                         .clone()
@@ -482,8 +482,8 @@ impl AstLowering {
                         .filter(IrType::is_union)
                         .and_then(|target_ty| self.union_subset_target(scrutinee_ty, target_ty)),
                     ast::Pattern::Group(inner) => match &inner.node {
-                        ast::Pattern::Constructor(name, _) if !name.contains("::") => self
-                            .union_pattern_target(scrutinee_ty, name)
+                        ast::Pattern::Constructor(name, _) if !name.node.contains("::") => self
+                            .union_pattern_target(scrutinee_ty, &name.node)
                             .filter(|target| target.target_ty.is_union()),
                         ast::Pattern::Binding(_) => narrowed_subject_ty
                             .clone()
@@ -558,9 +558,9 @@ impl AstLowering {
     /// Lower a pattern with enough scrutinee type context to rewrite union type patterns.
     fn lower_pattern_for_expected_type(&mut self, p: &ast::Pattern, expected_ty: &IrType) -> Pattern {
         if let ast::Pattern::Constructor(name, args) = p
-            && !name.contains("::")
+            && !name.node.contains("::")
         {
-            let target_ty = self.lower_type_pattern_name(name);
+            let target_ty = self.lower_type_pattern_name(&name.node);
             let option_wrapped_union = match expected_ty {
                 IrType::Option(inner) if inner.is_union() => Some(inner.as_ref()),
                 _ => None,
@@ -645,7 +645,7 @@ impl AstLowering {
                         ast::PatternArg::Named(field, pat) => {
                             has_named = true;
                             // RFC 021: resolve field alias to canonical name for struct patterns
-                            let canonical = self.resolve_field_alias(name, field);
+                            let canonical = self.resolve_field_alias(&name.node, &field.node);
                             named_fields.push((canonical, self.lower_pattern(&pat.node)));
                         }
                         ast::PatternArg::Positional(pat) => {
@@ -656,7 +656,7 @@ impl AstLowering {
 
                 if has_named {
                     Pattern::Struct {
-                        name: name.clone(),
+                        name: name.node.clone(),
                         fields: named_fields,
                     }
                 } else {
@@ -666,7 +666,7 @@ impl AstLowering {
                     }
                     Pattern::Enum {
                         name: String::new(),
-                        variant: name.clone(),
+                        variant: name.node.clone(),
                         fields,
                     }
                 }

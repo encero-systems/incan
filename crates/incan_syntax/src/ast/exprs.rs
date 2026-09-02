@@ -158,7 +158,8 @@ pub enum SurfaceExprPayload {
 /// Expression-position `race for value:` surface syntax.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaceForExpr {
-    pub binding: Ident,
+    /// The one source-authored winner binding shared by every arm, including its exact header token span.
+    pub binding: Spanned<Ident>,
     pub arms: Vec<RaceForArm>,
 }
 
@@ -356,7 +357,7 @@ pub enum CallArg {
     /// Positional argument
     Positional(Spanned<Expr>),
     /// Named argument: `name=value`
-    Named(Ident, Spanned<Expr>),
+    Named(Spanned<Ident>, Spanned<Expr>),
     /// Positional unpack argument: `*expr`.
     PositionalUnpack(Spanned<Expr>),
     /// Keyword unpack argument: `**expr`.
@@ -368,7 +369,7 @@ pub enum PatternArg {
     /// Positional pattern: `Type(x)`
     Positional(Spanned<Pattern>),
     /// Named pattern: `Type(name=pat)`
-    Named(Ident, Spanned<Pattern>),
+    Named(Spanned<Ident>, Spanned<Pattern>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -395,7 +396,7 @@ pub enum Pattern {
     /// Literal: `42`, `"hello"`, `true`
     Literal(Literal),
     /// Constructor: `Some(x)`, `Ok(value)`, `Type(name=pat)`
-    Constructor(Ident, Vec<PatternArg>),
+    Constructor(Spanned<Ident>, Vec<PatternArg>),
     /// Tuple: `(a, b)`
     Tuple(Vec<Spanned<Pattern>>),
     /// Parenthesized pattern used for grouping: `(A | B)`

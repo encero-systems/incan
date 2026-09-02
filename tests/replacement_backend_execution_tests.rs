@@ -28,6 +28,61 @@ fn lower_typed_body_ir(source: &str) -> Result<BodyIrModule, Box<dyn std::error:
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
 }
 
+/// Find the canonical Generator.collect call in the fixture's `main` body for malformed-IR assertions.
+fn canonical_collect_target_mut(module: &mut BodyIrModule) -> Option<&mut incan_semantics_core::body_ir::MethodTarget> {
+    module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")?
+        .block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Call {
+                callee: incan_semantics_core::body_ir::Callee::Method(target),
+                ..
+            } if target
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| identity.declaration_name == "Generator.collect") =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+}
+
+/// Find one identity-selected named call in a body for malformed-IR and display-spelling assertions.
+fn canonical_named_target_mut<'module>(
+    module: &'module mut BodyIrModule,
+    body_name: &str,
+    declaration_name: &str,
+) -> Option<&'module mut incan_semantics_core::body_ir::NamedCallableTarget> {
+    module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == body_name)?
+        .block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Call {
+                callee:
+                    incan_semantics_core::body_ir::Callee::Function(
+                        incan_semantics_core::body_ir::CallableTarget::Named(target),
+                    ),
+                ..
+            } if target
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| identity.declaration_name == declaration_name) =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+}
+
 /// Locate the compiler binary built for this integration-test invocation.
 fn incan_binary() -> PathBuf {
     std::env::var_os("CARGO_BIN_EXE_incan")
@@ -206,6 +261,60 @@ def main() -> int:
         execution.body_snapshot.contains("executed direct match arm"),
         "direct execution must retain selected pattern-arm evidence: {}",
         execution.body_snapshot
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Point:
+  x: int
+
+def main() -> int:
+  point = Point(x=42)
+  match point:
+    case Point(x=value):
+      return value
+  return 0
+"#;
+    let mut module = lower_typed_body_ir(source)?;
+    let pattern = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .and_then(|body| {
+            body.block
+                .stmts
+                .iter_mut()
+                .find_map(|statement| match &mut statement.kind {
+                    StatementKind::Assign {
+                        rvalue: Rvalue::Match { arms, .. },
+                        ..
+                    } => arms.first_mut().map(|arm| &mut arm.pattern),
+                    _ => None,
+                })
+        })
+        .ok_or("fixture must lower a nominal pattern")?;
+    let fields = match pattern {
+        incan_semantics_core::body_ir::Pattern::Nominal { fields, .. } => fields.clone(),
+        other => return Err(format!("fixture must retain the nominal identity: {other:?}").into()),
+    };
+    *pattern = incan_semantics_core::body_ir::Pattern::Struct {
+        canonical: None,
+        name: "Point".to_string(),
+        fields,
+    };
+
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(_) => return Err("a pattern without its exact canonical target must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("match pattern without an exact direct target identity")
     );
     Ok(())
 }
@@ -705,6 +814,63 @@ def main() -> int:
     Ok(())
 }
 
+#[test]
+fn replacement_refuses_enum_targets_whose_canonical_member_disagrees_with_the_physical_record()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fieldless_source =
+        "enum Signal:\n  Ready\n  Stop\n\ndef main() -> bool:\n  return Signal.Ready == Signal.Stop\n";
+    let mut fieldless = lower_typed_body_ir(fieldless_source)?;
+    let fieldless_target = fieldless
+        .bodies
+        .iter_mut()
+        .flat_map(|body| &mut body.block.stmts)
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::FieldlessEnumVariant(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("fixture must lower a fieldless-enum member")?;
+    fieldless_target.variant_canonical.declaration_name = "Stop".to_string();
+    let fieldless_error = match execute_free_function(&fieldless, "main", &[]) {
+        Ok(_) => return Err("a mismatched fieldless-enum canonical target must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        fieldless_error
+            .to_string()
+            .contains("without exact canonical source-local owner/member identities")
+    );
+
+    let value_source =
+        "enum Status(int):\n  Ok = 200\n  Missing = 404\n\ndef main() -> int:\n  return Status.Missing.value()\n";
+    let mut value = lower_typed_body_ir(value_source)?;
+    let value_target = value
+        .bodies
+        .iter_mut()
+        .flat_map(|body| &mut body.block.stmts)
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::ValueEnumVariant(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("fixture must lower a value-enum member")?;
+    value_target.enum_canonical.declaration_name = "Other".to_string();
+    let value_error = match execute_free_function(&value, "main", &[]) {
+        Ok(_) => return Err("a mismatched value-enum canonical target must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        value_error
+            .to_string()
+            .contains("without exact canonical source-local owner/member identities")
+    );
+    Ok(())
+}
+
 /// Refuse a constructor whose source-local declaration identity is absent instead of recovering it from its name.
 #[test]
 fn replacement_refuses_an_idless_nominal_constructor_at_its_original_source_span()
@@ -880,6 +1046,67 @@ def main() -> int:
     Ok(())
 }
 
+#[test]
+fn replacement_entrypoint_requires_one_canonical_free_function() -> Result<(), Box<dyn std::error::Error>> {
+    let mut missing_identity = lower_typed_body_ir("def main() -> int:\n  return 42\n")?;
+    missing_identity
+        .bodies
+        .first_mut()
+        .ok_or("fixture must contain main")?
+        .canonical = None;
+    let error = match execute_free_function(&missing_identity, "main", &[]) {
+        Ok(_) => return Err("an entrypoint without canonical authority must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("without an exact canonical free-function identity")
+    );
+
+    let mut mismatched_identity = lower_typed_body_ir("def main() -> int:\n  return 42\n")?;
+    mismatched_identity
+        .bodies
+        .first_mut()
+        .and_then(|body| body.canonical.as_mut())
+        .ok_or("fixture must contain main's canonical identity")?
+        .declaration_name = "not_main".to_string();
+    let error = match execute_free_function(&mismatched_identity, "main", &[]) {
+        Ok(_) => return Err("an entrypoint whose body and requested target disagree must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("without an exact canonical free-function identity")
+    );
+
+    let method_only = lower_typed_body_ir("class App:\n  def main(self) -> int:\n    return 42\n")?;
+    let error = match execute_free_function(&method_only, "main", &[]) {
+        Ok(_) => return Err("a same-named method must not become a free-function entrypoint".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("without an exact canonical free-function identity")
+    );
+
+    let overloaded = lower_typed_body_ir(
+        "def main(value: int) -> int:\n  return value\n\ndef main(value: str) -> int:\n  return 0\n",
+    )?;
+    let error = match execute_free_function(&overloaded, "main", &[ReplacementValue::Int(1)]) {
+        Ok(_) => return Err("an overloaded entrypoint must not select the first body".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("ambiguous overloaded free-function entrypoint")
+    );
+    Ok(())
+}
+
 /// Refuse an unimplemented dict aggregate at its original source span.
 #[test]
 fn replacement_refuses_unsupported_body_ir_with_the_original_source_span() -> Result<(), Box<dyn std::error::Error>> {
@@ -971,6 +1198,38 @@ def main() -> int:
     assert!(
         execution.body_snapshot.contains("yield"),
         "the Body-IR proof must retain a yield rather than materializing an eager list"
+    );
+    Ok(())
+}
+
+/// A checked method's retained canonical target, rather than its display spelling, is the replacement dispatch
+/// authority. Removing that authority must fail closed before the deferred generator can be consumed.
+#[test]
+fn replacement_dispatches_generator_methods_by_canonical_target_and_refuses_absent_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def main() -> int:
+  values = (value * 10 for value in range(1, 5) if value > 2).collect()
+  return values[0] + values[1]
+"#;
+    let mut renamed = lower_typed_body_ir(source)?;
+    canonical_collect_target_mut(&mut renamed)
+        .ok_or("fixture must retain the canonical Generator.collect target")?
+        .name = "not_collect".to_string();
+    let execution = execute_free_function(&renamed, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(70));
+
+    let mut missing = lower_typed_body_ir(source)?;
+    canonical_collect_target_mut(&mut missing)
+        .ok_or("fixture must retain the canonical Generator.collect target")?
+        .canonical = None;
+    let error = match execute_free_function(&missing, "main", &[]) {
+        Ok(_) => return Err("a source method without its canonical target must fail closed".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error.primary_span().is_some() && error.to_string().contains("method `collect`"),
+        "the missing method authority must refuse at the original call: {error}"
     );
     Ok(())
 }
@@ -1290,8 +1549,45 @@ def main() -> int:
     assert!(
         error
             .to_string()
-            .contains("body does not retain its canonical declaration identity"),
-        "the refusal must identify the malformed retained body identity: {error}"
+            .contains("canonical target disagrees with its physical Body-IR declaration"),
+        "the refusal must identify the mismatched semantic and physical declaration identities: {error}"
+    );
+    Ok(())
+}
+
+/// Named-call dispatch follows the retained declaration identity, never the source/display spelling. Removing the
+/// canonical half of that handoff must refuse even when the physical same-module id remains present.
+#[test]
+fn replacement_dispatches_named_calls_by_canonical_target_and_refuses_absent_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def helper() -> int:
+  return 42
+
+def main() -> int:
+  return helper()
+"#;
+    let mut renamed = lower_typed_body_ir(source)?;
+    canonical_named_target_mut(&mut renamed, "main", "helper")
+        .ok_or("fixture must lower the canonical helper call")?
+        .name = "not_helper".to_string();
+    assert_eq!(
+        execute_free_function(&renamed, "main", &[])?.value,
+        ReplacementValue::Int(42),
+        "the retained canonical target must select helper independently of its display spelling"
+    );
+
+    let mut missing = lower_typed_body_ir(source)?;
+    canonical_named_target_mut(&mut missing, "main", "helper")
+        .ok_or("fixture must lower the canonical helper call")?
+        .canonical = None;
+    let error = match execute_free_function(&missing, "main", &[]) {
+        Ok(_) => return Err("a physical direct-call id without its canonical target must fail closed".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error.primary_span().is_some() && error.to_string().contains("without a canonical declaration target"),
+        "the missing named-call authority must refuse at the original call: {error}"
     );
     Ok(())
 }
@@ -1900,31 +2196,53 @@ def main() -> int:
     Ok(())
 }
 
-/// Refuse lexical shadowing until Body IR carries an explicit binding-equivalence fact direct frames can honor.
+/// Execute explicit `let` shadowing from the canonical locals selected by Body IR, without recovering by name.
 #[test]
-fn replacement_refuses_lexically_shadowed_bindings() -> Result<(), Box<dyn std::error::Error>> {
+fn replacement_executes_let_shadowing_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
+  mut total = 0
   x = 1
   if true:
     let x = 2
-  return x
+    total += x
+  return total + x
 "#;
     let module = lower_typed_body_ir(source)?;
-    let error = match execute_free_function(&module, "main", &[]) {
-        Ok(execution) => {
-            return Err(format!("shadowing must refuse directly, got {:?}", execution.value).into());
-        }
-        Err(error) => error,
-    };
-    let expected_start = source
-        .find("let x = 2")
-        .ok_or("shadowing fixture must contain the inner binding")?;
-    let span = error
-        .primary_span()
-        .ok_or("shadowing refusal must retain the inner binding span")?;
-    assert_eq!(span.start, expected_start);
-    assert!(error.to_string().contains("repeated user binding"));
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("shadowing fixture must lower `main`")?;
+    let x_locals = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("x"))
+        .collect::<Vec<_>>();
+    assert_eq!(x_locals.len(), 2, "the outer and inner declarations must both survive");
+    assert_ne!(x_locals[0].id, x_locals[1].id);
+    assert_ne!(x_locals[0].identity, x_locals[1].identity);
+
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(3));
+    Ok(())
+}
+
+/// `mut` is also a declaration form: its inner value must not overwrite the same-spelled outer local.
+#[test]
+fn replacement_executes_mut_shadowing_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def main() -> int:
+  mut total = 0
+  mut x = 4
+  if true:
+    mut x = 7
+    total += x
+  return total + x
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(11));
     Ok(())
 }
 
@@ -4054,25 +4372,21 @@ fn both_backends_render_a_multi_argument_print_the_same_way() -> Result<(), Box<
 }
 
 #[test]
-fn replacement_print_respects_a_source_declaration_that_shadows_the_builtin() -> Result<(), Box<dyn std::error::Error>>
-{
-    // Resolving the builtin from a registry must not steal a name the source declared. A module defining its own
-    // `print` means that declaration, and lowering only marks the builtin when nothing in source took the spelling.
+fn replacement_rejects_a_source_declaration_that_redefines_immutable_print() -> Result<(), Box<dyn std::error::Error>> {
+    // `print` is an immutable language function. Replacement lowering only receives programs that have already
+    // passed the shared frontend contract, so redefining it must fail before Body IR can assign it another meaning.
     let source = r#"
 def print(value: int) -> int:
   return value + 1
-
-def main() -> int:
-  return print(41)
 "#;
-    let module = lower_typed_body_ir(source)?;
-    let execution = execute_free_function(&module, "main", &[])?;
-
-    assert_eq!(execution.value, ReplacementValue::Int(42));
+    let Err(error) = lower_typed_body_ir(source) else {
+        return Err("a source declaration named `print` must fail type checking".into());
+    };
     assert!(
-        execution.emitted_output().is_empty(),
-        "a shadowing declaration must not emit builtin output: {:?}",
-        execution.emitted_output()
+        error
+            .to_string()
+            .contains("Cannot redefine immutable built-in function 'print'"),
+        "the frontend must report the immutable builtin contract, got: {error}"
     );
     Ok(())
 }

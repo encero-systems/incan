@@ -98,20 +98,32 @@ impl AstLowering {
                 return AssignTarget::StaticBinding(name.to_string());
             }
             if scope_idx == 0 && direct_static {
-                return AssignTarget::Static(name.to_string());
+                return AssignTarget::Static {
+                    name: name.to_string(),
+                    reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+                };
             }
             return AssignTarget::Var(name.to_string());
         }
 
         if direct_static {
-            AssignTarget::Static(name.to_string())
+            AssignTarget::Static {
+                name: name.to_string(),
+                reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+            }
         } else {
             AssignTarget::Var(name.to_string())
         }
     }
 
     fn make_static_binding_expr(&self, name: String, ty: IrType) -> TypedExpr {
-        TypedExpr::new(IrExprKind::StaticBinding { name }, ty)
+        TypedExpr::new(
+            IrExprKind::StaticBinding {
+                name,
+                reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+            },
+            ty,
+        )
     }
 
     /// Register all loop bindings before lowering the loop body so body reads resolve to local variables.
@@ -1011,7 +1023,7 @@ impl AstLowering {
 
                         if var_exists_in_scope {
                             let target = self.resolve_named_assign_target(&a.name);
-                            if matches!(target, AssignTarget::Static(_)) {
+                            if matches!(target, AssignTarget::Static { .. }) {
                                 self.update_local_callable_signature(&a.name, local_callable_signature);
                                 return Ok(IrStmt::new(IrStmtKind::Assign {
                                     target,
@@ -1465,9 +1477,13 @@ impl AstLowering {
                 let assign_target = self.resolve_named_assign_target(&ca.name);
                 let lhs_ty = self.lookup_var(&ca.name);
                 let lhs_expr = match &assign_target {
-                    AssignTarget::Static(_) => {
-                        TypedExpr::new(IrExprKind::StaticRead { name: ca.name.clone() }, lhs_ty.clone())
-                    }
+                    AssignTarget::Static { reference_kind, .. } => TypedExpr::new(
+                        IrExprKind::StaticRead {
+                            name: ca.name.clone(),
+                            reference_kind: *reference_kind,
+                        },
+                        lhs_ty.clone(),
+                    ),
                     AssignTarget::StaticBinding(_) => TypedExpr::new(
                         IrExprKind::Var {
                             name: ca.name.clone(),
@@ -1954,7 +1970,7 @@ impl AstLowering {
     ) -> Option<AssertIsPattern<'a>> {
         match &pattern.node {
             ast::Pattern::Constructor(name, args)
-                if name == constructors::as_str(ConstructorId::None) && args.is_empty() =>
+                if name.node == constructors::as_str(ConstructorId::None) && args.is_empty() =>
             {
                 Some(AssertIsPattern {
                     kind: AssertIsPatternKind::None,
@@ -1963,7 +1979,7 @@ impl AstLowering {
                 })
             }
             ast::Pattern::Constructor(name, args) => {
-                let kind = match name.as_str() {
+                let kind = match name.node.as_str() {
                     n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
                     n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
                     n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,

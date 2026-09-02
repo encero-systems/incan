@@ -454,7 +454,7 @@ impl TypeChecker {
         let owner_subst =
             crate::frontend::resolved_type_subst::type_param_subst_map(owner_type_params, concrete_type_args);
         for adoption in adoptions {
-            let Some(adopted_info) = self.lookup_semantic_trait_info(&adoption.name) else {
+            let Some(adopted_info) = self.lookup_trait_adoption_info(adoption) else {
                 continue;
             };
             let direct_args = if adoption.type_args.is_empty() {
@@ -654,7 +654,7 @@ impl TypeChecker {
         &self,
         bound: &str,
     ) -> Option<(Vec<String>, String)> {
-        if let Some(path) = self.import_aliases.get(bound)
+        if let Some(path) = self.import_binding_path(bound)
             && path.len() >= 2
         {
             let trait_name = path.last()?.clone();

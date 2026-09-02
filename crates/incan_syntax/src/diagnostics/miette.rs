@@ -72,12 +72,30 @@ impl IncanDiagnostic {
 
         // Combine hints into help text
         let help = if error.hints.is_empty() && error.notes.is_empty() {
-            None
+            if error.related_declarations().is_empty() {
+                None
+            } else {
+                Some(
+                    error
+                        .related_declarations()
+                        .iter()
+                        .map(|related| format!("note: {}: {}", related.label, related.identity.render_compact()))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            }
         } else {
             let mut help_text = String::new();
             for note in &error.notes {
                 help_text.push_str("note: ");
                 help_text.push_str(note);
+                help_text.push('\n');
+            }
+            for related in error.related_declarations() {
+                help_text.push_str("note: ");
+                help_text.push_str(&related.label);
+                help_text.push_str(": ");
+                help_text.push_str(&related.identity.render_compact());
                 help_text.push('\n');
             }
             for hint in &error.hints {

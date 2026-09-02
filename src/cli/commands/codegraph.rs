@@ -16,17 +16,19 @@ use incan_codegraph::{
     CODEGRAPH_SCHEMA_VERSION, CodegraphCBindingBuffer, CodegraphCBindingCallRecord, CodegraphCBindingEnum,
     CodegraphCBindingEnumVariant, CodegraphCBindingFacadeRecord, CodegraphCBindingOutcome, CodegraphCBindingParameter,
     CodegraphCBindingRecord, CodegraphCBindingResource, CodegraphCBindingStruct, CodegraphCBindingStructField,
-    CodegraphCBindingSymbol, CodegraphCBindingType, CodegraphCallRecord, CodegraphComponentSelectionReason,
-    CodegraphContainmentRecord, CodegraphDeclarationRecord, CodegraphDependencyFeatureProjection,
-    CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedSpan, CodegraphExportRecord, CodegraphFeatureActivationReason,
-    CodegraphFeatureReasonProjection, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphImportRecord,
-    CodegraphLanguage, CodegraphMode, CodegraphModuleRecord, CodegraphPackage, CodegraphPackageFeatureProjection,
-    CodegraphProvenance, CodegraphProviderParticipation, CodegraphProviderProjection, CodegraphProviderProvenance,
-    CodegraphRecord, CodegraphReferenceRecord, CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
-    CodegraphSdkComponentProjection, CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, to_jsonl,
+    CodegraphCBindingSymbol, CodegraphCBindingType, CodegraphCallRecord, CodegraphCanonicalSymbolId,
+    CodegraphComponentSelectionReason, CodegraphContainmentRecord, CodegraphDeclarationRecord,
+    CodegraphDependencyFeatureProjection, CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedDeclaration,
+    CodegraphDiagnosticRelatedSpan, CodegraphExportRecord, CodegraphFeatureActivationReason,
+    CodegraphFeatureReasonProjection, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphIdentitySpan,
+    CodegraphImportBinding, CodegraphImportRecord, CodegraphLanguage, CodegraphMode, CodegraphModuleRecord,
+    CodegraphPackage, CodegraphPackageFeatureProjection, CodegraphProvenance, CodegraphProviderParticipation,
+    CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord, CodegraphReferenceRecord,
+    CodegraphRegistryRecord, CodegraphRegistryReexportProjection, CodegraphSdkComponentProjection,
+    CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
 };
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
-use incan_semantics_core::{CompilerNodeId, SemanticModuleSnapshot, SemanticSourceTarget};
+use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
 use crate::cli::prelude::ParsedModule;
@@ -37,7 +39,6 @@ use crate::frontend::ast::{
     RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use crate::frontend::diagnostics::{self, StableDiagnostic};
-use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::registry_metadata::{
     CheckedRegistryMetadataModule, CheckedRegistrySubjectKind, CheckedRegistryValue, collect_checked_registry_metadata,
 };
@@ -108,13 +109,24 @@ fn collect_codegraph_records(
             builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
             builder.set_registry_metadata(analysis.registry_metadata_by_path);
             builder.set_c_abi_artifacts(analysis.c_abi_by_path);
-            builder.seed_source_target_ids(&modules);
+            builder.seed_canonical_target_ids(&modules);
             for module in &modules {
                 builder.collect_parsed_module(module, Vec::new());
             }
         } else {
+            let parsed_paths = modules
+                .iter()
+                .map(|module| module.file_path.clone())
+                .collect::<BTreeSet<_>>();
+            for module in &modules {
+                builder.collect_parsed_module_with_degraded(
+                    module,
+                    diagnostics_for_file(&analysis.diagnostics, &module.file_path),
+                    true,
+                );
+            }
             let mut sessions = BTreeMap::new();
-            for file in &files {
+            for file in files.iter().filter(|file| !parsed_paths.contains(*file)) {
                 let project_root = resolve_project_root(file);
                 if !sessions.contains_key(&project_root) {
                     sessions.insert(
@@ -146,10 +158,13 @@ fn collect_codegraph_records(
                 builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
                 builder.set_registry_metadata(analysis.registry_metadata_by_path);
                 builder.set_c_abi_artifacts(analysis.c_abi_by_path);
-                builder.seed_source_target_ids(&modules);
+                builder.seed_canonical_target_ids(&modules);
                 for module in &modules {
-                    builder
-                        .collect_parsed_module(module, diagnostics_for_file(&analysis.diagnostics, &module.file_path));
+                    builder.collect_parsed_module_with_degraded(
+                        module,
+                        diagnostics_for_file(&analysis.diagnostics, &module.file_path),
+                        !analysis.diagnostics.is_empty(),
+                    );
                 }
                 builder.collect_diagnostics(analysis.diagnostics);
             }
@@ -242,27 +257,28 @@ fn directory_modules_diagnostics_and_info(
         }
     }
 
-    if diagnostics.is_empty() {
-        Ok((
-            modules_by_path.into_values().collect(),
-            CheckedCodegraphAnalysis {
-                diagnostics,
-                semantic_snapshots_by_path,
-                registry_metadata_by_path,
-                c_abi_by_path,
+    let has_diagnostics = !diagnostics.is_empty();
+    Ok((
+        modules_by_path.into_values().collect(),
+        CheckedCodegraphAnalysis {
+            diagnostics,
+            semantic_snapshots_by_path: if has_diagnostics {
+                BTreeMap::new()
+            } else {
+                semantic_snapshots_by_path
             },
-        ))
-    } else {
-        Ok((
-            Vec::new(),
-            CheckedCodegraphAnalysis {
-                diagnostics,
-                semantic_snapshots_by_path: BTreeMap::new(),
-                registry_metadata_by_path: BTreeMap::new(),
-                c_abi_by_path: BTreeMap::new(),
+            registry_metadata_by_path: if has_diagnostics {
+                BTreeMap::new()
+            } else {
+                registry_metadata_by_path
             },
-        ))
-    }
+            c_abi_by_path: if has_diagnostics {
+                BTreeMap::new()
+            } else {
+                c_abi_by_path
+            },
+        },
+    ))
 }
 
 /// Run typechecking and keep reusable semantic artifacts when the checked graph succeeds.
@@ -672,7 +688,7 @@ struct CodegraphBuilder {
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
-    source_target_ids: BTreeMap<(Vec<String>, String, String), String>,
+    canonical_target_ids: BTreeMap<CanonicalSymbolId, String>,
 }
 
 /// Compact source declaration facts used before serializing a public declaration record.
@@ -705,7 +721,7 @@ impl CodegraphBuilder {
             semantic_snapshots_by_path: BTreeMap::new(),
             registry_metadata_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
-            source_target_ids: BTreeMap::new(),
+            canonical_target_ids: BTreeMap::new(),
         }
     }
 
@@ -724,80 +740,36 @@ impl CodegraphBuilder {
         self.c_abi_by_path = c_abi_by_path;
     }
 
-    /// Precompute declaration ids for source targets before body facts are emitted.
+    /// Precompute declaration record ids from compiler-owned canonical identities before body facts are emitted.
     ///
-    /// Body facts consume typechecker-proven target artifacts. This map only connects those artifacts to declaration
-    /// records that this export will emit, including public source reexports whose declaration identity lives in
-    /// another module.
-    fn seed_source_target_ids(&mut self, modules: &[ParsedModule]) {
+    /// A target id is only an export-local linkage projection. The canonical identity is the key and remains present
+    /// on a reference even when its declaration lies outside this export.
+    fn seed_canonical_target_ids(&mut self, modules: &[ParsedModule]) {
         for module in modules {
+            let Some(snapshot) = self.semantic_snapshots_by_path.get(&module.file_path) else {
+                continue;
+            };
             for (index, declaration) in module.ast.declarations.iter().enumerate() {
                 let Some(summary) = declaration_summary(&declaration.node) else {
                     continue;
                 };
                 let declaration_id = declaration_id(module, declaration, index);
-                for module_path in source_module_target_paths(module) {
-                    self.source_target_ids.insert(
-                        (module_path, summary.name.clone(), summary.kind.clone()),
-                        declaration_id.clone(),
-                    );
+                let canonical = snapshot.hir.declarations.iter().find_map(|checked| {
+                    (checked.span.start == declaration.span.start
+                        && checked.span.end == declaration.span.end
+                        && checked.name.as_deref() == Some(summary.name.as_str()))
+                    .then(|| checked.canonical.clone())
+                    .flatten()
+                });
+                if let Some(canonical) = canonical
+                    && canonical.declaration_span.start == declaration.span.start
+                    && canonical.declaration_span.end == declaration.span.end
+                    && matches!(&canonical.origin, SymbolOrigin::Module(path) if path == &module.path_segments)
+                {
+                    self.canonical_target_ids.insert(canonical, declaration_id);
                 }
             }
         }
-
-        for _ in 0..modules.len() {
-            let before = self.source_target_ids.len();
-            for module in modules {
-                self.seed_import_source_target_ids(module);
-            }
-            if self.source_target_ids.len() == before {
-                break;
-            }
-        }
-    }
-
-    /// Connect one module's source imports/reexports to already-known source declaration ids.
-    fn seed_import_source_target_ids(&mut self, module: &ParsedModule) {
-        for declaration in &module.ast.declarations {
-            let Declaration::Import(import) = &declaration.node else {
-                continue;
-            };
-            let ImportKind::From {
-                module: imported,
-                items,
-            } = &import.kind
-            else {
-                continue;
-            };
-            if imported.parent_levels != 0 {
-                continue;
-            }
-            let target_module_path = canonicalize_source_module_segments(&imported.segments);
-            for item in items {
-                let local_name = item.alias.as_ref().unwrap_or(&item.name);
-                let Some((target_kind, target_id)) =
-                    self.source_target_id_for_module_name(&target_module_path, &item.name)
-                else {
-                    continue;
-                };
-                for module_path in source_module_target_paths(module) {
-                    self.source_target_ids.insert(
-                        (module_path, local_name.clone(), target_kind.clone()),
-                        target_id.clone(),
-                    );
-                }
-            }
-        }
-    }
-
-    /// Return the first known source target id for one module/name pair.
-    fn source_target_id_for_module_name(&self, module_path: &[String], name: &str) -> Option<(String, String)> {
-        self.source_target_ids
-            .iter()
-            .find(|((candidate_module_path, candidate_name, _), _)| {
-                candidate_module_path == module_path && candidate_name == name
-            })
-            .map(|((_, _, kind), id)| (kind.clone(), id.clone()))
     }
 
     /// Recover as much source structure as possible after the ordinary entrypoint collection path failed.
@@ -842,7 +814,7 @@ impl CodegraphBuilder {
                     source,
                     ast,
                 };
-                self.collect_module_records(&module, &file_id, Vec::new());
+                self.collect_module_records_with_degraded(&module, &file_id, true);
             }
             Err(errors) => {
                 self.ensure_file_record(path, &source, true);
@@ -865,14 +837,23 @@ impl CodegraphBuilder {
 
     /// Add graph records for one module that was already parsed by the canonical collection path.
     fn collect_parsed_module(&mut self, module: &ParsedModule, diagnostics: Vec<StableDiagnostic>) {
-        let degraded = !diagnostics.is_empty();
+        self.collect_parsed_module_with_degraded(module, diagnostics, false);
+    }
+
+    /// Add parsed module records, optionally marking the whole record set degraded because checked facts were lost.
+    fn collect_parsed_module_with_degraded(
+        &mut self,
+        module: &ParsedModule,
+        diagnostics: Vec<StableDiagnostic>,
+        force_degraded: bool,
+    ) {
+        let degraded = force_degraded || !diagnostics.is_empty();
         let file_id = self.ensure_file_record(&module.file_path, &module.source, degraded);
-        self.collect_module_records(module, &file_id, diagnostics);
+        self.collect_module_records_with_degraded(module, &file_id, degraded);
     }
 
     /// Add file, module, and module-containment facts before descending into declarations.
-    fn collect_module_records(&mut self, module: &ParsedModule, file_id: &str, diagnostics: Vec<StableDiagnostic>) {
-        let degraded = !diagnostics.is_empty();
+    fn collect_module_records_with_degraded(&mut self, module: &ParsedModule, file_id: &str, degraded: bool) {
         let module_id = module_id(module);
         if self.module_ids.insert(module_id.clone()) {
             let module_span = source_span(&module.file_path, &module.source, Span::new(0, module.source.len()));
@@ -1103,17 +1084,27 @@ impl CodegraphBuilder {
 
     /// Add declaration, import, export, and containment records for a parsed module body.
     fn collect_program_records(&mut self, module: &ParsedModule, module_id: &str, degraded: bool) {
-        self.index_module_declaration_targets(module);
         for (index, declaration) in module.ast.declarations.iter().enumerate() {
             match &declaration.node {
                 Declaration::Import(import) => {
                     let import_id = import_id(module, index);
+                    let import_bindings = self.import_canonical_bindings(module, declaration.span);
+                    let import_provenance = if import_bindings
+                        .iter()
+                        .any(|binding| binding.canonical_identity.is_some())
+                    {
+                        CodegraphProvenance::Checked
+                    } else {
+                        CodegraphProvenance::Syntax
+                    };
                     self.records.push(CodegraphRecord::Import(import_record(
                         module,
                         module_id,
                         &import_id,
                         import,
                         declaration.span,
+                        import_bindings.clone(),
+                        import_provenance,
                         degraded,
                     )));
                     self.records.push(CodegraphRecord::Containment(containment_record(
@@ -1127,6 +1118,10 @@ impl CodegraphBuilder {
                     )));
                     if import.visibility == Visibility::Public {
                         for name in import_export_names(import) {
+                            let canonical_identity = import_bindings
+                                .iter()
+                                .find(|binding| binding.local_name == name)
+                                .and_then(|binding| binding.canonical_identity.clone());
                             self.records.push(CodegraphRecord::Export(export_record(
                                 module,
                                 module_id,
@@ -1134,6 +1129,7 @@ impl CodegraphBuilder {
                                 &name,
                                 "import",
                                 declaration.span,
+                                canonical_identity,
                                 degraded,
                             )));
                         }
@@ -1145,6 +1141,10 @@ impl CodegraphBuilder {
                     let Some(summary) = declaration_summary(&declaration.node) else {
                         continue;
                     };
+                    let canonical_identity = self
+                        .declaration_canonical_identity(module, declaration.span, &summary.name)
+                        .cloned();
+                    let wire_identity = canonical_identity.as_ref().map(codegraph_canonical_identity);
                     self.records
                         .push(CodegraphRecord::Declaration(CodegraphDeclarationRecord {
                             id: declaration_id.clone(),
@@ -1155,8 +1155,9 @@ impl CodegraphBuilder {
                             visibility: visibility_spelling(summary.visibility).to_string(),
                             type_params: summary.type_params,
                             signature: summary.signature,
+                            canonical_identity: wire_identity.clone(),
                             span: Some(source_span(&module.file_path, &module.source, declaration.span)),
-                            provenance: CodegraphProvenance::Syntax,
+                            provenance: provenance_for_identity(canonical_identity.as_ref()),
                             degraded,
                         }));
                     self.records.push(CodegraphRecord::Containment(containment_record(
@@ -1176,27 +1177,12 @@ impl CodegraphBuilder {
                             &summary.name,
                             "declaration",
                             declaration.span,
+                            wire_identity,
                             degraded,
                         )));
                     }
                     self.collect_declaration_body_records(module, module_id, &declaration_id, declaration, degraded);
                 }
-            }
-        }
-    }
-
-    /// Index declaration ids before walking bodies so forward calls can resolve to later declarations in the module.
-    fn index_module_declaration_targets(&mut self, module: &ParsedModule) {
-        for (index, declaration) in module.ast.declarations.iter().enumerate() {
-            let Some(summary) = declaration_summary(&declaration.node) else {
-                continue;
-            };
-            let declaration_id = declaration_id(module, declaration, index);
-            for module_path in source_module_target_paths(module) {
-                self.source_target_ids.insert(
-                    (module_path, summary.name.clone(), summary.kind.clone()),
-                    declaration_id.clone(),
-                );
             }
         }
     }
@@ -1524,6 +1510,7 @@ impl CodegraphBuilder {
                     args.len(),
                     type_args.len(),
                     expr.span,
+                    codegraph_callee_identity_span(callee),
                     degraded,
                 );
                 self.collect_expr(module, module_id, owner_id, callee, degraded);
@@ -1540,6 +1527,7 @@ impl CodegraphBuilder {
                     "method",
                     args.len(),
                     type_args.len(),
+                    expr.span,
                     expr.span,
                     degraded,
                 );
@@ -1573,6 +1561,7 @@ impl CodegraphBuilder {
                     "constructor",
                     args.len(),
                     0,
+                    expr.span,
                     expr.span,
                     degraded,
                 );
@@ -1696,6 +1685,7 @@ impl CodegraphBuilder {
                         args.len(),
                         0,
                         expr.span,
+                        expr.span,
                         degraded,
                     );
                     for arg in args {
@@ -1745,8 +1735,12 @@ impl CodegraphBuilder {
         degraded: bool,
     ) {
         let id = self.next_body_fact_id("reference", module, span, name);
-        let target_id = self.source_target_id(module, span);
-        let provenance = provenance_for_target(target_id.as_ref());
+        let canonical_identity = self.source_canonical_identity(module, span).cloned();
+        let target_id = canonical_identity
+            .as_ref()
+            .and_then(|identity| self.canonical_target_ids.get(identity))
+            .cloned();
+        let provenance = provenance_for_identity(canonical_identity.as_ref());
         self.records.push(CodegraphRecord::Reference(CodegraphReferenceRecord {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
@@ -1755,6 +1749,7 @@ impl CodegraphBuilder {
             name: name.to_string(),
             kind: kind.to_string(),
             target_id,
+            canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
             span: Some(source_span(&module.file_path, &module.source, span)),
             provenance,
             degraded,
@@ -1784,11 +1779,16 @@ impl CodegraphBuilder {
         argument_count: usize,
         type_argument_count: usize,
         span: Span,
+        target_span: Span,
         degraded: bool,
     ) {
         let id = self.next_body_fact_id("call", module, span, callee);
-        let target_id = self.source_target_id(module, span);
-        let provenance = provenance_for_target(target_id.as_ref());
+        let canonical_identity = self.source_canonical_identity(module, target_span).cloned();
+        let target_id = canonical_identity
+            .as_ref()
+            .and_then(|identity| self.canonical_target_ids.get(identity))
+            .cloned();
+        let provenance = provenance_for_identity(canonical_identity.as_ref());
         self.records.push(CodegraphRecord::Call(CodegraphCallRecord {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
@@ -1799,6 +1799,7 @@ impl CodegraphBuilder {
             argument_count,
             type_argument_count,
             target_id,
+            canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
             span: Some(source_span(&module.file_path, &module.source, span)),
             provenance,
             degraded,
@@ -1981,28 +1982,85 @@ impl CodegraphBuilder {
         }
     }
 
-    /// Return a declaration record id for a compiler-proven source target at `span`.
-    fn source_target_id(&self, module: &ParsedModule, span: Span) -> Option<String> {
+    /// Return the canonical identity the typechecker proved for one source reference.
+    fn source_canonical_identity(&self, module: &ParsedModule, span: Span) -> Option<&CanonicalSymbolId> {
         let module_identity = incan_semantics_core::module_identity_for_path(&module.path_segments);
         let subject = CompilerNodeId::expression_span(&module_identity, span.start, span.end);
-        let target = self
-            .semantic_snapshots_by_path
+        self.semantic_snapshots_by_path
             .get(&module.file_path)?
             .facts
-            .source_targets_for(&subject)
-            .next()?;
-        self.declaration_id_for_source_target(target)
+            .symbol_identities_for(&subject)
+            .next()
     }
 
-    /// Resolve one source target artifact to an emitted declaration id.
-    fn declaration_id_for_source_target(&self, target: &SemanticSourceTarget) -> Option<String> {
-        self.source_target_ids
-            .get(&(
-                target.module_path.clone(),
-                target.name.clone(),
-                target.kind.as_str().to_string(),
-            ))
-            .cloned()
+    /// Return the canonical identity minted for one emitted top-level declaration.
+    fn declaration_canonical_identity(
+        &self,
+        module: &ParsedModule,
+        span: Span,
+        name: &str,
+    ) -> Option<&CanonicalSymbolId> {
+        self.semantic_snapshots_by_path
+            .get(&module.file_path)?
+            .hir
+            .declarations
+            .iter()
+            .find(|declaration| {
+                declaration.span.start == span.start
+                    && declaration.span.end == span.end
+                    && declaration.name.as_deref() == Some(name)
+            })?
+            .canonical
+            .as_ref()
+    }
+
+    /// Return every checked binding introduced by one import declaration.
+    fn import_canonical_bindings(&self, module: &ParsedModule, span: Span) -> Vec<CodegraphImportBinding> {
+        self.semantic_snapshots_by_path
+            .get(&module.file_path)
+            .into_iter()
+            .flat_map(|snapshot| snapshot.hir.declarations.iter())
+            .filter(|declaration| {
+                declaration.kind == incan_semantics_core::HirDeclarationKind::Import
+                    && declaration.span.start == span.start
+                    && declaration.span.end == span.end
+            })
+            .filter_map(|declaration| {
+                Some(CodegraphImportBinding {
+                    local_name: declaration.name.clone()?,
+                    canonical_identity: declaration.canonical.as_ref().map(codegraph_canonical_identity),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Project the compiler identity into the storage-neutral codegraph wire shape.
+fn codegraph_canonical_identity(identity: &CanonicalSymbolId) -> CodegraphCanonicalSymbolId {
+    let origin = match &identity.origin {
+        SymbolOrigin::Module(path) => CodegraphSymbolOrigin::Module { path: path.clone() },
+        SymbolOrigin::Package { library, module_path } => CodegraphSymbolOrigin::Package {
+            library: library.clone(),
+            module_path: module_path.clone(),
+        },
+        SymbolOrigin::RustCrate(path) => CodegraphSymbolOrigin::RustCrate { path: path.clone() },
+        SymbolOrigin::Builtin => CodegraphSymbolOrigin::Builtin,
+    };
+    CodegraphCanonicalSymbolId {
+        namespace: match identity.namespace {
+            incan_semantics_core::SymbolNamespace::OrdinaryLexical => "ordinary_lexical",
+            incan_semantics_core::SymbolNamespace::Member => "member",
+            incan_semantics_core::SymbolNamespace::ModulePath => "module_path",
+        }
+        .to_string(),
+        origin,
+        declaration_name: identity.declaration_name.clone(),
+        declaration_kind: identity.kind.as_str().to_string(),
+        scope_discriminant: identity.scope_discriminant.map(|scope| scope.0),
+        declaration_span: CodegraphIdentitySpan {
+            start: identity.declaration_span.start,
+            end: identity.declaration_span.end,
+        },
     }
 }
 
@@ -2285,22 +2343,20 @@ const fn checked_registry_subject_kind(kind: CheckedRegistrySubjectKind) -> &'st
     }
 }
 
-/// Return module path spellings that can refer to one parsed source module in checked target artifacts.
-fn source_module_target_paths(module: &ParsedModule) -> Vec<Vec<String>> {
-    let mut paths = BTreeSet::new();
-    paths.insert(module.path_segments.clone());
-    if let Some(stem) = module.file_path.file_stem().and_then(|stem| stem.to_str()) {
-        paths.insert(vec![stem.to_string()]);
-    }
-    paths.into_iter().collect()
-}
-
-/// Return provenance for body facts that may carry compiler-checked source targets.
-fn provenance_for_target(target_id: Option<&String>) -> CodegraphProvenance {
-    if target_id.is_some() {
+/// Return provenance for body facts that may carry compiler-checked canonical identity.
+fn provenance_for_identity(identity: Option<&CanonicalSymbolId>) -> CodegraphProvenance {
+    if identity.is_some() {
         CodegraphProvenance::Checked
     } else {
         CodegraphProvenance::Syntax
+    }
+}
+
+/// Return the source node on which expression checking records a direct callee identity.
+fn codegraph_callee_identity_span(callee: &Spanned<Expr>) -> Span {
+    match &callee.node {
+        Expr::Paren(inner) => codegraph_callee_identity_span(inner),
+        _ => callee.span,
     }
 }
 
@@ -2346,6 +2402,8 @@ fn import_record(
     import_id: &str,
     import: &ImportDecl,
     span: Span,
+    bindings: Vec<CodegraphImportBinding>,
+    provenance: CodegraphProvenance,
     degraded: bool,
 ) -> CodegraphImportRecord {
     let (kind, path, items) = import_shape(import);
@@ -2356,10 +2414,11 @@ fn import_record(
         kind,
         path,
         items,
+        bindings,
         alias: import.alias.clone(),
         visibility: visibility_spelling(import.visibility).to_string(),
         span: Some(source_span(&module.file_path, &module.source, span)),
-        provenance: CodegraphProvenance::Syntax,
+        provenance,
         degraded,
     }
 }
@@ -2394,6 +2453,7 @@ fn export_record(
     name: &str,
     kind: &str,
     span: Span,
+    canonical_identity: Option<CodegraphCanonicalSymbolId>,
     degraded: bool,
 ) -> CodegraphExportRecord {
     CodegraphExportRecord {
@@ -2403,8 +2463,13 @@ fn export_record(
         name: name.to_string(),
         kind: kind.to_string(),
         source_id: source_id.to_string(),
+        canonical_identity: canonical_identity.clone(),
         span: Some(source_span(&module.file_path, &module.source, span)),
-        provenance: CodegraphProvenance::Syntax,
+        provenance: if canonical_identity.is_some() {
+            CodegraphProvenance::Checked
+        } else {
+            CodegraphProvenance::Syntax
+        },
         degraded,
     }
 }
@@ -2448,6 +2513,14 @@ fn diagnostic_record(index: usize, diagnostic: &StableDiagnostic) -> CodegraphDi
                     end_line: related.span.end.line,
                     end_column: related.span.end.column,
                 },
+                label: related.label.clone(),
+            })
+            .collect(),
+        related_declarations: diagnostic
+            .related_declarations
+            .iter()
+            .map(|related| CodegraphDiagnosticRelatedDeclaration {
+                identity: codegraph_canonical_identity(&related.identity),
                 label: related.label.clone(),
             })
             .collect(),

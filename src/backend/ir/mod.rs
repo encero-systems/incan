@@ -51,6 +51,7 @@ pub use types::{IrType, Mutability, Ownership};
 
 use crate::frontend::ast::Span;
 use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
+use incan_semantics_core::{CanonicalSymbolId, encode_incan_symbol_identity};
 use std::collections::HashMap;
 
 /// Function signature for call-site type checking
@@ -149,6 +150,22 @@ impl FunctionSignature {
 pub struct FunctionRegistry {
     /// Map from function name to its signature
     signatures: HashMap<String, FunctionSignature>,
+    /// Source declaration spelling for each emitted/local registry key.
+    source_names: HashMap<String, String>,
+    /// Compiler-owned identity for each backend registry key that projects an Incan declaration.
+    canonical_identities: HashMap<String, CanonicalSymbolId>,
+    /// Exact compiler-created projection-to-registry-key relationship.
+    ///
+    /// This is intentionally not populated by decoding generated names. Semantic consumers can follow this map only
+    /// because lowering inserted both sides from the same canonical identity.
+    projection_targets: HashMap<String, String>,
+    /// Physical Rust identifiers for compiler-generated functions whose registry keys are deliberately not source
+    /// identifiers.
+    ///
+    /// Generated declarations use collision-proof internal keys so a valid Incan declaration can never overwrite
+    /// their registry metadata merely by matching a hidden helper spelling. Emission follows this compiler-created
+    /// map; semantic stages never recover meaning from the physical name.
+    generated_physical_names: HashMap<String, String>,
 }
 
 impl FunctionRegistry {
@@ -166,7 +183,54 @@ impl FunctionRegistry {
 
     /// Register a function signature
     pub fn register(&mut self, name: String, params: Vec<FunctionParam>, return_type: IrType) {
+        self.source_names.entry(name.clone()).or_insert_with(|| name.clone());
         self.signatures.insert(name, FunctionSignature { params, return_type });
+    }
+
+    /// Register an emitted projection while retaining its compiler-known source declaration spelling.
+    pub fn register_projection(
+        &mut self,
+        emitted_name: String,
+        source_name: String,
+        params: Vec<FunctionParam>,
+        return_type: IrType,
+    ) {
+        self.source_names.insert(emitted_name.clone(), source_name);
+        self.signatures
+            .insert(emitted_name, FunctionSignature { params, return_type });
+    }
+
+    /// Register a compiler-generated function under a collision-proof internal key and retain its physical Rust name.
+    pub fn register_generated(
+        &mut self,
+        registry_name: String,
+        physical_name: String,
+        source_name: String,
+        params: Vec<FunctionParam>,
+        return_type: IrType,
+    ) {
+        self.source_names.insert(registry_name.clone(), source_name);
+        self.generated_physical_names
+            .insert(registry_name.clone(), physical_name);
+        self.signatures
+            .insert(registry_name, FunctionSignature { params, return_type });
+    }
+
+    /// Register an Incan-origin function projection from its compiler-owned canonical identity.
+    pub fn register_canonical_projection(
+        &mut self,
+        registry_name: String,
+        source_name: String,
+        identity: CanonicalSymbolId,
+        params: Vec<FunctionParam>,
+        return_type: IrType,
+    ) {
+        let projection = encode_incan_symbol_identity(&identity);
+        self.source_names.insert(registry_name.clone(), source_name);
+        self.canonical_identities.insert(registry_name.clone(), identity);
+        self.projection_targets.insert(projection, registry_name.clone());
+        self.signatures
+            .insert(registry_name, FunctionSignature { params, return_type });
     }
 
     /// Register a function signature under its canonical module path.
@@ -176,15 +240,75 @@ impl FunctionRegistry {
         }
     }
 
+    /// Register a canonical module path while preserving the source declaration identity that path projects.
+    pub fn register_canonical_path_projection(
+        &mut self,
+        path: &[String],
+        source_name: String,
+        identity: CanonicalSymbolId,
+        params: Vec<FunctionParam>,
+        return_type: IrType,
+    ) {
+        if let Some(key) = Self::canonical_key(path) {
+            self.register_canonical_projection(key, source_name, identity, params, return_type);
+        }
+    }
+
     /// Look up a function signature by name
     pub fn get(&self, name: &str) -> Option<&FunctionSignature> {
-        self.signatures.get(name)
+        self.signatures.get(name).or_else(|| {
+            self.projection_targets
+                .get(name)
+                .and_then(|target| self.signatures.get(target))
+        })
+    }
+
+    /// Return the source declaration spelling retained for one registry key.
+    pub fn source_name(&self, name: &str) -> Option<&str> {
+        self.source_names
+            .get(name)
+            .or_else(|| {
+                self.projection_targets
+                    .get(name)
+                    .and_then(|target| self.source_names.get(target))
+            })
+            .map(String::as_str)
+    }
+
+    /// Return the exact registry key paired with an emitted projection created by lowering.
+    pub fn registry_key<'a>(&'a self, name: &'a str) -> &'a str {
+        self.projection_targets.get(name).map(String::as_str).unwrap_or(name)
+    }
+
+    /// Return the compiler-owned identity retained for one registry key or its exact emitted projection.
+    pub fn canonical_identity(&self, name: &str) -> Option<&CanonicalSymbolId> {
+        self.canonical_identities.get(name).or_else(|| {
+            self.projection_targets
+                .get(name)
+                .and_then(|target| self.canonical_identities.get(target))
+        })
+    }
+
+    /// Return the emitted Rust projection selected for a registered Incan declaration.
+    pub fn emitted_projection(&self, name: &str) -> Option<String> {
+        self.canonical_identity(name).map(encode_incan_symbol_identity)
+    }
+
+    /// Return the exact compiler-selected physical Rust name for a generated function.
+    pub fn generated_physical_name(&self, name: &str) -> Option<&str> {
+        self.generated_physical_names.get(name).map(String::as_str)
     }
 
     /// Look up a function signature by canonical module path.
     pub fn get_canonical_path(&self, path: &[String]) -> Option<&FunctionSignature> {
         let key = Self::canonical_key(path)?;
-        self.signatures.get(&key)
+        self.get(&key)
+    }
+
+    /// Return the canonical identity registered for a canonical module path.
+    pub fn canonical_identity_for_path(&self, path: &[String]) -> Option<&CanonicalSymbolId> {
+        let key = Self::canonical_key(path)?;
+        self.canonical_identity(&key)
     }
 
     /// Iterate over registered function signatures.
@@ -196,6 +320,19 @@ impl FunctionRegistry {
     pub fn merge(&mut self, other: &FunctionRegistry) {
         for (name, sig) in &other.signatures {
             self.signatures.insert(name.clone(), sig.clone());
+        }
+        for (name, source_name) in &other.source_names {
+            self.source_names.insert(name.clone(), source_name.clone());
+        }
+        for (name, identity) in &other.canonical_identities {
+            self.canonical_identities.insert(name.clone(), identity.clone());
+        }
+        for (projection, target) in &other.projection_targets {
+            self.projection_targets.insert(projection.clone(), target.clone());
+        }
+        for (name, physical_name) in &other.generated_physical_names {
+            self.generated_physical_names
+                .insert(name.clone(), physical_name.clone());
         }
     }
 
@@ -479,7 +616,8 @@ impl From<Span> for IrSpan {
 #[cfg(test)]
 mod tests {
     use super::{
-        FunctionParam, FunctionSignature, IrCheckedCFunction, IrCheckedCType, IrType, Mutability, ScalarTypeId,
+        FunctionParam, FunctionRegistry, FunctionSignature, IrCheckedCFunction, IrCheckedCType, IrType, Mutability,
+        ScalarTypeId,
     };
     use incan_core::lang::c_abi::LinkCapabilityId;
 
@@ -504,6 +642,20 @@ mod tests {
 
         assert_ne!(left.rust_name(), right.rust_name());
         assert_ne!(left.ffi_rust_name(), right.ffi_rust_name());
+    }
+
+    #[test]
+    fn function_registry_retains_source_identity_without_parsing_the_emitted_name() {
+        let mut registry = FunctionRegistry::new();
+        registry.register_projection(
+            "opaque_backend_projection".to_string(),
+            "calculate".to_string(),
+            Vec::new(),
+            IrType::Int,
+        );
+        registry.register("opaque_backend_projection".to_string(), Vec::new(), IrType::Int);
+
+        assert_eq!(registry.source_name("opaque_backend_projection"), Some("calculate"));
     }
 
     #[test]

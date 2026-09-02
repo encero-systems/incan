@@ -54,11 +54,10 @@
 //! told. Body IR v0 carries no acknowledgement fact a consumer could weigh, so the honest answer is a named
 //! refusal owned by #1162 rather than a silent inline. See [`BodyBuilder::refuse_unsafe_region`].
 //!
-//! Two coverage limits are silent rather than marked, and both are deliberate. Expression-position `yield` (the
-//! two-way send/receive protocol) is a stub in the existing Rust-emission backend too, so there is no behavior to
-//! preserve; the typechecker rejects a bare `yield` with no value before lowering runs. Newtype and enum method
-//! bodies produce no [`bir::Body`] at all rather than an `Unsupported` one (#1163) -- see
-//! [`lower_owner_method_bodies`].
+//! One coverage limit is silent rather than marked, and it is deliberate. Expression-position `yield` (the two-way
+//! send/receive protocol) is a stub in the existing Rust-emission backend too, so there is no behavior to preserve;
+//! the typechecker rejects a bare `yield` with no value before lowering runs. Model, class, trait-default, newtype,
+//! and enum method bodies all lower through [`lower_owner_method_bodies`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -204,17 +203,17 @@ fn build_body_ir_module_v0_with_provider_operations(
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
-    let nominal_declarations = collect_local_nominal_declarations(program, &module_identity);
+    let nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
     let local_nominal_declarations = nominal_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalNominalDeclarations>();
-    let fieldless_enum_declarations = collect_local_fieldless_enum_declarations(program, &module_identity);
+    let fieldless_enum_declarations = collect_local_fieldless_enum_declarations(program, &module_identity, type_info);
     let local_fieldless_enum_declarations = fieldless_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalFieldlessEnumDeclarations>();
-    let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity);
+    let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity, type_info);
     let local_value_enum_declarations = value_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
@@ -469,6 +468,10 @@ struct BodyBuilder<'type_info, 'source> {
     /// shadow. Nested lowering paths snapshot and restore the map at their lexical boundary, so branch/loop/arm
     /// names remain available to their Body-IR statements without leaking into following source.
     bindings: HashMap<String, bir::LocalId>,
+    /// Canonical source binding -> frame local. This is the semantic lookup used for every resolver-proven read or
+    /// write; [`Self::bindings`] remains only as a lexical bookkeeping projection for lowering constructs that
+    /// introduce and restore source names.
+    identity_bindings: HashMap<CanonicalSymbolId, bir::LocalId>,
     /// Names lowering could not resolve to a tracked local (e.g. module-level `const`/`static`), reused across
     /// repeated reads instead of allocating a fresh external local per read.
     external_locals: HashMap<String, bir::LocalId>,
@@ -514,6 +517,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
+            identity_bindings: HashMap::new(),
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             moved_out: HashSet::new(),
@@ -585,23 +589,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         total_reads: usize,
     ) -> bir::LocalId {
+        let source_span = ast::Span::new(span.start, span.end);
+        let identity = self.type_info.resolved_write_identity(source_span, &name).cloned();
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
             id,
             name: Some(name.clone()),
+            identity: identity.clone(),
             ty,
             origin: bir::LocalOrigin::UserBinding,
             scope,
             span,
         });
         self.bindings.insert(name, id);
+        if let Some(identity) = identity {
+            self.identity_bindings.insert(identity, id);
+        }
         self.remaining_reads.insert(id, total_reads);
         id
     }
 
     /// Declare a method's `self`/`mut self` receiver as a [`bir::LocalOrigin::Receiver`] local, bound under the
-    /// name `"self"` in [`Self::bindings`] exactly like an ordinary local so [`Self::local_for_name`] resolves
+    /// name `"self"` in [`Self::bindings`] exactly like an ordinary local so [`Self::place_for_name`] resolves
     /// `self` reads without a separate lookup path.
     ///
     /// Unlike [`Self::declare_new_local`], no last-use countdown is seeded: a receiver is always a Rust-level
@@ -615,17 +625,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         span: HirSourceSpan,
     ) -> bir::LocalId {
+        let source_span = ast::Span::new(span.start, span.end);
+        let identity = self.type_info.resolved_write_identity(source_span, "self").cloned();
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
             id,
             name: Some("self".to_string()),
+            identity: identity.clone(),
             ty,
             origin: bir::LocalOrigin::Receiver { mutable },
             scope,
             span,
         });
         self.bindings.insert("self".to_string(), id);
+        if let Some(identity) = identity {
+            self.identity_bindings.insert(identity, id);
+        }
         id
     }
 
@@ -638,6 +654,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals.push(bir::LocalDecl {
             id,
             name: None,
+            identity: None,
             ty,
             origin: bir::LocalOrigin::Temporary,
             scope,
@@ -646,13 +663,50 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         id
     }
 
-    /// Resolve a source identifier to a local, synthesizing a cached [`bir::LocalOrigin::External`] local for names
-    /// v0 cannot bind (module-level `const`/`static`, or anything else lowering does not yet track) instead of
-    /// panicking on an unresolved name.
-    fn local_for_name(&mut self, name: &str, span: HirSourceSpan) -> bir::LocalId {
-        if let Some(&id) = self.bindings.get(name) {
-            return id;
+    /// Resolve one source reference from the canonical identity recorded by typechecking.
+    ///
+    /// A proven local identity must select a frame local with that same identity. Proven `const`/`static` references
+    /// become canonical global places. Any other proven identity that has no Body IR value representation returns
+    /// `None`, so the caller emits an explicit unsupported node instead of silently changing meaning through a
+    /// spelling lookup. Only a genuinely unproven reference may use the legacy `External` recovery local.
+    fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
+        if let Some(identity) = self.type_info.resolved_identity(span).cloned() {
+            if let Some(&id) = self.identity_bindings.get(&identity) {
+                return Some(bir::Place::from_local(id));
+            }
+            return self.global_place(identity, ty.clone()).map(bir::Place::from_global);
         }
+
+        Some(bir::Place::from_local(
+            self.external_local_for_name(name, hir_span(span)),
+        ))
+    }
+
+    /// Select a canonical module-storage root when `identity` denotes a `const` or `static`.
+    fn global_place(&self, identity: CanonicalSymbolId, ty: IncanType) -> Option<bir::GlobalPlace> {
+        let write_policy = match identity.kind {
+            SemanticSourceTargetKind::Const => bir::GlobalWritePolicy::ReadOnly,
+            SemanticSourceTargetKind::Static => {
+                let declared_here = identity
+                    .module_path()
+                    .is_some_and(|path| body_ir_module_identity(path) == self.module_identity);
+                if declared_here {
+                    bir::GlobalWritePolicy::Rebindable
+                } else {
+                    bir::GlobalWritePolicy::ProjectionOnly
+                }
+            }
+            _ => return None,
+        };
+        Some(bir::GlobalPlace {
+            identity,
+            ty,
+            write_policy,
+        })
+    }
+
+    /// Allocate the explicit recovery local for a reference whose resolver supplied no identity.
+    fn external_local_for_name(&mut self, name: &str, span: HirSourceSpan) -> bir::LocalId {
         if let Some(&id) = self.external_locals.get(name) {
             return id;
         }
@@ -661,6 +715,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals.push(bir::LocalDecl {
             id,
             name: Some(name.to_string()),
+            identity: None,
             ty: IncanType::Unknown,
             origin: bir::LocalOrigin::External,
             scope: bir::ScopeId(0),
@@ -700,7 +755,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             };
             return (fact, false);
         }
-        if self.is_receiver_local(place.local) {
+        let Some(local) = place.local_id() else {
+            return (
+                if is_copy {
+                    bir::OwnershipFact::Copy
+                } else {
+                    bir::OwnershipFact::Clone
+                },
+                false,
+            );
+        };
+        if self.is_receiver_local(local) {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
             } else {
@@ -709,17 +774,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return (fact, false);
         }
         if is_copy {
-            if let Some(remaining) = self.remaining_reads.get_mut(&place.local) {
+            if let Some(remaining) = self.remaining_reads.get_mut(&local) {
                 *remaining = remaining.saturating_sub(1);
             }
             return (bir::OwnershipFact::Copy, false);
         }
-        let Some(remaining) = self.remaining_reads.get_mut(&place.local) else {
+        let Some(remaining) = self.remaining_reads.get_mut(&local) else {
             return (bir::OwnershipFact::Unknown, false);
         };
         *remaining = remaining.saturating_sub(1);
         if *remaining == 0 {
-            self.moved_out.insert(place.local);
+            self.moved_out.insert(local);
             (bir::OwnershipFact::Move, true)
         } else {
             (bir::OwnershipFact::Clone, false)

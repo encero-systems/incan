@@ -5,16 +5,18 @@
 //! early on producer mistakes such as unsupported manifest versions, malformed vocab artifacts, invalid soft-keyword
 //! activations, or helper bindings that drift from the exported library surface.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Component, Path};
 
 use semver::Version;
 
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
-    COMPILED_PROVIDER_METADATA_SCHEMA_VERSION, CompiledProviderMetadata, EnumExport, EnumValueExport,
-    EnumValueTypeExport, FieldVisibilityExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
-    ParamKindExport, PartialExport, ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
+    COMPILED_PROVIDER_METADATA_SCHEMA_VERSION, CanonicalIdentityExport, CanonicalIdentityNamespaceExport,
+    CanonicalIdentityOriginExport, CompiledProviderMetadata, EnumExport, EnumValueExport, EnumValueTypeExport,
+    ExportIdentityKind, ExportIdentityProjection, FieldVisibilityExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport, ParamKindExport,
+    PartialExport, ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
 };
 use crate::frontend::api_metadata::{
     ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION, validate_checked_api_public_namespaces,
@@ -29,10 +31,952 @@ pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), Libr
     validate_field_visibilities(raw)?;
     validate_callable_param_exports(&raw.exports)?;
     validate_value_enum_exports(&raw.exports)?;
+    validate_identity_graph(raw)?;
     validate_contract_metadata(raw)?;
     validate_rust_abi(raw)?;
     validate_vocab_payload(raw)?;
     validate_soft_keyword_activations(raw)?;
+    Ok(())
+}
+
+/// Validate the versioned canonical identity boundary before any consumer hydrates frontend facts from it.
+fn validate_identity_graph(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    let graph = &raw.contract_metadata.identity_graph;
+    if !matches!(
+        graph.schema_version,
+        LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION | LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION
+    ) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "contract_metadata.identity_graph.schema_version {} is unsupported (expected {} or {})",
+            graph.schema_version, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION
+        )));
+    }
+
+    let mut seen = BTreeSet::new();
+    for entry in &graph.exports {
+        if entry.public_name.trim().is_empty() || entry.source_path.is_empty() {
+            return Err(LibraryManifestError::Invalid(
+                "contract_metadata.identity_graph contains an empty public name or source path".to_string(),
+            ));
+        }
+        if entry.public_path.len() < 2
+            || entry.public_path.first() != Some(&raw.name)
+            || entry.public_path.last() != Some(&entry.public_name)
+        {
+            return Err(LibraryManifestError::Invalid(format!(
+                "identity graph entry `{}` has a public path inconsistent with package `{}`",
+                entry.public_name, raw.name
+            )));
+        }
+        match (graph.schema_version, entry.canonical.as_ref()) {
+            (LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, Some(_)) => {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "schema-v1 identity graph entry `{}` cannot publish canonical identity metadata",
+                    entry.public_name
+                )));
+            }
+            (LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, None) => {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "schema-v2 identity graph entry `{}` is missing its canonical identity",
+                    entry.public_name
+                )));
+            }
+            _ => {}
+        }
+        if let Some(identity) = &entry.canonical {
+            validate_canonical_identity(identity, &format!("export `{}`", entry.public_name), false)?;
+            validate_export_identity_binding(raw, entry, identity)?;
+            if graph.schema_version == LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION {
+                if entry.public_path.len() == 2 {
+                    validate_root_identity_graph_backing(raw, entry, identity)?;
+                } else {
+                    validate_nested_identity_graph_backing(raw, entry, identity)?;
+                }
+            }
+            if !seen.insert((entry.public_path.as_slice(), identity)) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "contract_metadata.identity_graph contains duplicate canonical export `{}`",
+                    entry.public_name
+                )));
+            }
+        }
+    }
+
+    let require_members = graph.schema_version == LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION;
+    if require_members {
+        validate_current_identity_graph_coverage(raw)?;
+    }
+    for model in &raw.exports.models {
+        let owner_identity = root_canonical_identity(raw, ExportIdentityKind::Model, &model.name);
+        validate_nominal_member_identities(
+            &format!("model `{}`", model.name),
+            owner_identity,
+            &model.fields,
+            &model.properties,
+            &model.methods,
+            require_members,
+        )?;
+    }
+    for class in &raw.exports.classes {
+        let owner_identity = root_canonical_identity(raw, ExportIdentityKind::Class, &class.name);
+        validate_nominal_member_identities(
+            &format!("class `{}`", class.name),
+            owner_identity,
+            &class.fields,
+            &class.properties,
+            &class.methods,
+            require_members,
+        )?;
+    }
+    for trait_export in &raw.exports.traits {
+        let owner_identity = root_canonical_identity(raw, ExportIdentityKind::Trait, &trait_export.name);
+        validate_method_identities(
+            &format!("trait `{}`", trait_export.name),
+            owner_identity,
+            &trait_export.methods,
+            require_members,
+            None,
+        )?;
+    }
+    for newtype in &raw.exports.newtypes {
+        let owner_identity = root_canonical_identity(raw, ExportIdentityKind::Newtype, &newtype.name);
+        validate_method_identities(
+            &format!("newtype `{}`", newtype.name),
+            owner_identity,
+            &newtype.methods,
+            require_members,
+            None,
+        )?;
+    }
+    for enum_export in &raw.exports.enums {
+        let owner_identity = root_canonical_identity(raw, ExportIdentityKind::Enum, &enum_export.name);
+        let mut seen_members = BTreeSet::new();
+        for variant in &enum_export.variants {
+            validate_member_identity(
+                &format!("enum `{}` variant `{}`", enum_export.name, variant.name),
+                &variant.name,
+                variant.canonical.as_ref(),
+                "variant",
+                owner_identity,
+                require_members,
+            )?;
+            record_member_identity(
+                &format!("enum `{}`", enum_export.name),
+                &variant.name,
+                variant.canonical.as_ref(),
+                &mut seen_members,
+            )?;
+        }
+        validate_method_identities(
+            &format!("enum `{}`", enum_export.name),
+            owner_identity,
+            &enum_export.methods,
+            require_members,
+            Some(&mut seen_members),
+        )?;
+    }
+    Ok(())
+}
+
+/// Bind a package-root v2 identity to its exact checked API declaration whenever API metadata is present.
+///
+/// Current-schema manifests without embedded API metadata remain a supported compact artifact form. Once a producer
+/// publishes both representations, however, the identity graph may not advertise a name/kind/span absent from the
+/// checked API snapshot.
+fn validate_root_identity_graph_backing(
+    raw: &RawLibraryManifest,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<(), LibraryManifestError> {
+    let Some(api) = raw.contract_metadata.api.as_ref() else {
+        return Ok(());
+    };
+    if let ExportIdentityProjection::Reexport { target_path } = &entry.projection {
+        let binding_exists = api.modules.iter().any(|module| {
+            matches!(module.module_path.as_slice(), [root] if root == "lib" || root == "main")
+                && module.declarations.iter().any(|declaration| {
+                    matches!(
+                        declaration,
+                        ApiDeclaration::Alias(alias)
+                            if alias.is_public
+                                && alias.name == entry.public_name
+                                && alias.target_path == *target_path
+                    )
+                })
+        });
+        if binding_exists && package_local_identity_target_matches(raw, api, identity) {
+            return Ok(());
+        }
+        return Err(LibraryManifestError::Invalid(format!(
+            "package-root identity graph entry `{}` is not backed by its checked API declaration",
+            entry.public_name
+        )));
+    }
+    let backing_path = &entry.source_path;
+    let Some((declaration_name, module_path)) = backing_path.split_last() else {
+        return Err(LibraryManifestError::Invalid(format!(
+            "package-root identity graph entry `{}` has no checked API declaration backing",
+            entry.public_name
+        )));
+    };
+    let backed = api
+        .modules
+        .iter()
+        .find(|module| module.module_path == module_path)
+        .is_some_and(|module| {
+            module.declarations.iter().any(|declaration| {
+                api_declaration_backs_identity_entry(
+                    raw,
+                    api,
+                    &module.module_path,
+                    declaration,
+                    declaration_name,
+                    entry,
+                    identity,
+                )
+            })
+        });
+    if !backed {
+        return Err(LibraryManifestError::Invalid(format!(
+            "package-root identity graph entry `{}` is not backed by its checked API declaration",
+            entry.public_name
+        )));
+    }
+    Ok(())
+}
+
+/// Require exact multiset coverage between current-schema raw exports and package-root identity entries.
+///
+/// Deeper public namespace entries are an additional API projection and remain valid. At the package root, however,
+/// every raw declaration must have exactly one graph entry and every graph entry must describe a raw declaration.
+/// Counting by `(kind, public name)` preserves overload sets while rejecting missing, duplicate, and fabricated
+/// roots.
+fn validate_current_identity_graph_coverage(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    let mut required = Vec::<(ExportIdentityKind, String)>::new();
+    let mut add = |kind, name: &str| required.push((kind, name.to_string()));
+    for export in &raw.exports.aliases {
+        add(ExportIdentityKind::Alias, &export.name);
+    }
+    for export in &raw.exports.partials {
+        add(ExportIdentityKind::Partial, &export.name);
+    }
+    for export in &raw.exports.models {
+        add(ExportIdentityKind::Model, &export.name);
+    }
+    for export in &raw.exports.classes {
+        add(ExportIdentityKind::Class, &export.name);
+    }
+    for export in &raw.exports.functions {
+        add(ExportIdentityKind::Function, &export.name);
+    }
+    for export in &raw.exports.traits {
+        add(ExportIdentityKind::Trait, &export.name);
+    }
+    for export in &raw.exports.enums {
+        add(ExportIdentityKind::Enum, &export.name);
+    }
+    for export in &raw.exports.type_aliases {
+        add(ExportIdentityKind::TypeAlias, &export.name);
+    }
+    for export in &raw.exports.newtypes {
+        add(ExportIdentityKind::Newtype, &export.name);
+    }
+    for export in &raw.exports.consts {
+        add(ExportIdentityKind::Const, &export.name);
+    }
+    for export in &raw.exports.statics {
+        add(ExportIdentityKind::Static, &export.name);
+    }
+
+    let required = required
+        .into_iter()
+        .fold(std::collections::BTreeMap::new(), |mut counts, key| {
+            *counts.entry(key).or_insert(0usize) += 1;
+            counts
+        });
+    let published = raw
+        .contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .filter(|entry| entry.public_path.len() == 2)
+        .fold(std::collections::BTreeMap::new(), |mut counts, entry| {
+            *counts.entry((entry.kind, entry.public_name.clone())).or_insert(0usize) += 1;
+            counts
+        });
+    for (key, required_count) in &required {
+        let published_count = published.get(key).copied().unwrap_or(0);
+        if published_count != *required_count {
+            return Err(LibraryManifestError::Invalid(format!(
+                "schema-v2 identity graph publishes {published_count} root {:?} identities named `{}` for {required_count} raw declarations",
+                key.0, key.1
+            )));
+        }
+    }
+    if let Some(((kind, name), count)) = published.iter().find(|(key, _)| !required.contains_key(*key)) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "schema-v2 identity graph publishes {count} unbacked root {kind:?} identities named `{name}`"
+        )));
+    }
+    Ok(())
+}
+
+/// Bind one graph entry's canonical identity to the exact source/projection path the entry publishes.
+fn validate_export_identity_binding(
+    raw: &RawLibraryManifest,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<(), LibraryManifestError> {
+    let expected_kind = match entry.kind {
+        ExportIdentityKind::Function => Some("function"),
+        ExportIdentityKind::Partial => Some("partial"),
+        ExportIdentityKind::Alias => None,
+        ExportIdentityKind::TypeAlias => Some("type_alias"),
+        ExportIdentityKind::Model => Some("model"),
+        ExportIdentityKind::Class => Some("class"),
+        ExportIdentityKind::Trait => Some("trait"),
+        ExportIdentityKind::Enum => Some("enum"),
+        ExportIdentityKind::Newtype => raw
+            .exports
+            .newtypes
+            .iter()
+            .find(|newtype| newtype.name == entry.public_name)
+            .map(|newtype| if newtype.is_rusttype { "rusttype" } else { "newtype" }),
+        ExportIdentityKind::Const => Some("const"),
+        ExportIdentityKind::Static => Some("static"),
+    };
+    if let Some(expected_kind) = expected_kind
+        && identity.kind != expected_kind
+    {
+        return Err(LibraryManifestError::Invalid(format!(
+            "identity graph entry `{}` publishes canonical kind `{}` instead of `{expected_kind}`",
+            entry.public_name, identity.kind
+        )));
+    }
+
+    let authoritative_path = match &entry.projection {
+        ExportIdentityProjection::Direct => {
+            if matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Partial) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph entry `{}` uses a direct projection for {:?}",
+                    entry.public_name, entry.kind
+                )));
+            }
+            if !matches!(
+                &identity.origin,
+                CanonicalIdentityOriginExport::Package { library, .. } if library == &raw.name
+            ) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph direct export `{}` has a canonical origin outside manifest package `{}`",
+                    entry.public_name, raw.name
+                )));
+            }
+            if entry.public_name != identity.declaration_name
+                || entry.source_path.last() != Some(&identity.declaration_name)
+            {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph direct export `{}` does not name its canonical declaration",
+                    entry.public_name
+                )));
+            }
+            &entry.source_path
+        }
+        ExportIdentityProjection::Alias { target_path } => {
+            if !matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Function) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph entry `{}` uses an alias projection for {:?}",
+                    entry.public_name, entry.kind
+                )));
+            }
+            if entry.source_path.last() != Some(&entry.public_name) || target_path.is_empty() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph alias `{}` has an invalid source or target path",
+                    entry.public_name
+                )));
+            }
+            target_path
+        }
+        ExportIdentityProjection::Reexport { target_path } => {
+            if !matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Function) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph entry `{}` uses a reexport projection for {:?}",
+                    entry.public_name, entry.kind
+                )));
+            }
+            if entry.source_path != *target_path {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph reexport `{}` has different source and target paths",
+                    entry.public_name
+                )));
+            }
+            target_path
+        }
+        ExportIdentityProjection::Partial {
+            target_path,
+            target_kind,
+        } => {
+            if entry.kind != ExportIdentityKind::Partial
+                || matches!(target_kind, super::PartialTargetKindExport::Unknown)
+                || target_path.is_empty()
+            {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph partial `{}` has an invalid target projection",
+                    entry.public_name
+                )));
+            }
+            if entry.public_name != identity.declaration_name
+                || entry.source_path.last() != Some(&identity.declaration_name)
+            {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "identity graph partial `{}` does not name its canonical declaration",
+                    entry.public_name
+                )));
+            }
+            &entry.source_path
+        }
+    };
+    if authoritative_path.is_empty() || !canonical_identity_matches_path(raw, identity, authoritative_path) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "identity graph entry `{}` canonical identity disagrees with its authoritative source/projection path",
+            entry.public_name
+        )));
+    }
+
+    if entry.public_path.len() == 2 {
+        match (&entry.kind, &entry.projection) {
+            (ExportIdentityKind::Alias, ExportIdentityProjection::Alias { target_path })
+            | (ExportIdentityKind::Alias, ExportIdentityProjection::Reexport { target_path }) => {
+                let raw_alias = raw
+                    .exports
+                    .aliases
+                    .iter()
+                    .find(|alias| alias.name == entry.public_name && alias.target_path == *target_path);
+                let Some(raw_alias) = raw_alias else {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "identity graph alias `{}` projection disagrees with its raw export",
+                        entry.public_name
+                    )));
+                };
+                validate_alias_callable_metadata(
+                    &format!("identity graph alias `{}`", entry.public_name),
+                    &entry.public_name,
+                    identity,
+                    raw_alias
+                        .projected_function
+                        .as_ref()
+                        .map(|function| function.name.as_str()),
+                )?;
+            }
+            (
+                ExportIdentityKind::Partial,
+                ExportIdentityProjection::Partial {
+                    target_path,
+                    target_kind,
+                },
+            ) => {
+                let matches_raw = raw.exports.partials.iter().any(|partial| {
+                    partial.name == entry.public_name
+                        && partial.target_path == *target_path
+                        && partial.target_kind == *target_kind
+                });
+                if !matches_raw {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "identity graph partial `{}` projection disagrees with its raw export",
+                        entry.public_name
+                    )));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Require a callable alias projection to agree with the canonical target it advertises.
+fn validate_alias_callable_metadata(
+    owner: &str,
+    public_name: &str,
+    identity: &CanonicalIdentityExport,
+    projected_function_name: Option<&str>,
+) -> Result<(), LibraryManifestError> {
+    let projected_function_name = match (identity.kind.as_str(), projected_function_name) {
+        ("function" | "partial" | "builtin", Some(projected_function_name)) => projected_function_name,
+        ("function" | "partial" | "builtin", None) => {
+            return Err(LibraryManifestError::Invalid(format!(
+                "{owner} has a canonical callable target without callable metadata"
+            )));
+        }
+        (_, Some(_)) => {
+            return Err(LibraryManifestError::Invalid(format!(
+                "{owner} publishes callable metadata for non-callable canonical kind `{}`",
+                identity.kind
+            )));
+        }
+        (_, None) => return Ok(()),
+    };
+    if projected_function_name != public_name {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} callable projection is named `{}` instead of `{public_name}`",
+            projected_function_name
+        )));
+    }
+    Ok(())
+}
+
+/// Bind a deeper v2 graph entry to the checked API namespace member and declaration that actually exports it.
+fn validate_nested_identity_graph_backing(
+    raw: &RawLibraryManifest,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<(), LibraryManifestError> {
+    if entry.public_path.len() == 2 {
+        return Ok(());
+    }
+    let Some(api) = raw.contract_metadata.api.as_ref() else {
+        return Err(LibraryManifestError::Invalid(format!(
+            "identity graph entry `{}` has no checked API namespace backing",
+            entry.public_name
+        )));
+    };
+    let namespace_path = &entry.public_path[1..entry.public_path.len() - 1];
+    let Some(namespace) = api
+        .public_namespaces
+        .iter()
+        .find(|namespace| namespace.path == namespace_path)
+    else {
+        return Err(LibraryManifestError::Invalid(format!(
+            "identity graph entry `{}` has no checked API namespace backing",
+            entry.public_name
+        )));
+    };
+    let backed = namespace
+        .members
+        .iter()
+        .filter(|member| member.name == entry.public_name)
+        .any(|member| {
+            let Some((declaration_name, module_path)) = member.source_path.split_last() else {
+                return false;
+            };
+            api.modules
+                .iter()
+                .find(|module| module.module_path == module_path)
+                .is_some_and(|module| {
+                    module.declarations.iter().any(|declaration| {
+                        api_declaration_backs_identity_entry(
+                            raw,
+                            api,
+                            &module.module_path,
+                            declaration,
+                            declaration_name,
+                            entry,
+                            identity,
+                        )
+                    })
+                })
+        });
+    if !backed {
+        return Err(LibraryManifestError::Invalid(format!(
+            "identity graph entry `{}` is not backed by a checked API namespace declaration",
+            entry.public_name
+        )));
+    }
+    Ok(())
+}
+
+/// Return whether one checked API declaration authorizes the graph kind and projection at its public path.
+fn api_declaration_backs_identity_entry(
+    raw: &RawLibraryManifest,
+    api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+    module_path: &[String],
+    declaration: &ApiDeclaration,
+    declaration_name: &str,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> bool {
+    match declaration {
+        ApiDeclaration::Alias(alias) if alias.name == declaration_name && alias.is_public => {
+            let target_matches = match &entry.projection {
+                ExportIdentityProjection::Alias { target_path }
+                | ExportIdentityProjection::Reexport { target_path } => target_path == &alias.target_path,
+                ExportIdentityProjection::Direct | ExportIdentityProjection::Partial { .. } => false,
+            };
+            if !target_matches || !matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Function) {
+                return false;
+            }
+            if let Some(projected) = &alias.projected_function
+                && projected.source_path != alias.target_path
+            {
+                return false;
+            }
+            validate_alias_callable_metadata(
+                &format!("checked API alias `{}`", alias.name),
+                &entry.public_name,
+                identity,
+                alias
+                    .projected_function
+                    .as_ref()
+                    .map(|projected| projected.callable.name.as_str()),
+            )
+            .is_ok()
+                && package_local_identity_target_matches(raw, api, identity)
+        }
+        ApiDeclaration::Partial(partial) if partial.name == declaration_name => {
+            entry.kind == ExportIdentityKind::Partial
+                && api_declaration_matches_canonical(
+                    raw,
+                    module_path,
+                    &partial.name,
+                    "partial",
+                    &partial.anchor,
+                    identity,
+                )
+                && matches!(
+                    &entry.projection,
+                    ExportIdentityProjection::Partial { target_path, target_kind }
+                        if target_path == &partial.target_path && target_kind == &partial.target_kind
+                )
+        }
+        declaration
+            if crate::frontend::api_metadata::api_declaration_public_name(declaration) == Some(declaration_name) =>
+        {
+            matches!(&entry.projection, ExportIdentityProjection::Direct)
+                && api_declaration_export_kind(declaration) == Some(entry.kind)
+                && api_declaration_identity_parts(declaration).is_some_and(|(name, kind, anchor)| {
+                    api_declaration_matches_canonical(raw, module_path, name, kind, anchor, identity)
+                })
+        }
+        _ => false,
+    }
+}
+
+/// Require a package-local alias target to name the exact checked declaration and source span.
+fn package_local_identity_target_matches(
+    raw: &RawLibraryManifest,
+    api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+    identity: &CanonicalIdentityExport,
+) -> bool {
+    let CanonicalIdentityOriginExport::Package { library, module_path } = &identity.origin else {
+        return true;
+    };
+    if library != &raw.name {
+        return true;
+    }
+    api.modules
+        .iter()
+        .find(|module| module.module_path == *module_path)
+        .is_some_and(|module| {
+            module.declarations.iter().any(|declaration| match declaration {
+                ApiDeclaration::Partial(partial) => api_declaration_matches_canonical(
+                    raw,
+                    &module.module_path,
+                    &partial.name,
+                    "partial",
+                    &partial.anchor,
+                    identity,
+                ),
+                declaration => api_declaration_identity_parts(declaration).is_some_and(|(name, kind, anchor)| {
+                    api_declaration_matches_canonical(raw, &module.module_path, name, kind, anchor, identity)
+                }),
+            })
+        })
+}
+
+/// Bind a local checked API declaration to the exact canonical name, kind, module, and source span it authorizes.
+fn api_declaration_matches_canonical(
+    raw: &RawLibraryManifest,
+    module_path: &[String],
+    name: &str,
+    kind: &str,
+    anchor: &crate::frontend::api_metadata::SourceAnchor,
+    identity: &CanonicalIdentityExport,
+) -> bool {
+    identity.declaration_name == name
+        && identity.kind == kind
+        && usize::try_from(identity.declaration_span.start).ok() == Some(anchor.span.start)
+        && usize::try_from(identity.declaration_span.end).ok() == Some(anchor.span.end)
+        && matches!(
+            &identity.origin,
+            CanonicalIdentityOriginExport::Package {
+                library,
+                module_path: identity_module_path,
+            } if library == &raw.name && identity_module_path == module_path
+        )
+}
+
+/// Return the canonical declaration fields represented by one non-projection checked API declaration.
+fn api_declaration_identity_parts(
+    declaration: &ApiDeclaration,
+) -> Option<(&str, &str, &crate::frontend::api_metadata::SourceAnchor)> {
+    match declaration {
+        ApiDeclaration::Function(value) => Some((&value.name, "function", &value.anchor)),
+        ApiDeclaration::Model(value) => Some((&value.name, "model", &value.anchor)),
+        ApiDeclaration::Class(value) => Some((&value.name, "class", &value.anchor)),
+        ApiDeclaration::Trait(value) => Some((&value.name, "trait", &value.anchor)),
+        ApiDeclaration::Enum(value) => Some((&value.name, "enum", &value.anchor)),
+        ApiDeclaration::Newtype(value) => Some((
+            &value.name,
+            if value.is_rusttype { "rusttype" } else { "newtype" },
+            &value.anchor,
+        )),
+        ApiDeclaration::TypeAlias(value) => Some((&value.name, "type_alias", &value.anchor)),
+        ApiDeclaration::Const(value) => Some((&value.name, "const", &value.anchor)),
+        ApiDeclaration::Static(value) => Some((&value.name, "static", &value.anchor)),
+        ApiDeclaration::Alias(_) | ApiDeclaration::Partial(_) => None,
+    }
+}
+
+/// Map one non-projection API declaration to its identity-graph kind.
+fn api_declaration_export_kind(declaration: &ApiDeclaration) -> Option<ExportIdentityKind> {
+    match declaration {
+        ApiDeclaration::Function(_) => Some(ExportIdentityKind::Function),
+        ApiDeclaration::Model(_) => Some(ExportIdentityKind::Model),
+        ApiDeclaration::Class(_) => Some(ExportIdentityKind::Class),
+        ApiDeclaration::Trait(_) => Some(ExportIdentityKind::Trait),
+        ApiDeclaration::Enum(_) => Some(ExportIdentityKind::Enum),
+        ApiDeclaration::Newtype(_) => Some(ExportIdentityKind::Newtype),
+        ApiDeclaration::TypeAlias(_) => Some(ExportIdentityKind::TypeAlias),
+        ApiDeclaration::Const(_) => Some(ExportIdentityKind::Const),
+        ApiDeclaration::Static(_) => Some(ExportIdentityKind::Static),
+        ApiDeclaration::Alias(_) | ApiDeclaration::Partial(_) => None,
+    }
+}
+
+/// Compare a stable compiled identity with one of the explicit source-path encodings emitted by the frontend.
+fn canonical_identity_matches_path(
+    raw: &RawLibraryManifest,
+    identity: &CanonicalIdentityExport,
+    path: &[String],
+) -> bool {
+    let local_path = match &identity.origin {
+        CanonicalIdentityOriginExport::Package { library, module_path } if library == &raw.name => {
+            let mut path = module_path.clone();
+            path.push(identity.declaration_name.clone());
+            path
+        }
+        CanonicalIdentityOriginExport::Package { library, module_path } => {
+            let mut path = vec!["pub".to_string(), library.clone()];
+            path.extend(module_path.iter().cloned());
+            path.push(identity.declaration_name.clone());
+            path
+        }
+        CanonicalIdentityOriginExport::RustCrate { path } => {
+            let mut source = vec!["rust".to_string()];
+            source.extend(path.iter().cloned());
+            if source.last() != Some(&identity.declaration_name) {
+                source.push(identity.declaration_name.clone());
+            }
+            source
+        }
+        CanonicalIdentityOriginExport::Builtin => vec![identity.declaration_name.clone()],
+    };
+    local_path == path
+}
+
+fn validate_nominal_member_identities(
+    owner: &str,
+    owner_identity: Option<&CanonicalIdentityExport>,
+    fields: &[super::FieldExport],
+    properties: &[super::PropertyExport],
+    methods: &[super::MethodExport],
+    required: bool,
+) -> Result<(), LibraryManifestError> {
+    let mut seen = BTreeSet::new();
+    for field in fields {
+        validate_member_identity(
+            &format!("{owner} field `{}`", field.name),
+            &field.name,
+            field.canonical.as_ref(),
+            "field",
+            owner_identity,
+            required,
+        )?;
+        record_member_identity(owner, &field.name, field.canonical.as_ref(), &mut seen)?;
+    }
+    for property in properties {
+        validate_member_identity(
+            &format!("{owner} property `{}`", property.name),
+            &property.name,
+            property.canonical.as_ref(),
+            "property",
+            owner_identity,
+            required,
+        )?;
+        record_member_identity(owner, &property.name, property.canonical.as_ref(), &mut seen)?;
+    }
+    validate_method_identities(owner, owner_identity, methods, required, Some(&mut seen))
+}
+
+fn validate_method_identities(
+    owner: &str,
+    owner_identity: Option<&CanonicalIdentityExport>,
+    methods: &[super::MethodExport],
+    required: bool,
+    mut shared_seen: Option<&mut BTreeSet<(String, CanonicalIdentityExport)>>,
+) -> Result<(), LibraryManifestError> {
+    let mut seen = BTreeSet::new();
+    for method in methods {
+        let expected_name = method.alias_of.as_deref().unwrap_or(&method.name);
+        validate_member_identity(
+            &format!("{owner} method `{}`", method.name),
+            expected_name,
+            method.canonical.as_ref(),
+            "method",
+            owner_identity,
+            required,
+        )?;
+        if let Some(identity) = &method.canonical
+            && !seen.insert((method.name.clone(), identity))
+        {
+            return Err(LibraryManifestError::Invalid(format!(
+                "{owner} contains duplicate canonical method identity `{}`",
+                method.name
+            )));
+        }
+        if let Some(shared_seen) = shared_seen.as_deref_mut() {
+            record_member_identity(owner, &method.name, method.canonical.as_ref(), shared_seen)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_member_identity(
+    owner: &str,
+    expected_name: &str,
+    identity: Option<&CanonicalIdentityExport>,
+    expected_kind: &str,
+    owner_identity: Option<&CanonicalIdentityExport>,
+    required: bool,
+) -> Result<(), LibraryManifestError> {
+    let Some(identity) = identity else {
+        return if required {
+            Err(LibraryManifestError::Invalid(format!(
+                "{owner} is missing its canonical member identity"
+            )))
+        } else {
+            Ok(())
+        };
+    };
+    if !required {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} cannot publish canonical member metadata in schema v1"
+        )));
+    }
+    validate_canonical_identity(identity, owner, true)?;
+    if identity.kind != expected_kind {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} publishes canonical kind `{}` instead of `{expected_kind}`",
+            identity.kind
+        )));
+    }
+    if identity.declaration_name != expected_name {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} publishes canonical declaration name `{}` instead of `{expected_name}`",
+            identity.declaration_name
+        )));
+    }
+    let Some(owner_identity) = owner_identity else {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} has no canonical owner export"
+        )));
+    };
+    if identity.origin != owner_identity.origin {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} publishes a canonical origin different from its owner declaration"
+        )));
+    }
+    if identity.declaration_span.start < owner_identity.declaration_span.start
+        || identity.declaration_span.end > owner_identity.declaration_span.end
+    {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} publishes a canonical declaration span outside its owner declaration"
+        )));
+    }
+    Ok(())
+}
+
+fn record_member_identity(
+    owner: &str,
+    public_name: &str,
+    identity: Option<&CanonicalIdentityExport>,
+    seen: &mut BTreeSet<(String, CanonicalIdentityExport)>,
+) -> Result<(), LibraryManifestError> {
+    if let Some(identity) = identity
+        && !seen.insert((public_name.to_string(), identity.clone()))
+    {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} contains duplicate canonical member identity `{}`",
+            identity.declaration_name
+        )));
+    }
+    Ok(())
+}
+
+fn root_canonical_identity<'a>(
+    raw: &'a RawLibraryManifest,
+    kind: ExportIdentityKind,
+    name: &str,
+) -> Option<&'a CanonicalIdentityExport> {
+    raw.contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .find(|entry| entry.public_path.len() == 2 && entry.kind == kind && entry.public_name == name)
+        .and_then(|entry| entry.canonical.as_ref())
+}
+
+fn validate_canonical_identity(
+    identity: &CanonicalIdentityExport,
+    owner: &str,
+    member: bool,
+) -> Result<(), LibraryManifestError> {
+    if identity.declaration_name.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} has an empty canonical declaration name"
+        )));
+    }
+    if identity.declaration_span.end < identity.declaration_span.start {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} has an inverted canonical declaration span"
+        )));
+    }
+    if matches!(
+        SemanticSourceTargetKind::from_kind_str(&identity.kind),
+        SemanticSourceTargetKind::Other(_)
+    ) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} has unknown canonical declaration kind `{}`",
+            identity.kind
+        )));
+    }
+    let expected_namespace = if member {
+        CanonicalIdentityNamespaceExport::Member
+    } else {
+        CanonicalIdentityNamespaceExport::OrdinaryLexical
+    };
+    if identity.namespace != expected_namespace {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} has canonical namespace `{:?}` instead of `{:?}`",
+            identity.namespace, expected_namespace
+        )));
+    }
+    match &identity.origin {
+        CanonicalIdentityOriginExport::Package { library, .. } if library.trim().is_empty() => {
+            return Err(LibraryManifestError::Invalid(format!(
+                "{owner} has an empty canonical package origin"
+            )));
+        }
+        CanonicalIdentityOriginExport::RustCrate { path } if path.is_empty() => {
+            return Err(LibraryManifestError::Invalid(format!(
+                "{owner} has an empty canonical Rust origin"
+            )));
+        }
+        _ => {}
+    }
+    if identity.hydrate().is_none() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} cannot hydrate its canonical identity on this compiler target"
+        )));
+    }
     Ok(())
 }
 

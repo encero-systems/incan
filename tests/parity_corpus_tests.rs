@@ -10,11 +10,10 @@
 //!
 //! ## Why these cases
 //!
-//! Per #987's own plan step 3 ("add a narrow source-only seed corpus before public package or Rust-interop
-//! rows"), every seed case here uses a direct-parser/typechecker, generated-project-run, or codegen-snapshot
-//! lane. Package/import, Rust-interop, vocab, and downstream lanes are deferred until the required compiler/ABI
-//! decisions are available (plan step 4). Issue #987 records the expansion criteria; a seed case must never imply
-//! that an unavailable lane has been proven.
+//! The original source-only seed has grown with the RFC 120 cutover matrix. Package/import rows execute the checked
+//! graph and both compiler consumers, while direct replacement package execution stays explicitly unavailable under
+//! #989. The release-artifact row compiles and inspects its pinned native fixture; neither form is mislabeled as a
+//! two-route source-observable execution.
 //!
 //! Each case's `evaluate` function probes the *current* compiler directly (not a fixture snapshot of past output),
 //! so a behavior change shows up as [`parity_corpus::ComparisonOutcome::Mismatch`] the next time this test runs.
@@ -33,13 +32,17 @@ use incan::library_manifest::{CompiledProviderMetadata, LibraryManifest, Provide
 use incan::provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
 use incan_semantics_core::authority::StaticAuthority;
 use incan_semantics_core::receipts::{AttributeSensitivity, ReceiptAttribute, ReceiptStatus, ReplayClassification};
-use incan_semantics_core::{AuthorityMode, CanonicalSymbolId, HirSourceSpan};
+use incan_semantics_core::{
+    AuthorityMode, CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+#[path = "support/emitted_symbol_artifact.rs"]
+mod emitted_symbol_artifact;
 #[path = "support/parity_corpus.rs"]
 mod parity_corpus;
 #[path = "support/shadow_capability.rs"]
@@ -52,8 +55,11 @@ mod shadow_capability;
 const SHADOW_COMPARED_CASE_ID: &str = "replacement-body-v0-001";
 
 use parity_corpus::{
-    BehaviorCategory, ComparisonOutcome, Disposition, EvidenceLane, OverallState, ParityCase, ReceiptRef,
-    validate_corpus,
+    BehaviorCategory, CheckedIdentityGraph, ComparisonOutcome, Disposition, EvidenceLane, IdentityAssertions,
+    IdentityBindingForm, IdentityConformancePlan, IdentityConformanceSubject, IdentityCoverageCell, IdentityNamespace,
+    IdentityReplacementPlan, IdentityScope, IdentitySourceModule, OverallState, ParityCase, ReceiptRef,
+    ReleaseArtifactAssertions, SourceIdentityConformancePlan, behavior_observation_identity, exact_rust_identifier,
+    identity_conformance_evidence_identity, validate_corpus, validate_identity_coverage,
 };
 
 // ============================================================================
@@ -1238,12 +1244,12 @@ fn case_diagnostic_statement_tuple_unpack_of_non_tuple() -> ComparisonOutcome {
 // comparison; each probe asserts that the execution it observed declared that non-green state explicitly rather
 // than leaving it implied.
 //
-// These rows carry a legacy-side corpus receipt because `ReplacementExecutionPlan` -- the corpus's own direct
-// execution shape -- names a function and concrete arguments, with nowhere to name the authority source and
-// provider host a provider operation needs. Their provider executions therefore produce real #986
-// selection/execution receipts inside the probe, which the probe asserts on, rather than corpus-visible
-// `ReceiptRef::ReplacementExecuted` evidence. Binding them into the corpus receipt is corpus-schema work in
-// `tests/support/parity_corpus.rs`, and belongs with #1146's comparison route rather than with this vertical.
+// `ReplacementExecutionPlan` -- the corpus's direct execution shape -- names a function and concrete arguments,
+// with nowhere to name the authority source and provider host a provider operation needs. These callbacks therefore
+// inspect the real provider receipts internally, while the outer corpus row records only a `BehaviorObserved`
+// evidence identity over the callback outcome. It does not fabricate a legacy receipt or borrow the provider's
+// nested receipt as if it authorized the whole row. A corpus-visible provider execution receipt belongs with
+// #1146's explicit comparison route rather than with this vertical.
 
 /// One ledger charge, plus a same-module caller that invokes it.
 ///
@@ -1678,12 +1684,1142 @@ fn case_provider_lifecycle_cleanup() -> ComparisonOutcome {
 }
 
 // ============================================================================
+// RFC 120 identity-conformance corpus
+// ============================================================================
+
+const IDENTITY_PROVIDER_SRC: &str = r#"
+pub def imported_lexical(value: int) -> int:
+    return value
+
+pub def aliased_lexical(value: int) -> int:
+    return value
+
+pub def relayed_lexical(value: int) -> int:
+    return value
+
+pub model ImportedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub model AliasedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub model RelayedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub def imported_path(value: int) -> int:
+    return value
+
+pub def aliased_path(value: int) -> int:
+    return value
+
+"#;
+
+const IDENTITY_FACADE_SRC: &str = r#"
+pub from identity_provider import RelayedMember, relayed_lexical
+"#;
+
+const IDENTITY_MATRIX_SRC: &str = r#"
+from identity_provider import ImportedMember, imported_lexical
+from identity_provider import AliasedMember as MemberAlias, aliased_lexical as lexical_alias
+from identity_facade import RelayedMember as MemberReexport, relayed_lexical as lexical_reexport
+import identity_provider
+import identity_provider as provider_alias
+
+def local_lexical(value: int) -> int:
+    return value
+
+model LocalMember:
+    value: int
+
+    def read(self) -> int:
+        return self.value
+
+def local_lexical_function_scope() -> int:
+    return local_lexical(1)
+
+def local_lexical_block_scope() -> int:
+    if true:
+        return local_lexical(1)
+    return 0
+
+def imported_lexical_function_scope() -> int:
+    return imported_lexical(3)
+
+def imported_lexical_block_scope() -> int:
+    if true:
+        return imported_lexical(3)
+    return 0
+
+def aliased_lexical_function_scope() -> int:
+    return lexical_alias(5)
+
+def aliased_lexical_block_scope() -> int:
+    if true:
+        return lexical_alias(5)
+    return 0
+
+def reexported_lexical_function_scope() -> int:
+    return lexical_reexport(7)
+
+def reexported_lexical_block_scope() -> int:
+    if true:
+        return lexical_reexport(7)
+    return 0
+
+def local_member_function_scope() -> int:
+    local = LocalMember(value=9)
+    return local.read()
+
+def local_member_block_scope() -> int:
+    local = LocalMember(value=10)
+    if true:
+        return local.read()
+    return 0
+
+def imported_member_function_scope() -> int:
+    imported = ImportedMember(value=11)
+    return imported.read()
+
+def imported_member_block_scope() -> int:
+    imported = ImportedMember(value=12)
+    if true:
+        return imported.read()
+    return 0
+
+def aliased_member_function_scope() -> int:
+    aliased = MemberAlias(value=13)
+    return aliased.read()
+
+def aliased_member_block_scope() -> int:
+    aliased = MemberAlias(value=14)
+    if true:
+        return aliased.read()
+    return 0
+
+def reexported_member_function_scope() -> int:
+    relayed = MemberReexport(value=15)
+    return relayed.read()
+
+def reexported_member_block_scope() -> int:
+    relayed = MemberReexport(value=16)
+    if true:
+        return relayed.read()
+    return 0
+
+def imported_path_function_scope() -> int:
+    return identity_provider.imported_path(17)
+
+def imported_path_block_scope() -> int:
+    if true:
+        return identity_provider.imported_path(17)
+    return 0
+
+def aliased_path_function_scope() -> int:
+    return provider_alias.aliased_path(19)
+
+def aliased_path_block_scope() -> int:
+    if true:
+        return provider_alias.aliased_path(19)
+    return 0
+
+"#;
+
+const IDENTITY_MATRIX_MODULES: &[IdentitySourceModule] = &[
+    IdentitySourceModule {
+        name: "identity_provider",
+        path: &["identity_provider"],
+        source: IDENTITY_PROVIDER_SRC,
+        dependencies: &[],
+    },
+    IdentitySourceModule {
+        name: "identity_facade",
+        path: &["identity_facade"],
+        source: IDENTITY_FACADE_SRC,
+        dependencies: &["identity_provider"],
+    },
+    IdentitySourceModule {
+        name: "identity_matrix",
+        path: &["identity_matrix"],
+        source: IDENTITY_MATRIX_SRC,
+        dependencies: &["identity_provider", "identity_facade"],
+    },
+];
+
+struct LexicalIdentityRow<'a> {
+    label: &'a str,
+    binding: IdentityBindingForm,
+    target_module: &'a str,
+    target_name: &'a str,
+    root_binding: &'a str,
+    call: &'a str,
+    function_body: &'a str,
+    block_body: &'a str,
+}
+
+#[derive(Clone, Copy)]
+struct DeclarationSpanSelector<'a> {
+    anchor: &'a str,
+    occurrence: usize,
+}
+
+struct MemberIdentityRow<'a> {
+    label: &'a str,
+    binding: IdentityBindingForm,
+    target_module: &'a str,
+    owner_name: &'a str,
+    owner: DeclarationSpanSelector<'a>,
+    member: DeclarationSpanSelector<'a>,
+    root_binding: &'a str,
+    receiver_call: &'a str,
+    function_body: &'a str,
+    block_body: &'a str,
+}
+
+struct PathIdentityRow<'a> {
+    label: &'a str,
+    binding: IdentityBindingForm,
+    expected_module_path: &'a [&'a str],
+    expected_module_name: &'a str,
+    target_name: &'a str,
+    module_binding: &'a str,
+    call: &'a str,
+    function_body: &'a str,
+    block_body: &'a str,
+}
+
+fn require_same_identity(
+    label: &str,
+    expected: &CanonicalSymbolId,
+    actual: &CanonicalSymbolId,
+    evidence: &mut Vec<String>,
+) -> Result<(), String> {
+    if actual != expected {
+        return Err(format!(
+            "{label} reconstructed or selected the wrong identity: expected {}, got {}",
+            expected.render_compact(),
+            actual.render_compact()
+        ));
+    }
+    evidence.push(format!("{label}: {}", actual.render_compact()));
+    Ok(())
+}
+
+fn require_body_consumer(
+    graph: &CheckedIdentityGraph,
+    body: &str,
+    expected: &CanonicalSymbolId,
+    evidence: &mut Vec<String>,
+    label: &str,
+) -> Result<(), String> {
+    let identities = graph.body_consumer_identities("identity_matrix", body)?;
+    if !identities.iter().any(|identity| identity == expected) {
+        return Err(format!(
+            "{label} Body IR lost {}, retaining {identities:?}",
+            expected.render_compact()
+        ));
+    }
+    evidence.push(format!("{label}: {}", expected.render_compact()));
+    Ok(())
+}
+
+fn verify_lexical_matrix_row(
+    graph: &CheckedIdentityGraph,
+    row: &LexicalIdentityRow<'_>,
+    assertions: &mut IdentityAssertions,
+) -> Result<(), String> {
+    let target = graph.declaration_identity(
+        row.target_module,
+        row.target_name,
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let module_binding = graph.hir_identity("identity_matrix", row.root_binding)?;
+    require_same_identity(
+        &format!("{} lexical/module", row.label),
+        &target,
+        &module_binding,
+        &mut assertions.checked_relations,
+    )?;
+    assertions
+        .hir_consumers
+        .push(format!("{} lexical/module HIR: {}", row.label, target.render_compact()));
+
+    let function_reference = graph.resolved_identity("identity_matrix", row.call, 0)?;
+    require_same_identity(
+        &format!("{} lexical/function", row.label),
+        &target,
+        &function_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.function_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} lexical/function", row.label),
+    )?;
+
+    let block_reference = graph.resolved_identity("identity_matrix", row.call, 1)?;
+    require_same_identity(
+        &format!("{} lexical/block", row.label),
+        &target,
+        &block_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.block_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} lexical/block", row.label),
+    )?;
+    let target_projection = graph.require_emitted_projection(row.target_module, &target)?;
+    let root_projection = graph.require_emitted_projection("identity_matrix", &target)?;
+    let projection_evidence = format!("{target_projection}; {root_projection}");
+    assertions.legacy_projections.push(target_projection);
+    assertions.legacy_projections.push(root_projection);
+    assertions.coverage_cells.extend([
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Lexical,
+            scope: IdentityScope::Module,
+            checked_identity: target.render_compact(),
+            hir_identity: Some(module_binding.render_compact()),
+            body_ir_identity: None,
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Lexical,
+            scope: IdentityScope::Function,
+            checked_identity: function_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(target.render_compact()),
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Lexical,
+            scope: IdentityScope::Block,
+            checked_identity: block_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(target.render_compact()),
+            emitted_projection: Some(projection_evidence),
+        },
+    ]);
+    Ok(())
+}
+
+fn verify_member_matrix_row(
+    graph: &CheckedIdentityGraph,
+    row: &MemberIdentityRow<'_>,
+    assertions: &mut IdentityAssertions,
+) -> Result<(), String> {
+    let owner = graph.declaration_identity_at_source_anchor(
+        row.target_module,
+        row.owner.anchor,
+        row.owner.occurrence,
+        SemanticSourceTargetKind::Model,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    if owner.declaration_name != row.owner_name {
+        return Err(format!(
+            "{} owner span selected `{}` instead of `{}`",
+            row.label, owner.declaration_name, row.owner_name
+        ));
+    }
+    let declared_member = graph.declaration_identity_at_source_anchor(
+        row.target_module,
+        row.member.anchor,
+        row.member.occurrence,
+        SemanticSourceTargetKind::Method,
+        SymbolNamespace::Member,
+    )?;
+    if declared_member.declaration_name != "read"
+        || declared_member.kind != SemanticSourceTargetKind::Method
+        || declared_member.namespace != SymbolNamespace::Member
+    {
+        return Err(format!(
+            "{} member declaration selected a non-method identity: {}",
+            row.label,
+            declared_member.render_compact()
+        ));
+    }
+    if declared_member.declaration_span.start < owner.declaration_span.start
+        || declared_member.declaration_span.end > owner.declaration_span.end
+    {
+        return Err(format!(
+            "{} member declaration {} is outside owner {}",
+            row.label,
+            declared_member.render_compact(),
+            owner.render_compact()
+        ));
+    }
+    let module_binding = graph.hir_identity("identity_matrix", row.root_binding)?;
+    require_same_identity(
+        &format!("{} member/module owner", row.label),
+        &owner,
+        &module_binding,
+        &mut assertions.checked_relations,
+    )?;
+    assertions.hir_consumers.push(format!(
+        "{} member/module HIR owner={} declared-member={}",
+        row.label,
+        owner.render_compact(),
+        declared_member.render_compact()
+    ));
+
+    let function_reference = graph.resolved_identity("identity_matrix", row.receiver_call, 0)?;
+    require_same_identity(
+        &format!("{} member/function", row.label),
+        &declared_member,
+        &function_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.function_body,
+        &declared_member,
+        &mut assertions.body_ir_consumers,
+        &format!("{} member/function", row.label),
+    )?;
+
+    let block_reference = graph.resolved_identity("identity_matrix", row.receiver_call, 1)?;
+    require_same_identity(
+        &format!("{} member/block", row.label),
+        &declared_member,
+        &block_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.block_body,
+        &declared_member,
+        &mut assertions.body_ir_consumers,
+        &format!("{} member/block", row.label),
+    )?;
+    let target_projection = graph.require_emitted_projection(row.target_module, &declared_member)?;
+    let root_projection = graph.require_emitted_projection("identity_matrix", &declared_member)?;
+    let projection_evidence = format!("{target_projection}; {root_projection}");
+    assertions.legacy_projections.push(target_projection);
+    assertions.legacy_projections.push(root_projection);
+    assertions.coverage_cells.extend([
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Member,
+            scope: IdentityScope::Owner,
+            checked_identity: declared_member.render_compact(),
+            hir_identity: None,
+            body_ir_identity: None,
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Member,
+            scope: IdentityScope::Function,
+            checked_identity: function_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(declared_member.render_compact()),
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Member,
+            scope: IdentityScope::Block,
+            checked_identity: block_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(declared_member.render_compact()),
+            emitted_projection: Some(projection_evidence),
+        },
+    ]);
+    Ok(())
+}
+
+fn verify_path_matrix_row(
+    graph: &CheckedIdentityGraph,
+    row: &PathIdentityRow<'_>,
+    assertions: &mut IdentityAssertions,
+) -> Result<(), String> {
+    let module_binding = graph.hir_identity("identity_matrix", row.module_binding)?;
+    let expected_module = CanonicalSymbolId {
+        namespace: SymbolNamespace::ModulePath,
+        origin: SymbolOrigin::Module(
+            row.expected_module_path
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect(),
+        ),
+        declaration_name: row.expected_module_name.to_string(),
+        kind: SemanticSourceTargetKind::Module,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    };
+    require_same_identity(
+        &format!("{} path/module", row.label),
+        &expected_module,
+        &module_binding,
+        &mut assertions.checked_relations,
+    )?;
+    assertions.hir_consumers.push(format!(
+        "{} path/module HIR: {}",
+        row.label,
+        module_binding.render_compact()
+    ));
+    assertions.coverage_cells.push(IdentityCoverageCell {
+        binding: row.binding,
+        namespace: IdentityNamespace::ModulePath,
+        scope: IdentityScope::Module,
+        checked_identity: module_binding.render_compact(),
+        hir_identity: Some(module_binding.render_compact()),
+        body_ir_identity: None,
+        emitted_projection: None,
+    });
+
+    let target = graph.declaration_identity(
+        "identity_provider",
+        row.target_name,
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let function_reference = graph.resolved_identity("identity_matrix", row.call, 0)?;
+    require_same_identity(
+        &format!("{} path/function", row.label),
+        &target,
+        &function_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.function_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} path/function", row.label),
+    )?;
+
+    let block_reference = graph.resolved_identity("identity_matrix", row.call, 1)?;
+    require_same_identity(
+        &format!("{} path/block", row.label),
+        &target,
+        &block_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.block_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} path/block", row.label),
+    )?;
+    assertions
+        .legacy_projections
+        .push(graph.require_emitted_projection("identity_provider", &target)?);
+    assertions
+        .legacy_projections
+        .push(graph.require_emitted_projection("identity_matrix", &target)?);
+    Ok(())
+}
+
+fn verify_wrong_path_target_selection(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let mut assertions = IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations: Vec::new(),
+        hir_consumers: Vec::new(),
+        body_ir_consumers: Vec::new(),
+        legacy_projections: Vec::new(),
+        artifact_observations: Vec::new(),
+    };
+    verify_path_matrix_row(
+        graph,
+        &PathIdentityRow {
+            label: "wrong-target negative",
+            binding: IdentityBindingForm::Import,
+            expected_module_path: &["identity_facade"],
+            expected_module_name: "identity_facade",
+            target_name: "imported_path",
+            module_binding: "identity_provider",
+            call: "identity_provider.imported_path(17)",
+            function_body: "imported_path_function_scope",
+            block_body: "imported_path_block_scope",
+        },
+        &mut assertions,
+    )?;
+    Err("wrong-target module-path selection was incorrectly accepted".to_string())
+}
+
+fn validate_identity_matrix_coverage(cells: &[IdentityCoverageCell]) -> Result<(), String> {
+    let mut expected = BTreeSet::new();
+    for binding in [
+        IdentityBindingForm::Local,
+        IdentityBindingForm::Import,
+        IdentityBindingForm::Alias,
+        IdentityBindingForm::ReExport,
+    ] {
+        for scope in [IdentityScope::Module, IdentityScope::Function, IdentityScope::Block] {
+            expected.insert((binding, IdentityNamespace::Lexical, scope));
+        }
+        for scope in [IdentityScope::Owner, IdentityScope::Function, IdentityScope::Block] {
+            expected.insert((binding, IdentityNamespace::Member, scope));
+        }
+    }
+    for binding in [IdentityBindingForm::Import, IdentityBindingForm::Alias] {
+        expected.insert((binding, IdentityNamespace::ModulePath, IdentityScope::Module));
+    }
+    let actual = cells
+        .iter()
+        .map(|cell| (cell.binding, cell.namespace, cell.scope))
+        .collect::<BTreeSet<_>>();
+    if actual != expected || cells.len() != expected.len() {
+        return Err(format!(
+            "RFC 120 typed coverage differs from the semantically valid contract: missing={:?}, unexpected={:?}",
+            expected.difference(&actual).collect::<Vec<_>>(),
+            actual.difference(&expected).collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
+fn verify_wrong_owner_member_selection(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let mut assertions = IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations: Vec::new(),
+        hir_consumers: Vec::new(),
+        body_ir_consumers: Vec::new(),
+        legacy_projections: Vec::new(),
+        artifact_observations: Vec::new(),
+    };
+    verify_member_matrix_row(
+        graph,
+        &MemberIdentityRow {
+            label: "wrong-owner negative",
+            binding: IdentityBindingForm::Import,
+            target_module: "identity_provider",
+            owner_name: "ImportedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model ImportedMember:",
+                occurrence: 0,
+            },
+            // Occurrence 1 is `AliasedMember.read`, deliberately outside the selected owner declaration span.
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 1,
+            },
+            root_binding: "ImportedMember",
+            receiver_call: "imported.read()",
+            function_body: "imported_member_function_scope",
+            block_body: "imported_member_block_scope",
+        },
+        &mut assertions,
+    )?;
+    Err("wrong-owner member selection was incorrectly accepted".to_string())
+}
+
+fn verify_identity_matrix(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let mut assertions = IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations: Vec::new(),
+        hir_consumers: Vec::new(),
+        body_ir_consumers: Vec::new(),
+        legacy_projections: Vec::new(),
+        artifact_observations: Vec::new(),
+    };
+    for row in [
+        LexicalIdentityRow {
+            label: "local",
+            binding: IdentityBindingForm::Local,
+            target_module: "identity_matrix",
+            target_name: "local_lexical",
+            root_binding: "local_lexical",
+            call: "local_lexical(1)",
+            function_body: "local_lexical_function_scope",
+            block_body: "local_lexical_block_scope",
+        },
+        LexicalIdentityRow {
+            label: "import",
+            binding: IdentityBindingForm::Import,
+            target_module: "identity_provider",
+            target_name: "imported_lexical",
+            root_binding: "imported_lexical",
+            call: "imported_lexical(3)",
+            function_body: "imported_lexical_function_scope",
+            block_body: "imported_lexical_block_scope",
+        },
+        LexicalIdentityRow {
+            label: "alias",
+            binding: IdentityBindingForm::Alias,
+            target_module: "identity_provider",
+            target_name: "aliased_lexical",
+            root_binding: "lexical_alias",
+            call: "lexical_alias(5)",
+            function_body: "aliased_lexical_function_scope",
+            block_body: "aliased_lexical_block_scope",
+        },
+        LexicalIdentityRow {
+            label: "re-export",
+            binding: IdentityBindingForm::ReExport,
+            target_module: "identity_provider",
+            target_name: "relayed_lexical",
+            root_binding: "lexical_reexport",
+            call: "lexical_reexport(7)",
+            function_body: "reexported_lexical_function_scope",
+            block_body: "reexported_lexical_block_scope",
+        },
+    ] {
+        verify_lexical_matrix_row(graph, &row, &mut assertions)?;
+    }
+    for row in [
+        MemberIdentityRow {
+            label: "local",
+            binding: IdentityBindingForm::Local,
+            target_module: "identity_matrix",
+            owner_name: "LocalMember",
+            owner: DeclarationSpanSelector {
+                anchor: "model LocalMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 0,
+            },
+            root_binding: "LocalMember",
+            receiver_call: "local.read()",
+            function_body: "local_member_function_scope",
+            block_body: "local_member_block_scope",
+        },
+        MemberIdentityRow {
+            label: "import",
+            binding: IdentityBindingForm::Import,
+            target_module: "identity_provider",
+            owner_name: "ImportedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model ImportedMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 0,
+            },
+            root_binding: "ImportedMember",
+            receiver_call: "imported.read()",
+            function_body: "imported_member_function_scope",
+            block_body: "imported_member_block_scope",
+        },
+        MemberIdentityRow {
+            label: "alias",
+            binding: IdentityBindingForm::Alias,
+            target_module: "identity_provider",
+            owner_name: "AliasedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model AliasedMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 1,
+            },
+            root_binding: "MemberAlias",
+            receiver_call: "aliased.read()",
+            function_body: "aliased_member_function_scope",
+            block_body: "aliased_member_block_scope",
+        },
+        MemberIdentityRow {
+            label: "re-export",
+            binding: IdentityBindingForm::ReExport,
+            target_module: "identity_provider",
+            owner_name: "RelayedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model RelayedMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 2,
+            },
+            root_binding: "MemberReexport",
+            receiver_call: "relayed.read()",
+            function_body: "reexported_member_function_scope",
+            block_body: "reexported_member_block_scope",
+        },
+    ] {
+        verify_member_matrix_row(graph, &row, &mut assertions)?;
+    }
+    for row in [
+        PathIdentityRow {
+            label: "import",
+            binding: IdentityBindingForm::Import,
+            expected_module_path: &["identity_provider"],
+            expected_module_name: "identity_provider",
+            target_name: "imported_path",
+            module_binding: "identity_provider",
+            call: "identity_provider.imported_path(17)",
+            function_body: "imported_path_function_scope",
+            block_body: "imported_path_block_scope",
+        },
+        PathIdentityRow {
+            label: "alias",
+            binding: IdentityBindingForm::Alias,
+            expected_module_path: &["identity_provider"],
+            expected_module_name: "identity_provider",
+            target_name: "aliased_path",
+            module_binding: "provider_alias",
+            call: "provider_alias.aliased_path(19)",
+            function_body: "aliased_path_function_scope",
+            block_body: "aliased_path_block_scope",
+        },
+    ] {
+        verify_path_matrix_row(graph, &row, &mut assertions)?;
+    }
+    validate_identity_matrix_coverage(&assertions.coverage_cells)?;
+    Ok(assertions)
+}
+
+const LET_SHADOW_SRC: &str = r#"
+def shadow_let() -> int:
+    mut total = 0
+    x = 1
+    if true:
+        let x = 2
+        total += x
+    return total + x
+"#;
+
+const LET_SHADOW_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_let_shadow",
+    path: &["identity_let_shadow"],
+    source: LET_SHADOW_SRC,
+    dependencies: &[],
+}];
+
+const MUT_SHADOW_SRC: &str = r#"
+def shadow_mut() -> int:
+    mut total = 0
+    mut x = 4
+    if true:
+        mut x = 7
+        total += x
+    return total + x
+"#;
+
+const MUT_SHADOW_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_mut_shadow",
+    path: &["identity_mut_shadow"],
+    source: MUT_SHADOW_SRC,
+    dependencies: &[],
+}];
+
+const GENERIC_BINDER_SRC: &str = r#"
+def generic_identity[T](value: T) -> T:
+    return value
+
+def generic_entry() -> int:
+    return generic_identity[int](42)
+"#;
+
+const GENERIC_BINDER_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_generic",
+    path: &["identity_generic"],
+    source: GENERIC_BINDER_SRC,
+    dependencies: &[],
+}];
+
+const BUILTIN_REBINDING_SRC: &str = r#"
+def len(value: int) -> int:
+    return value + 1
+
+def builtin_entry() -> int:
+    return len(4) + std.builtins.len([1, 2, 3])
+"#;
+
+const BUILTIN_REBINDING_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_builtin",
+    path: &["identity_builtin"],
+    source: BUILTIN_REBINDING_SRC,
+    dependencies: &[],
+}];
+
+fn no_replacement_arguments() -> Vec<ReplacementValue> {
+    Vec::new()
+}
+
+fn expected_three() -> ReplacementValue {
+    ReplacementValue::Int(3)
+}
+
+fn expected_eleven() -> ReplacementValue {
+    ReplacementValue::Int(11)
+}
+
+fn expected_forty_two() -> ReplacementValue {
+    ReplacementValue::Int(42)
+}
+
+fn expected_eight() -> ReplacementValue {
+    ReplacementValue::Int(8)
+}
+
+fn verify_shadow_binding(
+    graph: &CheckedIdentityGraph,
+    module: &str,
+    body: &str,
+    declaration_name: &str,
+) -> Result<IdentityAssertions, String> {
+    let outer_declaration = graph.resolved_identity(module, "x", 0)?;
+    let inner_declaration = graph.resolved_identity(module, "x", 1)?;
+    let inner_read = graph.resolved_identity(module, "x", 2)?;
+    let outer_read = graph.resolved_identity(module, "x", 3)?;
+    if outer_declaration == inner_declaration {
+        return Err("same-spelled shadow declarations collapsed to one canonical identity".to_string());
+    }
+    let mut checked_relations = Vec::new();
+    require_same_identity(
+        "inner shadow read",
+        &inner_declaration,
+        &inner_read,
+        &mut checked_relations,
+    )?;
+    require_same_identity(
+        "outer shadow read",
+        &outer_declaration,
+        &outer_read,
+        &mut checked_relations,
+    )?;
+    checked_relations.push(format!(
+        "shadow declarations distinct: {} != {}",
+        outer_declaration.render_compact(),
+        inner_declaration.render_compact()
+    ));
+
+    let locals = graph.body_local_identities(module, body, "x")?;
+    if locals.len() != 2
+        || !locals.iter().any(|identity| identity == &outer_declaration)
+        || !locals.iter().any(|identity| identity == &inner_declaration)
+    {
+        return Err(format!(
+            "Body IR did not retain both canonical shadow locals, got {locals:?}"
+        ));
+    }
+    let function = graph.declaration_identity(
+        module,
+        declaration_name,
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let hir_function = graph.hir_identity(module, declaration_name)?;
+    require_same_identity("shadow entry HIR", &function, &hir_function, &mut checked_relations)?;
+    Ok(IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations,
+        hir_consumers: vec![format!("shadow entry HIR: {}", hir_function.render_compact())],
+        body_ir_consumers: locals
+            .iter()
+            .map(|identity| format!("shadow local: {}", identity.render_compact()))
+            .collect(),
+        legacy_projections: vec![graph.require_emitted_projection(module, &function)?],
+        artifact_observations: Vec::new(),
+    })
+}
+
+fn verify_let_shadow(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    verify_shadow_binding(graph, "identity_let_shadow", "shadow_let", "shadow_let")
+}
+
+fn verify_mut_shadow(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    verify_shadow_binding(graph, "identity_mut_shadow", "shadow_mut", "shadow_mut")
+}
+
+fn verify_generic_binder(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let declaration = graph.resolved_identity("identity_generic", "T", 0)?;
+    let parameter = graph.resolved_identity("identity_generic", "T", 1)?;
+    let return_type = graph.resolved_identity("identity_generic", "T", 2)?;
+    if declaration.kind != SemanticSourceTargetKind::GenericBinder {
+        return Err(format!(
+            "generic declaration did not retain a GenericBinder identity: {}",
+            declaration.render_compact()
+        ));
+    }
+    let mut checked_relations = Vec::new();
+    require_same_identity(
+        "generic binder parameter annotation",
+        &declaration,
+        &parameter,
+        &mut checked_relations,
+    )?;
+    require_same_identity(
+        "generic binder return annotation",
+        &declaration,
+        &return_type,
+        &mut checked_relations,
+    )?;
+    let concrete_int = graph.resolved_identity("identity_generic", "int", 1)?;
+    if concrete_int == declaration || concrete_int.kind == SemanticSourceTargetKind::GenericBinder {
+        return Err(format!(
+            "generic binder collapsed into concrete `int`: binder={}, concrete={}",
+            declaration.render_compact(),
+            concrete_int.render_compact()
+        ));
+    }
+    checked_relations.push(format!(
+        "generic binder/concrete distinct: {} != {}",
+        declaration.render_compact(),
+        concrete_int.render_compact()
+    ));
+    let generic_function = graph.declaration_identity(
+        "identity_generic",
+        "generic_identity",
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let call = graph.resolved_identity("identity_generic", "generic_identity[int](42)", 0)?;
+    require_same_identity(
+        "generic callable selection",
+        &generic_function,
+        &call,
+        &mut checked_relations,
+    )?;
+    let body_consumers = graph.body_consumer_identities("identity_generic", "generic_entry")?;
+    if !body_consumers.iter().any(|identity| identity == &generic_function) {
+        return Err("generic call target did not survive into replacement-facing Body IR".to_string());
+    }
+    let hir_function = graph.hir_identity("identity_generic", "generic_identity")?;
+    require_same_identity(
+        "generic function HIR",
+        &generic_function,
+        &hir_function,
+        &mut checked_relations,
+    )?;
+    Ok(IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations,
+        hir_consumers: vec![format!("generic function HIR: {}", hir_function.render_compact())],
+        body_ir_consumers: body_consumers
+            .iter()
+            .map(|identity| format!("generic Body IR consumer: {}", identity.render_compact()))
+            .collect(),
+        legacy_projections: vec![graph.require_emitted_projection("identity_generic", &generic_function)?],
+        artifact_observations: Vec::new(),
+    })
+}
+
+fn verify_builtin_rebinding(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let local = graph.declaration_identity(
+        "identity_builtin",
+        "len",
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let local_call = graph.resolved_identity("identity_builtin", "len(4)", 0)?;
+    let builtin_call = graph.resolved_identity("identity_builtin", "std.builtins.len([1, 2, 3])", 0)?;
+    if builtin_call.kind != SemanticSourceTargetKind::Builtin
+        || builtin_call.namespace != SymbolNamespace::OrdinaryLexical
+        || builtin_call == local
+    {
+        return Err(format!(
+            "builtin qualification did not stay distinct from the ordinary lexical binding: local={}, builtin={}",
+            local.render_compact(),
+            builtin_call.render_compact()
+        ));
+    }
+    let mut checked_relations = Vec::new();
+    require_same_identity(
+        "ordinary builtin-name rebinding",
+        &local,
+        &local_call,
+        &mut checked_relations,
+    )?;
+    checked_relations.push(format!(
+        "ordinary/builtin distinct: {} != {}",
+        local.render_compact(),
+        builtin_call.render_compact()
+    ));
+    let body_consumers = graph.body_consumer_identities("identity_builtin", "builtin_entry")?;
+    if !body_consumers.iter().any(|identity| identity == &local)
+        || !body_consumers.iter().any(|identity| identity == &builtin_call)
+    {
+        return Err(format!(
+            "Body IR did not retain both local and builtin targets: {body_consumers:?}"
+        ));
+    }
+    let hir_local = graph.hir_identity("identity_builtin", "len")?;
+    require_same_identity(
+        "ordinary builtin-name binding HIR",
+        &local,
+        &hir_local,
+        &mut checked_relations,
+    )?;
+    Ok(IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations,
+        hir_consumers: vec![format!("local len HIR: {}", hir_local.render_compact())],
+        body_ir_consumers: body_consumers
+            .iter()
+            .map(|identity| format!("builtin row Body IR consumer: {}", identity.render_compact()))
+            .collect(),
+        legacy_projections: vec![graph.require_emitted_projection("identity_builtin", &local)?],
+        artifact_observations: Vec::new(),
+    })
+}
+
+fn verify_release_artifact() -> Result<ReleaseArtifactAssertions, String> {
+    static EVIDENCE: OnceLock<Result<ReleaseArtifactAssertions, String>> = OnceLock::new();
+    EVIDENCE
+        .get_or_init(|| {
+            let evidence = emitted_symbol_artifact::verify_pinned_release_artifact()
+                .map_err(|error| format!("pinned release artifact verification failed: {error}"))?;
+            if evidence.recovered_identities.len() != 4
+                || !evidence.saw_generic_u64_specialization
+                || !evidence.saw_non_incan_host_symbol
+            {
+                return Err(format!(
+                    "pinned release artifact returned incomplete evidence: {evidence:?}"
+                ));
+            }
+            Ok(ReleaseArtifactAssertions {
+                assertions: IdentityAssertions {
+                    coverage_cells: Vec::new(),
+                    checked_relations: Vec::new(),
+                    hir_consumers: Vec::new(),
+                    body_ir_consumers: Vec::new(),
+                    legacy_projections: evidence
+                        .recovered_identities
+                        .iter()
+                        .map(|identity| format!("recovered incan-v1: {}", identity.render_compact()))
+                        .collect(),
+                    artifact_observations: vec![
+                        format!("rustc {} optimized v0 artifact", emitted_symbol_artifact::SELECTED_RUST),
+                        "generic specialization u64 recovered".to_string(),
+                        "host_bridge classified as non-Incan".to_string(),
+                        format!(
+                            "artifact bytes baseline={} projected={}",
+                            evidence.baseline_bytes, evidence.projected_bytes
+                        ),
+                        format!(
+                            "identifier bytes baseline={} projected={}",
+                            evidence.baseline_identifier_bytes, evidence.projected_identifier_bytes
+                        ),
+                    ],
+                },
+                fixture_input_identity: evidence.fixture_input_identity,
+                artifact_content_identity: evidence.artifact_content_identity,
+                recovered_observation_identity: evidence.recovered_observation_identity,
+            })
+        })
+        .clone()
+}
+
+// ============================================================================
 // Seed corpus
 // ============================================================================
 
-/// The narrow, source-only seed corpus (#987 plan step 3). Package/import, Rust-interop, vocab, and downstream
-/// rows are deferred to plan step 4 until their compiler/ABI contracts are available; the public parity-corpus
-/// reference and #987 record that expansion boundary.
+/// The stable #987 corpus, including RFC 120's executable checked-identity and artifact-projection rows.
+/// Package/import execution remains a named #989 boundary rather than an inferred success.
 fn seed_corpus() -> Vec<ParityCase> {
     vec![
         ParityCase {
@@ -1695,6 +2831,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_1_SRC,
             evaluate: Some(case_supported_match_exhaustiveness),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1706,6 +2843,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_2_SRC,
             evaluate: Some(case_diagnostic_chained_comparison_rejected),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1717,6 +2855,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_3_SRC,
             evaluate: Some(case_stdlib_runtime_string_membership),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1728,6 +2867,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_4_SRC,
             evaluate: Some(case_generated_artifact_valid_rust_shape),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1739,6 +2879,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_5_SRC,
             evaluate: Some(case_supported_builtin_len_shadowing),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1760,6 +2901,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: CASE_6_SRC,
             evaluate: Some(case_diagnostic_unreachable_code_after_return),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1784,6 +2926,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: CASE_7_SRC,
             evaluate: Some(case_diagnostic_statement_tuple_unpack_of_non_tuple),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1795,6 +2938,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_8_SRC,
             evaluate: Some(case_supported_named_construction_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1806,6 +2950,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_9_SRC,
             evaluate: Some(case_supported_named_call_arguments_reach_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1817,6 +2962,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_10_SRC,
             evaluate: Some(case_supported_await_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1828,6 +2974,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_11_SRC,
             evaluate: Some(case_supported_race_for_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1839,6 +2986,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_12_SRC,
             evaluate: Some(case_supported_literal_spreads_reach_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1850,6 +2998,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_13_SRC,
             evaluate: Some(case_supported_call_spreads_reach_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1861,6 +3010,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_3_SRC,
             evaluate: Some(case_supported_string_membership_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1872,6 +3022,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_15_SRC,
             evaluate: Some(case_supported_bytes_literal_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1883,6 +3034,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_16_SRC,
             evaluate: Some(case_supported_range_value_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1894,6 +3046,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_18_SRC,
             evaluate: Some(case_supported_statement_loop_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1923,6 +3076,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: CASE_19_SRC,
             evaluate: Some(case_unsafe_region_is_a_stated_refusal),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1935,6 +3089,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_20_SRC,
             evaluate: Some(case_pattern_assertion_binding_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1947,6 +3102,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_22_SRC,
             evaluate: Some(case_collection_membership_names_its_container),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1959,6 +3115,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_23_SRC,
             evaluate: Some(case_list_concatenation_is_not_a_primitive_addition),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1971,6 +3128,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_21_SRC,
             evaluate: Some(case_raises_assertion_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1983,6 +3141,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_17_SRC,
             evaluate: Some(case_inactive_feature_body_never_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1995,6 +3154,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_001_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "add",
                 arguments: replacement_body_v0_001_arguments,
@@ -2013,6 +3173,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_002_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "greet",
                 arguments: replacement_body_v0_002_arguments,
@@ -2029,6 +3190,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_003_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "return_owned",
                 arguments: replacement_body_v0_003_arguments,
@@ -2045,6 +3207,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_004_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "control_flow",
                 arguments: replacement_body_v0_004_arguments,
@@ -2061,6 +3224,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_005_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "guarded_floor_div",
                 arguments: replacement_body_v0_005_arguments,
@@ -2077,6 +3241,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_006_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "select_second_pair",
                 arguments: replacement_body_v0_006_arguments,
@@ -2093,6 +3258,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_007_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "collect_lazy_values",
                 arguments: replacement_body_v0_007_arguments,
@@ -2109,6 +3275,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_008_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "stored_closure",
                 arguments: replacement_body_v0_008_arguments,
@@ -2125,6 +3292,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_009_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "partial_defaults",
                 arguments: replacement_body_v0_009_arguments,
@@ -2141,6 +3309,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_010_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "generator_function",
                 arguments: replacement_body_v0_010_arguments,
@@ -2157,6 +3326,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_011_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "generator_adapters",
                 arguments: replacement_body_v0_011_arguments,
@@ -2173,6 +3343,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_012_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "structural_values",
                 arguments: replacement_body_v0_012_arguments,
@@ -2189,6 +3360,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_013_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "nominal_values",
                 arguments: replacement_body_v0_013_arguments,
@@ -2205,6 +3377,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_014_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "value_enum_values",
                 arguments: replacement_body_v0_014_arguments,
@@ -2221,6 +3394,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_015_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "fieldless_enum_values",
                 arguments: replacement_body_v0_015_arguments,
@@ -2237,6 +3411,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_016_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "direct_patterns",
                 arguments: replacement_body_v0_016_arguments,
@@ -2253,6 +3428,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_017_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "direct_result_routing",
                 arguments: replacement_body_v0_017_arguments,
@@ -2269,6 +3445,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_018_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "direct_async_await",
                 arguments: replacement_body_v0_018_arguments,
@@ -2285,6 +3462,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_019_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "source_order_race",
                 arguments: replacement_body_v0_019_arguments,
@@ -2310,6 +3488,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_allowed_invocation),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2329,6 +3508,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_governed_denial),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2346,6 +3526,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_operation_failure),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2364,6 +3545,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_redaction_classification),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2381,9 +3563,453 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_lifecycle_cleanup),
+            identity_conformance: None,
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-01-identity-matrix",
+            title: "RFC 120 identities survive every semantically valid binding, namespace, and scope cell",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::PackageImportBoundary,
+            evidence: "RFC 120 typed Cutover conformance coverage; tests/parity_corpus_tests.rs::verify_identity_matrix",
+            disposition: Disposition::Preserved,
+            source: IDENTITY_MATRIX_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: IDENTITY_MATRIX_MODULES,
+                root_module: "identity_matrix",
+                verify: verify_identity_matrix,
+                replacement: IdentityReplacementPlan::Unavailable {
+                    owning_issue: 989,
+                    reason: "#989 owns cross-package/import/re-export replacement execution; this row executes the checked graph, HIR, Body IR, and generated canonical projections only",
+                },
+                comparison_reason: "#989 owns cross-package/import/re-export replacement execution, so no paired source-observable comparison was available",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-02-let-shadow",
+            title: "Explicit let shadowing preserves distinct checked and replacement local identities",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_let_shadow; tests/replacement_backend_execution_tests.rs::replacement_executes_let_shadowing_by_local_identity",
+            disposition: Disposition::Preserved,
+            source: LET_SHADOW_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: LET_SHADOW_MODULES,
+                root_module: "identity_let_shadow",
+                verify: verify_let_shadow,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_let_shadow",
+                    function: "shadow_let",
+                    arguments: no_replacement_arguments,
+                    expected: expected_three,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-03-mut-shadow",
+            title: "Explicit mut shadowing preserves distinct checked and replacement local identities",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_mut_shadow; tests/replacement_backend_execution_tests.rs::replacement_executes_mut_shadowing_by_local_identity",
+            disposition: Disposition::Preserved,
+            source: MUT_SHADOW_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: MUT_SHADOW_MODULES,
+                root_module: "identity_mut_shadow",
+                verify: verify_mut_shadow,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_mut_shadow",
+                    function: "shadow_mut",
+                    arguments: no_replacement_arguments,
+                    expected: expected_eleven,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-04-generic-binder",
+            title: "Generic binders and their callable target retain distinct canonical identities",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_generic_binder",
+            disposition: Disposition::Preserved,
+            source: GENERIC_BINDER_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: GENERIC_BINDER_MODULES,
+                root_module: "identity_generic",
+                verify: verify_generic_binder,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_generic",
+                    function: "generic_entry",
+                    arguments: no_replacement_arguments,
+                    expected: expected_forty_two,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-05-builtin-rebinding",
+            title: "Ordinary builtin-name rebinding stays distinct from explicit std.builtins lookup",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_builtin_rebinding",
+            disposition: Disposition::Preserved,
+            source: BUILTIN_REBINDING_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: BUILTIN_REBINDING_MODULES,
+                root_module: "identity_builtin",
+                verify: verify_builtin_rebinding,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_builtin",
+                    function: "builtin_entry",
+                    arguments: no_replacement_arguments,
+                    expected: expected_eight,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-06-release-artifact",
+            title: "Pinned release artifacts recover four Incan identity categories and reject host frames",
+            category: BehaviorCategory::GeneratedArtifactBehavior,
+            lane: EvidenceLane::GeneratedProjectRun,
+            evidence: "RFC 120 Cutover conformance; tests/support/emitted_symbol_artifact.rs::verify_pinned_release_artifact",
+            disposition: Disposition::Preserved,
+            source: "RFC 120 pinned Rust 1.98.0 release artifact",
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::ReleaseArtifact {
+                verify: verify_release_artifact,
+                comparison_reason: "the optimized artifact was built and its symbol table inspected, but no source-observable backend execution comparison was run",
+            }),
             replacement_execution: None,
         },
     ]
+}
+
+#[test]
+fn rfc_120_member_coverage_rejects_a_consistent_wrong_owner_selection() {
+    let case = ParityCase {
+        id: "parity-987-120-negative-wrong-owner",
+        title: "Wrong-owner member identity must fail conformance",
+        category: BehaviorCategory::SupportedLanguageContract,
+        lane: EvidenceLane::PackageImportBoundary,
+        evidence: "tests/parity_corpus_tests.rs::verify_wrong_owner_member_selection",
+        disposition: Disposition::Preserved,
+        source: IDENTITY_MATRIX_SRC,
+        evaluate: None,
+        identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+            modules: IDENTITY_MATRIX_MODULES,
+            root_module: "identity_matrix",
+            verify: verify_wrong_owner_member_selection,
+            replacement: IdentityReplacementPlan::Unavailable {
+                owning_issue: 989,
+                reason: "#989 owns cross-package replacement execution",
+            },
+            comparison_reason: "negative conformance fixture must fail before execution",
+        })),
+        replacement_execution: None,
+    };
+    let report = parity_corpus::evaluate_case(&case);
+    assert_eq!(report.overall_state, OverallState::NonGreenBehavior);
+    assert!(
+        matches!(
+            report.behavior_outcome,
+            ComparisonOutcome::Mismatch { ref detail } if detail.contains("outside owner")
+        ),
+        "wrong-owner member selection must fail on exact declaration spans: {:?}",
+        report.behavior_outcome
+    );
+}
+
+#[test]
+fn rfc_120_module_path_coverage_rejects_a_consistent_wrong_target_selection() {
+    let case = ParityCase {
+        id: "parity-987-120-negative-wrong-path-target",
+        title: "Wrong-target module-path identity must fail conformance",
+        category: BehaviorCategory::SupportedLanguageContract,
+        lane: EvidenceLane::PackageImportBoundary,
+        evidence: "tests/parity_corpus_tests.rs::verify_wrong_path_target_selection",
+        disposition: Disposition::Preserved,
+        source: IDENTITY_MATRIX_SRC,
+        evaluate: None,
+        identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+            modules: IDENTITY_MATRIX_MODULES,
+            root_module: "identity_matrix",
+            verify: verify_wrong_path_target_selection,
+            replacement: IdentityReplacementPlan::Unavailable {
+                owning_issue: 989,
+                reason: "#989 owns cross-package replacement execution",
+            },
+            comparison_reason: "negative conformance fixture must fail before execution",
+        })),
+        replacement_execution: None,
+    };
+    let report = parity_corpus::evaluate_case(&case);
+    assert_eq!(report.overall_state, OverallState::NonGreenBehavior);
+    assert!(
+        matches!(
+            report.behavior_outcome,
+            ComparisonOutcome::Mismatch { ref detail }
+                if detail.contains("path/module reconstructed or selected the wrong identity")
+        ),
+        "module-path selection must fail on the exact expected origin and name: {:?}",
+        report.behavior_outcome
+    );
+}
+
+#[test]
+fn rfc_120_emitted_projection_requires_an_exact_rust_identifier_token() -> Result<(), Box<dyn std::error::Error>> {
+    let projection = "__incan_v1_001122";
+    let lookalikes =
+        format!("fn {projection}_suffix() {{}}\n// fn {projection}() {{}}\nconst TEXT: &str = \"{projection}\";");
+    assert!(
+        exact_rust_identifier(&lookalikes, projection).is_err(),
+        "prefixes, comments, and string literals must not prove an emitted projection"
+    );
+    let emitted = format!("fn {projection}() {{}}");
+    assert_eq!(exact_rust_identifier(&emitted, projection)?, projection);
+    Ok(())
+}
+
+#[test]
+fn rfc_120_typed_coverage_rejects_invalid_scope_and_missing_carriers() {
+    let invalid_scope = IdentityCoverageCell {
+        binding: IdentityBindingForm::Local,
+        namespace: IdentityNamespace::Member,
+        scope: IdentityScope::Module,
+        checked_identity: "member".to_string(),
+        hir_identity: None,
+        body_ir_identity: None,
+        emitted_projection: Some("projection".to_string()),
+    };
+    assert!(
+        matches!(
+            validate_identity_coverage(&[invalid_scope]),
+            Err(detail) if detail.contains("not a semantically valid namespace/scope combination")
+        ),
+        "member declarations must use owner scope"
+    );
+
+    let missing_hir = IdentityCoverageCell {
+        binding: IdentityBindingForm::Import,
+        namespace: IdentityNamespace::Lexical,
+        scope: IdentityScope::Module,
+        checked_identity: "callable".to_string(),
+        hir_identity: None,
+        body_ir_identity: None,
+        emitted_projection: Some("projection".to_string()),
+    };
+    assert!(
+        matches!(
+            validate_identity_coverage(&[missing_hir]),
+            Err(detail) if detail.contains("invalid HIR carrier presence")
+        ),
+        "a module-scope lexical cell must prove its HIR carrier"
+    );
+
+    let missing_projection = IdentityCoverageCell {
+        binding: IdentityBindingForm::ReExport,
+        namespace: IdentityNamespace::Member,
+        scope: IdentityScope::Owner,
+        checked_identity: "member".to_string(),
+        hir_identity: None,
+        body_ir_identity: None,
+        emitted_projection: None,
+    };
+    assert!(
+        matches!(
+            validate_identity_coverage(&[missing_projection]),
+            Err(detail) if detail.contains("invalid emitted projection carrier presence")
+        ),
+        "an owner-scope member cell must prove the linker's source-declaration projection"
+    );
+}
+
+#[test]
+fn rfc_120_rows_publish_real_conformance_evidence_without_fabricating_legacy_execution()
+-> Result<(), Box<dyn std::error::Error>> {
+    let summary = parity_corpus::summarize(&seed_corpus());
+    let rows = summary
+        .cases
+        .iter()
+        .filter(|row| row.id.starts_with("parity-987-120-"))
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 6, "the stable RFC 120 corpus rows must remain complete");
+    for row in &rows {
+        assert_eq!(row.overall_state, OverallState::NonGreenShadowUnavailable);
+        let ReceiptRef::IdentityConformanceObserved {
+            replacement_receipt_identity,
+            evidence_identity,
+            comparison_reason,
+        } = &row.receipt
+        else {
+            return Err(format!(
+                "{} lost its identity-conformance observation: {:?}",
+                row.id, row.receipt
+            )
+            .into());
+        };
+        assert!(!comparison_reason.is_empty());
+        let evidence = row
+            .identity_conformance
+            .as_ref()
+            .ok_or_else(|| format!("{} omitted its conformance evidence", row.id))?;
+        match (&evidence.subject, row.id) {
+            (IdentityConformanceSubject::SourceGraph { graph_identity }, id)
+                if id != "parity-987-120-06-release-artifact" =>
+            {
+                assert!(!graph_identity.is_empty());
+            }
+            (
+                IdentityConformanceSubject::ReleaseArtifact {
+                    fixture_input_identity,
+                    artifact_content_identity,
+                    recovered_observation_identity,
+                },
+                "parity-987-120-06-release-artifact",
+            ) => {
+                for identity in [
+                    fixture_input_identity,
+                    artifact_content_identity,
+                    recovered_observation_identity,
+                ] {
+                    assert!(identity.starts_with("sha256:"));
+                }
+            }
+            (subject, id) => return Err(format!("{id} reported the wrong conformance subject: {subject:?}").into()),
+        }
+        assert_eq!(
+            identity_conformance_evidence_identity(evidence),
+            *evidence_identity,
+            "{} published an evidence identity that cannot be recomputed from its report",
+            row.id
+        );
+        assert_eq!(
+            evidence.evidence_identity, *evidence_identity,
+            "{} split the receipt and report evidence identities",
+            row.id
+        );
+        let mut tampered = evidence.clone();
+        tampered.checked_relations.push("tampered checked relation".to_string());
+        assert_ne!(
+            identity_conformance_evidence_identity(&tampered),
+            *evidence_identity,
+            "{} evidence digest ignored a serialized checked relation",
+            row.id
+        );
+        let mut tampered_subject = evidence.clone();
+        match &mut tampered_subject.subject {
+            IdentityConformanceSubject::SourceGraph { graph_identity } => graph_identity.push_str("-tampered"),
+            IdentityConformanceSubject::ReleaseArtifact {
+                artifact_content_identity,
+                ..
+            } => artifact_content_identity.push_str("-tampered"),
+        }
+        assert_ne!(
+            identity_conformance_evidence_identity(&tampered_subject),
+            *evidence_identity,
+            "{} evidence digest ignored its typed conformance subject",
+            row.id
+        );
+        if matches!(
+            row.id,
+            "parity-987-120-02-let-shadow"
+                | "parity-987-120-03-mut-shadow"
+                | "parity-987-120-04-generic-binder"
+                | "parity-987-120-05-builtin-rebinding"
+        ) {
+            assert!(
+                replacement_receipt_identity
+                    .as_deref()
+                    .is_some_and(|identity| identity.starts_with("sha256:"))
+            );
+            assert!(evidence.replacement_output_identity.is_some());
+        } else {
+            assert_eq!(replacement_receipt_identity, &None);
+            assert_eq!(evidence.replacement_output_identity, None);
+        }
+    }
+
+    let matrix = rows
+        .iter()
+        .find(|row| row.id == "parity-987-120-01-identity-matrix")
+        .and_then(|row| row.identity_conformance.as_ref())
+        .ok_or("RFC 120 identity matrix evidence is missing")?;
+    assert_eq!(matrix.coverage_cells.len(), 26);
+    assert_eq!(matrix.replacement_unavailable_issue, Some(989));
+
+    let artifact = rows
+        .iter()
+        .find(|row| row.id == "parity-987-120-06-release-artifact")
+        .and_then(|row| row.identity_conformance.as_ref())
+        .ok_or("RFC 120 release-artifact evidence is missing")?;
+    assert_eq!(artifact.legacy_projections.len(), 4);
+    assert!(
+        artifact
+            .artifact_observations
+            .iter()
+            .any(|item| item.contains("non-Incan"))
+    );
+    Ok(())
+}
+
+#[test]
+fn rfc_120_expected_value_mismatch_retains_the_observed_replacement_receipt_and_evidence() {
+    let case = ParityCase {
+        id: "parity-987-120-negative-expected-value",
+        title: "A completed replacement mismatch retains its execution evidence",
+        category: BehaviorCategory::SupportedLanguageContract,
+        lane: EvidenceLane::DirectReplacementBodyIr,
+        evidence: "tests/parity_corpus_tests.rs::rfc_120_expected_value_mismatch_retains_the_observed_replacement_receipt_and_evidence",
+        disposition: Disposition::Preserved,
+        source: GENERIC_BINDER_SRC,
+        evaluate: None,
+        identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+            modules: GENERIC_BINDER_MODULES,
+            root_module: "identity_generic",
+            verify: verify_generic_binder,
+            replacement: IdentityReplacementPlan::Direct {
+                module: "identity_generic",
+                function: "generic_entry",
+                arguments: no_replacement_arguments,
+                expected: expected_three,
+            },
+            comparison_reason: "negative fixture executed one replacement route only",
+        })),
+        replacement_execution: None,
+    };
+    let report = parity_corpus::evaluate_case(&case);
+    assert_eq!(report.overall_state, OverallState::NonGreenBehavior);
+    assert!(matches!(
+        report.behavior_outcome,
+        ComparisonOutcome::Mismatch { ref detail }
+            if detail.contains("returned Int(42), expected Int(3)")
+    ));
+    assert!(matches!(
+        report.receipt,
+        ReceiptRef::IdentityConformanceObserved {
+            replacement_receipt_identity: Some(ref identity),
+            ..
+        } if identity.starts_with("sha256:")
+    ));
+    assert!(
+        report
+            .identity_conformance
+            .as_ref()
+            .is_some_and(|evidence| evidence.replacement_output_identity.is_some()),
+        "completed mismatch must retain the output identity that its receipt finalized"
+    );
 }
 
 /// The #1156 provider paths each carry a stable disposition and none of them claims a comparison it cannot support.
@@ -2448,9 +4074,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
             evidence: "tests/parity_corpus_tests.rs (red-state fixture)",
             disposition: Disposition::Preserved,
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2461,9 +4088,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
             evidence: "tests/parity_corpus_tests.rs (red-state fixture)",
             disposition: Disposition::Preserved,
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2474,9 +4102,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
             evidence: "tests/parity_corpus_tests.rs (red-state fixture)",
             disposition: Disposition::Preserved,
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2490,9 +4119,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
                 migration_note: "",
             },
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
     ]
@@ -2561,8 +4191,9 @@ fn seed_corpus_ids_are_stable_and_globally_unique() {
 }
 
 #[test]
-fn seed_corpus_every_case_confirms_its_documented_current_behavior() {
-    let summary = parity_corpus::summarize(&seed_corpus());
+fn seed_corpus_every_case_confirms_its_documented_current_behavior() -> Result<(), Box<dyn std::error::Error>> {
+    let corpus = seed_corpus();
+    let summary = parity_corpus::summarize(&corpus);
     let regressions: Vec<&parity_corpus::CaseReport> = summary
         .cases
         .iter()
@@ -2574,6 +4205,45 @@ fn seed_corpus_every_case_confirms_its_documented_current_behavior() {
          compiler's actual behavior drifted from what this corpus recorded — update the case or investigate the \
          regression, do not silently accept it): {regressions:#?}"
     );
+    for case in corpus.iter().filter(|case| case.evaluate.is_some()) {
+        let report = summary
+            .cases
+            .iter()
+            .find(|report| report.id == case.id)
+            .ok_or_else(|| format!("summary omitted callback row `{}`", case.id))?;
+        let ReceiptRef::BehaviorObserved {
+            evidence_identity,
+            comparison_reason,
+        } = &report.receipt
+        else {
+            return Err(format!(
+                "callback row `{}` fabricated or borrowed an execution receipt: {:?}",
+                case.id, report.receipt
+            )
+            .into());
+        };
+        assert_eq!(
+            behavior_observation_identity(case.id, case.evidence, case.source, &report.behavior_outcome),
+            *evidence_identity,
+            "callback row `{}` did not bind its actual outcome into evidence",
+            case.id
+        );
+        assert_ne!(
+            behavior_observation_identity(
+                case.id,
+                case.evidence,
+                case.source,
+                &ComparisonOutcome::Mismatch {
+                    detail: "tampered callback outcome".to_string(),
+                },
+            ),
+            *evidence_identity,
+            "callback row `{}` evidence ignored its observed outcome",
+            case.id
+        );
+        assert!(!comparison_reason.is_empty());
+    }
+    Ok(())
 }
 
 #[test]
@@ -2586,8 +4256,13 @@ fn only_a_row_with_a_real_two_route_comparison_can_be_green() -> Result<(), Box<
     // capability whose Oven build then fails has run no comparison, and must not be treated as if it had.
     let summary = parity_corpus::summarize(&seed_corpus());
     assert!(
-        summary.receipt_schema_available,
-        "the summary must say the #986 receipt schema is available now that PR #1120 landed it"
+        summary.execution_receipt_schema_available,
+        "the summary must say the #986 execution-receipt schema is available now that PR #1120 landed it"
+    );
+    assert!(summary.cases_with_execution_receipts > 0);
+    assert!(
+        summary.cases_with_execution_receipts < summary.total_cases,
+        "callback and artifact-only observations must not be counted as execution receipts"
     );
     assert_eq!(summary.non_green_shadow_diverged, 0);
     assert_eq!(summary.non_green_behavior, 0);
@@ -2911,7 +4586,8 @@ fn ci_summary_serializes_with_the_fields_655_needs_and_is_written_to_a_stable_pa
         "non_green_shadow_unavailable",
         "non_green_shadow_diverged",
         "non_green_behavior",
-        "receipt_schema_available",
+        "execution_receipt_schema_available",
+        "cases_with_execution_receipts",
         "source_observable_comparison_available",
         "cases",
     ] {
@@ -2920,6 +4596,10 @@ fn ci_summary_serializes_with_the_fields_655_needs_and_is_written_to_a_stable_pa
             "CI summary is missing required top-level field `{field}`: {value}"
         );
     }
+    assert!(
+        value.get("receipt_schema_available").is_none(),
+        "schema v7 must not retain the ambiguous field that implied every row had a receipt"
+    );
 
     let cases = value
         .get("cases")
@@ -2936,6 +4616,7 @@ fn ci_summary_serializes_with_the_fields_655_needs_and_is_written_to_a_stable_pa
             "disposition_kind",
             "behavior_outcome",
             "receipt",
+            "identity_conformance",
             "overall_state",
         ] {
             assert!(

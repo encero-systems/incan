@@ -11,6 +11,7 @@ use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::trait_capabilities;
 use incan_core::lang::traits::{self as core_traits, TraitId};
+use incan_semantics_core::encode_incan_symbol_identity;
 
 use super::super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{EmitError, IrEmitter};
@@ -244,6 +245,33 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
+        let method_projection_impl = if !impl_block.method_projections.is_empty() {
+            let methods = impl_block
+                .method_projections
+                .iter()
+                .map(|projection| {
+                    let method = impl_block
+                        .methods
+                        .iter()
+                        .find(|method| method.name == projection.abi_method_name)
+                        .ok_or_else(|| {
+                            EmitError::InternalInvariant(format!(
+                                "recoverable projection for `{}.{}` has no matching trait ABI method",
+                                impl_block.target_type, projection.abi_method_name
+                            ))
+                        })?;
+                    self.emit_trait_method_projection(impl_block, method, projection)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            quote! {
+                impl #generics #target_type #generics_bare {
+                    #(#methods)*
+                }
+            }
+        } else {
+            quote! {}
+        };
+
         let borrowed_observer_impl = if borrowed_observer_methods.is_empty() {
             quote! {}
         } else {
@@ -258,8 +286,92 @@ impl<'a> IrEmitter<'a> {
             .replace(previous_method_owner_type_params);
         Ok(quote! {
             #main_impl
+            #method_projection_impl
             #borrowed_observer_impl
             #(#trait_impls)*
+        })
+    }
+
+    /// Emit a recoverable Incan-origin entry point beside a Rust ABI-constrained method slot.
+    ///
+    /// The trait slot itself must keep the trait declaration's Rust spelling. This inherent wrapper is the concrete
+    /// source declaration's independently decodable artifact symbol, and concrete call sites target it directly.
+    fn emit_trait_method_projection(
+        &self,
+        impl_block: &super::super::super::decl::IrImpl,
+        method: &super::super::super::decl::IrFunction,
+        projection: &super::super::super::decl::IrMethodProjection,
+    ) -> Result<TokenStream, EmitError> {
+        let name = Self::rust_ident(&encode_incan_symbol_identity(&projection.identity));
+        let slot = Self::rust_ident(&projection.abi_method_name);
+        let params = method
+            .params
+            .iter()
+            .map(|param| {
+                if param.is_self {
+                    match param.mutability {
+                        super::super::super::types::Mutability::Mutable => quote! { &mut self },
+                        super::super::super::types::Mutability::Immutable
+                        | super::super::super::types::Mutability::OwnedMutable => quote! { &self },
+                    }
+                } else {
+                    let param_name = Self::rust_ident(&param.name);
+                    let ty = self.emit_type(&param.ty);
+                    quote! { #param_name: #ty }
+                }
+            })
+            .collect::<Vec<_>>();
+        let args = method
+            .params
+            .iter()
+            .map(|param| {
+                if param.is_self {
+                    quote! { self }
+                } else {
+                    let name = Self::rust_ident(&param.name);
+                    quote! { #name }
+                }
+            })
+            .collect::<Vec<_>>();
+        let generics = self.emit_type_params(&method.type_params);
+        let turbofish = if method.type_params.is_empty() {
+            quote! {}
+        } else {
+            let names = method
+                .type_params
+                .iter()
+                .map(|param| Self::rust_ident(&param.name))
+                .collect::<Vec<_>>();
+            quote! { :: < #(#names),* > }
+        };
+        let return_type = match &method.return_type {
+            IrType::Unit => quote! {},
+            ty => {
+                let ty = self.emit_type(ty);
+                quote! { -> #ty }
+            }
+        };
+        let async_keyword = method.is_async.then(|| quote! { async });
+        let await_suffix = method.is_async.then(|| quote! { .await });
+        let invocation = if impl_block.trait_name.is_none()
+            && magic_methods::from_str(&projection.abi_method_name) == Some(magic_methods::MagicMethodId::Eq)
+        {
+            let forwarded = args.iter().skip(1);
+            quote! { <Self as std::cmp::PartialEq>::eq(self, #(#forwarded),*) }
+        } else if let Some(trait_name) = impl_block.trait_name.as_deref() {
+            let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
+            quote! { <Self as #trait_tokens>::#slot #turbofish (#(#args),*) }
+        } else if method.params.first().is_some_and(|param| param.is_self) {
+            let forwarded = args.iter().skip(1);
+            quote! { self.#slot #turbofish (#(#forwarded),*) }
+        } else {
+            quote! { Self::#slot #turbofish (#(#args),*) }
+        };
+        Ok(quote! {
+            #[inline(never)]
+            pub #async_keyword fn #name #generics (#(#params),*) #return_type {
+                #invocation #await_suffix
+            }
         })
     }
 

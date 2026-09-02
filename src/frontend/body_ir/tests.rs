@@ -80,6 +80,156 @@ fn build(source: &str, module_path: &[&str]) -> Result<bir::BodyIrModule, Box<dy
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
 }
 
+#[test]
+fn imported_callable_without_call_site_identity_does_not_recover_authority_from_its_binding_name()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dependency_source = "pub def helper() -> int:\n  return 42\n";
+    let source = "from helpers import helper\n\ndef main() -> int:\n  return helper()\n";
+    let dependency_tokens =
+        lexer::lex(dependency_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let dependency =
+        parser::parse(&dependency_tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["app".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_with_imports(&program, &[("helpers", &dependency)])
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    assert!(
+        checker.type_info().resolved_import_identity("helper").is_some(),
+        "the fixture must retain import-binding metadata independently of the call-site fact"
+    );
+    let mut type_info = checker.type_info().clone();
+    type_info.references.resolved_identities.clear();
+
+    let module = build_body_ir_module_v0(&program, &module_path, &type_info);
+    let target = named_targets(&module, "main")
+        .into_iter()
+        .next()
+        .ok_or("missing imported helper call")?;
+    assert_eq!(target.canonical, None);
+    assert_eq!(target.direct_call_id, None);
+    assert_eq!(target.builtin, None);
+    Ok(())
+}
+
+#[test]
+fn canonical_local_and_global_roots_survive_body_ir_lowering() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+const LIMIT: int = 3
+static COUNT: int = 0
+
+def update(value: int) -> int:
+  mut local = value
+  COUNT += local
+  return LIMIT + COUNT
+"#;
+    let module = build(source, &["app"])?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "update")
+        .ok_or("missing update body")?;
+    assert!(
+        body.locals
+            .iter()
+            .filter(|local| !matches!(local.origin, bir::LocalOrigin::Temporary))
+            .all(|local| local.identity.is_some()),
+        "every source local and parameter must retain its canonical declaration identity: {:?}",
+        body.locals
+    );
+    assert!(
+        !body
+            .locals
+            .iter()
+            .any(|local| matches!(local.origin, bir::LocalOrigin::External)),
+        "resolved globals must not degrade to External locals: {:?}",
+        body.locals
+    );
+    let snapshot = body.render_snapshot();
+    assert!(
+        snapshot.contains("@const:app::LIMIT@"),
+        "missing canonical const root: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("@static:app::COUNT@"),
+        "missing canonical static root: {snapshot}"
+    );
+    Ok(())
+}
+
+#[test]
+fn imported_alias_globals_keep_the_provider_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = r#"
+pub const LIMIT: int = 3
+pub static COUNT: int = 1
+"#;
+    let consumer = r#"
+from provider import LIMIT as maximum, COUNT as current
+
+def read() -> int:
+  return maximum + current
+"#;
+    let module = build_with_imports(consumer, &["consumer"], &[("provider", &["provider"], provider)])?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "read")
+        .ok_or("missing read body")?;
+    let snapshot = body.render_snapshot();
+    assert!(
+        snapshot.contains("@const:provider::LIMIT@"),
+        "alias lost provider const identity: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("@static:provider::COUNT@"),
+        "alias lost provider static identity: {snapshot}"
+    );
+    assert!(
+        !snapshot.contains("maximum") && !snapshot.contains("current"),
+        "global identity must not be reconstructed from the consumer alias: {snapshot}"
+    );
+    Ok(())
+}
+
+#[test]
+fn rejected_const_write_keeps_its_canonical_target_and_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+const LIMIT: int = 3
+
+def overwrite() -> int:
+  LIMIT = 4
+  return LIMIT
+"#;
+    let (module, diagnostics) = build_after_expected_typecheck_errors(source, &["app", "const_write"])?;
+    assert!(
+        diagnostics.iter().any(|message| message.contains("LIMIT")),
+        "the source checker must reject the const write: {diagnostics:?}"
+    );
+    let body = body_named(&module, "overwrite")?;
+    assert!(
+        !body
+            .locals
+            .iter()
+            .any(|local| matches!(local.origin, bir::LocalOrigin::External)),
+        "a rejected canonical const target must not degrade to an External local: {:?}",
+        body.locals
+    );
+    assert!(
+        body.block.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Unsupported { description }
+                if description.contains("const:app::const_write::LIMIT")
+                    && description.contains("not writable")
+        )),
+        "the rejected write must retain the const identity in its explicit refusal: {}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Lower an intentionally-invalid source program after recording its typecheck diagnostics.
 ///
 /// Positive coverage must go through [`build`], which requires ordinary typechecking. This helper is only for
@@ -195,7 +345,12 @@ fn lowers_arithmetic_with_a_copy_last_use_and_a_move_return() -> Result<(), Box<
     let snapshot_second = build(source, &["m", "arith"])?.render_snapshot();
     assert_eq!(snapshot_first, snapshot_second, "lowering must be deterministic");
 
-    assert!(snapshot_first.contains("body add decl:m::arith::add"));
+    let body = body_named(&module, "add")?;
+    assert_eq!(
+        body.decl_id, body.direct_call_id,
+        "top-level Body IR and declaration HIR must correlate by the same span-derived node id"
+    );
+    assert!(snapshot_first.contains("body add decl:m::arith#decl."));
     assert!(snapshot_first.contains("local 0 x : int [param]"));
     assert!(snapshot_first.contains("local 1 y : int [param]"));
     // x is not the last read (y is), so x is Copy either way (int is a Copy type); both reads should be `copy`.
@@ -807,6 +962,17 @@ fn for_pattern_bindings_do_not_escape_the_loop_scope() -> Result<(), Box<dyn std
         snapshot.contains("return copy(_0)"),
         "the trailing read must resolve the enclosing parameter, not the for-pattern local: {snapshot}"
     );
+    let body = body_named(&module, "keep_outer")?;
+    let identities: Vec<_> = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("x"))
+        .map(|local| local.identity.as_ref())
+        .collect();
+    let [Some(parameter), Some(loop_binding)] = identities.as_slice() else {
+        return Err(format!("expected canonical identities for the parameter and loop binding: {body:?}").into());
+    };
+    assert_ne!(parameter, loop_binding, "shadowed bindings need distinct identities");
     Ok(())
 }
 
@@ -887,6 +1053,22 @@ fn comprehension_bindings_do_not_escape_the_expression_scope() -> Result<(), Box
     assert!(
         snapshot.contains("return copy(_0)"),
         "the trailing read must resolve the enclosing parameter, not the comprehension binding: {snapshot}"
+    );
+    let body = body_named(&module, "keep_outer")?;
+    let identities: Vec<_> = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("x"))
+        .map(|local| local.identity.as_ref())
+        .collect();
+    let [Some(parameter), Some(comprehension_binding)] = identities.as_slice() else {
+        return Err(
+            format!("expected canonical identities for the parameter and comprehension binding: {body:?}").into(),
+        );
+    };
+    assert_ne!(
+        parameter, comprehension_binding,
+        "scoped bindings need distinct identities"
     );
     Ok(())
 }
@@ -2613,6 +2795,49 @@ fn lowers_a_literal_and_wildcard_match_as_a_single_structured_rvalue() -> Result
 }
 
 #[test]
+fn nominal_pattern_without_checker_identity_stays_an_unresolved_fallback() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "model Point:\n",
+        "  x: int\n",
+        "\n",
+        "def coordinate(point: Point) -> int:\n",
+        "  match point:\n",
+        "    case Point(x=value):\n",
+        "      return value\n",
+        "  return 0\n",
+    );
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["m".to_string(), "missing_pattern_identity".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut type_info = checker.type_info().clone();
+    type_info.references.resolved_identities.clear();
+
+    let module = build_body_ir_module_v0(&program, &module_path, &type_info);
+    let pattern = body_named(&module, "coordinate")?
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Match { arms, .. },
+                ..
+            } => arms.first().map(|arm| &arm.pattern),
+            _ => None,
+        })
+        .ok_or("fixture must lower the match pattern")?;
+    let bir::Pattern::Struct { canonical, .. } = pattern else {
+        return Err(format!("missing identity must not admit a nominal target: {pattern:?}").into());
+    };
+    assert_eq!(canonical, &None);
+    Ok(())
+}
+
+#[test]
 fn lowers_an_enum_variant_pattern_that_binds_a_field() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(
         "def unwrap_or_zero(x: Option[int]) -> int:\n",
@@ -2739,8 +2964,9 @@ fn or_pattern_alternatives_share_one_local_for_a_bound_name() -> Result<(), Box<
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("Circle(bind(_1, borrow)) | Square(bind(_1, borrow))"),
-        "both alternatives should bind the same shared local `_1`: {snapshot}"
+        snapshot.contains("Circle(bind(_1, borrow)) canonical=")
+            && snapshot.contains("Square(bind(_1, borrow)) canonical="),
+        "both canonical alternatives should bind the same shared local `_1`: {snapshot}"
     );
     Ok(())
 }
@@ -2835,6 +3061,18 @@ fn lowers_a_tuple_for_pattern_into_one_binding_per_element() -> Result<(), Box<d
         snapshot.contains(" b : int [binding]"),
         "`b` must be a real source binding carrying its resolved element type: {snapshot}"
     );
+    let body = body_named(&module, "total")?;
+    for name in ["a", "b"] {
+        let binding = body
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some(name))
+            .ok_or_else(|| format!("missing `{name}` binding"))?;
+        assert!(
+            binding.identity.is_some(),
+            "`{name}` must retain its canonical identity: {binding:?}"
+        );
+    }
 
     let destination = iter_next_destination(&snapshot).ok_or("expected an IterNext statement")?;
     assert!(
@@ -3292,6 +3530,25 @@ fn source_local_model_construction_retains_its_declaration_identity_and_canonica
     assert_eq!(declaration.name, "Pair");
     assert_eq!(declaration.fields, vec!["left", "right"]);
     assert_eq!(declaration.type_parameter_count, 0);
+    assert_eq!(
+        declaration.canonical.kind,
+        SemanticSourceTargetKind::Model,
+        "the retained physical declaration must carry its compiler-owned model identity"
+    );
+    assert_eq!(declaration.canonical.declaration_name, "Pair");
+    assert_eq!(declaration.field_identities.len(), declaration.fields.len());
+    assert_eq!(
+        declaration
+            .field_identities
+            .iter()
+            .map(|identity| (identity.kind.clone(), identity.declaration_name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (SemanticSourceTargetKind::Field, "left"),
+            (SemanticSourceTargetKind::Field, "right")
+        ],
+        "the physical field layout must retain the checked member identity for every slot"
+    );
 
     let body = body_named(&module, "main")?;
     let target = body
@@ -3307,6 +3564,7 @@ fn source_local_model_construction_retains_its_declaration_identity_and_canonica
         })
         .ok_or("the local model construction must lower as a constructor aggregate")?;
     assert_eq!(target.name, "Pair");
+    assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
     assert_eq!(
         target.direct_declaration_id.as_ref(),
         Some(&declaration.direct_declaration_id)
@@ -3351,6 +3609,55 @@ fn source_local_value_enum_member_retains_exact_enum_and_variant_identities() ->
         snapshot.contains("value_enum_variant(HttpStatus::NotFound"),
         "the member expression must lower to an identity-bearing rvalue instead of an external field place: {snapshot}"
     );
+    let declaration = module
+        .value_enum_declarations
+        .first()
+        .ok_or("the value enum must retain its declaration record")?;
+    let variant = declaration
+        .variants
+        .iter()
+        .find(|variant| variant.name == "NotFound")
+        .ok_or("the value enum must retain NotFound")?;
+    assert_eq!(declaration.canonical.kind, SemanticSourceTargetKind::Enum);
+    assert_eq!(variant.canonical.kind, SemanticSourceTargetKind::Variant);
+    let selected = module
+        .bodies
+        .iter()
+        .flat_map(|body| &body.block.stmts)
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::ValueEnumVariant(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("the selected member must retain its value-enum target")?;
+    assert_eq!(selected.enum_canonical, declaration.canonical);
+    assert_eq!(selected.variant_canonical, variant.canonical);
+    let body = body_named(&module, "main")?;
+    let value_method = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("the value-enum scalar projection must lower as a method call")?;
+    let canonical = value_method
+        .canonical
+        .as_ref()
+        .ok_or("the checked value-enum method must retain its canonical target")?;
+    assert_eq!(canonical.namespace, incan_semantics_core::SymbolNamespace::Member);
+    assert_eq!(canonical.kind, SemanticSourceTargetKind::Method);
+    assert_eq!(canonical.declaration_name, "value");
+    assert_eq!(
+        canonical.origin,
+        incan_semantics_core::SymbolOrigin::Module(vec!["m".to_string(), "value_enum_identity".to_string()])
+    );
     Ok(())
 }
 
@@ -3375,6 +3682,29 @@ fn source_local_fieldless_enum_member_retains_exact_enum_and_variant_identities(
         snapshot.contains("fieldless_enum_variant(Signal::Ready"),
         "the member expression must lower to an identity-bearing rvalue instead of an external field place: {snapshot}"
     );
+    let declaration = module
+        .fieldless_enum_declarations
+        .first()
+        .ok_or("the fieldless enum must retain its declaration record")?;
+    let selected = module
+        .bodies
+        .iter()
+        .flat_map(|body| &body.block.stmts)
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::FieldlessEnumVariant(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("the selected member must retain its fieldless-enum target")?;
+    let variant = declaration
+        .variants
+        .iter()
+        .find(|variant| variant.name == selected.variant_name)
+        .ok_or("the selected variant must exist in the retained registry")?;
+    assert_eq!(selected.enum_canonical, declaration.canonical);
+    assert_eq!(selected.variant_canonical, variant.canonical);
     Ok(())
 }
 
@@ -3932,7 +4262,8 @@ fn lowers_a_two_arm_race_with_per_arm_bindings_and_pre_selection_awaitables() ->
         "{ASYNC_PRELUDE}async def f() -> int:\n  race for value:\n    await fast() => value\n    await slow() => value\n"
     );
     let module = build(&source, &["m", "race_two"])?;
-    let rendered = body_named(&module, "f")?.render_snapshot();
+    let body = body_named(&module, "f")?;
+    let rendered = body.render_snapshot();
 
     assert!(
         !rendered.contains("unsupported("),
@@ -3947,12 +4278,34 @@ fn lowers_a_two_arm_race_with_per_arm_bindings_and_pre_selection_awaitables() ->
         fast_at < slow_at && slow_at < race_at,
         "all arm awaitables must be evaluated, in source order, before selection: {rendered}"
     );
-    // The source spells one binding name, but each arm re-scopes it, so each arm owns its own local.
+    // Each arm owns a type-refined local, but both locals are projections of the one authored race-header binding.
     assert_eq!(
         rendered.matches("value : int [binding]").count(),
         2,
         "each arm must bind its own local rather than sharing one: {rendered}"
     );
+    let identities: Vec<_> = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("value"))
+        .filter_map(|local| local.identity.as_ref())
+        .collect();
+    let [first_arm, second_arm] = identities.as_slice() else {
+        return Err(format!("both arm bindings need canonical identities: {body:?}").into());
+    };
+    assert_eq!(first_arm, second_arm, "both arm locals must retain the header identity");
+    let header = source.find("value:").ok_or("missing race header binding")?;
+    for local in body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("value"))
+    {
+        assert_eq!(
+            local.span,
+            incan_semantics_core::HirSourceSpan::new(header, header + "value".len()),
+            "each arm local must stay anchored to the exact race header token"
+        );
+    }
     Ok(())
 }
 
@@ -4796,20 +5149,18 @@ def use_c() -> int:
     Ok(())
 }
 
-/// A local declaration shadowed by a same-name import must be identified as the *local* declaration.
+/// A local declaration beside an explicitly aliased import is identified as the *local* declaration.
 ///
-/// `source_target_for_symbol` consults import bindings first and unconditionally, so the recorded source target
-/// names the import regardless of what the call bound. Inferring locality from that target gave one
-/// `NamedCallableTarget` two facts naming two different declarations.
+/// RFC 120 rejects an implicit same-spelling replacement of an import. The explicit alias is the valid spelling for
+/// keeping both bindings active, and the local call must still carry the local declaration's identity.
 #[test]
-fn a_local_declaration_shadowed_by_a_same_name_import_is_identified_locally() -> Result<(), Box<dyn std::error::Error>>
-{
+fn a_local_declaration_beside_an_aliased_import_is_identified_locally() -> Result<(), Box<dyn std::error::Error>> {
     let helpers_source = r#"
 pub def render() -> int:
   return 1
 "#;
     let app_source = r#"
-from helpers import render
+from helpers import render as imported_render
 
 def render(value: int) -> int:
   return value
@@ -4832,7 +5183,7 @@ def run() -> int:
     assert_eq!(
         fact.origin,
         incan_semantics_core::SymbolOrigin::Module(vec!["app".to_string()]),
-        "the shadowing local declaration owns this call, not the import it shadows"
+        "the local declaration owns this call; the explicitly aliased import is a separate binding"
     );
     // The two facts on one target must never name different declarations.
     let resolved = app
@@ -5066,11 +5417,10 @@ def run() -> int:
     Ok(())
 }
 
-/// Pins the overload guard in `canonical_callable_target` itself. The local-overload test below cannot: it takes
-/// the separate `is_overloaded` branch, whose `canonical` is a hardcoded `None`, so it stays green even with the
-/// guard deleted.
+/// An imported overload is selected at the call site, so its identity must carry that checked selection through an
+/// ordinary import and an alias instead of falling back to the overloaded spelling.
 #[test]
-fn an_imported_overloaded_binding_has_no_canonical_identity() -> Result<(), Box<dyn std::error::Error>> {
+fn imported_overload_calls_retain_the_selected_canonical_identity() -> Result<(), Box<dyn std::error::Error>> {
     let helpers_source = r#"
 pub def render(value: int) -> int:
   return value
@@ -5090,6 +5440,17 @@ def use_alias() -> int:
 "#;
     let app = build_with_imports(app_source, &["app"], &[("helpers", &["helpers"], helpers_source)])?;
 
+    let helpers = build(helpers_source, &["helpers"])?;
+    let overload_spans = helpers
+        .bodies
+        .iter()
+        .filter(|body| body.name == "render")
+        .map(|body| body.span)
+        .collect::<Vec<_>>();
+    let [int_overload_span, str_overload_span] = overload_spans.as_slice() else {
+        return Err(format!("expected both helper overload bodies, got {overload_spans:?}").into());
+    };
+    let mut selected = Vec::new();
     for body in ["use_imported", "use_alias"] {
         let targets = named_targets(&app, body);
         let [target] = targets.as_slice() else {
@@ -5098,11 +5459,24 @@ def use_alias() -> int:
                 targets.len()
             )));
         };
-        assert!(
-            target.canonical.is_none(),
-            "`{body}` calls an overloaded import, which a name-based identity cannot separate"
+        let canonical = target
+            .canonical
+            .as_ref()
+            .ok_or_else(|| format!("`{body}` must retain the overload selected by typechecking"))?;
+        assert_eq!(canonical.declaration_span, *int_overload_span);
+        assert_ne!(canonical.declaration_span, *str_overload_span);
+        assert_eq!(canonical.declaration_name, "render");
+        assert_eq!(canonical.kind, SemanticSourceTargetKind::Function);
+        assert_eq!(
+            canonical.origin,
+            incan_semantics_core::SymbolOrigin::Module(vec!["helpers".to_string()])
         );
+        selected.push(canonical.clone());
     }
+    assert_eq!(
+        selected[0], selected[1],
+        "the alias must preserve the selected declaration identity"
+    );
     Ok(())
 }
 
@@ -5596,9 +5970,9 @@ fn provider_plans<'module>(
 fn a_pattern_assertion_binding_is_a_declared_local_read_by_the_statements_after_it()
 -> Result<(), Box<dyn std::error::Error>> {
     // The defect #1167 closes: `assert o is Some(v)` used to lower to a bare placeholder, which dropped `v`
-    // entirely. `print(v)` then lowered against a name this body never declared, and `local_for_name` invented an
-    // `External` local for it -- so Body IR described a read of something outside the body rather than of the
-    // value the assertion had just bound.
+    // entirely. `print(v)` then lowered against a name this body never declared, and the unresolved-name recovery
+    // path invented an `External` local for it -- so Body IR described a read of something outside the body rather
+    // than of the value the assertion had just bound.
     let source = "def run(o: Option[str]) -> None:\n  assert o is Some(v)\n  print(v)\n";
     let module = build(source, &["m", "assert_pattern"])?;
     let body = body_named(&module, "run")?;
@@ -5616,9 +5990,19 @@ fn a_pattern_assertion_binding_is_a_declared_local_read_by_the_statements_after_
     let [bir::AssertionKind::Pattern { pattern, .. }] = assertion_kinds(body).as_slice() else {
         return Err(format!("expected exactly one pattern assertion: {:?}", body.block.stmts).into());
     };
-    let bir::Pattern::Enum { variant, fields, .. } = pattern else {
+    let bir::Pattern::Enum {
+        canonical,
+        variant,
+        fields,
+        ..
+    } = pattern
+    else {
         return Err(format!("expected `Some(..)` to lower to a constructor pattern: {pattern:?}").into());
     };
+    assert!(
+        canonical.is_some(),
+        "a successfully checked constructor pattern must retain its exact canonical target"
+    );
     assert_eq!(
         variant,
         constructors::as_str(constructors::ConstructorId::Some),
@@ -6290,7 +6674,9 @@ fn range_iteration_facts(
             bir::StatementKind::Assign {
                 place,
                 rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
-            } if place.local == item_local.id && place.projection.is_empty() => Some(format!("{:?}", read.fact)),
+            } if place.local_id() == Some(item_local.id) && place.projection.is_empty() => {
+                Some(format!("{:?}", read.fact))
+            }
             _ => None,
         })
         .ok_or("expected the per-iteration item write")?;
@@ -7439,7 +7825,7 @@ fn branch_shadowing_does_not_leak_into_following_body_ir_reads() -> Result<(), B
         .find_map(|statement| match &statement.kind {
             bir::StatementKind::Return {
                 value: Some(bir::Operand::Place(operand)),
-            } => Some(operand.place.local),
+            } => operand.place.local_id(),
             _ => None,
         })
         .ok_or("fixture must return a local place")?;

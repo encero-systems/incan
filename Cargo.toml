@@ -117,6 +117,8 @@ wasmtime = { version = "36.0.13", default-features = false, features = ["craneli
 wasmtime-wasi = { version = "36.0.13", default-features = false, features = ["preview1"] }
 
 [dev-dependencies]
+# Artifact-level `incan-v1` conformance decodes the pinned toolchain's v0 symbols independently of compiler state.
+rustc-demangle = "0.1.27"
 # Unix process-group cleanup for bounded subprocess regression tests.
 libc = "0.2"
 # Runtime crate used by std.io generated-project offline smoke tests.

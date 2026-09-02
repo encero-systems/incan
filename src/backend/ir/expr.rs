@@ -23,6 +23,16 @@ use incan_core::lang::surface::{
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 
+/// Whether a module-static reference names source storage or a compiler-generated helper.
+///
+/// Source storage must resolve through the compiler-owned canonical projection table. Generated storage must never
+/// consult that table, even when its synthetic spelling collides with a source declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrStaticReferenceKind {
+    Source,
+    CompilerGenerated,
+}
+
 /// A typed expression in IR
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
@@ -133,11 +143,13 @@ pub enum IrExprKind {
     /// Read from a compiler-managed module static storage cell.
     StaticRead {
         name: String,
+        reference_kind: IrStaticReferenceKind,
     },
 
     /// Create a live local binding wrapper from a compiler-managed module static.
     StaticBinding {
         name: String,
+        reference_kind: IrStaticReferenceKind,
     },
 
     /// Reference an associated function item such as `Type::method`.

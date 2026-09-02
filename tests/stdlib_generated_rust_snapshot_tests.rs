@@ -49,7 +49,11 @@ fn normalize_codegen_output(code: &str) -> String {
 
 fn assert_stdlib_source_snapshot(snapshot_name: &str, path: &str) -> TestResult {
     let source = fs::read_to_string(path)?;
-    let rust_code = generate_rust(&source, path)?;
+    let context = path.to_string();
+    let rust_code = incan::compiler_stack::run_on_compiler_stack(move || {
+        generate_rust(&source, &context).map_err(|error| error.to_string())
+    })
+    .map_err(err_box)?;
     insta::assert_snapshot!(snapshot_name, rust_code);
     Ok(())
 }

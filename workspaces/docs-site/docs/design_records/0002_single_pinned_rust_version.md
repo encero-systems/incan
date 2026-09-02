@@ -56,6 +56,28 @@ Pinning the minimum supported version alongside the others is deliberate rather 
   - `cargo +nightly fmt` remains required, because the project's formatting configuration uses unstable comment and documentation wrapping options. It formats the compiler's own Rust source; it is never shipped and never compiles user code.
   - The nightly publisher toolchain used by the test harness exists only to exercise Cargo's nightly-only metadata flags. Its justification disappears with the move off Cargo, so it should be retired rather than pinned.
 
+## Recoverable-symbol conformance
+
+`tests/emitted_symbol_projection_tests.rs` exercises the part of this decision consumed by RFC 120 independently of the ambient build toolchain. It asks `rustup` for Rust 1.98.0, verifies the `release:` field from that executable's `rustc -Vv` output, and fails with a DD-0002-specific error if the exact toolchain is unavailable. It never falls back to `stable` or another installed compiler.
+
+This is a synthetic, independently compiled Rust carrier fixture. It compiles optimized 2024-edition executables with `-C symbol-mangling-version=v0`, reads their native symbol tables, demangles the Rust v0 symbols, and decodes ordinary-function, generic-function, source-method, and source-static identities without a sidecar. It proves that the selected compiler, object format, linker, demangler, and `incan-v1` decoder preserve the payload; it does not by itself prove that Incan code generation attaches the payload to the right declarations and calls. Focused compiler regressions in `tests/codegen_snapshot_tests.rs` separately cover free functions, top-level partial wrappers, ordinary, decorated, class, and static methods, method aliases, method-partial synthetic wrappers and their projected targets, computed properties, Rust-extern wrappers, trait ABI slots with recoverable concrete wrappers, targeted method overloads, adopted trait defaults, same-module and cross-module aliases, and multi-hop re-exports.
+
+The backend-parity report binds this native probe with three separate content identities: the exact rustc version, flags, platform, and fixture sources supplied as inputs; the compiled baseline and projected artifact bytes; and the native-symbol observation plus the exact recovered identities and classifications. A descriptive corpus-row label is not used as an artifact identity.
+
+The carrier fixture also proves that the generic `<u64>` specialization remains visible in the v0 demangling while the reversible Incan payload continues to identify the source declaration. Specialization is therefore not duplicated inside `incan-v1`: the canonical payload answers which declaration produced the symbol, while Rust v0's own type suffix distinguishes its linker-visible instantiation.
+
+An earlier three-symbol prototype recorded this Rust 1.98.0 macOS arm64 measurement:
+
+| Fixture | Artifact bytes | Source identifier bytes |
+| --- | ---: | ---: |
+| short-name baseline | 1,443,608 | 21 |
+| `incan-v1` projection | 1,444,072 | 475 |
+| delta | +464 | +454 |
+
+That table is historical prototype data, not a measurement of the current four-symbol fixture and not an acceptance threshold. The current ordinary/generic/method/static fixture prints its own baseline, projected, and identifier-byte measurements on every Linux and macOS CI run while asserting semantic recovery; its exact macOS figures must be recorded only after that fixture is rerun. Object formats and linkers differ across supported platforms, so no platform-independent byte-for-byte threshold is implied. There is no optimized or release fixture mode that removes the payload.
+
+This conformance fixture does **not** by itself complete issue #1168's repository-wide pin migration. The workspace manifest and other build lanes must still converge on the accepted 1.98.0 policy; the fixture is intentionally narrower and refuses to turn their current drift into evidence for a different compiler release.
+
 ## Non-goals
 
 - Making Cargo invalid as a project format. Cargo remains a supported compatibility and adoption mode; this record is about which Rust the toolchain itself is built with and ships.

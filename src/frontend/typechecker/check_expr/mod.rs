@@ -174,23 +174,43 @@ impl TypeChecker {
         &mut self,
         module_path: &[String],
         member: &str,
-    ) -> Option<VariableInfo> {
+    ) -> Option<(VariableInfo, Option<incan_semantics_core::CanonicalSymbolId>)> {
         if let Some(info) = self.stdlib_cache.lookup_constant(module_path, member) {
-            return Some(info);
+            let identity = self.stdlib_cache.lookup_identity(module_path, member);
+            return Some((info, identity));
         }
         if module_path.len() >= 2 && module_path.first().is_some_and(|seg| seg == "pub") {
-            let (kind, _) = self.lookup_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)?;
-            return match kind {
-                SymbolKind::Variable(info) => Some(info),
-                SymbolKind::Static(info) => Some(VariableInfo {
-                    ty: info.ty,
-                    is_mutable: false,
-                    is_used: info.is_used,
-                }),
+            let resolved = self
+                .resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)
+                .ok()
+                .flatten()?;
+            return match resolved.kind {
+                SymbolKind::Variable(info) => Some((info, resolved.canonical)),
+                SymbolKind::Static(info) => Some((
+                    VariableInfo {
+                        ty: info.ty,
+                        is_mutable: false,
+                        is_used: info.is_used,
+                    },
+                    resolved.canonical,
+                )),
                 _ => None,
             };
         }
-        None
+        let kind = self.dependency_member_symbol_for_path(&ImportPath::simple(module_path.to_vec()), member)?;
+        let identity = self.dependency_member_identity(&ImportPath::simple(module_path.to_vec()), member);
+        match kind {
+            SymbolKind::Variable(info) => Some((info, identity)),
+            SymbolKind::Static(info) => Some((
+                VariableInfo {
+                    ty: info.ty,
+                    is_mutable: false,
+                    is_used: info.is_used,
+                },
+                identity,
+            )),
+            _ => None,
+        }
     }
 
     /// Convert function symbol information into a resolved function type.

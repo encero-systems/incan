@@ -27,9 +27,13 @@ impl<'a> Parser<'a> {
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
             let mut params = Vec::new();
             loop {
-                let name = self.identifier()?;
+                let name = self.identifier_spanned()?;
                 let bounds = self.type_param_bounds()?;
-                params.push(TypeParam { name, bounds });
+                params.push(TypeParam {
+                    name: name.node,
+                    bounds,
+                    span: name.span,
+                });
                 if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                     break;
                 }

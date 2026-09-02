@@ -66,7 +66,7 @@ impl<'a> Parser<'a> {
             incan_core::lang::decorators::from_segments(&decorator.node.path.segments)
                 == Some(incan_core::lang::decorators::DecoratorId::ClassMethod)
         });
-        let (receiver, params) = self.receiver_and_params(is_classmethod)?;
+        let (receiver, receiver_binding, params) = self.receiver_and_params(is_classmethod)?;
 
         self.expect_punct(PunctuationId::RParen, "Expected ')' after parameters")?;
         let trait_target = if self.match_keyword(KeywordId::For) {
@@ -109,6 +109,7 @@ impl<'a> Parser<'a> {
                 name,
                 type_params,
                 receiver,
+                receiver_binding,
                 params,
                 trait_target,
                 return_type,
@@ -199,37 +200,58 @@ impl<'a> Parser<'a> {
     fn receiver_and_params(
         &mut self,
         is_classmethod: bool,
-    ) -> Result<(Option<Receiver>, Vec<Spanned<Param>>), CompileError> {
+    ) -> Result<(Option<Receiver>, Option<Spanned<Ident>>, Vec<Spanned<Param>>), CompileError> {
         self.skip_newlines();
 
         // Check for receiver
-        let receiver = if self.check_keyword(KeywordId::Mut) {
+        let (receiver, receiver_binding) = if self.check_keyword(KeywordId::Mut) {
             self.advance();
+            let span = self.current_span();
             self.expect(&TokenKind::Keyword(KeywordId::SelfKw), "Expected 'self' after 'mut'")?;
             self.skip_newlines();
             if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 self.advance();
                 self.skip_newlines();
             }
-            Some(Receiver::Mutable)
+            (
+                Some(Receiver::Mutable),
+                Some(Spanned::new(
+                    incan_core::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                    span,
+                )),
+            )
         } else if self.check_keyword(KeywordId::SelfKw) {
+            let span = self.current_span();
             self.advance();
             self.skip_newlines();
             if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 self.advance();
                 self.skip_newlines();
             }
-            Some(Receiver::Immutable)
+            (
+                Some(Receiver::Immutable),
+                Some(Spanned::new(
+                    incan_core::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                    span,
+                )),
+            )
         } else if is_classmethod && self.peek_ident_text(incan_core::lang::keywords::as_str(KeywordId::Cls)) {
+            let span = self.current_span();
             self.advance();
             self.skip_newlines();
             if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 self.advance();
                 self.skip_newlines();
             }
-            None
+            (
+                None,
+                Some(Spanned::new(
+                    incan_core::lang::keywords::as_str(KeywordId::Cls).to_string(),
+                    span,
+                )),
+            )
         } else {
-            None
+            (None, None)
         };
 
         let params = if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
@@ -238,7 +260,7 @@ impl<'a> Parser<'a> {
             Vec::new()
         };
 
-        Ok((receiver, params))
+        Ok((receiver, receiver_binding, params))
     }
 
     /// Parse parameters.

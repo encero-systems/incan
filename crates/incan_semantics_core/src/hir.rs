@@ -88,11 +88,11 @@ pub struct HirDeclaration {
     pub type_fact_subject: Option<CompilerNodeId>,
     /// RFC 120 canonical identity of this declaration, when the frontend proved one.
     ///
-    /// For a local declaration this is the identity minted at its definition; for a single-binding import it is the
-    /// *declaring* module's identity, so an aliased import and its target declaration visibly share one identity in
-    /// the HIR handoff. `None` means unproven (multi-item imports, docstrings, declarations whose identity the
-    /// frontend does not yet export) — a consumer must not reconstruct one from [`Self::id`] or [`Self::name`],
-    /// which remain spelling-derived v0 surfaces.
+    /// For a local declaration this is the identity minted at its definition; for an import binding it is the
+    /// *declaring* module's identity, so every alias or re-export and its target declaration visibly share one
+    /// identity in the HIR handoff. `None` means unproven (module bindings, docstrings, or declarations whose
+    /// identity the frontend could not prove) — a consumer must not reconstruct one from [`Self::id`] or
+    /// [`Self::name`].
     pub canonical: Option<CanonicalSymbolId>,
 }
 
@@ -149,7 +149,8 @@ mod tests {
 
     #[test]
     fn hir_module_snapshot_is_deterministic() {
-        let decl_id = CompilerNodeId::new(CompilerNodeKind::Declaration, "facts::hir::run");
+        let decl_id = CompilerNodeId::declaration_span("facts::hir", 1, 24);
+        let type_fact_subject = CompilerNodeId::declaration("facts::hir", "run");
         let module = HirModule {
             id: CompilerNodeId::new(CompilerNodeKind::Module, "facts::hir"),
             path: "facts::hir".to_string(),
@@ -158,7 +159,7 @@ mod tests {
                 kind: HirDeclarationKind::Function,
                 name: Some("run".to_string()),
                 span: HirSourceSpan::new(1, 24),
-                type_fact_subject: Some(decl_id),
+                type_fact_subject: Some(type_fact_subject),
                 canonical: None,
             }],
         };
@@ -166,16 +167,17 @@ mod tests {
         assert_eq!(
             module.render_snapshot(),
             "module facts::hir module:facts::hir\n\
-             decl function run decl:facts::hir::run span=1..24 type_fact=decl:facts::hir::run\n"
+             decl function run decl:facts::hir#decl.1..24 span=1..24 type_fact=decl:facts::hir::run\n"
         );
     }
 
     #[test]
     fn semantic_module_snapshot_renders_hir_and_facts() {
-        let decl_id = CompilerNodeId::new(CompilerNodeKind::Declaration, "facts::hir::run");
+        let decl_id = CompilerNodeId::declaration_span("facts::hir", 1, 24);
+        let type_fact_subject = CompilerNodeId::declaration("facts::hir", "run");
         let mut facts = SemanticFactStore::new();
         facts.insert(crate::SemanticFact::new(
-            decl_id.clone(),
+            type_fact_subject.clone(),
             crate::SemanticFactKind::Type,
             crate::SemanticFactValue::semantic_type(crate::IncanType::Primitive(crate::IncanPrimitiveType::Int)),
         ));
@@ -188,7 +190,7 @@ mod tests {
                     kind: HirDeclarationKind::Function,
                     name: Some("run".to_string()),
                     span: HirSourceSpan::new(1, 24),
-                    type_fact_subject: Some(decl_id),
+                    type_fact_subject: Some(type_fact_subject),
                     canonical: None,
                 }],
             },
@@ -198,7 +200,7 @@ mod tests {
         assert_eq!(
             snapshot.render_snapshot(),
             "module facts::hir module:facts::hir\n\
-             decl function run decl:facts::hir::run span=1..24 type_fact=decl:facts::hir::run\n\
+             decl function run decl:facts::hir#decl.1..24 span=1..24 type_fact=decl:facts::hir::run\n\
              facts\n\
              decl:facts::hir::run type=int\n"
         );

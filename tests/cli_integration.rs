@@ -3293,7 +3293,7 @@ def main() -> None:
 fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
     assert!(!records.is_empty(), "codegraph export should include a header record");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
-    assert_eq!(records[0]["schema_version"], serde_json::json!(6));
+    assert_eq!(records[0]["schema_version"], serde_json::json!(7));
     assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
     assert!(
         records[0]["degraded"].is_boolean(),
@@ -3450,6 +3450,7 @@ def main() -> None:
             && record["kind"] == serde_json::json!("function")
             && record["name"] == serde_json::json!("entrypoint")
             && record["visibility"] == serde_json::json!("public")
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("entrypoint")
     }));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("call")
@@ -4762,10 +4763,20 @@ pub def make_widget(value: int) -> Widget:
     let main_path = src_dir.join("main.incn");
     fs::write(
         &main_path,
-        r#"from helpers import make_widget
+        r#"import helpers
+from helpers import make_widget
+
+enum Signal:
+    Ready
 
 def local_value() -> int:
     return 3
+
+def qualified_value() -> int:
+    return helpers.make_widget(std.builtins.len([1, 2])).value
+
+def ready() -> Signal:
+    return Signal.Ready()
 
 pub def entrypoint() -> int:
     return make_widget(local_value()).value
@@ -4836,6 +4847,39 @@ pub def entrypoint() -> int:
                         && candidate["name"] == serde_json::json!("make_widget")
                 })
             })
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("make_widget")
+            && record["canonical_identity"]["origin"]["kind"] == serde_json::json!("module")
+            && record["provenance"] == serde_json::json!("checked")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["callee"] == serde_json::json!("helpers.make_widget")
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("make_widget")
+            && record["canonical_identity"]["origin"]["kind"] == serde_json::json!("module")
+            && record["target_id"].as_str().is_some_and(|target_id| {
+                records.iter().any(|candidate| {
+                    candidate["record"] == serde_json::json!("declaration")
+                        && candidate["id"] == serde_json::json!(target_id)
+                        && candidate["name"] == serde_json::json!("make_widget")
+                })
+            })
+            && record["provenance"] == serde_json::json!("checked")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["callee"] == serde_json::json!("std.builtins.len")
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("len")
+            && record["canonical_identity"]["origin"]["kind"] == serde_json::json!("builtin")
+            && record["target_id"] == serde_json::Value::Null
+            && record["provenance"] == serde_json::json!("checked")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["callee"] == serde_json::json!("Signal.Ready")
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("Ready")
+            && record["canonical_identity"]["kind"] == serde_json::json!("variant")
+            && record["canonical_identity"]["origin"]["kind"] == serde_json::json!("module")
+            && record["target_id"] == serde_json::Value::Null
             && record["provenance"] == serde_json::json!("checked")
     }));
     assert!(records.iter().any(|record| {
@@ -4850,6 +4894,7 @@ pub def entrypoint() -> int:
                         && candidate["name"] == serde_json::json!("local_value")
                 })
             })
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("local_value")
             && record["provenance"] == serde_json::json!("checked")
     }));
     assert!(records.iter().any(|record| {
@@ -4863,6 +4908,7 @@ pub def entrypoint() -> int:
                         && candidate["name"] == serde_json::json!("make_widget")
                 })
             })
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("make_widget")
             && record["provenance"] == serde_json::json!("checked")
     }));
     assert!(records.iter().any(|record| {
@@ -4876,6 +4922,7 @@ pub def entrypoint() -> int:
                         && candidate["name"] == serde_json::json!("local_value")
                 })
             })
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("local_value")
             && record["provenance"] == serde_json::json!("checked")
     }));
     assert!(records.iter().any(|record| {
@@ -4883,7 +4930,9 @@ pub def entrypoint() -> int:
             && record["kind"] == serde_json::json!("field")
             && record["name"] == serde_json::json!("value")
             && record["target_id"] == serde_json::Value::Null
-            && record["provenance"] == serde_json::json!("syntax")
+            && record["canonical_identity"]["declaration_name"] == serde_json::json!("value")
+            && record["canonical_identity"]["namespace"] == serde_json::json!("member")
+            && record["provenance"] == serde_json::json!("checked")
     }));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("containment")
@@ -4914,6 +4963,146 @@ pub def entrypoint() -> int:
             })
             && record["provenance"] == serde_json::json!("checked")
     }));
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_keeps_one_identity_through_alias_reexport_and_without_a_local_record()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "identity_graph"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("provider.incn"),
+        r#"pub def helper() -> int:
+    return 7
+
+pub run = alias helper
+"#,
+    )?;
+    fs::write(
+        src_dir.join("facade.incn"),
+        r#"pub from provider import run as h
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"from facade import h as run_helper
+
+def entrypoint() -> int:
+    print("identity")
+    return (run_helper)()
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            src_dir.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&output, "identity-backed incan inspect codegraph");
+    let records = parse_jsonl_stdout(&output)?;
+
+    let provider = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("declaration") && record["name"] == serde_json::json!("helper")
+        })
+        .ok_or("provider declaration was absent")?;
+    let provider_identity = &provider["canonical_identity"];
+    assert_eq!(provider_identity["declaration_name"], serde_json::json!("helper"));
+    assert_eq!(provider["provenance"], serde_json::json!("checked"));
+
+    let declaration_alias = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("declaration") && record["name"] == serde_json::json!("run")
+        })
+        .ok_or("provider declaration alias was absent")?;
+    assert_eq!(&declaration_alias["canonical_identity"], provider_identity);
+    assert_ne!(declaration_alias["id"], provider["id"]);
+
+    let reexport = records
+        .iter()
+        .find(|record| record["record"] == serde_json::json!("export") && record["name"] == serde_json::json!("h"))
+        .ok_or("facade re-export record was absent")?;
+    assert_eq!(&reexport["canonical_identity"], provider_identity);
+    assert_eq!(reexport["provenance"], serde_json::json!("checked"));
+
+    let aliased_import = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("import")
+                && record["bindings"].as_array().is_some_and(|bindings| {
+                    bindings
+                        .iter()
+                        .any(|binding| binding["local_name"] == serde_json::json!("run_helper"))
+                })
+        })
+        .ok_or("consumer alias import record was absent")?;
+    let aliased_binding = aliased_import["bindings"]
+        .as_array()
+        .and_then(|bindings| {
+            bindings
+                .iter()
+                .find(|binding| binding["local_name"] == serde_json::json!("run_helper"))
+        })
+        .ok_or("consumer alias binding was absent")?;
+    assert_eq!(&aliased_binding["canonical_identity"], provider_identity);
+    assert_eq!(aliased_import["provenance"], serde_json::json!("checked"));
+
+    for record_kind in ["reference", "call"] {
+        let aliased = records
+            .iter()
+            .find(|record| {
+                record["record"] == serde_json::json!(record_kind)
+                    && (record["name"] == serde_json::json!("run_helper")
+                        || record["callee"] == serde_json::json!("run_helper"))
+            })
+            .ok_or_else(|| format!("aliased {record_kind} record was absent"))?;
+        assert_eq!(
+            &aliased["canonical_identity"], provider_identity,
+            "every spelling must retain the original provider identity"
+        );
+        assert_eq!(
+            aliased["target_id"], provider["id"],
+            "graph-local linkage must select the canonical declaration rather than its alias binding"
+        );
+        assert_eq!(aliased["provenance"], serde_json::json!("checked"));
+    }
+
+    let builtin = records
+        .iter()
+        .find(|record| record["record"] == serde_json::json!("call") && record["callee"] == serde_json::json!("print"))
+        .ok_or("builtin call record was absent")?;
+    assert_eq!(builtin["target_id"], serde_json::Value::Null);
+    assert_eq!(
+        builtin["canonical_identity"]["origin"]["kind"],
+        serde_json::json!("builtin")
+    );
+    assert_eq!(
+        builtin["canonical_identity"]["declaration_name"],
+        serde_json::json!("print")
+    );
+    assert_eq!(
+        builtin["provenance"],
+        serde_json::json!("checked"),
+        "a missing graph-local declaration must not erase compiler-proven identity"
+    );
 
     Ok(())
 }
@@ -5444,7 +5633,7 @@ def main() -> None:
     assert_eq!(first.stdout, second.stdout, "importer summary must be deterministic");
 
     let summary = parse_json_stdout(&first)?;
-    assert_eq!(summary["schema_version"], serde_json::json!(6));
+    assert_eq!(summary["schema_version"], serde_json::json!(7));
     assert_eq!(summary["mode"], serde_json::json!("strict"));
     assert_eq!(summary["metadata_record_count"], serde_json::json!(1));
     assert!(
@@ -5595,6 +5784,16 @@ fn inspect_codegraph_strict_directory_rejects_semantic_diagnostics() -> Result<(
         record["record"] == serde_json::json!("declaration")
             && record["name"] == serde_json::json!("bad")
             && record["provenance"] == serde_json::json!("syntax")
+            && record["canonical_identity"] == serde_json::Value::Null
+            && record["degraded"] == serde_json::json!(true)
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["callee"] == serde_json::json!("missing")
+            && record["target_id"] == serde_json::Value::Null
+            && record["canonical_identity"] == serde_json::Value::Null
+            && record["provenance"] == serde_json::json!("syntax")
+            && record["degraded"] == serde_json::json!(true)
     }));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("diagnostic")

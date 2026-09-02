@@ -17,10 +17,10 @@ def main() -> None:
 ```
 
 !!! tip "Coming from Python?"
-    In Python you usually write `print("...")`. In Incan you have both:
+    In Python you usually write `print("...")`. In Incan both spellings select the same line-oriented builtin:
 
-    - `println("...")`: prints with a newline (used in most examples)
-    - `print("...")`: prints without a newline
+    - `println("...")`: canonical spelling used in most examples
+    - `print("...")`: immutable alias with identical behavior
 
 Tip: Incan uses indentation for blocks. The canonical style is **4 spaces** per indent level; see the [Incan Code Style Guide](../../reference/code_style.md) and run `incan fmt` to normalize source.
 
@@ -66,7 +66,7 @@ For the full lifecycle workflow, see [Project lifecycle](../../how-to/project_li
 
 1. Change the message you print.
 2. Print two lines (two calls to `println`).
-3. Use `print("...")` once to see the “no newline” behavior.
+3. Replace one call with `print("...")` and verify that it still prints one complete line.
 
 </section>
 
@@ -77,8 +77,7 @@ One possible solution:
 ```incan
 def main() -> None:
     print("Hello")
-    println(", Incan!")
-    println("Second line")
+    println("Incan!")
 ```
 
 </section>

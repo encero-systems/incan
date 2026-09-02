@@ -38,7 +38,7 @@ fn target_mutates_var(target: &AssignTarget, var: &str) -> bool {
     match target {
         AssignTarget::Var(name) => name == var,
         AssignTarget::StaticBinding(name) => name == var,
-        AssignTarget::Static(_) => false,
+        AssignTarget::Static { .. } => false,
         AssignTarget::Field { object, .. } => root_var_name(object).is_some_and(|n| n == var),
         AssignTarget::Index { object, .. } => root_var_name(object).is_some_and(|n| n == var),
     }
@@ -559,7 +559,7 @@ fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
                         names.insert(name.to_string());
                     }
                 }
-                AssignTarget::Var(_) | AssignTarget::Static(_) => {}
+                AssignTarget::Var(_) | AssignTarget::Static { .. } => {}
             }
             expr_mutates_storage_binding(value, names);
         }
@@ -1123,9 +1123,9 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             IrStmtKind::Assign { target, value } => {
-                if let AssignTarget::Static(name) = target {
-                    let n = Self::rust_static_ident(name);
-                    let init_call = self.emit_static_init_call_for_static(name);
+                if let AssignTarget::Static { name, reference_kind } = target {
+                    let n = self.rust_static_reference_ident(name, *reference_kind)?;
+                    let init_call = self.emit_static_init_call_for_reference(name, *reference_kind);
                     let v = self.emit_assignment_value(value, None)?;
                     return Ok(quote! {
                         #init_call
@@ -1593,6 +1593,7 @@ mod tests {
             value: TypedExpr::new(
                 IrExprKind::StaticBinding {
                     name: "ACTIVE_FLAGS".to_string(),
+                    reference_kind: super::super::expr::IrStaticReferenceKind::Source,
                 },
                 IrType::List(Box::new(IrType::Bool)),
             ),
@@ -1773,6 +1774,7 @@ mod tests {
                 value: TypedExpr::new(
                     IrExprKind::StaticBinding {
                         name: "ITEMS".to_string(),
+                        reference_kind: super::super::expr::IrStaticReferenceKind::Source,
                     },
                     IrType::List(Box::new(IrType::Int)),
                 ),

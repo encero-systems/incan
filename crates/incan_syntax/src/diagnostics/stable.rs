@@ -4,6 +4,7 @@
 //! used by CLI JSON output and explain/help surfaces. It intentionally starts with broad phase-level codes, then can
 //! grow narrower codes without making callers scrape terminal prose.
 
+use incan_semantics_core::CanonicalSymbolId;
 use serde::Serialize;
 
 use crate::ast::{Declaration, Program, Span};
@@ -11,7 +12,7 @@ use crate::ast::{Declaration, Program, Span};
 use super::{CompileError, ErrorKind};
 
 /// Schema version for machine-readable diagnostic reports.
-pub const DIAGNOSTIC_SCHEMA_VERSION: u32 = 1;
+pub const DIAGNOSTIC_SCHEMA_VERSION: u32 = 2;
 
 /// Pipeline phase that produced a diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -127,6 +128,13 @@ pub struct DiagnosticRelatedSpan {
     pub label: String,
 }
 
+/// One declaration related to a diagnostic, retaining its canonical source origin and provider-local byte span.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiagnosticRelatedDeclaration {
+    pub identity: CanonicalSymbolId,
+    pub label: String,
+}
+
 /// Machine-readable diagnostic payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StableDiagnostic {
@@ -155,6 +163,9 @@ pub struct StableDiagnostic {
     /// Related compiler-owned source locations.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub related_spans: Vec<DiagnosticRelatedSpan>,
+    /// Related declarations whose offsets are not projected into the primary file's coordinate system.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related_declarations: Vec<DiagnosticRelatedDeclaration>,
     /// Command users can run to read the catalog explanation for `code`.
     pub explain: String,
 }
@@ -411,6 +422,14 @@ pub fn stable_diagnostic(
                 label: related.label.clone(),
             })
             .collect(),
+        related_declarations: error
+            .related_declarations()
+            .iter()
+            .map(|related| DiagnosticRelatedDeclaration {
+                identity: related.identity.clone(),
+                label: related.label.clone(),
+            })
+            .collect(),
         explain: format!("incan explain {code}"),
     }
 }
@@ -512,6 +531,30 @@ mod tests {
         assert_eq!(diagnostic.related_spans.len(), 1);
         assert_eq!(diagnostic.related_spans[0].label, "Function parameter declared here");
         assert_eq!(diagnostic.related_spans[0].span.start.offset, 0);
+    }
+
+    #[test]
+    fn stable_diagnostic_keeps_cross_file_declarations_out_of_primary_source_coordinates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
+
+        let declaration = CanonicalSymbolId::module_declaration(
+            vec!["provider".to_string()],
+            "parse",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(120, 180),
+        );
+        let error = CompileError::type_error("bad call through alias".to_string(), Span::new(0, 5))
+            .with_related_declaration(declaration.clone(), "declaration of `parse`");
+        let diagnostic = stable_diagnostic("consumer.incn", "alias()\n", &error, DiagnosticPhase::Typecheck);
+
+        assert!(diagnostic.related_spans.is_empty());
+        let [related] = diagnostic.related_declarations.as_slice() else {
+            return Err(format!("expected one related declaration: {diagnostic:?}").into());
+        };
+        assert_eq!(related.identity, declaration);
+        assert_eq!(related.identity.declaration_span.start, 120);
+        Ok(())
     }
 
     #[test]

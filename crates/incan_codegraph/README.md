@@ -6,7 +6,7 @@ The crate owns record types, schema versioning, language/provenance vocabulary, 
 
 ## Scope
 
-The 0.5 schema is the first RFC 106 codegraph slice. It covers:
+Codegraph began as the first v0.5 RFC 106 slice. The current v0.6 schema covers:
 
 - export headers with schema version, compiler version, mode, root, languages, package identity, and degraded state
 - source files and modules
@@ -14,19 +14,20 @@ The 0.5 schema is the first RFC 106 codegraph slice. It covers:
 - imports and public exports
 - compiler-checked registry entries, including public facade projections that preserve one canonical subject identity
 - compiler-checked C binding declarations, direct C calls admitted through explicit `unsafe:` source, and compiler-proven public façade-to-private-bridge relations
-- body-level reference and call syntax, with conservative checked `target_id` values when the compiler has a source declaration identity
+- canonical declaration identities on checked declaration, reference, and call records, with export-local `target_id`
+  linkage when the target declaration is present in the same graph
 - containment relationships
-- stable diagnostic records in tolerant exports
+- stable diagnostic records in tolerant exports, including canonical identities for related declarations
 - source spans, explicit language tags, provenance, and degraded-state flags
 
 This crate deliberately has no dependency on compiler internals, graph databases, embeddings, MCP servers, or storage engines.
 
-## 0.5 Contract
+## 0.6 Contract
 
-The 0.5 exporter emits Incan-language facts only:
+The v0.6 exporter emits Incan-language facts only:
 
 ```json
-{"record":"header","schema_version":6,"languages":["incan"]}
+{"record":"header","schema_version":7,"languages":["incan"]}
 ```
 
 Every non-header fact record carries:
@@ -35,7 +36,11 @@ Every non-header fact record carries:
 - `provenance`
 - `degraded`
 
-The schema already has a `rust` language value because Rust is Incan's host, generated-code target, and interop substrate. That is reserved for follow-up work; the 0.5 CLI must not emit Rust graph facts until first-class Rust support lands.
+Checked declaration, reference, and call records also carry a structured `canonical_identity`. References reached
+through imports, aliases, or re-exports retain the original declaration identity. `target_id` is only an optional link
+to a declaration record in this particular export; a checked identity remains present when no such record exists.
+
+The schema already has a `rust` language value because Rust is Incan's host, generated-code target, and interop substrate. That is reserved for follow-up work; the v0.6 CLI must not emit Rust graph facts until first-class Rust support lands.
 
 ## Non-goals
 

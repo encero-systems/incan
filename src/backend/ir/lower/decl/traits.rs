@@ -81,8 +81,14 @@ impl AstLowering {
     /// Lower a trait declaration.
     pub(in crate::backend::ir::lower) fn lower_trait(&mut self, t: &ast::TraitDecl) -> Result<IrTrait, LoweringError> {
         let type_param_names: HashSet<&str> = t.type_params.iter().map(|tp| tp.name.as_str()).collect();
-        let trait_methods =
-            Self::methods_with_partials(&t.methods, &t.method_aliases, &t.method_partials, ast::Span::default());
+        let trait_methods = self.methods_with_partials(
+            &t.name,
+            &t.methods,
+            &t.method_aliases,
+            &t.method_partials,
+            ast::Span::default(),
+            true,
+        )?;
         let mut methods: Vec<IrFunction> = trait_methods
             .iter()
             .map(|m| {
@@ -188,7 +194,7 @@ impl AstLowering {
 
         for property in &t.properties {
             methods.push(self.lower_property_with_type_params(
-                &property.node,
+                property,
                 Some(&type_param_names),
                 PropertyLoweringMode::TraitDecl,
             )?);

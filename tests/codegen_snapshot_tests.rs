@@ -8,7 +8,14 @@
 
 use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
+use incan_semantics_core::{
+    CanonicalSymbolId, SemanticSourceTargetKind, decode_incan_symbol_identity, encode_incan_symbol_identity,
+};
+use std::collections::HashSet;
+use std::error::Error;
 use std::fs;
+
+type TestResult = Result<(), Box<dyn Error>>;
 
 #[path = "support/builtin_stdlib.rs"]
 mod builtin_stdlib_support;
@@ -21,35 +28,42 @@ fn codegen_with_builtin_stdlib_inventory() -> IrCodegen<'static> {
 
 /// Generate Rust code from Incan source
 fn generate_rust(source: &str) -> String {
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lexer failed");
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parser failed");
-    };
-    let code = match codegen_with_builtin_stdlib_inventory().try_generate(&ast) {
-        Ok(code) => code,
-        Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
-    };
-    normalize_codegen_output(&code)
+    let source = source.to_string();
+    incan::compiler_stack::run_on_compiler_stack(move || {
+        let Ok(tokens) = lexer::lex(&source) else {
+            panic!("lexer failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parser failed");
+        };
+        let code = match codegen_with_builtin_stdlib_inventory().try_generate(&ast) {
+            Ok(code) => code,
+            Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
+        };
+        normalize_codegen_output(&code)
+    })
 }
 
 /// Generate Rust with the same source-module and package identity context that the CLI supplies for registry code.
 fn generate_registry_rust(source: &str, module_name: &str) -> String {
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lexer failed");
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parser failed");
-    };
-    let mut codegen = IrCodegen::new();
-    codegen.set_root_source_module_name(Some(module_name.to_string()));
-    codegen.set_registry_package_identity(Some(module_name.to_string()));
-    let code = match codegen.try_generate(&ast) {
-        Ok(code) => code,
-        Err(error) => panic!("registry codegen snapshot inputs must typecheck: {error:?}"),
-    };
-    normalize_codegen_output(&code)
+    let source = source.to_string();
+    let module_name = module_name.to_string();
+    incan::compiler_stack::run_on_compiler_stack(move || {
+        let Ok(tokens) = lexer::lex(&source) else {
+            panic!("lexer failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parser failed");
+        };
+        let mut codegen = IrCodegen::new();
+        codegen.set_root_source_module_name(Some(module_name.clone()));
+        codegen.set_registry_package_identity(Some(module_name));
+        let code = match codegen.try_generate(&ast) {
+            Ok(code) => code,
+            Err(error) => panic!("registry codegen snapshot inputs must typecheck: {error:?}"),
+        };
+        normalize_codegen_output(&code)
+    })
 }
 
 fn parse_incan_program(source: &str, context: &str) -> incan::frontend::ast::Program {
@@ -631,6 +645,17 @@ fn normalize_codegen_output(code: &str) -> String {
         .join("\n")
 }
 
+fn recover_incan_identities_from_generated_rust(code: &str) -> HashSet<CanonicalSymbolId> {
+    code.split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .filter(|token| token.starts_with("__incan_v"))
+        .filter_map(|token| decode_incan_symbol_identity(token).ok().flatten())
+        .collect()
+}
+
+fn compact_rust(code: &str) -> String {
+    code.chars().filter(|character| !character.is_whitespace()).collect()
+}
+
 /// Load a test file from the codegen_snapshots directory
 fn load_test_file(name: &str) -> String {
     let path = format!("tests/codegen_snapshots/{}.incn", name);
@@ -700,6 +725,619 @@ fn test_user_defined_decorators_codegen() {
     let source = load_test_file("user_defined_decorators");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("user_defined_decorators", rust_code);
+}
+
+#[deny(clippy::expect_used, clippy::unwrap_used)]
+mod emitted_symbol_projection_tests {
+    use super::*;
+
+    #[test]
+    fn decorated_function_emits_one_source_projection_and_distinct_generated_helpers() -> TestResult {
+        let source = load_test_file("user_defined_decorators");
+        let rust_code = generate_rust(&source);
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "label"
+            })
+            .ok_or_else(|| "decorated source wrapper must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert_eq!(
+            rust_code.matches(&format!("fn {projection}")).count(),
+            1,
+            "one source declaration must emit exactly one projected function definition:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("fn __incan_original_label"),
+            "decorator original must retain its separate compiler-helper name:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decorator_factory_calls_use_the_resolved_projection_for_free_and_method_wrappers() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+@preserve()
+def decorated_total(first: int, second: int) -> int:
+  return first + second
+
+class Box:
+  base: int
+
+  @preserve()
+  def total(self, extra: int) -> int:
+    return self.base + extra
+
+def main() -> None:
+  box = Box(base=5)
+  _ = decorated_total(1, 2) + box.total(6)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let preserve = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "preserve"
+            })
+            .ok_or_else(|| "decorator factory must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(preserve);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert_eq!(
+            compact.matches(&format!("{projection}()")).count(),
+            2,
+            "both decorator initializers must call the exact compiler-derived factory projection:\n{rust_code}"
+        );
+        assert!(
+            !compact.contains("preserve()"),
+            "decorator lowering must not fall back to the raw source name:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_function_declaration_and_call_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def calculate(value: int) -> int:
+  return value + 1
+
+def main() -> None:
+  _ = calculate(41)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "calculate"
+            })
+            .ok_or_else(|| "ordinary source function must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(compact.contains(&format!("{projection}(41,)")), "{rust_code}");
+        Ok(())
+    }
+
+    #[test]
+    fn same_module_function_alias_calls_the_target_projection_without_a_second_definition() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def calculate(value: int) -> int:
+  return value + 1
+
+compute = calculate
+
+def main() -> None:
+  _ = compute(41)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| identity.declaration_name == "calculate")
+            .ok_or_else(|| "alias target identity must survive codegen".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(compact.contains(&format!("{projection}(41,)")), "{rust_code}");
+        assert!(
+            !rust_code.contains("fn compute"),
+            "a binding alias must not create another declaration:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_wrapper_declaration_and_call_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def route(method: str, path: str) -> str:
+  return method + path
+
+get = partial route(method="GET")
+
+def main() -> None:
+  _ = get(path="/")
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let get = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Partial && identity.declaration_name == "get")
+            .ok_or_else(|| "source partial wrapper must retain its own canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(get);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact.contains(&format!("{projection}(\"GET\".to_string(),\"/\".to_string(),)")),
+            "{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cross_module_function_alias_imports_and_calls_the_provider_projection() -> TestResult {
+        let root_source = r#"
+from helpers import calculate as compute
+
+def main() -> None:
+  _ = compute(41)
+"#;
+        let helper_source = r#"
+pub def calculate(value: int) -> int:
+  return value + 1
+"#;
+        let root_ast = parse_incan_program(root_source, "root alias fixture");
+        let helper_ast = parse_incan_program(helper_source, "helper alias fixture");
+        let helper_path = vec!["helpers".to_string()];
+        let mut codegen = codegen_with_builtin_stdlib_inventory();
+        codegen.add_module_with_path_segments("helpers", &helper_ast, helper_path.clone());
+        let (root_code, modules) = codegen
+            .try_generate_multi_file_nested(&root_ast, std::slice::from_ref(&helper_path))
+            .map_err(|error| format!("cross-module alias fixture must typecheck and lower: {error:?}"))?;
+        let helper_code = modules
+            .get(&helper_path)
+            .ok_or_else(|| "helper module must be emitted".to_string())?;
+        let identities = recover_incan_identities_from_generated_rust(helper_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| identity.declaration_name == "calculate")
+            .ok_or_else(|| "provider function must carry a projection".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact_root = compact_rust(&root_code);
+
+        assert!(helper_code.contains(&format!("fn {projection}")), "{helper_code}");
+        assert!(
+            compact_root.contains(&format!("usecrate::helpers::{projection};")),
+            "{root_code}"
+        );
+        assert!(
+            !compact_root.contains(&format!("{projection}as{projection}")),
+            "{root_code}"
+        );
+        assert!(compact_root.contains(&format!("{projection}(41,)")), "{root_code}");
+        Ok(())
+    }
+
+    #[test]
+    fn decorated_method_declaration_and_call_share_one_projection() -> TestResult {
+        let source = load_test_file("user_defined_method_decorators");
+        let rust_code = generate_rust(&source);
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "decorated source method must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            rust_code.matches(&format!(".{projection}")).count() >= 1,
+            "method call must use the compiler-derived declaration projection:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("fn __incan_original_label"),
+            "decorator method helper must remain non-Incan and distinct:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_method_declaration_and_call_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+class Counter:
+  value: int
+
+  def next(self) -> int:
+    return self.value + 1
+
+def main() -> None:
+  counter: Counter = Counter(value=41)
+  _ = counter.next()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let next = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "next")
+            .ok_or_else(|| "ordinary source method must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(next);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "concrete method call must use the compiler-derived declaration projection:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn classmethod_and_staticmethod_declarations_and_calls_share_their_projections() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+class Factory:
+  @classmethod
+  def answer(cls) -> int:
+    return 42
+
+  @staticmethod
+  def twice(value: int) -> int:
+    return value * 2
+
+def main() -> None:
+  answer = Factory.answer()
+  twice = Factory.twice(21)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let answer = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "answer")
+            .ok_or_else(|| "classmethod must retain its canonical identity".to_string())?;
+        let twice = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "twice")
+            .ok_or_else(|| "staticmethod must retain its canonical identity".to_string())?;
+        let answer_projection = encode_incan_symbol_identity(answer);
+        let twice_projection = encode_incan_symbol_identity(twice);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(
+            rust_code.matches(&format!("fn {answer_projection}")).count(),
+            1,
+            "{rust_code}"
+        );
+        assert_eq!(
+            rust_code.matches(&format!("fn {twice_projection}")).count(),
+            1,
+            "{rust_code}"
+        );
+        assert!(
+            compact.contains(&format!("Factory::{answer_projection}()")),
+            "{rust_code}"
+        );
+        assert!(
+            compact.contains(&format!("Factory::{twice_projection}(21,)")),
+            "{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn method_alias_calls_the_target_projection_without_a_second_definition() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+model User:
+  name: str
+  short = label
+
+  def label(self) -> str:
+    return self.name
+
+def main() -> None:
+  user = User(name="Ada")
+  _ = user.short()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "method alias target must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(compact.contains(&format!(".{projection}()")), "{rust_code}");
+        assert!(
+            !rust_code.contains("fn short"),
+            "binding alias must not create a method declaration:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn method_partial_uses_an_explicit_generated_wrapper_and_preserves_the_target_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+model User:
+  name: str
+  short = partial label(prefix=1)
+
+  def label(self, prefix: int) -> str:
+    return self.name
+
+def main() -> None:
+  user = User(name="Ada")
+  _ = user.short()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| format!("method partial target must retain its canonical identity:\n{rust_code}"))?;
+        let projection = encode_incan_symbol_identity(label);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            rust_code.contains("fn short"),
+            "method partial must emit its generated forwarding helper:\n{rust_code}"
+        );
+        assert!(
+            compact.contains(".short(1)"),
+            "method partial call must target its forwarding helper:\n{rust_code}"
+        );
+        assert!(compact.contains(&format!(".{projection}(prefix,)")), "{rust_code}");
+        assert!(
+            identities.iter().all(|identity| identity.declaration_name != "short"),
+            "a method-partial binding must not mint a second source declaration identity: {identities:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn computed_property_getter_and_access_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def main() -> None:
+  account: Account = Account(cents=100)
+  _ = account.dollars
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let dollars = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Property && identity.declaration_name == "dollars"
+            })
+            .ok_or_else(|| "computed property getter must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(dollars);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "computed property access must call the compiler-derived projection:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn trait_method_keeps_abi_slot_and_exposes_one_recoverable_concrete_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+trait Labelled:
+  def label(self) -> str
+
+class Item with Labelled:
+  value: str
+
+  def label(self) -> str:
+    return self.value
+
+def main() -> None:
+  item: Item = Item(value="ready")
+  _ = item.label()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "concrete trait implementation method must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert!(
+            rust_code.contains("fn label(&self)"),
+            "Rust trait ABI slot must retain its declared name:\n{rust_code}"
+        );
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "concrete method call must use the recoverable projection rather than guess the trait slot name:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn trait_targeted_method_overloads_keep_distinct_recoverable_projections() {
+        let rust_code = generate_rust(&load_test_file("rfc043_newtype_trait_targets"));
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let convert_identities = identities
+            .iter()
+            .filter(|identity| {
+                identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "convert"
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            convert_identities.len(),
+            2,
+            "each targeted source method needs its own canonical projection"
+        );
+        for identity in convert_identities {
+            let projection = encode_incan_symbol_identity(identity);
+            assert_eq!(
+                rust_code.matches(&format!("fn {projection}")).count(),
+                1,
+                "each targeted method declaration must materialize once:\n{rust_code}"
+            );
+        }
+    }
+
+    #[test]
+    fn adopted_default_method_exposes_a_recoverable_projection_beside_the_trait_slot() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+trait Labelled:
+  def label(self) -> str:
+    return "default"
+
+class Item with Labelled:
+  value: str
+
+def main() -> None:
+  item: Item = Item(value="ready")
+  _ = item.label()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "an adopted Incan default method must retain its declaration identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert!(
+            rust_code.contains("fn label(&self)"),
+            "Rust trait ABI slot must retain its declared name:\n{rust_code}"
+        );
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "concrete calls to an adopted default must use the recoverable projection:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rust_extern_wrapper_is_projected_but_delegated_rust_symbol_is_not() -> TestResult {
+        let source = load_test_file("rust_extern_delegation");
+        let rust_code = generate_rust(&source);
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let fail_t = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "fail_t"
+            })
+            .ok_or_else(|| "Incan extern wrapper must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(fail_t);
+
+        assert!(rust_code.contains(&format!("fn {projection}")), "{rust_code}");
+        assert!(rust_code.contains("incan_stdlib::testing::fail_t"), "{rust_code}");
+        assert!(
+            !rust_code.contains(&format!("incan_stdlib::testing::{projection}")),
+            "{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_chain_preserves_the_provider_projection_without_alias_guessing() -> TestResult {
+        let provider_ast = parse_incan_program(
+            "pub def calculate(value: int) -> int:\n  return value + 1\n",
+            "function reexport provider",
+        );
+        let facade_ast = parse_incan_program(
+            "pub from provider import calculate as facade_calculate\n",
+            "function reexport facade",
+        );
+        let public_api_ast = parse_incan_program(
+            "pub from facade import facade_calculate as exported_calculate\n",
+            "function reexport public API",
+        );
+        let consumer_ast = parse_incan_program(
+            "from crate.public_api import exported_calculate as compute\n\ndef main() -> None:\n  _ = compute(41)\n",
+            "function reexport consumer",
+        );
+        let provider_path = vec!["provider".to_string()];
+        let facade_path = vec!["facade".to_string()];
+        let public_api_path = vec!["public_api".to_string()];
+        let dependency_paths = vec![provider_path.clone(), facade_path.clone(), public_api_path.clone()];
+        let mut codegen = codegen_with_builtin_stdlib_inventory();
+        codegen.add_module_with_path_segments("provider", &provider_ast, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade_ast, facade_path.clone());
+        codegen.add_module_with_path_segments("public_api", &public_api_ast, public_api_path.clone());
+        let (consumer_code, modules) = codegen
+            .try_generate_multi_file_nested(&consumer_ast, &dependency_paths)
+            .map_err(|error| format!("function reexport chain must typecheck and lower: {error:?}"))?;
+        let provider_code = modules
+            .get(&provider_path)
+            .ok_or_else(|| "provider module must be emitted".to_string())?;
+        let facade_code = modules
+            .get(&facade_path)
+            .ok_or_else(|| "facade module must be emitted".to_string())?;
+        let public_api_code = modules
+            .get(&public_api_path)
+            .ok_or_else(|| "public API module must be emitted".to_string())?;
+        let identities = recover_incan_identities_from_generated_rust(provider_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| identity.declaration_name == "calculate")
+            .ok_or_else(|| "provider declaration must carry a projection".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact_facade = compact_rust(facade_code);
+        let compact_public_api = compact_rust(public_api_code);
+        let compact_consumer = compact_rust(&consumer_code);
+
+        assert!(provider_code.contains(&format!("fn {projection}")), "{provider_code}");
+        assert!(compact_facade.contains(&projection), "{facade_code}");
+        assert!(compact_public_api.contains(&projection), "{public_api_code}");
+        assert!(
+            compact_consumer.contains(&format!("{projection}(41,)")),
+            "{consumer_code}"
+        );
+        assert!(
+            !compact_facade.contains(&format!("{projection}as{projection}")),
+            "{facade_code}"
+        );
+        assert!(
+            !compact_public_api.contains(&format!("{projection}as{projection}")),
+            "{public_api_code}"
+        );
+        Ok(())
+    }
 }
 
 #[test]

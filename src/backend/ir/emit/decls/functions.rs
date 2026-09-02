@@ -171,7 +171,7 @@ impl<'a> IrEmitter<'a> {
                 Self::rewrite_borrowed_param_types_in_expr(object, borrowed);
                 Self::rewrite_borrowed_param_types_in_expr(index, borrowed);
             }
-            AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static(_) => {}
+            AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
         }
     }
 
@@ -534,8 +534,9 @@ impl<'a> IrEmitter<'a> {
             return self.emit_extern_function(func);
         }
 
-        let name = Self::rust_ident(&func.name);
         let is_main = func.name == conventions::ENTRYPOINT_NAME;
+        let has_recoverable_projection = self.function_registry.canonical_identity(&func.name).is_some();
+        let name = self.rust_function_ident(&func.name);
         let mutated_params = self.collect_mutated_params(func);
         let used_names = Self::collect_function_used_names(func);
 
@@ -626,6 +627,15 @@ impl<'a> IrEmitter<'a> {
         let generics = self.emit_type_params(&func.type_params);
 
         if is_main && func.is_async {
+            let process_entry = has_recoverable_projection.then(|| {
+                quote! {
+                    // Rust requires the process boundary to have this fixed name. It is a host shim, not an Incan-origin
+                    // declaration; the source body remains in the recoverable `incan-v1` function above.
+                    fn main() {
+                        #name();
+                    }
+                }
+            });
             return Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
@@ -641,6 +651,8 @@ impl<'a> IrEmitter<'a> {
                         std::process::exit(1);
                     }
                 }
+
+                #process_entry
             });
         }
 
@@ -665,6 +677,14 @@ impl<'a> IrEmitter<'a> {
         // non-Result entrypoint annotations continue to use the unit process entrypoint convention.
         let main_returns_result = is_main && matches!(func.return_type, IrType::Result(_, _));
         if ret_ty_is_unit || (is_main && !main_returns_result) {
+            let process_entry = (is_main && has_recoverable_projection).then(|| {
+                quote! {
+                    // Fixed-name host shim; source provenance belongs to the recoverable function above.
+                    fn main() {
+                        #name();
+                    }
+                }
+            });
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
@@ -675,9 +695,18 @@ impl<'a> IrEmitter<'a> {
                     #zen_stmt
                     #(#body_stmts)*
                 }
+                #process_entry
             })
         } else {
             let ret_ty = self.emit_type(&func.return_type);
+            let process_entry = (is_main && has_recoverable_projection).then(|| {
+                quote! {
+                    // Fixed-name host shim; source provenance belongs to the recoverable function above.
+                    fn main() -> #ret_ty {
+                        #name()
+                    }
+                }
+            });
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
@@ -686,6 +715,7 @@ impl<'a> IrEmitter<'a> {
                     #static_init_stmt
                     #(#body_stmts)*
                 }
+                #process_entry
             })
         }
     }
@@ -707,7 +737,10 @@ impl<'a> IrEmitter<'a> {
             )));
         };
 
-        let name = Self::rust_ident(&func.name);
+        let name = self.rust_function_ident(&func.name);
+        // The wrapper is Incan-origin and therefore projected. Its delegated symbol remains host-owned Rust and must
+        // use the compiler-carried source spelling rather than inheriting or decoding the Incan projection.
+        let backing_name = Self::rust_ident(self.function_registry.source_name(&func.name).unwrap_or(&func.name));
         let vis = self.emit_visibility(&func.visibility);
 
         // Build parameter list (same as normal functions, but simpler: no mutation tracking needed).
@@ -741,7 +774,7 @@ impl<'a> IrEmitter<'a> {
                 quote! { #ident }
             })
             .collect();
-        call_path_tokens.push(quote! { #name });
+        call_path_tokens.push(quote! { #backing_name });
         let call_path = join_path_tokens(&call_path_tokens);
 
         // Build argument list (forward all params by name).
@@ -1420,7 +1453,7 @@ impl<'a> IrEmitter<'a> {
             AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
-            AssignTarget::Static(_) => {}
+            AssignTarget::Static { .. } => {}
             AssignTarget::Field { object, .. } => {
                 Self::collect_expr_used_names(object, param_names, shadowed_names, used_names);
             }
@@ -1495,7 +1528,9 @@ impl<'a> IrEmitter<'a> {
         used_names: &mut HashSet<String>,
     ) {
         match &expr.kind {
-            IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+            IrExprKind::Var { name, .. }
+            | IrExprKind::StaticRead { name, .. }
+            | IrExprKind::StaticBinding { name, .. } => {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
             IrExprKind::AssociatedFunction { .. } | IrExprKind::FunctionItem { .. } => {}

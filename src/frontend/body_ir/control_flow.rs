@@ -508,9 +508,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let Some(range) = range else {
             let loop_scope = self.new_scope(Some(scope), span);
-            let item_local = self.declare_for_item_local(&for_stmt.pattern, &item_ty, loop_scope, span, &|name| {
-                count_reads_in_stmts(name, &for_stmt.body)
-            });
+            let item_local = self.declare_for_item_local(
+                &for_stmt.pattern,
+                &item_ty,
+                loop_scope,
+                hir_span(for_stmt.pattern.span),
+                &|name| count_reads_in_stmts(name, &for_stmt.body),
+            );
             self.lower_general_iteration(
                 &for_stmt.iter,
                 item_local,
@@ -618,7 +622,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// field on every iteration without the range appearing to be moved out from under itself.
     fn read_range_field(&mut self, range: &bir::Place, field: &str, field_ty: &IncanType) -> bir::Operand {
         let mut place = range.clone();
-        place.projection.push(bir::PlaceElem::Field(field.to_string()));
+        place.projection.push(bir::PlaceElem::synthetic_field(field));
         let (fact, last_use) = self.ownership_fact_for_place(&place, field_ty);
         bir::Operand::place(place, fact, last_use)
     }
@@ -769,9 +773,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // per-iteration item local at all -- unlike the general path, where `IterNext` must still write the polled
         // item somewhere for the poll itself to happen.
         if !matches!(for_stmt.pattern.node, ast::Pattern::Wildcard) {
-            let item_local = self.declare_for_item_local(&for_stmt.pattern, item_ty, loop_scope, span, &|name| {
-                count_reads_in_stmts(name, &for_stmt.body)
-            });
+            let item_local = self.declare_for_item_local(
+                &for_stmt.pattern,
+                item_ty,
+                loop_scope,
+                hir_span(for_stmt.pattern.span),
+                &|name| count_reads_in_stmts(name, &for_stmt.body),
+            );
             body_stmts.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
                     place: bir::Place::from_local(item_local),
@@ -924,7 +932,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let element_types = tuple_element_types(expected_ty, items.len());
                 for (index, (item, element_ty)) in items.iter().zip(&element_types).enumerate() {
                     let mut field_place = place.clone();
-                    field_place.projection.push(bir::PlaceElem::Field(index.to_string()));
+                    field_place
+                        .projection
+                        .push(bir::PlaceElem::synthetic_field(index.to_string()));
                     self.bind_for_pattern_fields(item, element_ty, &field_place, loop_scope, reads, out);
                 }
             }

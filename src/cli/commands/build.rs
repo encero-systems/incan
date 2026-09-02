@@ -43,7 +43,9 @@ use crate::frontend::body_ir::{
     is_direct_replacement_value_enum,
 };
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
-use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
+use crate::frontend::library_exports::{
+    CheckedExportKind, CheckedNamedExport, LibraryExportBindingRegistry, collect_checked_public_exports,
+};
 use crate::frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     dependency_project_root, load_provider_dependency_artifact,
@@ -3069,13 +3071,13 @@ impl<'a> LibraryReexportResolver<'a> {
     ) -> Result<Vec<CheckedNamedExport>, Vec<crate::frontend::diagnostics::CompileError>> {
         let mut errors = Vec::new();
         let mut resolved = Vec::new();
-        let mut exported_names: HashSet<String> = HashSet::new();
+        let mut exported_names = LibraryExportBindingRegistry::default();
         let known_modules: Vec<String> = self.module_exports.keys().cloned().collect();
 
         if let Some(exports_by_name) = self.module_exports.get(&module_key(&lib_module.path_segments)) {
             for (export_name, export_span) in Self::direct_public_exports(lib_module) {
-                if !exported_names.insert(export_name.clone()) {
-                    errors.push(diagnostics::errors::duplicate_library_export(&export_name, export_span));
+                if let Err(error) = exported_names.register(&export_name, export_span) {
+                    errors.push(error);
                     continue;
                 }
                 if let Some(exports) = exports_by_name.get(&export_name) {
@@ -3113,8 +3115,8 @@ impl<'a> LibraryReexportResolver<'a> {
 
                 for item in items {
                     let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
-                    if !exported_names.insert(exported_name.clone()) {
-                        errors.push(diagnostics::errors::duplicate_library_export(&exported_name, decl.span));
+                    if let Err(error) = exported_names.register(&exported_name, decl.span) {
+                        errors.push(error);
                         continue;
                     }
 
@@ -3150,8 +3152,8 @@ impl<'a> LibraryReexportResolver<'a> {
 
             for item in items {
                 let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
-                if !exported_names.insert(exported_name.clone()) {
-                    errors.push(diagnostics::errors::duplicate_library_export(&exported_name, decl.span));
+                if let Err(error) = exported_names.register(&exported_name, decl.span) {
+                    errors.push(error);
                     continue;
                 }
 
@@ -10004,6 +10006,7 @@ fn prepare_library_project(
     let typecheck_start = Instant::now();
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
+    let mut checked_exports_by_source_module: Vec<(Vec<String>, Vec<CheckedNamedExport>)> = Vec::new();
     let mut api_metadata_modules = Vec::new();
     let module_idx_by_key = module_key_index(&modules);
     let mut stdlib_cache = StdlibAstCache::new();
@@ -10040,6 +10043,7 @@ fn prepare_library_project(
                     &checker,
                     module.path_segments.clone(),
                 ));
+                checked_exports_by_source_module.push((module.path_segments.clone(), module_exports.clone()));
                 checked_exports_by_module.insert(
                     module_key(&module.path_segments),
                     checked_exports_by_name(module_exports),
@@ -10161,6 +10165,11 @@ fn prepare_library_project(
     };
     materialize_checked_api_public_namespaces(&mut checked_api)
         .map_err(|error| CliError::failure(format!("failed to publish checked module namespaces: {error}")))?;
+    library_manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports(&project_name, &checked_api, &checked_exports_by_source_module)
+        .map_err(|error| CliError::failure(format!("failed to publish checked module identities: {error}")))?;
     library_manifest.contract_metadata.api = Some(checked_api);
     library_manifest.contract_metadata.provider = compiled_provider_metadata(CompiledProviderMetadataInputs {
         manifest: &manifest,

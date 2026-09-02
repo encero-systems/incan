@@ -54,6 +54,8 @@ pub struct TypeCheckInfo {
     pub derivations: DerivationArtifacts,
     /// Expression-local resolution facts keyed by source spans.
     pub expressions: ExpressionArtifacts,
+    /// Source-reference resolution facts keyed by source spans.
+    pub references: ReferenceArtifacts,
     /// Const evaluation facts needed by runtime and emission boundaries.
     pub consts: ConstArtifacts,
     /// Rust interop decisions that must be preserved exactly across lowering.
@@ -70,6 +72,36 @@ pub struct TypeCheckInfo {
     pub protocols: ProtocolArtifacts,
     /// Checked C ABI declaration facts consumed by verification and code generation.
     pub c_abi: CAbiInteropArtifacts,
+    /// Source import and alias paths accepted by typechecking, keyed by their active local binding.
+    pub import_bindings: CheckedImportBindings,
+}
+
+/// Checked source-path facts for active import-derived bindings.
+///
+/// These paths describe how source resolution accepted a local name. They intentionally do not replace canonical
+/// symbol identities: a re-exported binding can retain its facade path here while its identity names the original
+/// declaring module.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CheckedImportBindings {
+    paths: BTreeMap<String, Vec<String>>,
+}
+
+impl CheckedImportBindings {
+    /// Return the checked source path for one active local binding.
+    pub fn path(&self, local_name: &str) -> Option<&[String]> {
+        self.paths.get(local_name).map(Vec::as_slice)
+    }
+
+    /// Iterate active local bindings and their checked source paths in deterministic name order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.paths.iter().map(|(name, path)| (name.as_str(), path.as_slice()))
+    }
+
+    pub(crate) fn from_paths(paths: impl IntoIterator<Item = (String, Vec<String>)>) -> Self {
+        Self {
+            paths: paths.into_iter().collect(),
+        }
+    }
 }
 
 /// Checked source-level C ABI binding contracts.
@@ -676,14 +708,28 @@ pub struct ExpressionArtifacts {
     /// The codegraph exporter consumes this instead of re-resolving names from syntax. Absence means the target is
     /// unsupported, ambiguous, degraded, or outside the current conservative source target set.
     pub source_targets: HashMap<(usize, usize), SourceTargetInfo>,
-    /// RFC 120 canonical identities of resolved references, keyed by reference expression span.
+}
+
+/// Source-reference resolution facts keyed by source spans.
+#[derive(Debug, Default, Clone)]
+pub struct ReferenceArtifacts {
+    /// RFC 120 canonical identities of resolved value and type references.
     ///
-    /// This is the reference-side identity fact: a local, an import, an alias, and a re-export of one declaration
-    /// all record the *same* value here, so a consumer can decide "do these two references mean the same thing"
-    /// structurally, without comparing spellings. [`Self::source_targets`] stays the string-shaped codegraph
-    /// projection; it is never the identity. Absence means resolution did not prove an identity for that reference —
-    /// consumers fail closed rather than reconstruct one.
+    /// A local, an import, an alias, and a re-export of one declaration all record the *same* value here, so a
+    /// consumer can decide "do these two references mean the same thing" structurally without comparing spellings.
+    /// [`ExpressionArtifacts::source_targets`] stays the string-shaped codegraph projection; it is never the
+    /// identity. Absence means resolution did not prove an identity for that reference — consumers fail closed
+    /// rather than reconstruct one.
     pub resolved_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// RFC 120 identities selected for statement-owned write targets at their exact authored identifier spans.
+    ///
+    /// Single, tuple-unpack, chained, and compound assignments retain one target span per written identifier. Keying
+    /// by that exact span plus the target spelling preserves each target independently without asking Body IR lowering
+    /// to repeat lexical lookup after the typechecker has exited the binding's scope. Compiler-generated assignments
+    /// use their unique synthetic target spans through the same contract.
+    pub resolved_write_identities: HashMap<(usize, usize, String), CanonicalSymbolId>,
+    /// Checked type of each statement-owned write target, keyed identically to [`Self::resolved_write_identities`].
+    pub resolved_write_types: HashMap<(usize, usize, String), ResolvedType>,
 }
 
 /// Const evaluation facts needed by runtime and emission boundaries.
@@ -826,11 +872,23 @@ pub struct DeclarationArtifacts {
     pub resolved_import_identities: HashMap<String, CanonicalSymbolId>,
     /// RFC 120 identities of this module's own top-level declarations, keyed by declaration span.
     ///
-    /// Exported from the symbol table's minting after checking so later stages (declaration-level HIR, semantic
-    /// snapshots) consume the minted identity instead of re-deriving one from module path plus spelling. Only
-    /// module-scope declaration kinds are exported; bindings that carry a *target's* identity (imports, aliases) are
-    /// found in [`Self::resolved_import_identities`] under their local name instead.
+    /// Exported from the symbol table's minting after checking as a compatibility view for span-keyed declaration
+    /// consumers. Binding-aware consumers use [`Self::hir_bindings_by_span`], which also represents imports and
+    /// aliases carrying a target's identity.
     pub declaration_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// RFC 120 identities of accepted source-owned member declarations, keyed by their declaration span.
+    ///
+    /// Fields, methods, properties, and enum variants do not occupy the module's ordinary lexical declaration map,
+    /// but declaration-aware consumers still need their compiler-owned identity before any use site exists. This
+    /// map is populated from the checked member registry after collision resolution; an absent entry is unproven and
+    /// must never be reconstructed from an owner/name pair.
+    pub member_declaration_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Checked source bindings introduced by each top-level declaration, in source binding order.
+    ///
+    /// This is the declaration-level HIR handoff. It preserves the local spelling separately from the canonical
+    /// identity of the declaration it names, and it can represent every binding of one multi-item import without
+    /// asking HIR to reinterpret import syntax. An absent identity is an explicit unproven result.
+    pub hir_bindings_by_span: BTreeMap<(usize, usize), Vec<CheckedSourceBinding>>,
     /// Checked provider-operation declarations, keyed by their provider function's canonical identity.
     ///
     /// This is the producer-side fact that package publication persists. Body-IR lowering consumes the resulting
@@ -884,6 +942,15 @@ pub struct DeclarationArtifacts {
     pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
+}
+
+/// One active source binding exported for declaration-level HIR lowering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedSourceBinding {
+    /// Spelling introduced in the current module.
+    pub local_name: String,
+    /// Canonical declaration identity proven for this binding, if any.
+    pub canonical: Option<CanonicalSymbolId>,
 }
 
 /// One provider function's checked authority requirement.
@@ -1141,8 +1208,8 @@ pub struct CallArtifacts {
     ///
     /// A race arm binds the shared `race for value:` name to the *awaited output* type, not to the awaitable's own
     /// type: `Awaitable[T]` binds `T`, and `JoinHandle[T]` binds `Result[T, TaskJoinError]`. Only the typechecker
-    /// performs that unwrapping (`await_output_type`), and the arm binding has no `await X` expression span of its
-    /// own for lowering to look up, so the decision is recorded here instead of being re-derived.
+    /// performs that unwrapping (`await_output_type`). The shared header span identifies the source binding, while
+    /// the awaitable span distinguishes each arm's refined type, so that type is recorded here instead of re-derived.
     pub race_arm_binding_types: HashMap<(usize, usize), ResolvedType>,
     /// Resolved `model`/`class` construction field binding, keyed by full call expression span (#1158).
     ///
@@ -1493,6 +1560,16 @@ pub struct TestingFixtureInfo {
 }
 
 impl TypeCheckInfo {
+    /// Return the checked source path associated with one active import-derived binding.
+    pub fn import_binding_path(&self, local_name: &str) -> Option<&[String]> {
+        self.import_bindings.path(local_name)
+    }
+
+    /// Return all checked source import binding paths.
+    pub fn checked_import_bindings(&self) -> &CheckedImportBindings {
+        &self.import_bindings
+    }
+
     /// Export a backend-neutral fact snapshot for consumers that should not depend on typed AST or Rust IR shapes.
     ///
     /// This is the first bridge into the v0.5 semantic fact store. It deliberately reuses facts that the typechecker
@@ -1528,6 +1605,14 @@ impl TypeCheckInfo {
                 CompilerNodeId::expression_span(&module_identity, span.0, span.1),
                 SemanticFactKind::SymbolTarget,
                 SemanticFactValue::source_target(semantic_source_target_from_typecheck(target)),
+            ));
+        }
+
+        for (&span, identity) in &self.references.resolved_identities {
+            facts.push(SemanticFact::new(
+                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                SemanticFactKind::SymbolIdentity,
+                SemanticFactValue::canonical_identity(identity.clone()),
             ));
         }
 
@@ -1653,7 +1738,45 @@ impl TypeCheckInfo {
     /// Absent means unproven — never permission to rebuild an identity from the reference's spelling or from
     /// [`Self::source_target`], which is a string-shaped codegraph projection rather than an identity.
     pub fn resolved_identity(&self, span: Span) -> Option<&CanonicalSymbolId> {
-        self.expressions.resolved_identities.get(&(span.start, span.end))
+        self.references.resolved_identities.get(&(span.start, span.end))
+    }
+
+    /// Record the RFC 120 canonical identity proven for one source reference.
+    ///
+    /// Expression and type-reference checking share this write boundary so consumers never need to know which AST
+    /// category produced the reference fact. Callers must pass an identity obtained from the resolved symbol; this
+    /// method deliberately does not reconstruct identities from source spellings.
+    pub(crate) fn record_resolved_identity(&mut self, span: Span, identity: CanonicalSymbolId) {
+        self.references
+            .resolved_identities
+            .insert((span.start, span.end), identity);
+    }
+
+    /// Return the canonical binding selected for a statement-owned write target.
+    pub fn resolved_write_identity(&self, span: Span, name: &str) -> Option<&CanonicalSymbolId> {
+        self.references
+            .resolved_write_identities
+            .get(&(span.start, span.end, name.to_string()))
+    }
+
+    /// Return the checked type of a statement-owned write target.
+    pub fn resolved_write_type(&self, span: Span, name: &str) -> Option<&ResolvedType> {
+        self.references
+            .resolved_write_types
+            .get(&(span.start, span.end, name.to_string()))
+    }
+
+    /// Record the canonical binding selected for a statement-owned write target.
+    pub(crate) fn record_resolved_write_identity(
+        &mut self,
+        span: Span,
+        name: &str,
+        identity: CanonicalSymbolId,
+        ty: ResolvedType,
+    ) {
+        let key = (span.start, span.end, name.to_string());
+        self.references.resolved_write_identities.insert(key.clone(), identity);
+        self.references.resolved_write_types.insert(key, ty);
     }
 
     /// Return whether the identifier at `span` resolved to the ambient `std.logging` logger binding.

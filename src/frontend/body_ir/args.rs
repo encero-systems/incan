@@ -115,9 +115,10 @@ pub(super) fn expand_shaped_spread(type_info: &TypeCheckInfo, arg: &ast::CallArg
                 .iter()
                 .map(|entry| match entry {
                     ast::DictEntry::Pair(key, value) => match &unparenthesized(key).node {
-                        ast::Expr::Literal(ast::Literal::String(name)) => {
-                            Some(ast::CallArg::Named(name.clone(), value.clone()))
-                        }
+                        ast::Expr::Literal(ast::Literal::String(name)) => Some(ast::CallArg::Named(
+                            ast::Spanned::new(name.clone(), ast::Span::default()),
+                            value.clone(),
+                        )),
                         _ => None,
                     },
                     ast::DictEntry::Spread(_) => None,
@@ -172,9 +173,9 @@ pub(super) fn plan_declared_args<'a>(
             ast::CallArg::Named(arg_name, expr) => {
                 let Some(index) = params
                     .iter()
-                    .position(|param| param.name.as_deref() == Some(arg_name.as_str()))
+                    .position(|param| param.name.as_deref() == Some(arg_name.node.as_str()))
                 else {
-                    return Err(format!("{callee} has no parameter `{arg_name}`"));
+                    return Err(format!("{callee} has no parameter `{}`", arg_name.node));
                 };
                 (index, expr)
             }

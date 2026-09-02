@@ -59,18 +59,21 @@ pub use type_info::{
     CAbiInteropArtifacts, CAbiOutputSlot, CAbiSpan, CAbiSpanAccess, CAbiSpanAccessKind, CAbiSpanKind, CBindingBuffer,
     CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingFacade, CBindingFunctionCall, CBindingOutcome,
     CBindingParameter, CBindingRawCall, CBindingRawCallOwner, CBindingResource, CBindingStruct, CBindingStructField,
-    CBindingSymbol, CBindingType, COutputMode, CResourceAccess, ComputedPropertyAccessInfo,
-    DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan, FunctionBindingInfo, IdentKind,
-    ImportedRegistryDefinitionInfo, MutableRustTypeArgumentProjection, PartialProjectionInfo, PartialProjectionPreset,
-    PartialProjectionTargetKind, ProtocolIterationInfo, ProviderOperationDeclarationInfo, RegistryArtifacts,
-    RegistryDefinitionInfo, RegistryDescriptionRegistry, RegistryExplicitEntryInfo, ResolvedMethodCall,
-    ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
-    SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo,
-    ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep, c_binding_descriptor_identity,
+    CBindingSymbol, CBindingType, COutputMode, CResourceAccess, CheckedImportBindings, CheckedSourceBinding,
+    ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan,
+    FunctionBindingInfo, IdentKind, ImportedRegistryDefinitionInfo, MutableRustTypeArgumentProjection,
+    PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, ProtocolIterationInfo,
+    ProviderOperationDeclarationInfo, RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry,
+    RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
+    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
+    c_binding_descriptor_identity,
 };
 pub(crate) use type_info::{ClassFieldDefaultInfo, semantic_type_from_resolved};
 #[cfg(test)]
 mod canonical_identity_tests;
+#[cfg(test)]
+mod identity_surface_tests;
 #[cfg(test)]
 mod tests;
 
@@ -102,6 +105,7 @@ use incan_core::interop::{
     metadata_free_method_signature, render_rust_type_shape_path, rust_display_is_owned_string,
     split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
+use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::errors as runtime_errors;
@@ -114,7 +118,7 @@ use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_core::lang::types::stringlike::StringLikeId;
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Type checker state.
 ///
@@ -148,6 +152,42 @@ pub(crate) struct LoopContext {
 pub(crate) struct TypeAliasTarget {
     pub type_params: Vec<String>,
     pub target: ResolvedType,
+}
+
+/// Source member categories that share one RFC 120 member-namespace registration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemberBindingKind {
+    Field,
+    Method,
+    Property,
+    MethodAlias,
+    MethodPartial,
+    Variant,
+    VariantAlias,
+}
+
+impl MemberBindingKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Field => "field",
+            Self::Method => "method",
+            Self::Property => "property",
+            Self::MethodAlias => "method alias",
+            Self::MethodPartial => "method partial",
+            Self::Variant => "variant",
+            Self::VariantAlias => "variant alias",
+        }
+    }
+
+    const fn declaration_kind(self) -> Option<SemanticSourceTargetKind> {
+        match self {
+            Self::Field => Some(SemanticSourceTargetKind::Field),
+            Self::Method => Some(SemanticSourceTargetKind::Method),
+            Self::Property => Some(SemanticSourceTargetKind::Property),
+            Self::Variant => Some(SemanticSourceTargetKind::Variant),
+            Self::MethodAlias | Self::MethodPartial | Self::VariantAlias => None,
+        }
+    }
 }
 
 /// Canonical nominal identity for one type exported through a compiled public-library dependency.
@@ -334,6 +374,11 @@ pub struct TypeChecker {
     pub(crate) current_module_function_symbols: HashMap<String, SymbolId>,
     /// Transparent source type aliases, keyed by their local type name.
     pub(crate) type_aliases: HashMap<String, TypeAliasTarget>,
+    /// Member declarations rejected by the source-ordered shared member registry.
+    ///
+    /// Collection and semantic checking both consult this set so a later colliding declaration cannot overwrite the
+    /// first active member or produce a second, contradictory collision through the lexical symbol table.
+    rejected_member_bindings: HashSet<(usize, usize)>,
     /// Previous type-alias bindings changed while dependency imports are collected transactionally.
     dependency_import_type_alias_transaction: Option<HashMap<String, Option<TypeAliasTarget>>>,
     /// Whether source annotation names should be validated during the semantic check pass.
@@ -366,6 +411,11 @@ pub struct TypeChecker {
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as
     /// alias` binds `module.name`, not an unrelated same-name symbol imported earlier from a sibling dependency.
     pub(crate) dependency_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    /// Exact transparent type-alias targets exported by dependency modules.
+    ///
+    /// Alias expansion is source semantics, so targets are keyed by owner module and are copied into the consumer's
+    /// local alias map only when an explicit source import creates that binding.
+    pub(crate) dependency_member_type_aliases: HashMap<String, HashMap<String, TypeAliasTarget>>,
     /// Checked `Registry.define(...)` contracts exported by dependency source modules, keyed by canonical module name.
     ///
     /// This cache is deliberately separate from imported static types. A `Registry[K, T]` type alone is not proof of
@@ -382,13 +432,14 @@ pub struct TypeChecker {
     /// contain unrelated same-name declarations from sibling modules. Direct members must therefore come from this
     /// per-module snapshot rather than a later global `lookup_symbol(...)`.
     pub(crate) dependency_direct_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
-    /// Declaration span of each directly-declared dependency member, keyed by module cache key then member name.
+    /// Direct dependency-owned type-alias targets before facade re-export projection.
+    pub(crate) dependency_direct_member_type_aliases: HashMap<String, HashMap<String, TypeAliasTarget>>,
+    /// Canonical identities retained by direct dependency member bindings, including source aliases.
     ///
-    /// RFC 120 anchors a canonical identity to its one declaration site, and a dependency's members are exactly the
-    /// declarations a consumer cannot otherwise see a span for. The cache key is the `_`-joined module spelling and is
-    /// ambiguous by itself, so the owning module path is supplied at lookup time from the resolution candidate rather
-    /// than recovered by splitting this key.
-    pub(crate) dependency_direct_member_spans: HashMap<String, HashMap<String, Span>>,
+    /// A public `alias` binding carries its target declaration's identity, so reconstructing identity from the alias
+    /// spelling and span would invent a second declaration. This cache preserves the symbol table's authoritative
+    /// answer across the dependency boundary.
+    pub(crate) dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
     /// Re-export links a dependency module publishes, keyed by module cache key then exported name.
     ///
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
@@ -421,7 +472,7 @@ pub struct TypeChecker {
     pub(crate) local_rust_derive_paths: HashMap<String, Vec<String>>,
     /// Shared provider and feature projection for ordinary dependencies and SDK-supplied libraries.
     pub(crate) provider_plan: Arc<ProviderPlan>,
-    /// Internal semantic type cache for `pub::` exports referenced transitively by imported signatures.
+    /// Internal semantic type cache for dependency exports referenced transitively by imported signatures.
     ///
     /// These entries are intentionally **not** source-visible names: they exist so values returned from imported
     /// functions/methods can still participate in method lookup and trait compatibility even when the consumer did not
@@ -432,7 +483,7 @@ pub struct TypeChecker {
     /// Identity is deliberately separate from [`ResolvedType`]: source diagnostics retain local spellings while
     /// compatibility can still distinguish identical short names owned by separate dependencies.
     pub(crate) public_library_type_identities: HashMap<String, PublicLibraryTypeIdentity>,
-    /// Internal semantic trait cache for `pub::` exports referenced transitively by imported signatures.
+    /// Internal semantic trait cache for dependency exports referenced transitively by imported signatures.
     ///
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
     /// names ambient in user source.
@@ -490,13 +541,6 @@ pub struct TypeChecker {
     /// This is populated while imports are collected. Keeping it with the checker prevents declaration checking from
     /// reopening provider source after the compiled manifest has become the semantic authority.
     pub(crate) testing_marker_semantics: Option<crate::frontend::testing_markers::TestingMarkerSemantics>,
-    /// Import aliases collected from `import` / `from ... import` declarations.
-    ///
-    /// Maps each local binding name to the fully qualified module path segments. Used as a fallback in
-    /// [`validate_decorators`](Self::validate_decorators) when the SymbolTable-based
-    /// [`DecoratorPrefixLookup`](crate::frontend::decorator_resolution::DecoratorPrefixLookup) cannot resolve a
-    /// decorator path (e.g. functions imported via `from std.testing import parametrize`).
-    pub(crate) import_aliases: HashMap<String, Vec<String>>,
     /// Unified import-driven activation and strategy context for soft-keyword/decorator semantics.
     pub(crate) surface_context: SurfaceContext,
     /// RFC 042: transitive supertrait closure for each trait, keyed by trait name.
@@ -508,7 +552,7 @@ pub struct TypeChecker {
     ///
     /// Ensures supertrait names are not mistaken for free type parameters when the supertrait is declared later in the
     /// same module.
-    pub(crate) pending_trait_supertraits: Vec<(String, Vec<Spanned<TraitBound>>)>,
+    pub(crate) pending_trait_supertraits: Vec<(SymbolId, Vec<Spanned<TraitBound>>)>,
     /// Current recursive compatibility-check depth.
     ///
     /// Recursive source aliases and Rust facade identities can route compatibility back through the same structural
@@ -594,6 +638,7 @@ impl TypeChecker {
             local_function_decls: HashMap::new(),
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
+            rejected_member_bindings: HashSet::new(),
             dependency_import_type_alias_transaction: None,
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
@@ -605,10 +650,12 @@ impl TypeChecker {
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
             dependency_member_symbols: HashMap::new(),
+            dependency_member_type_aliases: HashMap::new(),
             dependency_registry_definitions: HashMap::new(),
             dependency_member_partial_projections: HashMap::new(),
             dependency_direct_member_symbols: HashMap::new(),
-            dependency_direct_member_spans: HashMap::new(),
+            dependency_direct_member_type_aliases: HashMap::new(),
+            dependency_direct_member_identities: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
             dependency_module_path_segments: HashMap::new(),
             dependency_direct_member_partial_projections: HashMap::new(),
@@ -633,7 +680,6 @@ impl TypeChecker {
             surface_type_import_bindings: HashMap::new(),
             testing_fixture_names: HashSet::new(),
             testing_marker_semantics: None,
-            import_aliases: HashMap::new(),
             surface_context: SurfaceContext::default(),
             supertrait_closure: HashMap::new(),
             pending_trait_supertraits: Vec::new(),
@@ -2120,6 +2166,11 @@ impl TypeChecker {
         &self.type_info
     }
 
+    /// Return the checked source path for one active import-derived binding.
+    pub(crate) fn import_binding_path(&self, local_name: &str) -> Option<&[String]> {
+        self.symbols.import_binding_path(local_name)
+    }
+
     /// Record the resolved type for one expression span in the lowering-facing expression artifact map.
     pub(crate) fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
@@ -2143,12 +2194,12 @@ impl TypeChecker {
         );
     }
 
-    /// Export the RFC 120 identities minted for this module's own declarations into the lowering-facing artifacts.
+    /// Export the RFC 120 identities and active source bindings into lowering-facing artifacts.
     ///
-    /// Runs once at the end of checking, when every declaration has been defined. The span-keyed map lets
-    /// declaration-level HIR attach each top-level declaration's identity without re-deriving it from module path
-    /// plus spelling; import/alias bindings are excluded here because they carry a target's identity and are already
-    /// exported by local name in `resolved_import_identities`.
+    /// Runs once at the end of checking, when every declaration has been defined. The legacy identity-only map keeps
+    /// local declaration facts available to existing consumers. The checked-binding map additionally preserves
+    /// imports and aliases with their target identities and all bindings introduced by a single declaration, so HIR
+    /// never has to reconstruct source resolution from spellings.
     fn export_declaration_identities(&mut self) {
         for (span, identity) in self.symbols.local_declaration_identities() {
             self.type_info
@@ -2156,6 +2207,38 @@ impl TypeChecker {
                 .declaration_identities
                 .insert((span.start, span.end), identity.clone());
         }
+
+        self.type_info.declarations.hir_bindings_by_span.clear();
+        let bindings = self
+            .symbols
+            .active_module_source_bindings()
+            .map(|(span, name, canonical)| {
+                (
+                    span,
+                    CheckedSourceBinding {
+                        local_name: name.to_string(),
+                        canonical: canonical.cloned(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        for (span, binding) in bindings {
+            self.type_info
+                .declarations
+                .hir_bindings_by_span
+                .entry((span.start, span.end))
+                .or_default()
+                .push(binding);
+        }
+    }
+
+    /// Snapshot active checked source-import paths for consumers that do not retain the symbol table.
+    fn export_checked_import_bindings(&mut self) {
+        self.type_info.import_bindings = CheckedImportBindings::from_paths(
+            self.symbols
+                .active_import_binding_paths()
+                .map(|(name, path)| (name.to_string(), path.to_vec())),
+        );
     }
 
     /// Retain one compiler-proven ordinary function call for checked C bridge/facade projection.
@@ -2306,7 +2389,7 @@ impl TypeChecker {
             crate::frontend::resolved_type_subst::type_param_subst_map(type_params, concrete_type_args);
 
         for adopted_trait in adopted {
-            let Some(adopted_info) = self.lookup_semantic_trait_info(&adopted_trait.name) else {
+            let Some(adopted_info) = self.lookup_trait_adoption_info(adopted_trait) else {
                 continue;
             };
             let direct_args: Vec<ResolvedType> = if adopted_trait.type_args.is_empty() {
@@ -2380,7 +2463,7 @@ impl TypeChecker {
             return false;
         };
         let canonical_derive = incan_core::lang::derives::as_str(derive_id);
-        if canonical_derive == trait_name && !self.import_aliases.contains_key(trait_name) {
+        if canonical_derive == trait_name && self.import_binding_path(trait_name).is_none() {
             return self.lookup_semantic_trait_info(trait_name).is_some();
         }
         let Some((module_path, source_trait)) = self.resolve_bound_trait_path(trait_name) else {
@@ -2576,6 +2659,25 @@ impl TypeChecker {
         }
         let infos = self.transitive_pub_traits.get(name)?;
         (infos.len() == 1).then(|| &infos[0])
+    }
+
+    /// Look up the exact trait metadata named by a collected adoption.
+    ///
+    /// Dependency types retain the spelling used in their declaring module (for example `json.Serialize`) together
+    /// with the provider module and source trait name. That qualified spelling is not a consumer binding, so exact
+    /// provider metadata is consulted after ordinary semantic lookup rather than leaking the dependency's import into
+    /// the consumer scope.
+    pub(crate) fn lookup_trait_adoption_info(&self, adoption: &TypeBoundInfo) -> Option<&TraitInfo> {
+        if let Some(info) = self.lookup_semantic_trait_info(&adoption.name) {
+            return Some(info);
+        }
+        let module_path = adoption.module_path.as_ref()?;
+        let source_name = adoption
+            .source_name
+            .as_deref()
+            .or_else(|| adoption.name.rsplit('.').next())?;
+        self.dependency_module_traits
+            .get(&format!("{}.{}", module_path.join("."), source_name))
     }
 
     /// Return the transitive supertrait closure for one trait using visible symbols first, then cached `pub::`
@@ -4026,6 +4128,161 @@ impl TypeChecker {
         }
     }
 
+    /// Record every compiler-proven declaration identity referenced by one source type annotation.
+    ///
+    /// Generic constructors and their arguments are independent reference sites, so the walk retains each AST
+    /// node's own span. Qualified paths resolve through the checked import metadata rather than being reconstructed
+    /// from their written spelling. `Self` records the enclosing concrete nominal declaration in methods and the
+    /// enclosing trait declaration in an abstract trait signature.
+    fn record_type_reference_identities(&mut self, ty: &Spanned<Type>) {
+        match &ty.node {
+            Type::Simple(name) | Type::ConstrainedPrimitive(name, _) => {
+                self.record_named_type_reference_identity(name, ty.span);
+            }
+            Type::Generic(name, args) => {
+                self.record_named_type_reference_identity(name, ty.span);
+                for arg in args {
+                    self.record_type_reference_identities(arg);
+                }
+            }
+            Type::DottedGeneric(segments, args) => {
+                self.record_dotted_type_reference_identity(segments, ty.span);
+                for arg in args {
+                    self.record_type_reference_identities(arg);
+                }
+            }
+            Type::Function(params, ret) => {
+                for param in params {
+                    self.record_type_reference_identities(param);
+                }
+                self.record_type_reference_identities(ret);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => self.record_type_reference_identities(inner),
+            Type::Tuple(items) => {
+                for item in items {
+                    self.record_type_reference_identities(item);
+                }
+            }
+            Type::SelfType => {
+                if let Some(owner) = self
+                    .current_method_owner
+                    .clone()
+                    .or_else(|| self.current_trait_name.clone())
+                {
+                    self.record_named_type_reference_identity(&owner, ty.span);
+                }
+            }
+            Type::Qualified(segments) => self.record_qualified_rust_type_reference_identity(segments, ty.span),
+            Type::Dotted(segments) => self.record_dotted_type_reference_identity(segments, ty.span),
+            Type::IntLiteral(_) | Type::Unit | Type::Infer => {}
+        }
+    }
+
+    /// Record one Rust item reached through an already-resolved `rust::` module binding.
+    ///
+    /// The import collector owns the root's canonical crate path. Appending the syntactically checked suffix yields
+    /// the same target identity as a direct `from rust::... import Item` binding; no generated Rust spelling or local
+    /// alias is consulted.
+    fn record_qualified_rust_type_reference_identity(&mut self, segments: &[String], span: Span) {
+        let Some((root, suffix)) = segments.split_first() else {
+            return;
+        };
+        let Some(info) = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
+            SymbolKind::RustItem(info) if info.binding != RustImportBindingKind::FromImport => Some(info),
+            _ => None,
+        }) else {
+            return;
+        };
+        let mut canonical_path = info.path.split("::").map(str::to_string).collect::<Vec<_>>();
+        canonical_path.extend(suffix.iter().cloned());
+        let Some(declaration_name) = canonical_path.last().cloned() else {
+            return;
+        };
+        self.type_info.record_resolved_identity(
+            span,
+            CanonicalSymbolId {
+                namespace: SymbolNamespace::OrdinaryLexical,
+                origin: SymbolOrigin::RustCrate(canonical_path),
+                declaration_name,
+                kind: SemanticSourceTargetKind::RustItem,
+                scope_discriminant: None,
+                declaration_span: HirSourceSpan::new(0, 0),
+            },
+        );
+    }
+
+    /// Record one type reached through an already-resolved Incan module binding.
+    fn record_dotted_type_reference_identity(&mut self, segments: &[String], span: Span) {
+        let Some((root, remainder)) = segments.split_first() else {
+            return;
+        };
+        let Some((name, nested_module)) = remainder.split_last() else {
+            return;
+        };
+        let Some(mut module_path) = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+        module_path.extend(nested_module.iter().cloned());
+
+        let identity = if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
+            self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
+                .ok()
+                .flatten()
+                .and_then(|resolved| {
+                    matches!(resolved.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)).then_some(resolved.canonical)?
+                })
+        } else {
+            let import = ImportPath::simple(module_path.clone());
+            let type_like = self
+                .dependency_member_symbol_for_path(&import, name)
+                .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
+            if type_like {
+                self.dependency_member_identity(&import, name)
+                    .or_else(|| self.stdlib_cache.lookup_identity(&module_path, name))
+            } else {
+                self.stdlib_cache
+                    .lookup_identity(&module_path, name)
+                    .filter(|identity| {
+                        matches!(
+                            identity.kind,
+                            SemanticSourceTargetKind::Model
+                                | SemanticSourceTargetKind::Class
+                                | SemanticSourceTargetKind::Newtype
+                                | SemanticSourceTargetKind::Rusttype
+                                | SemanticSourceTargetKind::Enum
+                                | SemanticSourceTargetKind::TypeAlias
+                                | SemanticSourceTargetKind::Trait
+                        )
+                    })
+            }
+        };
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+    }
+
+    /// Record one type-like lexical binding without guessing an identity from its source spelling.
+    fn record_named_type_reference_identity(&mut self, name: &str, span: Span) {
+        let identity = self.symbols.lookup(name).and_then(|symbol_id| {
+            let symbol = self.symbols.get(symbol_id)?;
+            let type_like = matches!(symbol.kind, SymbolKind::Type(_) | SymbolKind::Trait(_))
+                || matches!(
+                    &symbol.kind,
+                    SymbolKind::RustItem(info) if info.binding != RustImportBindingKind::CrateRoot
+                );
+            if !type_like {
+                return None;
+            }
+            self.symbols.identity_of(symbol_id).cloned()
+        });
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+    }
+
     /// Register the resolved target for a source-level type alias.
     pub(crate) fn register_type_alias_target(&mut self, alias: &TypeAliasDecl) {
         let type_params = alias
@@ -4195,7 +4452,7 @@ impl TypeChecker {
         {
             return;
         }
-        let Some([root, dependency_key, public_name]) = self.import_aliases.get(name).map(Vec::as_slice) else {
+        let Some([root, dependency_key, public_name]) = self.import_binding_path(name) else {
             return;
         };
         if root == PUBLIC_LIBRARY_NAMESPACE {
@@ -4207,6 +4464,7 @@ impl TypeChecker {
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         if self.validate_source_type_names {
             self.validate_source_type_annotation_names(&ty.node, ty.span);
+            self.record_type_reference_identities(ty);
         }
         self.validate_stdlib_type_usage(ty);
         if let Type::Simple(name) = &ty.node
@@ -4844,17 +5102,11 @@ impl TypeChecker {
                         &model.properties,
                         &model.methods,
                     );
-                    self.validate_method_alias_declarations(
-                        &model.name,
-                        &model.method_aliases,
-                        &model.properties,
-                        &model.methods,
-                    );
+                    self.validate_method_alias_declarations(&model.name, &model.method_aliases, &model.methods);
                     self.validate_method_partial_declarations(
                         &model.name,
                         &model.method_aliases,
                         &model.method_partials,
-                        &model.properties,
                         &model.methods,
                     );
                 }
@@ -4867,17 +5119,11 @@ impl TypeChecker {
                         &class.properties,
                         &class.methods,
                     );
-                    self.validate_method_alias_declarations(
-                        &class.name,
-                        &class.method_aliases,
-                        &class.properties,
-                        &class.methods,
-                    );
+                    self.validate_method_alias_declarations(&class.name, &class.method_aliases, &class.methods);
                     self.validate_method_partial_declarations(
                         &class.name,
                         &class.method_aliases,
                         &class.method_partials,
-                        &class.properties,
                         &class.methods,
                     );
                 }
@@ -4890,27 +5136,36 @@ impl TypeChecker {
                         &tr.properties,
                         &tr.methods,
                     );
-                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.properties, &tr.methods);
+                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.methods);
                     self.validate_method_partial_declarations(
                         &tr.name,
                         &tr.method_aliases,
                         &tr.method_partials,
-                        &tr.properties,
                         &tr.methods,
                     );
                 }
                 Declaration::Newtype(nt) => {
-                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &[], &nt.methods);
-                    self.validate_method_partial_declarations(
+                    self.validate_member_name_collisions(
                         &nt.name,
+                        &[],
                         &nt.method_aliases,
                         &nt.method_partials,
                         &[],
                         &nt.methods,
                     );
+                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &nt.methods);
+                    self.validate_method_partial_declarations(
+                        &nt.name,
+                        &nt.method_aliases,
+                        &nt.method_partials,
+                        &nt.methods,
+                    );
                     if let Type::Simple(target) = &nt.underlying.node {
                         newtype_underlyings.insert(nt.name.clone(), (target.clone(), nt.underlying.span));
                     }
+                }
+                Declaration::Enum(en) => {
+                    self.validate_enum_member_name_collisions(&en.name, &en.variants, &en.variant_aliases, &en.methods);
                 }
                 _ => {}
             }
@@ -5093,23 +5348,18 @@ impl TypeChecker {
         &mut self,
         owner: &str,
         aliases: &[Spanned<MethodAliasDecl>],
-        properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
-        let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
-        let property_names: HashSet<&str> = properties.iter().map(|property| property.node.name.as_str()).collect();
+        let method_names: HashSet<&str> = methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .map(|method| method.node.name.as_str())
+            .collect();
         let mut alias_targets = HashMap::new();
-        let mut alias_names = HashSet::new();
 
         for alias in aliases {
-            if !alias_names.insert(alias.node.name.as_str())
-                || method_names.contains(alias.node.name.as_str())
-                || property_names.contains(alias.node.name.as_str())
-            {
-                self.errors.push(CompileError::type_error(
-                    format!("Duplicate method alias '{}' on '{}'", alias.node.name, owner),
-                    alias.span,
-                ));
+            if !self.member_binding_is_active(alias.span) {
+                continue;
             }
             if !method_names.contains(alias.node.target.as_str()) {
                 self.errors.push(CompileError::type_error(
@@ -5126,7 +5376,7 @@ impl TypeChecker {
         self.validate_method_alias_cycles(owner, &alias_targets);
     }
 
-    /// Reject computed property names that collide with storage fields, aliases, properties, or methods.
+    /// Register every authored member spelling through one source-ordered first-wins collision mechanism.
     fn validate_member_name_collisions(
         &mut self,
         owner: &str,
@@ -5136,55 +5386,148 @@ impl TypeChecker {
         properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
-        let mut seen: HashMap<&str, (&str, Span)> = HashMap::new();
-        for field in fields {
-            seen.entry(field.node.name.as_str()).or_insert(("field", field.span));
-        }
-        for alias in aliases {
-            seen.entry(alias.node.name.as_str())
-                .or_insert(("method alias", alias.span));
-        }
-        for partial in partials {
-            seen.entry(partial.node.name.as_str())
-                .or_insert(("method partial", partial.span));
-        }
-        let mut method_seen: HashMap<&str, Span> = HashMap::new();
-        for method in methods {
-            if method_seen.insert(method.node.name.as_str(), method.span).is_none()
-                && !seen.contains_key(method.node.name.as_str())
-            {
-                seen.insert(method.node.name.as_str(), ("method", method.span));
+        let mut declarations =
+            Vec::with_capacity(fields.len() + aliases.len() + partials.len() + properties.len() + methods.len());
+        declarations.extend(
+            fields
+                .iter()
+                .map(|field| (field.node.name.clone(), MemberBindingKind::Field, field.span)),
+        );
+        declarations.extend(
+            methods
+                .iter()
+                .map(|method| (method.node.name.clone(), MemberBindingKind::Method, method.span)),
+        );
+        declarations.extend(
+            properties
+                .iter()
+                .map(|property| (property.node.name.clone(), MemberBindingKind::Property, property.span)),
+        );
+        declarations.extend(
+            aliases
+                .iter()
+                .map(|alias| (alias.node.name.clone(), MemberBindingKind::MethodAlias, alias.span)),
+        );
+        declarations.extend(partials.iter().map(|partial| {
+            (
+                partial.node.name.clone(),
+                MemberBindingKind::MethodPartial,
+                partial.span,
+            )
+        }));
+        self.register_source_ordered_member_bindings(owner, declarations);
+    }
+
+    /// Register enum variants, their aliases, and enum methods through the shared member-namespace mechanism.
+    fn validate_enum_member_name_collisions(
+        &mut self,
+        owner: &str,
+        variants: &[Spanned<VariantDecl>],
+        aliases: &[Spanned<EnumVariantAliasDecl>],
+        methods: &[Spanned<MethodDecl>],
+    ) {
+        let mut declarations = Vec::with_capacity(variants.len() + aliases.len() + methods.len());
+        declarations.extend(
+            variants
+                .iter()
+                .map(|variant| (variant.node.name.clone(), MemberBindingKind::Variant, variant.span)),
+        );
+        declarations.extend(
+            aliases
+                .iter()
+                .map(|alias| (alias.node.name.clone(), MemberBindingKind::VariantAlias, alias.span)),
+        );
+        declarations.extend(
+            methods
+                .iter()
+                .map(|method| (method.node.name.clone(), MemberBindingKind::Method, method.span)),
+        );
+        self.register_source_ordered_member_bindings(owner, declarations);
+    }
+
+    /// Apply the one source-ordered, first-wins collision decision shared by every member-bearing declaration.
+    fn register_source_ordered_member_bindings(
+        &mut self,
+        owner: &str,
+        mut declarations: Vec<(String, MemberBindingKind, Span)>,
+    ) {
+        declarations.sort_by_key(|(_, _, span)| (span.start, span.end));
+
+        let mut seen = HashMap::new();
+        for (name, kind, span) in declarations {
+            match register_binding(&mut seen, name.clone(), (kind, span)) {
+                BindingRegistration::Registered => {
+                    self.record_member_declaration_identity(&name, kind, span);
+                }
+                BindingRegistration::Collision {
+                    existing: (MemberBindingKind::Method, _),
+                } if kind == MemberBindingKind::Method => {
+                    // Same-name methods form one overload binding.
+                    self.record_member_declaration_identity(&name, kind, span);
+                }
+                BindingRegistration::Collision {
+                    existing: (previous_kind, previous_span),
+                } => {
+                    self.rejected_member_bindings.insert((span.start, span.end));
+                    self.record_member_name_collision(owner, &name, previous_kind, previous_span, kind, span);
+                }
             }
-        }
-        for property in properties {
-            self.validate_one_member_name(owner, "property", property.node.name.as_str(), property.span, &mut seen);
         }
     }
 
-    /// Validate one property name against the member names already used in the same owner declaration.
-    fn validate_one_member_name<'a>(
+    /// Return whether one member declaration survived the shared first-wins registry.
+    pub(super) fn member_binding_is_active(&self, span: Span) -> bool {
+        !self.rejected_member_bindings.contains(&(span.start, span.end))
+    }
+
+    /// Export one accepted source-owned member declaration from the shared member registry.
+    fn record_member_declaration_identity(&mut self, name: &str, kind: MemberBindingKind, span: Span) {
+        let Some(kind) = kind.declaration_kind() else {
+            // Aliases and partials introduce bindings to an existing method declaration; they do not mint one.
+            return;
+        };
+        let identity = self.symbols.member_declaration_identity(name, kind, span);
+        self.type_info
+            .declarations
+            .member_declaration_identities
+            .insert((span.start, span.end), identity);
+    }
+
+    /// Render one collision already decided by the shared member registration.
+    fn record_member_name_collision(
         &mut self,
         owner: &str,
-        kind: &'static str,
-        name: &'a str,
+        name: &str,
+        previous_kind: MemberBindingKind,
+        previous_span: Span,
+        kind: MemberBindingKind,
         span: Span,
-        seen: &mut HashMap<&'a str, (&'static str, Span)>,
     ) {
-        if let Some((previous_kind, previous_span)) = seen.insert(name, (kind, span)) {
-            self.errors.push(
-                CompileError::type_error(
-                    format!(
-                        "Duplicate member '{}.{}' declared as both {} and {}",
-                        owner, name, previous_kind, kind
-                    ),
-                    span,
-                )
-                .with_note(format!(
-                    "First declaration span: {}..{}",
-                    previous_span.start, previous_span.end
-                )),
-            );
+        if matches!(
+            previous_kind,
+            MemberBindingKind::Variant | MemberBindingKind::VariantAlias
+        ) && matches!(kind, MemberBindingKind::Variant | MemberBindingKind::VariantAlias)
+        {
+            self.errors.push(errors::duplicate_binding(name, previous_span, span));
+            return;
         }
+
+        let message = match kind {
+            MemberBindingKind::MethodAlias => format!("Duplicate method alias '{}' on '{}'", name, owner),
+            MemberBindingKind::MethodPartial => format!("Duplicate method partial '{}.{}'", owner, name),
+            _ => format!(
+                "Duplicate member '{}.{}' declared as both {} and {}",
+                owner,
+                name,
+                previous_kind.label(),
+                kind.label()
+            ),
+        };
+        self.errors
+            .push(CompileError::type_error(message, span).with_note(format!(
+                "First declaration span: {}..{}",
+                previous_span.start, previous_span.end
+            )));
     }
 
     /// Reject direct and indirect cycles between method aliases on one owner type.
@@ -5218,24 +5561,22 @@ impl TypeChecker {
         owner: &str,
         aliases: &[Spanned<MethodAliasDecl>],
         partials: &[Spanned<MethodPartialDecl>],
-        properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
-        let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
-        let alias_names: HashSet<&str> = aliases.iter().map(|alias| alias.node.name.as_str()).collect();
-        let property_names: HashSet<&str> = properties.iter().map(|property| property.node.name.as_str()).collect();
-        let mut partial_names = HashSet::new();
+        let method_names: HashSet<&str> = methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .map(|method| method.node.name.as_str())
+            .collect();
+        let alias_names: HashSet<&str> = aliases
+            .iter()
+            .filter(|alias| self.member_binding_is_active(alias.span))
+            .map(|alias| alias.node.name.as_str())
+            .collect();
 
         for partial in partials {
-            if !partial_names.insert(partial.node.name.as_str())
-                || method_names.contains(partial.node.name.as_str())
-                || alias_names.contains(partial.node.name.as_str())
-                || property_names.contains(partial.node.name.as_str())
-            {
-                self.errors.push(CompileError::type_error(
-                    format!("Duplicate method partial '{}.{}'", owner, partial.node.name),
-                    partial.span,
-                ));
+            if !self.member_binding_is_active(partial.span) {
+                continue;
             }
             if !method_names.contains(partial.node.target.as_str())
                 && !alias_names.contains(partial.node.target.as_str())
@@ -5251,7 +5592,7 @@ impl TypeChecker {
         }
     }
 
-    /// Collect declarations in the shared order required for forward references before semantic validation begins.
+    /// Collect concrete declarations in source order, then aliases and partials after all possible targets exist.
     fn collect_declarations_for_check(&mut self, declarations: &[Spanned<Declaration>]) {
         for decl in declarations {
             if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
@@ -5313,6 +5654,7 @@ impl TypeChecker {
         self.static_decls.clear();
         self.local_function_decls.clear();
         self.current_module_function_symbols.clear();
+        self.rejected_member_bindings.clear();
         self.warned_public_c_abi_raw_call_owners.clear();
         self.static_decl_positions.clear();
         self.const_eval_state.clear();
@@ -5328,7 +5670,6 @@ impl TypeChecker {
         self.local_rust_derive_paths.clear();
         self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
-        self.import_aliases = self.surface_context.import_aliases().clone();
         self.supertrait_closure.clear();
         if !preserve_dependency_semantics {
             self.transitive_pub_types.clear();
@@ -5381,6 +5722,8 @@ impl TypeChecker {
 
         // ---- RFC 120: export the minted declaration identities for later stages ----
         self.export_declaration_identities();
+        self.export_checked_import_bindings();
+        self.record_binding_collision_diagnostics();
 
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);
@@ -5392,6 +5735,40 @@ impl TypeChecker {
         if fatal.is_empty() { Ok(()) } else { Err(fatal) }
     }
 
+    /// Turn collisions from the shared symbol-registration mechanism into source diagnostics.
+    ///
+    /// The mechanism decides collision and ambiguity once; this layer owns user-facing wording. Two imports are
+    /// ambiguous when their local spellings collide and their canonical identities differ or either target is
+    /// unproven. A repeated binding to the same proven declaration is still a duplicate definition, not a new
+    /// semantic declaration.
+    fn record_binding_collision_diagnostics(&mut self) {
+        for collision in self.symbols.take_binding_collisions() {
+            let immutable_builtin = collision.existing_identity.as_ref().is_some_and(|identity| {
+                matches!(identity.origin, incan_semantics_core::SymbolOrigin::Builtin)
+                    && identity.declaration_name == builtins::as_str(BuiltinFnId::Print)
+            });
+            let ambiguous_import = collision.existing_is_import
+                && collision.incoming_is_import
+                && (collision.existing_identity.is_none()
+                    || collision.incoming_identity.is_none()
+                    || collision.existing_identity != collision.incoming_identity);
+            let mut error = if immutable_builtin {
+                errors::immutable_builtin_redefinition(&collision.name, collision.incoming_span)
+            } else if ambiguous_import {
+                errors::ambiguous_import_binding(&collision.name, collision.existing_span, collision.incoming_span)
+            } else {
+                errors::duplicate_binding(&collision.name, collision.existing_span, collision.incoming_span)
+            };
+            if let Some(identity) = &collision.existing_identity {
+                error = error.with_note(format!("First canonical identity: {}", identity.render_compact()));
+            }
+            if let Some(identity) = &collision.incoming_identity {
+                error = error.with_note(format!("Second canonical identity: {}", identity.render_compact()));
+            }
+            self.errors.push(error);
+        }
+    }
+
     /// Import symbols from another module's AST into the symbol table.
     ///
     /// Call this before [`check_program`](Self::check_program) so the main module can reference types and functions
@@ -5400,13 +5777,21 @@ impl TypeChecker {
     /// ## Parameters
     ///
     /// - `module_ast`: parsed AST of the dependency module.
-    /// - `_module_name`: reserved for future namespacing (currently unused).
-    pub fn import_module(&mut self, module_ast: &Program, _module_name: &str) {
+    /// - `module_name`: dependency cache key whose registered path owns the collected declarations.
+    pub fn import_module(&mut self, module_ast: &Program, module_name: &str) {
         let previous_surface_context = self.surface_context.clone();
-        let previous_import_aliases = self.import_aliases.clone();
         let previous_module_function_symbols = std::mem::take(&mut self.current_module_function_symbols);
+        let previous_module_path = self.current_module_path.clone();
+        let previous_type_aliases = self.type_aliases.clone();
+        let dependency_module_path = self
+            .dependency_module_path_segments
+            .get(module_name)
+            .cloned()
+            .unwrap_or_else(|| vec![module_name.to_string()]);
+        self.set_current_module_path(Some(dependency_module_path));
         self.surface_context = SurfaceContext::from_program(module_ast);
-        self.import_aliases = self.surface_context.import_aliases().clone();
+        self.symbols.begin_dependency_interface_bindings();
+        self.seed_dependency_interface_bindings(module_ast, true);
 
         // Imports are lexical rather than exported, but public declaration signatures may depend on their exact type
         // metadata. Collect them temporarily, then restore only the names they introduced after the public surface has
@@ -5436,10 +5821,10 @@ impl TypeChecker {
             }
         }
         self.resolve_pending_trait_supertraits();
-        self.register_dependency_derivable_metadata(_module_name, module_ast);
-        self.cache_dependency_direct_member_symbols(_module_name, module_ast, true);
-        self.cache_dependency_registry_definitions(_module_name, module_ast, true);
-        self.cache_dependency_member_symbols(_module_name, module_ast, true);
+        self.register_dependency_derivable_metadata(module_name, module_ast);
+        self.cache_dependency_direct_member_symbols(module_name, module_ast, true);
+        self.cache_dependency_registry_definitions(module_name, module_ast, true);
+        self.cache_dependency_member_symbols(module_name, module_ast, true);
         let owned_names = module_ast
             .declarations
             .iter()
@@ -5463,20 +5848,30 @@ impl TypeChecker {
         );
         self.dependency_semantics_pending = true;
         self.surface_context = previous_surface_context;
-        self.import_aliases = previous_import_aliases;
         self.current_module_function_symbols = previous_module_function_symbols;
+        self.symbols.finish_dependency_interface_bindings();
+        self.type_aliases = previous_type_aliases;
+        self.set_current_module_path(previous_module_path);
     }
 
     /// Import all symbols from another module's AST into the symbol table.
     ///
     /// This is used for internal compiler passes that need type information across modules
     /// without enforcing `pub` visibility (e.g. codegen-only validation for dependencies).
-    pub fn import_module_all(&mut self, module_ast: &Program, _module_name: &str) {
+    pub fn import_module_all(&mut self, module_ast: &Program, module_name: &str) {
         let previous_surface_context = self.surface_context.clone();
-        let previous_import_aliases = self.import_aliases.clone();
         let previous_module_function_symbols = std::mem::take(&mut self.current_module_function_symbols);
+        let previous_module_path = self.current_module_path.clone();
+        let previous_type_aliases = self.type_aliases.clone();
+        let dependency_module_path = self
+            .dependency_module_path_segments
+            .get(module_name)
+            .cloned()
+            .unwrap_or_else(|| vec![module_name.to_string()]);
+        self.set_current_module_path(Some(dependency_module_path));
         self.surface_context = SurfaceContext::from_program(module_ast);
-        self.import_aliases = self.surface_context.import_aliases().clone();
+        self.symbols.begin_dependency_interface_bindings();
+        self.seed_dependency_interface_bindings(module_ast, false);
 
         // Dependency imports must be available while its declarations are collected so public signatures retain exact
         // provider-owned type metadata. They still belong only to the dependency's lexical scope, so remember which
@@ -5508,10 +5903,10 @@ impl TypeChecker {
             }
         }
         self.resolve_pending_trait_supertraits();
-        self.register_dependency_derivable_metadata(_module_name, module_ast);
-        self.cache_dependency_direct_member_symbols(_module_name, module_ast, false);
-        self.cache_dependency_registry_definitions(_module_name, module_ast, false);
-        self.cache_dependency_member_symbols(_module_name, module_ast, false);
+        self.register_dependency_derivable_metadata(module_name, module_ast);
+        self.cache_dependency_direct_member_symbols(module_name, module_ast, false);
+        self.cache_dependency_registry_definitions(module_name, module_ast, false);
+        self.cache_dependency_member_symbols(module_name, module_ast, false);
         let owned_names = module_ast
             .declarations
             .iter()
@@ -5533,8 +5928,10 @@ impl TypeChecker {
         );
         self.dependency_semantics_pending = true;
         self.surface_context = previous_surface_context;
-        self.import_aliases = previous_import_aliases;
         self.current_module_function_symbols = previous_module_function_symbols;
+        self.symbols.finish_dependency_interface_bindings();
+        self.type_aliases = previous_type_aliases;
+        self.set_current_module_path(previous_module_path);
     }
 
     /// Start a narrow transaction for source-visible bindings mutated while dependency imports are collected.
@@ -5603,11 +6000,13 @@ impl TypeChecker {
             }
             self.cache_dependency_member_symbols(name, dep_ast, public_only);
         }
+        self.cache_dependency_adoption_traits();
     }
 
     /// Cache exact member symbols exported by one dependency module for source `from ... import ...` resolution.
     fn cache_dependency_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
         let mut member_symbols = HashMap::new();
+        let mut member_type_aliases = HashMap::new();
         let mut member_projections = HashMap::new();
         if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
             member_symbols.extend(direct_symbols.clone());
@@ -5620,6 +6019,9 @@ impl TypeChecker {
         if let Some(direct_projections) = self.dependency_direct_member_partial_projections.get(module_name) {
             member_projections.extend(direct_projections.clone());
         }
+        if let Some(direct_aliases) = self.dependency_direct_member_type_aliases.get(module_name) {
+            member_type_aliases.extend(direct_aliases.clone());
+        }
         let mut reexports = HashMap::new();
         // A facade's own relative imports resolve against the facade's module, not the consumer's. Resolving them
         // from the consumer would bind `pkg.facade`'s `from helpers import render` to the root `helpers`.
@@ -5630,6 +6032,11 @@ impl TypeChecker {
             reexports.insert(exported_name.clone(), (module.clone(), item_name.clone()));
             if let Some(kind) = self.dependency_reexported_function_symbol(&facade_module_path, &module, &item_name) {
                 member_symbols.insert(exported_name.clone(), kind);
+            }
+            if let Some(target) =
+                self.dependency_member_type_alias_for_path_from(&facade_module_path, &module, &item_name)
+            {
+                member_type_aliases.insert(exported_name.clone(), target);
             }
             if let Some(mut projection) =
                 self.dependency_member_partial_projection_for_path_from(&facade_module_path, &module, &item_name)
@@ -5642,6 +6049,8 @@ impl TypeChecker {
             .insert(module_name.to_string(), reexports);
         self.dependency_member_symbols
             .insert(module_name.to_string(), member_symbols);
+        self.dependency_member_type_aliases
+            .insert(module_name.to_string(), member_type_aliases);
         self.dependency_member_partial_projections
             .insert(module_name.to_string(), member_projections);
     }
@@ -5666,24 +6075,98 @@ impl TypeChecker {
     /// Cache direct declarations owned by one dependency module.
     fn cache_dependency_direct_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
         let mut direct_symbols = HashMap::new();
-        let mut direct_spans = HashMap::new();
+        let mut direct_type_aliases = HashMap::new();
+        let mut direct_identities = HashMap::new();
         let mut direct_projections = HashMap::new();
         for name in Self::dependency_direct_member_names(module_ast, public_only) {
-            if let Some(symbol) = self.lookup_symbol(name.as_str()) {
+            if let Some(symbol_id) = self.symbols.lookup(name.as_str())
+                && let Some(symbol) = self.symbols.get(symbol_id)
+            {
                 direct_symbols.insert(name.clone(), symbol.kind.clone());
-                // The symbol's own span is the declaration site an identity must anchor to.
-                direct_spans.insert(name.clone(), symbol.span);
+                if let Some(identity) = self.symbols.identity_of(symbol_id) {
+                    direct_identities.insert(name.clone(), identity.clone());
+                }
             }
             if let Some(projection) = self.type_info.partial_projection(&name) {
                 direct_projections.insert(name, projection.clone());
             }
         }
-        self.dependency_direct_member_spans
-            .insert(module_name.to_string(), direct_spans);
+        for declaration in &module_ast.declarations {
+            let Declaration::TypeAlias(alias) = &declaration.node else {
+                continue;
+            };
+            if public_only && alias.visibility != Visibility::Public {
+                continue;
+            }
+            if let Some(target) = self.type_aliases.get(&alias.name) {
+                direct_type_aliases.insert(alias.name.clone(), target.clone());
+            }
+        }
+        for (name, kind) in &direct_symbols {
+            match kind {
+                SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
+                    self.transitive_pub_types
+                        .entry(name.clone())
+                        .or_default()
+                        .push(info.clone());
+                }
+                SymbolKind::Trait(info) => {
+                    self.transitive_pub_traits
+                        .entry(name.clone())
+                        .or_default()
+                        .push(info.clone());
+                }
+                _ => {}
+            }
+        }
         self.dependency_direct_member_symbols
             .insert(module_name.to_string(), direct_symbols);
+        self.dependency_direct_member_type_aliases
+            .insert(module_name.to_string(), direct_type_aliases);
+        self.dependency_direct_member_identities
+            .insert(module_name.to_string(), direct_identities);
         self.dependency_direct_member_partial_projections
             .insert(module_name.to_string(), direct_projections);
+    }
+
+    /// Cache exact provider traits referenced by dependency-owned type adoptions.
+    ///
+    /// A dependency may write `@derive(json)` and therefore store `json.Serialize` on its exported model. The
+    /// dependency's local `json` binding must not become ambient in a consumer, but method and bound resolution still
+    /// need the trait interface. Cache it under the provider module plus source trait name; lookup remains
+    /// semantic-only through [`Self::lookup_trait_adoption_info`].
+    fn cache_dependency_adoption_traits(&mut self) {
+        let adoptions = self
+            .dependency_direct_member_symbols
+            .values()
+            .flat_map(HashMap::values)
+            .filter_map(|kind| match kind {
+                SymbolKind::Type(TypeInfo::Model(info)) => Some(info.trait_adoptions.as_slice()),
+                SymbolKind::Type(TypeInfo::Class(info)) => Some(info.trait_adoptions.as_slice()),
+                SymbolKind::Type(TypeInfo::Newtype(info)) => Some(info.trait_adoptions.as_slice()),
+                SymbolKind::Type(TypeInfo::Enum(info)) => Some(info.trait_adoptions.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|adoption| {
+                let module_path = adoption.module_path.as_ref()?;
+                let source_name = adoption
+                    .source_name
+                    .as_deref()
+                    .or_else(|| adoption.name.rsplit('.').next())?;
+                Some((module_path.clone(), source_name.to_string()))
+            })
+            .collect::<Vec<_>>();
+
+        for (module_path, source_name) in adoptions {
+            let key = format!("{}.{}", module_path.join("."), source_name);
+            if self.dependency_module_traits.contains_key(&key) {
+                continue;
+            }
+            if let Some(info) = self.stdlib_cache.lookup_trait(&module_path, &source_name) {
+                self.dependency_module_traits.insert(key, info);
+            }
+        }
     }
 
     /// Cache canonical `Registry.define(...)` contracts from one dependency's owned static declarations.
@@ -5908,6 +6391,29 @@ impl TypeChecker {
             .cloned()
     }
 
+    /// Return one dependency type alias target using ordinary consumer import resolution.
+    pub(crate) fn dependency_member_type_alias_for_path(
+        &self,
+        module: &ImportPath,
+        item_name: &str,
+    ) -> Option<TypeAliasTarget> {
+        self.dependency_module_entry_for_path(module, &self.dependency_member_type_aliases)?
+            .get(item_name)
+            .cloned()
+    }
+
+    /// Return one dependency type alias target relative to a dependency module that is being collected or refreshed.
+    fn dependency_member_type_alias_for_path_from(
+        &self,
+        base_module_path: &[String],
+        module: &ImportPath,
+        item_name: &str,
+    ) -> Option<TypeAliasTarget> {
+        self.dependency_module_entry_for_path_from(base_module_path, module, &self.dependency_member_type_aliases)?
+            .get(item_name)
+            .cloned()
+    }
+
     /// Maximum re-export hops followed while resolving one imported member to its declaring module.
     ///
     /// A malformed or cyclic facade chain must terminate rather than recurse forever; exceeding this yields no
@@ -5958,16 +6464,10 @@ impl TypeChecker {
     /// candidate order resolution used, and where the winning candidate only re-exports the member it follows that
     /// link instead of naming the facade — a re-export is a binding to an existing declaration, not a second one.
     ///
-    /// Returns `None` when the member is reachable only through the ambiguous ends-with fallback, when a re-export
-    /// chain does not terminate in a declaration, when the binding is an overload set (which retains only one
-    /// candidate's span), or when the declaration kind has no canonical spelling yet. An unproven identity must stay
-    /// absent rather than resolve to a facade or to a guess.
-    ///
-    /// Two known holes, both inherited rather than introduced here. A dependency module cache key is the `_`-joined
-    /// module spelling, so a module literally named `pkg_helpers` and the path `pkg.helpers` are one key and cannot be
-    /// told apart; an origin built from the matching candidate then reflects the spelling that asked, not the module
-    /// that answered. And the entrypoint-as-logical-`main` layout resolves through an ends-with fallback that this
-    /// deliberately does not mirror, so such calls carry no identity at all. Both are recorded on #1042.
+    /// Returns `None` when the member is reachable only through an ambiguous fallback, when a re-export chain does not
+    /// terminate in a declaration, or when the direct dependency cache lacks the compiler-minted canonical identity.
+    /// A symbol kind, name, module key, and span are insufficient proof: absent canonical data must stay absent rather
+    /// than being reconstructed into a plausible but invented declaration.
     pub(crate) fn dependency_member_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
         let current_module_path = self.current_module_path.as_deref().unwrap_or_default();
         self.dependency_member_identity_from(current_module_path, module, item_name, 0)
@@ -5999,29 +6499,17 @@ impl TypeChecker {
             }
 
             // Resolution stops at this candidate. It owns the declaration only if it declares the member directly.
-            if let Some(kind) = self
+            if self
                 .dependency_direct_member_symbols
                 .get(&key)
                 .and_then(|direct| direct.get(item_name))
+                .is_some()
             {
-                // An overloaded symbol keeps only one candidate's span, so an identity minted from it would name an
-                // arbitrary overload. Refuse at the producer rather than in a consumer: this accessor is public and
-                // documents that an absent identity means unproven.
-                if matches!(kind, SymbolKind::FunctionOverloads(_)) {
-                    return None;
-                }
-                let span = self
-                    .dependency_direct_member_spans
+                return self
+                    .dependency_direct_member_identities
                     .get(&key)
-                    .and_then(|spans| spans.get(item_name))?;
-                let target_kind = Self::source_target_kind_for_symbol(kind)?;
-                let owner = self.canonical_owner_segments(&key)?;
-                return Some(CanonicalSymbolId::module_declaration(
-                    owner,
-                    item_name,
-                    SemanticSourceTargetKind::from_kind_str(target_kind),
-                    HirSourceSpan::new(span.start, span.end),
-                ));
+                    .and_then(|identities| identities.get(item_name))
+                    .cloned();
             }
 
             // Otherwise the member arrived here as a re-export. Follow it to the declaration it names, resolving
@@ -6197,21 +6685,39 @@ impl TypeChecker {
         paths
     }
 
-    /// Predeclare dependency interface names before collecting imported declarations.
+    /// Predeclare exact per-module dependency interface members before collecting imported declarations.
     ///
-    /// Cross-module public signatures may reference types and traits from other dependency modules, including cyclic
-    /// interfaces such as `session -> dataset -> session`. A predeclaration pass breaks that order sensitivity by
-    /// making type- and trait-like names resolvable before method and function signatures are collected.
+    /// Cross-module public signatures may reference types and traits from modules collected later, including cyclic
+    /// interfaces such as `session -> dataset -> session`. Shells live in the module-keyed import-resolution cache,
+    /// never in the consumer's lexical symbol table, so sibling modules may export the same spelling safely.
     fn predeclare_dependency_interfaces(&mut self, dependencies: &[(&str, &Program)], public_only: bool) {
         for (module_name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(module_name) {
                 continue;
             }
+            let members = self
+                .dependency_member_symbols
+                .entry((*module_name).to_string())
+                .or_default();
             for decl in &dep_ast.declarations {
                 if public_only && !is_public_decl(decl) {
                     continue;
                 }
-                self.predeclare_dependency_decl(decl);
+                if let Some(symbol) = Self::dependency_interface_shell(decl) {
+                    members.entry(symbol.name).or_insert(symbol.kind);
+                }
+            }
+        }
+    }
+
+    /// Seed one dependency's temporary interface lookup view from its own declaration shells.
+    fn seed_dependency_interface_bindings(&mut self, module_ast: &Program, public_only: bool) {
+        for decl in &module_ast.declarations {
+            if public_only && !is_public_decl(decl) {
+                continue;
+            }
+            if let Some(symbol) = Self::dependency_interface_shell(decl) {
+                self.symbols.define_import_binding(symbol, None);
             }
         }
     }
@@ -6224,142 +6730,112 @@ impl TypeChecker {
                 .is_some_and(|tail| tail.starts_with('_'))
     }
 
-    /// Seed the symbol table with a minimal placeholder for one dependency declaration.
+    /// Build a minimal placeholder for one type-like dependency declaration.
     ///
-    /// The subsequent `import_module*` pass overwrites these placeholders with full collected metadata. These shells
-    /// exist only so `resolve_type_checked` can keep interface types concrete instead of degrading them to `TypeVar` or
-    /// `Unknown` during cyclic or transitive dependency import collection.
-    fn predeclare_dependency_decl(&mut self, decl: &Spanned<Declaration>) {
+    /// The subsequent `import_module*` pass replaces the temporary lookup shell with full collected metadata. The
+    /// module-keyed copy remains available to imports from modules that have not yet been collected.
+    fn dependency_interface_shell(decl: &Spanned<Declaration>) -> Option<Symbol> {
         match &decl.node {
-            Declaration::Model(model) if self.lookup_symbol(model.name.as_str()).is_none() => {
-                self.symbols.define_import_binding(
-                    Symbol {
-                        name: model.name.clone(),
-                        kind: SymbolKind::Type(TypeInfo::Model(ModelInfo {
-                            type_params: model.type_params.iter().map(|tp| tp.name.clone()).collect(),
-                            traits: Vec::new(),
-                            trait_adoptions: Vec::new(),
-                            derives: Vec::new(),
-                            fields: HashMap::new(),
-                            field_order: Vec::new(),
-                            properties: HashMap::new(),
-                            methods: HashMap::new(),
-                            method_overloads: HashMap::new(),
-                            method_aliases: HashMap::new(),
-                        })),
-                        span: decl.span,
-                        scope: 0,
-                    },
-                    None,
-                );
-            }
-            Declaration::Class(class) if self.lookup_symbol(class.name.as_str()).is_none() => {
-                self.symbols.define_import_binding(
-                    Symbol {
-                        name: class.name.clone(),
-                        kind: SymbolKind::Type(TypeInfo::Class(ClassInfo {
-                            type_params: class.type_params.iter().map(|tp| tp.name.clone()).collect(),
-                            extends: class.extends.clone(),
-                            traits: Vec::new(),
-                            trait_adoptions: Vec::new(),
-                            derives: Vec::new(),
-                            fields: HashMap::new(),
-                            field_defaults: Box::new(HashMap::new()),
-                            field_default_metadata: Box::new(HashMap::new()),
-                            field_provider_libraries: Box::new(HashMap::new()),
-                            field_order: Vec::new(),
-                            properties: HashMap::new(),
-                            methods: HashMap::new(),
-                            method_overloads: HashMap::new(),
-                            method_aliases: HashMap::new(),
-                        })),
-                        span: decl.span,
-                        scope: 0,
-                    },
-                    None,
-                );
-            }
-            Declaration::Trait(tr) if self.lookup_symbol(tr.name.as_str()).is_none() => {
-                self.symbols.define_import_binding(
-                    Symbol {
-                        name: tr.name.clone(),
-                        kind: SymbolKind::Trait(TraitInfo {
-                            type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
-                            methods: HashMap::new(),
-                            method_aliases: HashMap::new(),
-                            properties: HashMap::new(),
-                            requires: Vec::new(),
-                            supertraits: Vec::new(),
-                        }),
-                        span: decl.span,
-                        scope: 0,
-                    },
-                    None,
-                );
-            }
-            Declaration::TypeAlias(alias) if self.lookup_symbol(alias.name.as_str()).is_none() => {
-                self.symbols.define_import_binding(
-                    Symbol {
-                        name: alias.name.clone(),
-                        kind: SymbolKind::Type(TypeInfo::TypeAlias),
-                        span: decl.span,
-                        scope: 0,
-                    },
-                    None,
-                );
-            }
-            Declaration::Newtype(nt) if self.lookup_symbol(nt.name.as_str()).is_none() => {
-                self.symbols.define_import_binding(
-                    Symbol {
-                        name: nt.name.clone(),
-                        kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
-                            type_params: nt.type_params.iter().map(|tp| tp.name.clone()).collect(),
-                            is_rusttype: nt.is_rusttype,
-                            has_interop: !nt.interop_edges.is_empty(),
-                            underlying: ResolvedType::Unknown,
-                            constraints: Vec::new(),
-                            implicit_coercion_enabled: true,
-                            method_rebindings: HashMap::new(),
-                            traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
-                            trait_adoptions: Vec::new(),
-                            derives: Vec::new(),
-                            method_aliases: HashMap::new(),
-                            methods: HashMap::new(),
-                            method_overloads: HashMap::new(),
-                        })),
-                        span: decl.span,
-                        scope: 0,
-                    },
-                    None,
-                );
-            }
-            Declaration::Enum(en) if self.lookup_symbol(en.name.as_str()).is_none() => {
-                self.symbols.define_import_binding(
-                    Symbol {
-                        name: en.name.clone(),
-                        kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
-                            type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
-                            traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
-                            trait_adoptions: Vec::new(),
-                            variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
-                            variant_fields: HashMap::new(),
-                            variant_aliases: en
-                                .variant_aliases
-                                .iter()
-                                .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
-                                .collect(),
-                            value_enum: None,
-                            derives: Vec::new(),
-                            methods: HashMap::new(),
-                            method_overloads: HashMap::new(),
-                        })),
-                        span: decl.span,
-                        scope: 0,
-                    },
-                    None,
-                );
-            }
-            _ => {}
+            Declaration::Model(model) => Some(Symbol {
+                name: model.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Model(ModelInfo {
+                    type_params: model.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                    traits: Vec::new(),
+                    trait_adoptions: Vec::new(),
+                    derives: Vec::new(),
+                    fields: HashMap::new(),
+                    field_order: Vec::new(),
+                    properties: HashMap::new(),
+                    methods: HashMap::new(),
+                    method_overloads: HashMap::new(),
+                    method_aliases: HashMap::new(),
+                })),
+                span: decl.span,
+                scope: 0,
+            }),
+            Declaration::Class(class) => Some(Symbol {
+                name: class.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Class(ClassInfo {
+                    type_params: class.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                    extends: class.extends.clone(),
+                    traits: Vec::new(),
+                    trait_adoptions: Vec::new(),
+                    derives: Vec::new(),
+                    fields: HashMap::new(),
+                    field_defaults: Box::new(HashMap::new()),
+                    field_default_metadata: Box::new(HashMap::new()),
+                    field_provider_libraries: Box::new(HashMap::new()),
+                    field_order: Vec::new(),
+                    properties: HashMap::new(),
+                    methods: HashMap::new(),
+                    method_overloads: HashMap::new(),
+                    method_aliases: HashMap::new(),
+                })),
+                span: decl.span,
+                scope: 0,
+            }),
+            Declaration::Trait(tr) => Some(Symbol {
+                name: tr.name.clone(),
+                kind: SymbolKind::Trait(TraitInfo {
+                    type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                    methods: HashMap::new(),
+                    method_aliases: HashMap::new(),
+                    properties: HashMap::new(),
+                    requires: Vec::new(),
+                    supertraits: Vec::new(),
+                }),
+                span: decl.span,
+                scope: 0,
+            }),
+            Declaration::TypeAlias(alias) => Some(Symbol {
+                name: alias.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::TypeAlias),
+                span: decl.span,
+                scope: 0,
+            }),
+            Declaration::Newtype(nt) => Some(Symbol {
+                name: nt.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
+                    type_params: nt.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                    is_rusttype: nt.is_rusttype,
+                    has_interop: !nt.interop_edges.is_empty(),
+                    underlying: ResolvedType::Unknown,
+                    constraints: Vec::new(),
+                    implicit_coercion_enabled: true,
+                    method_rebindings: HashMap::new(),
+                    traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
+                    trait_adoptions: Vec::new(),
+                    derives: Vec::new(),
+                    method_aliases: HashMap::new(),
+                    methods: HashMap::new(),
+                    method_overloads: HashMap::new(),
+                })),
+                span: decl.span,
+                scope: 0,
+            }),
+            Declaration::Enum(en) => Some(Symbol {
+                name: en.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
+                    type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                    traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
+                    trait_adoptions: Vec::new(),
+                    variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
+                    variant_identities: HashMap::new(),
+                    variant_fields: HashMap::new(),
+                    variant_aliases: en
+                        .variant_aliases
+                        .iter()
+                        .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
+                        .collect(),
+                    value_enum: None,
+                    derives: Vec::new(),
+                    methods: HashMap::new(),
+                    method_overloads: HashMap::new(),
+                })),
+                span: decl.span,
+                scope: 0,
+            }),
+            _ => None,
         }
     }
 
@@ -6390,10 +6866,12 @@ impl TypeChecker {
         self.cached_pub_libraries.clear();
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
+        self.dependency_member_type_aliases.clear();
         self.dependency_registry_definitions.clear();
         self.dependency_member_partial_projections.clear();
         self.dependency_direct_member_symbols.clear();
-        self.dependency_direct_member_spans.clear();
+        self.dependency_direct_member_type_aliases.clear();
+        self.dependency_direct_member_identities.clear();
         self.dependency_member_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
@@ -6438,10 +6916,12 @@ impl TypeChecker {
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
+        self.dependency_member_type_aliases.clear();
         self.dependency_registry_definitions.clear();
         self.dependency_member_partial_projections.clear();
         self.dependency_direct_member_symbols.clear();
-        self.dependency_direct_member_spans.clear();
+        self.dependency_direct_member_type_aliases.clear();
+        self.dependency_direct_member_identities.clear();
         self.dependency_member_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();

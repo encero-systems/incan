@@ -294,7 +294,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        self.lower_nominal_construction(name, args, span, scope, out)
+        self.lower_nominal_construction(name, args, span, span, scope, out)
     }
 
     // ---- Async surface (#1164) ----

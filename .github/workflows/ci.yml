@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, release/** ]
+    branches: [ main, 0.6.0-dev.2, release/** ]
   pull_request:
-    branches: [ main, release/** ]
+    branches: [ main, 0.6.0-dev.2, release/** ]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -127,6 +127,27 @@ jobs:
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
+  emitted-symbol-projection:
+    name: Recoverable emitted symbols (Rust 1.98.0)
+    runs-on: ${{ matrix.runner }}
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-emitted-symbol-1.98.0
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Prove incan-v1 recovery after v0 mangling and demangling
+        run: cargo test --locked --test emitted_symbol_projection_tests -- --nocapture
 
   oven-platform-smoke:
     name: Platform C ABI gate (${{ matrix.name }})

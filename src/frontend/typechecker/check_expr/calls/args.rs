@@ -157,7 +157,7 @@ impl TypeChecker {
                 CallArg::Named(name, expr) => {
                     let expected = normal_params
                         .iter()
-                        .find(|param| param.name() == Some(name.as_str()))
+                        .find(|param| param.name() == Some(name.node.as_str()))
                         .map(|param| param.ty.clone())
                         .or_else(|| rest_keyword.map(|param| param.ty.clone()));
                     self.call_argument_depth += 1;
@@ -435,19 +435,21 @@ impl TypeChecker {
                     }
                 }
                 CallArg::Named(name, _) => {
-                    if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
-                        self.errors
-                            .push(errors::duplicate_call_argument(callee, name, first_span, arg_span));
+                    if let Some(first_span) = named_seen.insert(name.node.as_str(), name.span) {
+                        self.errors.push(errors::duplicate_call_argument(
+                            callee, &name.node, first_span, name.span,
+                        ));
                     }
 
                     if let Some((normal_idx, (_, param))) = normal_params
                         .iter()
                         .enumerate()
-                        .find(|(_, (_, param))| param.name() == Some(name.as_str()))
+                        .find(|(_, (_, param))| param.name() == Some(name.node.as_str()))
                     {
                         if let Some(first_span) = normal_bound_spans[normal_idx] {
-                            self.errors
-                                .push(errors::duplicate_call_argument(callee, name, first_span, arg_span));
+                            self.errors.push(errors::duplicate_call_argument(
+                                callee, &name.node, first_span, name.span,
+                            ));
                             continue;
                         }
                         normal_bound_spans[normal_idx] = Some(arg_span);
@@ -472,7 +474,7 @@ impl TypeChecker {
                         );
                     } else {
                         self.errors
-                            .push(errors::unknown_keyword_argument(callee, name, arg_span));
+                            .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
                     }
                 }
                 CallArg::KeywordUnpack(_) => {

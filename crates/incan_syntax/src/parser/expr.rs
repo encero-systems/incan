@@ -582,7 +582,8 @@ impl<'a> Parser<'a> {
 
     /// Parse optional explicit call-site type arguments (`[T, U]`) without consuming non-call brackets.
     ///
-    /// This is intentionally conservative: we only treat brackets as call-site type args when the matching `]` is followed immediately by `(`.
+    /// This is intentionally conservative: we only treat brackets as call-site type args when the matching `]` is
+    /// followed immediately by `(`.
     pub(super) fn call_site_type_args(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
         if !self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
             return Ok(Vec::new());
@@ -612,8 +613,7 @@ impl<'a> Parser<'a> {
             return Ok(Vec::new());
         };
         let next_idx = close_idx + 1;
-        if next_idx >= self.tokens.len()
-            || self.tokens[next_idx].kind != TokenKind::Punctuation(PunctuationId::LParen)
+        if next_idx >= self.tokens.len() || self.tokens[next_idx].kind != TokenKind::Punctuation(PunctuationId::LParen)
         {
             return Ok(Vec::new());
         }
@@ -1023,10 +1023,7 @@ impl<'a> Parser<'a> {
         let start = self.current_span().start;
         let block = self.parse_braced_vocab_child_from_spec(keyword_name, spec, parent_keyword)?;
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;
-        Ok(Some(Spanned::new(
-            Statement::VocabBlock(block),
-            Span::new(start, end),
-        )))
+        Ok(Some(Spanned::new(Statement::VocabBlock(block), Span::new(start, end))))
     }
 
     /// Parse one metadata-selected child item in braced vocab syntax.
@@ -1168,8 +1165,7 @@ impl<'a> Parser<'a> {
     fn braced_vocab_body_boundary(&self, sibling_parent_keyword: Option<&str>) -> bool {
         self.check_punct(PunctuationId::RBrace)
             || self.is_at_end()
-            || sibling_parent_keyword
-                .is_some_and(|parent| self.current_starts_vocab_block_for_parent(Some(parent)))
+            || sibling_parent_keyword.is_some_and(|parent| self.current_starts_vocab_block_for_parent(Some(parent)))
     }
 
     /// Parse `partial Target(name=value)` after the `partial` marker has already been consumed.
@@ -1271,9 +1267,11 @@ impl<'a> Parser<'a> {
                     active.descriptor.syntax,
                     incan_vocab::ScopedSurfaceSyntax::LeadingDotPath { .. }
                 )
-                && active.descriptor.eligible_in.iter().any(|eligibility| {
-                    self.scoped_surface_eligibility_accepts_current_context(eligibility)
-                })
+                && active
+                    .descriptor
+                    .eligible_in
+                    .iter()
+                    .any(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
         })
     }
 
@@ -1293,9 +1291,11 @@ impl<'a> Parser<'a> {
                     incan_vocab::ScopedSurfaceSyntax::LeadingDotPath { .. }
                 )
         })?;
-        let diagnostic = active.descriptor.diagnostics.iter().find(|diagnostic| {
-            diagnostic.kind == incan_vocab::ScopedSurfaceDiagnosticKind::OutsideScope
-        });
+        let diagnostic = active
+            .descriptor
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.kind == incan_vocab::ScopedSurfaceDiagnosticKind::OutsideScope);
         let message = diagnostic
             .map(|diagnostic| diagnostic.message.clone())
             .unwrap_or_else(|| {
@@ -1305,7 +1305,10 @@ impl<'a> Parser<'a> {
                 )
             });
         let mut error = CompileError::syntax(message, Span::new(start, self.peek_next().span.end));
-        if let Some(code) = diagnostic.map(|diagnostic| diagnostic.code.as_str()).filter(|code| !code.is_empty()) {
+        if let Some(code) = diagnostic
+            .map(|diagnostic| diagnostic.code.as_str())
+            .filter(|code| !code.is_empty())
+        {
             error = error.with_note(format!("diagnostic code: {code}"));
         }
         if let Some(help) = diagnostic.and_then(|diagnostic| diagnostic.help.as_deref()) {
@@ -1320,14 +1323,14 @@ impl<'a> Parser<'a> {
             matches!(
                 active.descriptor.family,
                 incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike
-            )
-                && matches!(
-                    &active.descriptor.syntax,
-                    incan_vocab::ScopedSurfaceSyntax::Glyph { spelling } if spelling == glyph
-                )
-                && active.descriptor.eligible_in.iter().any(|eligibility| {
-                    self.scoped_surface_eligibility_accepts_current_context(eligibility)
-                })
+            ) && matches!(
+                &active.descriptor.syntax,
+                incan_vocab::ScopedSurfaceSyntax::Glyph { spelling } if spelling == glyph
+            ) && active
+                .descriptor
+                .eligible_in
+                .iter()
+                .any(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
         })
     }
 
@@ -1361,21 +1364,17 @@ impl<'a> Parser<'a> {
             .filter(|active| self.scoped_symbol_owner_depth(active) == max_depth);
         let first = best.next();
         if best.next().is_some() {
-            return Err(CompileError::syntax(
-                format!("Ambiguous scoped symbol `{symbol}` in this DSL position"),
-                span,
-            )
-            .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"));
+            return Err(
+                CompileError::syntax(format!("Ambiguous scoped symbol `{symbol}` in this DSL position"), span)
+                    .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"),
+            );
         }
         Ok(first)
     }
 
-    /// Build a descriptor-owned diagnostic for a scoped symbol used inside its active DSL but outside an eligible position.
-    fn scoped_symbol_misuse_error(
-        &self,
-        symbol: &str,
-        span: Span,
-    ) -> Result<Option<CompileError>, CompileError> {
+    /// Build a descriptor-owned diagnostic for a scoped symbol used inside its active DSL but outside an eligible
+    /// position.
+    fn scoped_symbol_misuse_error(&self, symbol: &str, span: Span) -> Result<Option<CompileError>, CompileError> {
         let matches: Vec<_> = self
             .active_scoped_symbol_descriptors
             .iter()
@@ -1403,16 +1402,17 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         if best.next().is_some() {
-            return Err(CompileError::syntax(
-                format!("Ambiguous scoped symbol `{symbol}` in this DSL position"),
-                span,
-            )
-            .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"));
+            return Err(
+                CompileError::syntax(format!("Ambiguous scoped symbol `{symbol}` in this DSL position"), span)
+                    .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"),
+            );
         }
 
-        let diagnostic = active.descriptor.diagnostics.iter().find(|diagnostic| {
-            diagnostic.kind == incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition
-        });
+        let diagnostic = active
+            .descriptor
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.kind == incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition);
         let message = diagnostic
             .map(|diagnostic| diagnostic.message.clone())
             .unwrap_or_else(|| {
@@ -1422,7 +1422,10 @@ impl<'a> Parser<'a> {
                 )
             });
         let mut error = CompileError::syntax(message, span);
-        if let Some(code) = diagnostic.map(|diagnostic| diagnostic.code.as_str()).filter(|code| !code.is_empty()) {
+        if let Some(code) = diagnostic
+            .map(|diagnostic| diagnostic.code.as_str())
+            .filter(|code| !code.is_empty())
+        {
             error = error.with_note(format!("diagnostic code: {code}"));
         }
         if let Some(help) = diagnostic.and_then(|diagnostic| diagnostic.help.as_deref()) {
@@ -1510,11 +1513,7 @@ impl<'a> Parser<'a> {
             idx += 1;
         }
 
-        if matched == spelling {
-            Some(idx - pos)
-        } else {
-            None
-        }
+        if matched == spelling { Some(idx - pos) } else { None }
     }
 
     /// Return the source spelling for an operator or punctuation token at `idx`.
@@ -1535,10 +1534,9 @@ impl<'a> Parser<'a> {
             incan_vocab::ScopedSurfacePosition::DeclarationBody => {
                 self.vocab_block_stack.last() == Some(&eligibility.declaration)
             }
-            incan_vocab::ScopedSurfacePosition::ClauseBody => self.current_vocab_clause_matches(
-                eligibility.declaration.as_str(),
-                eligibility.clause.as_deref(),
-            ),
+            incan_vocab::ScopedSurfacePosition::ClauseBody => {
+                self.current_vocab_clause_matches(eligibility.declaration.as_str(), eligibility.clause.as_deref())
+            }
             incan_vocab::ScopedSurfacePosition::CallArgument => self
                 .scoped_call_argument_stack
                 .last()
@@ -1557,15 +1555,18 @@ impl<'a> Parser<'a> {
             incan_vocab::ScopedSymbolPosition::DeclarationBody => {
                 self.vocab_block_stack.last() == Some(&eligibility.declaration)
             }
-            incan_vocab::ScopedSymbolPosition::ClauseBody => self.current_vocab_clause_matches(
-                eligibility.declaration.as_str(),
-                eligibility.clause.as_deref(),
-            ),
-            incan_vocab::ScopedSymbolPosition::CallArgument => self
-                .scoped_call_argument_stack
-                .last()
-                .is_some_and(|context| eligibility.call.as_deref() == Some(context.call.as_str()))
-                && self.vocab_block_stack.iter().any(|declaration| declaration == &eligibility.declaration),
+            incan_vocab::ScopedSymbolPosition::ClauseBody => {
+                self.current_vocab_clause_matches(eligibility.declaration.as_str(), eligibility.clause.as_deref())
+            }
+            incan_vocab::ScopedSymbolPosition::CallArgument => {
+                self.scoped_call_argument_stack
+                    .last()
+                    .is_some_and(|context| eligibility.call.as_deref() == Some(context.call.as_str()))
+                    && self
+                        .vocab_block_stack
+                        .iter()
+                        .any(|declaration| declaration == &eligibility.declaration)
+            }
             _ => false,
         }
     }
@@ -1585,11 +1586,7 @@ impl<'a> Parser<'a> {
         let Some(clause) = clause else {
             return false;
         };
-        let Some(clause_depth) = self
-            .vocab_block_stack
-            .iter()
-            .rposition(|active| active == clause)
-        else {
+        let Some(clause_depth) = self.vocab_block_stack.iter().rposition(|active| active == clause) else {
             return false;
         };
         self.vocab_block_stack
@@ -1738,6 +1735,45 @@ impl<'a> Parser<'a> {
         self.shift_expr_spans(&mut expr.node, offset);
     }
 
+    /// Shift one parsed call argument, including an authored keyword label that is not part of the value span.
+    fn shift_call_arg(&self, arg: &mut CallArg, offset: usize) {
+        match arg {
+            CallArg::Named(name, value) => {
+                name.span = Span::new(name.span.start + offset, name.span.end + offset);
+                self.shift_spanned_expr(value, offset);
+            }
+            CallArg::Positional(value) | CallArg::PositionalUnpack(value) | CallArg::KeywordUnpack(value) => {
+                self.shift_spanned_expr(value, offset);
+            }
+        }
+    }
+
+    /// Shift a pattern parsed inside an interpolated expression, preserving constructor and named-field labels.
+    fn shift_spanned_pattern(&self, pattern: &mut Spanned<Pattern>, offset: usize) {
+        pattern.span = Span::new(pattern.span.start + offset, pattern.span.end + offset);
+        match &mut pattern.node {
+            Pattern::Constructor(name, args) => {
+                name.span = Span::new(name.span.start + offset, name.span.end + offset);
+                for arg in args {
+                    match arg {
+                        PatternArg::Positional(pattern) => self.shift_spanned_pattern(pattern, offset),
+                        PatternArg::Named(name, pattern) => {
+                            name.span = Span::new(name.span.start + offset, name.span.end + offset);
+                            self.shift_spanned_pattern(pattern, offset);
+                        }
+                    }
+                }
+            }
+            Pattern::Tuple(patterns) | Pattern::Or(patterns) => {
+                for pattern in patterns {
+                    self.shift_spanned_pattern(pattern, offset);
+                }
+            }
+            Pattern::Group(inner) => self.shift_spanned_pattern(inner, offset),
+            Pattern::Wildcard | Pattern::Binding(_) | Pattern::Literal(_) => {}
+        }
+    }
+
     /// Recursively shift expression spans parsed from an f-string interpolation back into outer-source coordinates.
     fn shift_expr_spans(&self, expr: &mut Expr, offset: usize) {
         match expr {
@@ -1752,14 +1788,7 @@ impl<'a> Parser<'a> {
             Expr::Call(callee, _type_args, args) => {
                 self.shift_spanned_expr(callee, offset);
                 for arg in args {
-                    match arg {
-                        CallArg::Positional(value)
-                        | CallArg::Named(_, value)
-                        | CallArg::PositionalUnpack(value)
-                        | CallArg::KeywordUnpack(value) => {
-                            self.shift_spanned_expr(value, offset);
-                        }
-                    }
+                    self.shift_call_arg(arg, offset);
                 }
             }
             Expr::Index(base, index) => {
@@ -1784,14 +1813,7 @@ impl<'a> Parser<'a> {
             Expr::MethodCall(base, _, _type_args, args) => {
                 self.shift_spanned_expr(base, offset);
                 for arg in args {
-                    match arg {
-                        CallArg::Positional(value)
-                        | CallArg::Named(_, value)
-                        | CallArg::PositionalUnpack(value)
-                        | CallArg::KeywordUnpack(value) => {
-                            self.shift_spanned_expr(value, offset);
-                        }
-                    }
+                    self.shift_call_arg(arg, offset);
                 }
             }
             Expr::Partial(partial) => {
@@ -1807,6 +1829,7 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(subject, offset);
                 for arm in arms {
                     arm.span = Span::new(arm.span.start + offset, arm.span.end + offset);
+                    self.shift_spanned_pattern(&mut arm.node.pattern, offset);
                     if let Some(guard) = &mut arm.node.guard {
                         self.shift_spanned_expr(guard, offset);
                     }
@@ -1847,7 +1870,14 @@ impl<'a> Parser<'a> {
                     self.shift_comprehension_clause(clause, offset);
                 }
             }
-            Expr::Closure(_, body) => {
+            Expr::Closure(params, body) => {
+                for param in params {
+                    param.span = Span::new(param.span.start + offset, param.span.end + offset);
+                    param.node.ty.span = Span::new(param.node.ty.span.start + offset, param.node.ty.span.end + offset);
+                    if let Some(default) = &mut param.node.default {
+                        self.shift_spanned_expr(default, offset);
+                    }
+                }
                 self.shift_spanned_expr(body, offset);
             }
             Expr::Tuple(elems) | Expr::Set(elems) => {
@@ -1877,14 +1907,7 @@ impl<'a> Parser<'a> {
             }
             Expr::Constructor(_, args) => {
                 for arg in args {
-                    match arg {
-                        CallArg::Positional(value)
-                        | CallArg::Named(_, value)
-                        | CallArg::PositionalUnpack(value)
-                        | CallArg::KeywordUnpack(value) => {
-                            self.shift_spanned_expr(value, offset);
-                        }
-                    }
+                    self.shift_call_arg(arg, offset);
                 }
             }
             Expr::FString(parts) => {
@@ -1908,6 +1931,7 @@ impl<'a> Parser<'a> {
             Expr::Surface(surface_expr) => match &mut surface_expr.payload {
                 SurfaceExprPayload::PrefixUnary(value) => self.shift_spanned_expr(value, offset),
                 SurfaceExprPayload::RaceFor(race) => {
+                    race.binding.span = Span::new(race.binding.span.start + offset, race.binding.span.end + offset);
                     for arm in &mut race.arms {
                         self.shift_spanned_expr(&mut arm.awaitable, offset);
                         if let RaceForBody::Expr(value) = &mut arm.body {
@@ -1922,12 +1946,7 @@ impl<'a> Parser<'a> {
                 }
                 SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
                     for arg in args {
-                        match arg {
-                            CallArg::Positional(expr)
-                            | CallArg::Named(_, expr)
-                            | CallArg::PositionalUnpack(expr)
-                            | CallArg::KeywordUnpack(expr) => self.shift_spanned_expr(expr, offset),
-                        }
+                        self.shift_call_arg(arg, offset);
                     }
                 }
             },
@@ -1989,10 +2008,7 @@ impl<'a> Parser<'a> {
             arms.push(arm);
 
             next_leading = self.consume_inter_statement_blank_prefix();
-            if next_leading > 0
-                && self.check(&TokenKind::Dedent)
-                && self.dedent_is_followed_by_outer_statement()
-            {
+            if next_leading > 0 && self.check(&TokenKind::Dedent) && self.dedent_is_followed_by_outer_statement() {
                 self.pending_dedent_blank_lines = self.pending_dedent_blank_lines.max(next_leading);
                 next_leading = 0;
             }
@@ -2154,10 +2170,7 @@ impl<'a> Parser<'a> {
                     "Expected ')' after grouped pattern",
                 )?;
                 let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(
-                    Pattern::Group(Box::new(first)),
-                    Span::new(start, end),
-                ));
+                return Ok(Spanned::new(Pattern::Group(Box::new(first)), Span::new(start, end)));
             }
 
             let mut patterns = Vec::new();
@@ -2180,11 +2193,12 @@ impl<'a> Parser<'a> {
 
         // Identifier (binding) or constructor pattern
         if let TokenKind::Ident(name) = &self.peek().kind {
-            let mut name = name.clone();
+            let mut name = Spanned::new(name.clone(), self.current_span());
             self.advance();
 
             // Check for qualified pattern: Type.Variant or Type.Variant(args)
             if self.match_token(&TokenKind::Punctuation(PunctuationId::Dot)) {
+                let variant_span = self.current_span();
                 let variant = match &self.peek().kind {
                     TokenKind::Ident(v) => {
                         let v = v.clone();
@@ -2201,7 +2215,10 @@ impl<'a> Parser<'a> {
                     }
                 };
                 // Build qualified name: "Type::Variant" for Rust
-                name = format!("{}::{}", name, variant);
+                name = Spanned::new(
+                    format!("{}::{}", name.node, variant),
+                    Span::new(start, variant_span.end),
+                );
             }
 
             if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
@@ -2209,18 +2226,17 @@ impl<'a> Parser<'a> {
                 let mut patterns = Vec::new();
                 if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
                     loop {
-                        if matches!(
-                            self.peek().kind,
-                            TokenKind::Ident(_) | TokenKind::Keyword(_)
-                        ) && self.peek_next().kind == TokenKind::Operator(OperatorId::Eq)
+                        if matches!(self.peek().kind, TokenKind::Ident(_) | TokenKind::Keyword(_))
+                            && self.peek_next().kind == TokenKind::Operator(OperatorId::Eq)
                         {
+                            let name_span = self.current_span();
                             let name = self.identifier_or_any_keyword()?;
                             self.expect(
                                 &TokenKind::Operator(OperatorId::Eq),
                                 "Expected '=' after pattern field name",
                             )?;
                             let pat = self.pattern()?;
-                            patterns.push(PatternArg::Named(name, pat));
+                            patterns.push(PatternArg::Named(Spanned::new(name, name_span), pat));
                         } else {
                             patterns.push(PatternArg::Positional(self.pattern()?));
                         }
@@ -2241,17 +2257,14 @@ impl<'a> Parser<'a> {
             }
 
             // Check if this is a unit variant (qualified without parens): Type.Variant
-            if name.contains("::") {
+            if name.node.contains("::") {
                 let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(
-                    Pattern::Constructor(name, vec![]),
-                    Span::new(start, end),
-                ));
+                return Ok(Spanned::new(Pattern::Constructor(name, vec![]), Span::new(start, end)));
             }
 
             // Just a binding
             let end = self.tokens[self.pos - 1].span.end;
-            return Ok(Spanned::new(Pattern::Binding(name), Span::new(start, end)));
+            return Ok(Spanned::new(Pattern::Binding(name.node), Span::new(start, end)));
         }
 
         Err(errors::expected_pattern(
@@ -2298,10 +2311,7 @@ impl<'a> Parser<'a> {
     /// Parse a `loop` expression.
     fn loop_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
-        self.expect(
-            &TokenKind::Punctuation(PunctuationId::Colon),
-            "Expected ':' after loop",
-        )?;
+        self.expect(&TokenKind::Punctuation(PunctuationId::Colon), "Expected ':' after loop")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
         self.expect(&TokenKind::Indent, "Expected indented block")?;
         let body = self.block()?;
@@ -2325,7 +2335,7 @@ impl<'a> Parser<'a> {
                 self.current_span(),
             ));
         }
-        let binding = self.identifier_spanned()?.node;
+        let binding = self.identifier_spanned()?;
         if self.check_punct(PunctuationId::LParen) || self.check_punct(PunctuationId::Comma) {
             return Err(errors::expected_token_message(
                 "Pattern-binding race headers are not supported; use a single binding name and match inside the arm body",
@@ -2702,10 +2712,7 @@ impl<'a> Parser<'a> {
             )?;
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(
-                Expr::Generator(Box::new(GeneratorExpr {
-                    expr: first,
-                    clauses,
-                })),
+                Expr::Generator(Box::new(GeneratorExpr { expr: first, clauses })),
                 Span::new(start, end),
             ));
         }
@@ -2798,8 +2805,7 @@ impl<'a> Parser<'a> {
     /// Parse call arguments while temporarily enabling descriptors scoped to the named call target.
     fn call_args_for(&mut self, call: Option<String>) -> Result<Vec<CallArg>, CompileError> {
         let pushed_context = call.map(|call| {
-            self.scoped_call_argument_stack
-                .push(ScopedCallArgumentContext { call });
+            self.scoped_call_argument_stack.push(ScopedCallArgumentContext { call });
         });
         let result = self.call_args();
         if pushed_context.is_some() {
@@ -2823,11 +2829,10 @@ impl<'a> Parser<'a> {
                 }
 
                 // Check for named argument (allow keywords)
-                if matches!(
-                    self.peek().kind,
-                    TokenKind::Ident(_) | TokenKind::Keyword(_)
-                ) && self.peek_next().kind == TokenKind::Operator(OperatorId::Eq)
+                if matches!(self.peek().kind, TokenKind::Ident(_) | TokenKind::Keyword(_))
+                    && self.peek_next().kind == TokenKind::Operator(OperatorId::Eq)
                 {
+                    let name_span = self.current_span();
                     let name = self.identifier_or_any_keyword()?;
                     self.expect(
                         &TokenKind::Operator(OperatorId::Eq),
@@ -2836,7 +2841,7 @@ impl<'a> Parser<'a> {
                     self.skip_newlines();
                     let value = self.expression()?;
                     self.skip_newlines();
-                    args.push(CallArg::Named(name, value));
+                    args.push(CallArg::Named(Spanned::new(name, name_span), value));
                     if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                         break;
                     }
@@ -2916,7 +2921,7 @@ impl<'a> Parser<'a> {
         let mut partial_args = Vec::new();
         for arg in args {
             match arg {
-                CallArg::Named(name, value) => partial_args.push(PartialArg { name, value }),
+                CallArg::Named(name, value) => partial_args.push(PartialArg { name: name.node, value }),
                 CallArg::Positional(value) | CallArg::PositionalUnpack(value) | CallArg::KeywordUnpack(value) => {
                     return Err(CompileError::syntax(
                         "Partial presets only support keyword arguments".to_string(),
@@ -2927,7 +2932,6 @@ impl<'a> Parser<'a> {
         }
         Ok(partial_args)
     }
-
 }
 
 /// Split a raw f-string interpolation body into expression text plus the supported top-level format marker.

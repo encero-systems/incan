@@ -2316,7 +2316,7 @@ impl AstLowering {
             };
             match arg {
                 ast::CallArg::Named(field_name, _) => {
-                    let canonical = self.resolve_field_alias(name, field_name);
+                    let canonical = self.resolve_field_alias(name, &field_name.node);
                     let Some(coercion) = self.aggregate_field_coercion(value.span) else {
                         fields.push((canonical, raw_var(VarAccess::Move)));
                         continue;
@@ -3190,7 +3190,7 @@ impl AstLowering {
         let mut by_name = merged
             .into_iter()
             .filter_map(|arg| match arg {
-                ast::CallArg::Named(name, value) => Some((name, value)),
+                ast::CallArg::Named(name, value) => Some((name.node.clone(), (name, value))),
                 _ => None,
             })
             .collect::<HashMap<_, _>>();
@@ -3199,14 +3199,14 @@ impl AstLowering {
             let Some(name) = param.name.as_deref() else {
                 continue;
             };
-            if let Some(value) = by_name.remove(name) {
-                ordered.push(ast::CallArg::Named(name.to_string(), value));
+            if let Some((label, value)) = by_name.remove(name) {
+                ordered.push(ast::CallArg::Named(label, value));
             }
         }
         ordered.extend(
             by_name
                 .into_iter()
-                .map(|(name, value)| ast::CallArg::Named(name, value)),
+                .map(|(_, (name, value))| ast::CallArg::Named(name, value)),
         );
         Some(ordered)
     }
@@ -3235,7 +3235,7 @@ impl AstLowering {
         for preset in projection.presets {
             if source_args
                 .iter()
-                .any(|arg| matches!(arg, ast::CallArg::Named(name, _) if name == &preset.name))
+                .any(|arg| matches!(arg, ast::CallArg::Named(name, _) if name.node == preset.name))
             {
                 continue;
             }
@@ -3345,10 +3345,10 @@ impl AstLowering {
                     ast::CallArg::Positional(expr) => {
                         message = Some(self.lower_expr_spanned(expr)?);
                     }
-                    ast::CallArg::Named(field, expr) if field == "message" => {
+                    ast::CallArg::Named(field, expr) if field.node == "message" => {
                         message = Some(self.lower_expr_spanned(expr)?);
                     }
-                    ast::CallArg::Named(field, expr) if field == "code" => {
+                    ast::CallArg::Named(field, expr) if field.node == "code" => {
                         code = Some(self.lower_expr_spanned(expr)?);
                     }
                     ast::CallArg::Named(_, expr)
@@ -3451,7 +3451,7 @@ impl AstLowering {
                 ast::CallArg::Named(field_name, value) => {
                     let lowered_value = self.lower_expr_spanned(value)?;
                     // RFC 021: map alias → canonical field name
-                    let canonical = self.resolve_field_alias(&struct_name, field_name);
+                    let canonical = self.resolve_field_alias(&struct_name, &field_name.node);
                     Ok((canonical, lowered_value))
                 }
                 ast::CallArg::Positional(value) => {
@@ -3552,7 +3552,7 @@ impl AstLowering {
         };
         !args.is_empty()
             && args.iter().all(|arg| match arg {
-                ast::CallArg::Named(field, _) => fields.contains_key(field),
+                ast::CallArg::Named(field, _) => fields.contains_key(&field.node),
                 _ => false,
             })
     }
@@ -3573,7 +3573,7 @@ impl AstLowering {
                     expr: self.lower_expr_spanned(e)?,
                 }),
                 ast::CallArg::Named(name, e) => lowered.push(IrCallArg {
-                    name: Some(name.clone()),
+                    name: Some(name.node.clone()),
                     kind: IrCallArgKind::Named,
                     expr: self.lower_expr_spanned(e)?,
                 }),
@@ -3709,8 +3709,8 @@ mod tests {
     };
     use crate::library_manifest::{
         AliasExport, CompiledProviderMetadata, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
-        FunctionExport, LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryExports, LibraryIdentityGraph, LibraryManifest,
-        ParamDefaultExport, ParamExport, ParamKindExport, ProviderModuleClaim, TypeRef,
+        FunctionExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryExports, LibraryIdentityGraph,
+        LibraryManifest, ParamDefaultExport, ParamExport, ParamKindExport, ProviderModuleClaim, TypeRef,
     };
     use crate::provider::ProviderPlan;
     use incan_core::interop::CoercionPolicy;
@@ -3784,7 +3784,7 @@ mod tests {
         let [CallArg::Named(name, value)] = args.as_slice() else {
             return Err(format!("expected one named preset, got {args:?}"));
         };
-        assert_eq!(name, "size");
+        assert_eq!(name.node, "size");
         assert!(matches!(value.node, Expr::Literal(Literal::String(ref value)) if value == "preset"));
 
         let mut lowered = lowering
@@ -3944,7 +3944,7 @@ mod tests {
             public_namespaces: Vec::new(),
         });
         manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
-            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
             exports: vec![ExportIdentity {
                 public_name: "safe_cast".to_string(),
                 public_path: vec!["mylib".to_string(), "safe_cast".to_string()],
@@ -3953,6 +3953,7 @@ mod tests {
                 projection: ExportIdentityProjection::Alias {
                     target_path: vec!["helpers".to_string(), "cast".to_string()],
                 },
+                canonical: None,
             }],
         };
 
@@ -4264,7 +4265,7 @@ mod tests {
             Box::new(Spanned::new(Expr::Ident("FunctionOption".to_string()), callee_span)),
             Vec::new(),
             vec![CallArg::Named(
-                "name".to_string(),
+                Spanned::new("name".to_string(), arg_span),
                 Spanned::new(Expr::Ident("OPTION_NAME".to_string()), arg_span),
             )],
         );

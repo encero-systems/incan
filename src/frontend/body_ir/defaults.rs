@@ -32,12 +32,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let saved_moved_out = self.moved_out.clone();
         let saved_materialized_range_locals = self.materialized_range_locals.clone();
         let saved_bindings = std::mem::take(&mut self.bindings);
+        let saved_identity_bindings = std::mem::take(&mut self.identity_bindings);
         let saved_external_locals = std::mem::take(&mut self.external_locals);
         let mut stmts = Vec::new();
         let result = self.lower_expr_to_operand(default_expr, scope, &mut stmts);
         let mut unresolved_names: Vec<String> = self.external_locals.keys().cloned().collect();
         unresolved_names.sort();
         self.bindings = saved_bindings;
+        self.identity_bindings = saved_identity_bindings;
         self.external_locals = saved_external_locals;
 
         let refusal = first_unsupported_default_statement(&stmts)

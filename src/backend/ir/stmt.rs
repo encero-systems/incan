@@ -1,6 +1,6 @@
 //! IR statement definitions
 
-use super::expr::Pattern;
+use super::expr::{IrStaticReferenceKind, Pattern};
 use super::{IrExpr, IrSpan, IrType, Mutability};
 
 /// An IR statement
@@ -109,7 +109,10 @@ pub enum AssignTarget {
     /// Local binding wrapper created from a module static.
     StaticBinding(String),
     /// Direct assignment into a compiler-managed module static storage cell.
-    Static(String),
+    Static {
+        name: String,
+        reference_kind: IrStaticReferenceKind,
+    },
     /// Field access (obj.field)
     Field { object: Box<IrExpr>, field: String },
     /// Index access (`list[i]`)

@@ -414,6 +414,7 @@ pub(crate) fn partial_export_from_api(partial: &ApiPartial) -> PartialExport {
 pub(crate) fn method_export_from_api(method: &ApiMethod) -> MethodExport {
     MethodExport {
         name: method.name.clone(),
+        canonical: None,
         alias_of: method.alias_of.clone(),
         type_params: method.type_params.clone(),
         receiver: method.receiver.clone(),
@@ -428,6 +429,7 @@ pub(crate) fn method_export_from_api(method: &ApiMethod) -> MethodExport {
 fn property_export_from_api(property: &ApiProperty) -> PropertyExport {
     PropertyExport {
         name: property.name.clone(),
+        canonical: None,
         return_type: property.return_type.clone(),
     }
 }
@@ -494,6 +496,7 @@ pub(crate) fn enum_export_from_api(enum_decl: &ApiEnum) -> EnumExport {
             .iter()
             .map(|variant| EnumVariantExport {
                 name: variant.name.clone(),
+                canonical: None,
                 fields: variant.fields.clone(),
                 value: variant.value.clone(),
             })
@@ -1326,6 +1329,7 @@ fn api_trait(
             .iter()
             .map(|(name, ty)| FieldExport {
                 name: name.clone(),
+                canonical: None,
                 ty: type_ref_from_resolved(ty),
                 surface_type_name: Some(ty.to_string()),
                 visibility: crate::library_manifest::FieldVisibilityExport::Public,
@@ -1722,6 +1726,7 @@ fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport 
     let default = field.default.as_ref().and_then(param_default_from_checked);
     FieldExport {
         name: field.name.clone(),
+        canonical: None,
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {
@@ -1780,7 +1785,7 @@ fn decorators_metadata(
     decorators
         .iter()
         .map(|decorator| {
-            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &checker.import_aliases);
+            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &checker.symbols);
             DecoratorMetadata {
                 path: resolved,
                 source_name: decorator.node.path.segments.join("."),
@@ -1927,7 +1932,7 @@ fn decorator_call_arg_metadata(arg: &CallArg, checker: &TypeChecker) -> Decorato
             value: decorator_expr_value(value, checker),
         },
         CallArg::Named(name, value) => DecoratorCallArgMetadata::Named {
-            name: name.clone(),
+            name: name.node.clone(),
             value: decorator_expr_value(value, checker),
         },
         CallArg::PositionalUnpack(value) => DecoratorCallArgMetadata::PositionalUnpack {
@@ -3135,6 +3140,7 @@ pub class Writer:
         let checked_methods = vec![
             CheckedMethod {
                 name: "write".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),
@@ -3157,6 +3163,7 @@ pub class Writer:
             },
             CheckedMethod {
                 name: "write".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),
@@ -3229,6 +3236,7 @@ pub class Parser:
         let checked_methods = vec![
             CheckedMethod {
                 name: "parse".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),
@@ -3244,6 +3252,7 @@ pub class Parser:
             },
             CheckedMethod {
                 name: "parse".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),

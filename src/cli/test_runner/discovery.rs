@@ -1039,11 +1039,11 @@ fn extract_case_call(expr: &Spanned<Expr>) -> Option<(&Spanned<Expr>, Vec<TestMa
     let mut id = None;
     for arg in args {
         if let CallArg::Named(name, value) = arg {
-            if name == "id" {
+            if name.node == "id" {
                 if let Expr::Literal(Literal::String(value)) = &value.node {
                     id = Some(value.clone());
                 }
-            } else if name == "marks" {
+            } else if name.node == "marks" {
                 markers.extend(extract_case_marks(&value.node));
             }
         }

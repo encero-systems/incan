@@ -22,7 +22,10 @@ use incan_core::lang::c_abi::{
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives;
 use incan_core::lang::stdlib;
-use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
+use incan_semantics_core::{
+    CanonicalSymbolId, DecoratorFeature, HirSourceSpan, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolNamespace,
+    SymbolOrigin,
+};
 
 #[derive(Clone, Copy)]
 enum DecoratorValidationTarget {
@@ -160,21 +163,8 @@ impl TypeChecker {
     ///   user-defined decorator target diagnostic.
     fn validate_decorators_for_target(&mut self, decorators: &[Spanned<Decorator>], target: DecoratorValidationTarget) {
         for dec in decorators {
-            let mut resolved = resolve_decorator_path(&dec.node, &self.symbols);
-            let mut feature = self.surface_context.decorator_feature_for_path(&resolved);
-
-            // ---- Fallback: import-alias resolution ----
-            // The SymbolTable-based `DecoratorPrefixLookup` only handles Module symbols, so decorators imported as
-            // functions (e.g. `from std.testing import parametrize` then `@parametrize(...)`) won't resolve via the
-            // symbol table. Fall back to the import aliases collected from the program's `import` / `from ... import`
-            // declarations, which correctly map `parametrize` → `["std", "testing", "parametrize"]`.
-            if feature.is_none() && decorators::from_segments(&resolved).is_none() {
-                let alias_resolved = decorator_resolution::resolve_decorator_path(&dec.node, &self.import_aliases);
-                if alias_resolved != resolved {
-                    resolved = alias_resolved;
-                    feature = self.surface_context.decorator_feature_for_path(&resolved);
-                }
-            }
+            let resolved = resolve_decorator_path(&dec.node, &self.symbols);
+            let feature = self.surface_context.decorator_feature_for_path(&resolved);
 
             let Some(id) = decorators::from_segments(&resolved) else {
                 let is_stdlib_decorator_function = feature
@@ -216,6 +206,18 @@ impl TypeChecker {
                 }
                 continue;
             };
+
+            self.type_info.record_resolved_identity(
+                dec.span,
+                CanonicalSymbolId {
+                    namespace: SymbolNamespace::OrdinaryLexical,
+                    origin: SymbolOrigin::Builtin,
+                    declaration_name: decorators::as_str(id).to_string(),
+                    kind: SemanticSourceTargetKind::Builtin,
+                    scope_discriminant: None,
+                    declaration_span: HirSourceSpan::new(0, 0),
+                },
+            );
 
             if id == DecoratorId::RustAllow {
                 self.validate_rust_allow_args(dec);
@@ -337,9 +339,7 @@ impl TypeChecker {
     fn validate_rust_derive_trait_conflict(&mut self, derive_leaf: &str, traits: &[Spanned<TraitBound>], span: Span) {
         for trait_ref in traits {
             let trait_leaf = self
-                .import_aliases
-                .get(&trait_ref.node.name)
-                .and_then(|segments| segments.last().map(String::as_str))
+                .rust_derive_leaf_for_ident(&trait_ref.node.name)
                 .unwrap_or_else(|| Self::trait_name_leaf(&trait_ref.node.name));
             if trait_leaf == derive_leaf {
                 self.errors.push(errors::rust_derive_conflicts_with_trait_adoption(
@@ -353,19 +353,18 @@ impl TypeChecker {
 
     /// Resolve an imported derive binding to its final path segment.
     fn rust_derive_leaf_for_ident(&self, name: &str) -> Option<&str> {
-        self.import_aliases
-            .get(name)
+        self.import_binding_path(name)
             .and_then(|segments| segments.last().map(String::as_str))
+            .or_else(|| {
+                self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
+                    SymbolKind::RustItem(info) => info.path.rsplit("::").next(),
+                    _ => None,
+                })
+            })
     }
 
     /// Return the Rust path imported for a local derive binding name.
     fn rust_import_path_for_local_name(&self, name: &str) -> Option<String> {
-        if let Some(segments) = self.import_aliases.get(name)
-            && segments.first().is_some_and(|segment| segment == "rust")
-            && segments.len() >= 2
-        {
-            return Some(segments[1..].join("::"));
-        }
         self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
             SymbolKind::RustItem(info) => Some(info.path.clone()),
             _ => None,
@@ -440,7 +439,7 @@ impl TypeChecker {
         kind: &'static str,
     ) {
         for dec in decorators {
-            if self.decorator_id_with_import_aliases(&dec.node) == Some(DecoratorId::RustAllow) {
+            if self.decorator_id(&dec.node) == Some(DecoratorId::RustAllow) {
                 self.errors
                     .push(errors::rust_allow_unsupported_attachment(kind, dec.span));
             }
@@ -452,11 +451,11 @@ impl TypeChecker {
     /// Compiler-owned decorators and stdlib marker decorators keep their existing compiler semantics. Unknown paths in
     /// known compiler namespaces stay diagnostic-only rather than becoming user-defined decorators.
     pub(crate) fn is_user_defined_decorator_candidate(&mut self, dec: &Decorator) -> bool {
-        if self.decorator_id_with_import_aliases(dec).is_some() {
+        if self.decorator_id(dec).is_some() {
             return false;
         }
 
-        let resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
+        let resolved = decorator_resolution::resolve_decorator_path(dec, &self.symbols);
         if resolved
             .first()
             .is_some_and(|first| decorators::is_known_decorator_namespace(first))
@@ -475,15 +474,10 @@ impl TypeChecker {
         !is_stdlib_decorator_function
     }
 
-    /// Resolve a decorator identifier through import aliases.
-    pub(crate) fn decorator_id_with_import_aliases(&self, dec: &Decorator) -> Option<DecoratorId> {
+    /// Resolve a decorator identifier through checked source bindings.
+    pub(crate) fn decorator_id(&self, dec: &Decorator) -> Option<DecoratorId> {
         let resolved = resolve_decorator_path(dec, &self.symbols);
-        if let Some(id) = decorators::from_segments(&resolved) {
-            return Some(id);
-        }
-
-        let alias_resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
-        decorators::from_segments(&alias_resolved)
+        decorators::from_segments(&resolved)
     }
 
     /// Validate the source-owned descriptor attached to a checked C binding class.
@@ -496,7 +490,7 @@ impl TypeChecker {
         let bindings = class
             .decorators
             .iter()
-            .filter(|decorator| self.decorator_id_with_import_aliases(&decorator.node) == Some(DecoratorId::CBinding))
+            .filter(|decorator| self.decorator_id(&decorator.node) == Some(DecoratorId::CBinding))
             .collect::<Vec<_>>();
         if bindings.len() > 1 {
             self.errors.push(CompileError::type_error(
@@ -1655,8 +1649,7 @@ impl TypeChecker {
     /// Return whether the decorator's leading alias resolves to the activated C vocabulary.
     fn c_interop_decorator_is_imported(&self, decorator: &Decorator) -> bool {
         decorator.path.segments.first().is_some_and(|prefix| {
-            self.import_aliases
-                .get(prefix)
+            self.import_binding_path(prefix)
                 .is_some_and(|path| c_abi::is_interop_namespace_path(path.iter().map(String::as_str)))
         })
     }
@@ -1691,8 +1684,7 @@ impl TypeChecker {
             return None;
         };
         if !self
-            .import_aliases
-            .get(namespace_name)
+            .import_binding_path(namespace_name)
             .is_some_and(|path| c_abi::is_interop_namespace_path(path.iter().map(String::as_str)))
         {
             return None;
@@ -1772,7 +1764,40 @@ impl TypeChecker {
             .collect();
 
         for (name, span) in derive_items {
-            self.validate_single_derive(&name, span);
+            if self.validate_single_derive(&name, span) {
+                self.record_derive_argument_identity(&name, span);
+            }
+        }
+    }
+
+    /// Record the compiler-proven target selected by one accepted `@derive(...)` argument.
+    fn record_derive_argument_identity(&mut self, name: &str, span: Span) {
+        let identity = derives::from_str(name)
+            .and_then(|id| {
+                let canonical = derives::as_str(id);
+                self.symbols
+                    .lookup(canonical)
+                    .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+                    .cloned()
+                    .or_else(|| {
+                        Some(CanonicalSymbolId {
+                            namespace: SymbolNamespace::OrdinaryLexical,
+                            origin: SymbolOrigin::Builtin,
+                            declaration_name: canonical.to_string(),
+                            kind: SemanticSourceTargetKind::Builtin,
+                            scope_discriminant: None,
+                            declaration_span: HirSourceSpan::new(0, 0),
+                        })
+                    })
+            })
+            .or_else(|| {
+                self.symbols
+                    .lookup(name)
+                    .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+                    .cloned()
+            });
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(span, identity);
         }
     }
 
@@ -1841,16 +1866,16 @@ impl TypeChecker {
     }
 
     /// Validate a single derive name, reporting appropriate errors.
-    fn validate_single_derive(&mut self, name: &str, span: Span) {
+    fn validate_single_derive(&mut self, name: &str, span: Span) -> bool {
         if derives::from_str(name).is_some() {
-            return;
+            return true;
         }
 
         if self
             .lookup_symbol(name)
             .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
         {
-            return;
+            return true;
         }
 
         if self
@@ -1859,27 +1884,26 @@ impl TypeChecker {
             && let Some(module_path) = self.module_path_for_imported_name(name)
         {
             if self.lookup_derivable_traits(&module_path).is_some() {
-                return;
+                return true;
             }
             self.errors.push(errors::derive_module_missing_derives(name, span));
-            return;
+            return false;
         }
 
         if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
             self.define_hidden_trait_symbol(&canonical, info, span);
-            return;
+            return true;
         }
 
         // Allow custom derives imported from stdlib modules backed by rust.module(...).
         let resolved = self
-            .import_aliases
-            .get(name)
-            .cloned()
+            .import_binding_path(name)
+            .map(<[String]>::to_vec)
             .unwrap_or_else(|| vec![name.to_string()]);
         if resolved.len() >= 2
             && self.imported_trait_is_derivable(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
         {
-            return;
+            return true;
         }
 
         // Check if the name refers to a type/function (wrong usage)
@@ -1888,6 +1912,7 @@ impl TypeChecker {
         } else {
             self.errors.push(errors::unknown_derive(name, span));
         }
+        false
     }
 
     /// Look up what kind of symbol a name refers to, if any.

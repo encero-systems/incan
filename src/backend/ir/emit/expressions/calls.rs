@@ -1316,7 +1316,12 @@ impl<'a> IrEmitter<'a> {
             return Ok(None);
         };
 
-        let fn_ident = Self::rust_ident(function_name);
+        let emitted_name = self
+            .canonical_function_registry()
+            .canonical_identity_for_path(canonical_path)
+            .map(incan_semantics_core::encode_incan_symbol_identity)
+            .unwrap_or_else(|| function_name.clone());
+        let fn_ident = Self::rust_ident(&emitted_name);
         segments.push(quote! { #fn_ident });
 
         let mut iter = segments.into_iter();
@@ -1511,6 +1516,7 @@ mod tests {
         let sealed_fields = vec![
             FieldExport {
                 name: "secret".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "int".to_string(),
                 },
@@ -1523,6 +1529,7 @@ mod tests {
             },
             FieldExport {
                 name: "label".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },
@@ -1536,6 +1543,7 @@ mod tests {
         ];
         let decoy_fields = vec![FieldExport {
             name: "unrelated".to_string(),
+            canonical: None,
             ty: TypeRef::Named {
                 name: "bool".to_string(),
             },
@@ -1594,6 +1602,7 @@ mod tests {
 
         let fields = vec![FieldExport {
             name: "size".to_string(),
+            canonical: None,
             ty: TypeRef::Named {
                 name: "int".to_string(),
             },
@@ -1619,6 +1628,7 @@ mod tests {
         );
         let defaulted_class_fields = vec![FieldExport {
             name: "size".to_string(),
+            canonical: None,
             ty: TypeRef::Named {
                 name: "int".to_string(),
             },

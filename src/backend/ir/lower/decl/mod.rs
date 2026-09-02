@@ -88,6 +88,7 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_declaration(
         &mut self,
         decl: &ast::Declaration,
+        span: ast::Span,
     ) -> Result<IrDecl, LoweringError> {
         let kind = match decl {
             ast::Declaration::Function(f) => IrDeclKind::Function(self.lower_function(f)?),
@@ -129,6 +130,9 @@ impl AstLowering {
                 IrDeclKind::Static {
                     visibility,
                     name: s.name.clone(),
+                    provenance: super::super::decl::IrStaticProvenance::Source(
+                        self.emitted_static_identity(&s.name, span)?,
+                    ),
                     ty: self.lower_type(&s.ty.node),
                     value,
                 }
@@ -168,6 +172,7 @@ impl AstLowering {
                     visibility: Self::map_visibility(a.visibility),
                     name: a.name.clone(),
                     target_path,
+                    target_canonical: self.emitted_symbol_alias_target_identity(&a.name, span)?,
                     target_origin,
                     target_qualifier,
                 }
@@ -198,7 +203,7 @@ impl AstLowering {
                     .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                 IrDeclKind::Struct(struct_ir)
             }
-            ast::Declaration::Import(i) => self.lower_import(i),
+            ast::Declaration::Import(i) => self.lower_import(i, span)?,
             ast::Declaration::Trait(t) => IrDeclKind::Trait(self.lower_trait(t)?),
             ast::Declaration::TestModule(_) => {
                 return Err(LoweringError {

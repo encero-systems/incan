@@ -3387,6 +3387,7 @@ mod codegen_tests {
     };
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
+    use incan_semantics_core::{SemanticSourceTargetKind, decode_incan_symbol_identity, encode_incan_symbol_identity};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
@@ -3596,7 +3597,7 @@ def main() -> None:
     }
 
     #[test]
-    fn test_method_alias_codegen_rewrites_to_target_method() {
+    fn test_method_alias_codegen_rewrites_to_target_method() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 model Stats:
   value: int
@@ -3609,23 +3610,27 @@ def main() -> None:
   let stats = Stats(value=10)
   println(stats.mean())
 "#;
-        let Ok(tokens) = lexer::lex(source) else {
-            panic!("lex failed");
-        };
-        let Ok(ast) = parser::parse(&tokens) else {
-            panic!("parse failed");
-        };
-        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
-            panic!("codegen failed");
-        };
+        let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex failed: {errors:?}")))?;
+        let ast =
+            parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse failed: {errors:?}")))?;
+        let rust_code = IrCodegen::new()
+            .try_generate(&ast)
+            .map_err(|error| std::io::Error::other(format!("codegen failed: {error:?}")))?;
+        let avg_identity = rust_code
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter_map(|token| decode_incan_symbol_identity(token).ok().flatten())
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "avg")
+            .ok_or_else(|| std::io::Error::other("generated Rust did not carry the target method identity"))?;
+        let projection = encode_incan_symbol_identity(&avg_identity);
         assert!(
-            rust_code.contains(".avg("),
-            "expected method alias call to lower to target method, got:\n{rust_code}"
+            rust_code.contains(&format!(".{projection}(")),
+            "expected method alias call to lower to the target declaration's canonical projection, got:\n{rust_code}"
         );
         assert!(
             !rust_code.contains(".mean("),
             "method alias must not emit an independent wrapper call, got:\n{rust_code}"
         );
+        Ok(())
     }
 
     #[test]

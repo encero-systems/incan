@@ -988,10 +988,11 @@ impl TypeChecker {
                 continue;
             };
 
-            let Some((canonical_name, field_info)) = Self::resolve_const_model_field(&model.fields, field_name) else {
+            let Some((canonical_name, field_info)) = Self::resolve_const_model_field(&model.fields, &field_name.node)
+            else {
                 self.eval_const_expr(value, None, stack, decl_span);
                 self.errors
-                    .push(errors::missing_field(type_name, field_name, value.span));
+                    .push(errors::missing_field(type_name, &field_name.node, field_name.span));
                 had_error = true;
                 continue;
             };
@@ -1024,10 +1025,10 @@ impl TypeChecker {
                     Some(false) => had_error = true,
                     None => {
                         self.errors.push(errors::field_type_mismatch(
-                            field_name,
+                            &field_name.node,
                             &field_info.ty.to_string(),
                             &field_result.ty.to_string(),
-                            value.span,
+                            field_name.span,
                         ));
                         had_error = true;
                     }

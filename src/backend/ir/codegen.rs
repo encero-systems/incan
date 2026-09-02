@@ -68,6 +68,23 @@ use string_try_from_bridge::{
     StringTryFromBridgeConfig, compilation_imports_std_string_try_from_contract, imports_std_string_try_from_contract,
 };
 
+fn source_module_identity_path(
+    program: &Program,
+    explicit_path: Option<Vec<String>>,
+    fallback_name: Option<&str>,
+) -> Option<Vec<String>> {
+    let path = explicit_path
+        .or_else(|| {
+            program
+                .source_path
+                .as_deref()
+                .and_then(crate::frontend::module::logical_module_name_from_source_path)
+                .map(|name| name.split('.').map(str::to_owned).collect())
+        })
+        .or_else(|| fallback_name.map(|name| vec![name.to_string()]))?;
+    Some(canonicalize_source_module_segments(&path))
+}
+
 /// Error during Rust code generation.
 ///
 /// This error type wraps all possible errors that can occur during code generation,
@@ -393,11 +410,21 @@ impl<'a> IrCodegen<'a> {
             for (name, signature) in program.function_registry.iter() {
                 let mut canonical_path = (*module_path).to_vec();
                 canonical_path.push(name.clone());
-                registry.register_canonical_path(
-                    &canonical_path,
-                    signature.params.clone(),
-                    signature.return_type.clone(),
-                );
+                if let Some(identity) = program.function_registry.canonical_identity(name) {
+                    registry.register_canonical_path_projection(
+                        &canonical_path,
+                        program.function_registry.source_name(name).unwrap_or(name).to_string(),
+                        identity.clone(),
+                        signature.params.clone(),
+                        signature.return_type.clone(),
+                    );
+                } else {
+                    registry.register_canonical_path(
+                        &canonical_path,
+                        signature.params.clone(),
+                        signature.return_type.clone(),
+                    );
+                }
             }
         }
 
@@ -418,11 +445,21 @@ impl<'a> IrCodegen<'a> {
                     continue;
                 }
                 if let Some(signature) = registry.get_canonical_path(&target_path).cloned() {
-                    registry.register_canonical_path(
-                        &alias_path,
-                        signature.params.clone(),
-                        signature.return_type.clone(),
-                    );
+                    if let Some(identity) = registry.canonical_identity_for_path(&target_path).cloned() {
+                        registry.register_canonical_path_projection(
+                            &alias_path,
+                            identity.declaration_name.clone(),
+                            identity,
+                            signature.params.clone(),
+                            signature.return_type.clone(),
+                        );
+                    } else {
+                        registry.register_canonical_path(
+                            &alias_path,
+                            signature.params.clone(),
+                            signature.return_type.clone(),
+                        );
+                    }
                     made_progress = true;
                 } else {
                     unresolved.push((alias_path, target_path));
@@ -806,6 +843,7 @@ impl<'a> IrCodegen<'a> {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
+                tc.set_current_module_path(Some(canonicalize_source_module_segments(path_segments)));
                 let typecheck_deps =
                     Self::imported_dependency_modules_for_program(module_ast, &dependencies, Some(&module_key));
                 let result = match tc.check_with_imports_allow_private(module_ast, &typecheck_deps) {
@@ -819,7 +857,7 @@ impl<'a> IrCodegen<'a> {
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
             self.configure_lowering(&mut lowering);
             lowering.set_current_source_module_name(Some(path_segments.join(".")));
-            lowering.seed_dependency_trait_decls(&dependencies);
+            lowering.seed_dependency_trait_decls(&dependencies)?;
             let ir = lowering.lower_program(module_ast)?;
             programs.push((path_segments.clone(), ir));
         }
@@ -1059,6 +1097,13 @@ impl<'a> IrCodegen<'a> {
             compilation_imports_std_string_try_from_contract(program, &dependency_symbol_modules),
         );
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
+        let root_module_path = source_module_identity_path(
+            program,
+            self.root_source_module_name
+                .as_deref()
+                .map(|name| name.split('.').map(str::to_owned).collect()),
+            None,
+        );
 
         // Typecheck to obtain reusable type information for lowering.
         //
@@ -1069,6 +1114,7 @@ impl<'a> IrCodegen<'a> {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
             self.configure_typechecker(&mut tc);
+            tc.set_current_module_path(root_module_path.clone());
             let typecheck_deps = Self::imported_dependency_modules_for_program(program, &dependency_modules, None);
             let result = match tc.check_with_imports(program, &typecheck_deps) {
                 Ok(()) => tc.type_info().clone(),
@@ -1082,13 +1128,8 @@ impl<'a> IrCodegen<'a> {
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
         self.configure_lowering(&mut lowering);
-        lowering.set_current_source_module_name(self.root_source_module_name.clone().or_else(|| {
-            program
-                .source_path
-                .as_deref()
-                .and_then(crate::frontend::module::logical_module_name_from_source_path)
-        }));
-        lowering.seed_dependency_trait_decls(&dependency_modules);
+        lowering.set_current_source_module_name(root_module_path.as_ref().map(|path| path.join(".")));
+        lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
         if self.needs_serde {
@@ -1143,6 +1184,7 @@ impl<'a> IrCodegen<'a> {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
+                tc.set_current_module_path(Some(dep_path.clone()));
                 let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
                 let typecheck_deps =
                     Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
@@ -1166,7 +1208,7 @@ impl<'a> IrCodegen<'a> {
                             .and_then(crate::frontend::module::logical_module_name_from_source_path)
                     }),
             );
-            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules)?;
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
@@ -1290,10 +1332,13 @@ impl<'a> IrCodegen<'a> {
             .map(|(name, _, path_segments)| Self::dependency_module_key(name, path_segments))
             .unwrap_or_else(|| module_name.to_string());
         let module_path_segments = module_metadata.and_then(|(_, _, path_segments)| path_segments.clone());
+        let module_identity_path =
+            source_module_identity_path(program, module_path_segments.clone(), Some(module_name));
         let module_type_info = {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
             self.configure_typechecker(&mut tc);
+            tc.set_current_module_path(module_identity_path.clone());
             let typecheck_deps =
                 Self::imported_dependency_modules_for_program(program, &dependency_modules, Some(&module_key));
             let result = match tc.check_with_imports_allow_private(program, &typecheck_deps) {
@@ -1307,18 +1352,8 @@ impl<'a> IrCodegen<'a> {
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new_with_type_info(module_type_info);
         self.configure_lowering(&mut lowering);
-        lowering.set_current_source_module_name(
-            module_path_segments
-                .clone()
-                .map(|segments| segments.join("."))
-                .or_else(|| {
-                    program
-                        .source_path
-                        .as_deref()
-                        .and_then(crate::frontend::module::logical_module_name_from_source_path)
-                }),
-        );
-        lowering.seed_dependency_trait_decls(&dependency_modules);
+        lowering.set_current_source_module_name(module_identity_path.as_ref().map(|path| path.join(".")));
+        lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
 
@@ -1330,10 +1365,12 @@ impl<'a> IrCodegen<'a> {
                 continue;
             }
             let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
+            let dep_identity_path = source_module_identity_path(dep_ast, dep_path_segments.clone(), Some(dep_name));
             let dep_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
+                tc.set_current_module_path(dep_identity_path.clone());
                 let typecheck_deps =
                     Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
                 let result = match tc.check_with_imports_allow_private(dep_ast, &typecheck_deps) {
@@ -1345,18 +1382,8 @@ impl<'a> IrCodegen<'a> {
             };
             let mut dep_lowering = AstLowering::new_with_type_info(dep_type_info);
             self.configure_lowering(&mut dep_lowering);
-            dep_lowering.set_current_source_module_name(
-                dep_path_segments
-                    .clone()
-                    .map(|segments| segments.join("."))
-                    .or_else(|| {
-                        dep_ast
-                            .source_path
-                            .as_deref()
-                            .and_then(crate::frontend::module::logical_module_name_from_source_path)
-                    }),
-            );
-            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
+            dep_lowering.set_current_source_module_name(dep_identity_path.as_ref().map(|path| path.join(".")));
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules)?;
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
@@ -1468,10 +1495,12 @@ impl<'a> IrCodegen<'a> {
             if !module_names.contains(&name) {
                 continue;
             }
+            let module_identity_path = source_module_identity_path(ast, path_segments.clone(), Some(name));
             let module_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
+                tc.set_current_module_path(module_identity_path.clone());
                 let module_key = Self::dependency_module_key(name, &path_segments);
                 let typecheck_deps =
                     Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&module_key));
@@ -1485,13 +1514,8 @@ impl<'a> IrCodegen<'a> {
             self.collect_provider_rust_bridge_roots(&module_type_info)?;
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
             self.configure_lowering(&mut lowering);
-            lowering.set_current_source_module_name(Some(
-                path_segments
-                    .clone()
-                    .unwrap_or_else(|| vec![name.to_string()])
-                    .join("."),
-            ));
-            lowering.seed_dependency_trait_decls(&dependency_modules);
+            lowering.set_current_source_module_name(module_identity_path.as_ref().map(|path| path.join(".")));
+            lowering.seed_dependency_trait_decls(&dependency_modules)?;
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
             // Do not auto-add serde derives to dependency modules.
@@ -1751,6 +1775,7 @@ impl<'a> IrCodegen<'a> {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
                     self.configure_typechecker(&mut tc);
+                    tc.set_current_module_path(Some(canonicalize_source_module_segments(path)));
                     let self_key = canonicalize_source_module_segments(path).join("_");
                     let typecheck_deps =
                         Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&self_key));
@@ -1772,7 +1797,7 @@ impl<'a> IrCodegen<'a> {
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
                 self.configure_lowering(&mut lowering);
                 lowering.set_current_source_module_name(Some(path.join(".")));
-                lowering.seed_dependency_trait_decls(&dependency_modules);
+                lowering.seed_dependency_trait_decls(&dependency_modules)?;
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
                 // Do not auto-add serde derives to dependency modules.
@@ -2475,6 +2500,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2486,6 +2512,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -2593,6 +2620,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("AlphaRender"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2604,6 +2632,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("BetaRender"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2706,6 +2735,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -2713,6 +2743,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -2821,6 +2852,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Digest"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2832,6 +2864,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Sha256"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -3719,6 +3752,347 @@ pub def touch(db: Database) -> None:
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
         assert!(!store_code.contains("use db::schema::Database;"));
+    }
+
+    #[test]
+    fn top_level_partial_keeps_one_projection_through_reexport_and_consumer_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = parse_program_result(
+            r#"
+pub model Spec:
+  pub namespace: str
+  pub policy: str
+
+pub portable = partial Spec(namespace="core")
+"#,
+        )?;
+        let facade = parse_program_result("pub from provider import portable\n")?;
+        let main = parse_program_result(
+            r#"
+from facade import portable as make_spec
+
+def main() -> None:
+  let spec = make_spec(policy="portable")
+  println(spec.namespace)
+"#,
+        )?;
+        let provider_path = vec!["provider".to_string()];
+        let facade_path = vec!["facade".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("provider", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[provider_path.clone(), facade_path.clone()])?;
+        let provider_code = modules.get(&provider_path).ok_or("missing generated provider module")?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
+        let projection = provider_code
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub fn __incan_v1_")
+                    .and_then(|tail| tail.split('(').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("provider partial did not emit an incan-v1 function projection")?;
+
+        assert!(
+            facade_code.contains(&projection),
+            "facade reexport did not bind the provider partial projection `{projection}`:\n{facade_code}"
+        );
+        assert!(
+            main_code.contains(&projection),
+            "consumer alias did not bind or call the provider partial projection `{projection}`:\n{main_code}"
+        );
+        assert!(
+            !facade_code.contains("provider::portable") && !main_code.contains("facade::portable"),
+            "partial import/reexport fell back to a source spelling:\nfacade:\n{facade_code}\nconsumer:\n{main_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_static_declaration_reads_writes_and_init_share_one_projection() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let program = parse_program_result(
+            r#"
+pub static counter: int = 0
+
+pub def increment() -> int:
+  counter = counter + 1
+  return counter
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("source static did not emit an incan-v1 projection")?;
+
+        assert!(
+            generated.matches(&projection).count() >= 4,
+            "static declaration, module init, write, and read must share `{projection}`:\n{generated}"
+        );
+        assert!(
+            !generated.contains("static COUNTER") && !generated.contains("COUNTER.with_"),
+            "source static fell back to its raw Rust-global spelling:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_static_keeps_one_projection_through_reexport_and_consumer_alias() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = parse_program_result("pub static counter: int = 1\n")?;
+        let facade = parse_program_result("pub from provider import counter\n")?;
+        let main = parse_program_result(
+            r#"
+from facade import counter as shared
+
+def main() -> None:
+  println(shared)
+"#,
+        )?;
+        let provider_path = vec!["provider".to_string()];
+        let facade_path = vec!["facade".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("provider", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[provider_path.clone(), facade_path.clone()])?;
+        let provider_code = modules.get(&provider_path).ok_or("missing generated provider module")?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
+        let projection = provider_code
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("provider static did not emit an incan-v1 projection")?;
+
+        assert!(
+            facade_code.contains(&projection),
+            "facade reexport did not bind the provider static projection `{projection}`:\n{facade_code}"
+        );
+        assert!(
+            main_code.contains(&projection),
+            "consumer alias did not bind and read the provider static projection `{projection}`:\n{main_code}"
+        );
+        assert!(
+            !facade_code.contains("provider::COUNTER") && !main_code.contains("facade::COUNTER"),
+            "static import/reexport fell back to a source spelling:\nfacade:\n{facade_code}\nconsumer:\n{main_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_decorator_static_collision_keeps_distinct_identifiers_and_reads()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+pub static __incan_decorated_target: int = 41
+
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+@preserve()
+pub def target() -> int:
+  return 1
+
+pub def source_value() -> int:
+  return __incan_decorated_target
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let source_projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("colliding source static did not emit an incan-v1 projection")?;
+
+        assert!(
+            generated.contains("static __INCAN_DECORATED_TARGET:")
+                && generated.contains("__INCAN_DECORATED_TARGET.get()"),
+            "the generated decorator cell and its wrapper read must retain the synthetic identifier:\n{generated}"
+        );
+        assert!(
+            generated.matches(&source_projection).count() >= 3,
+            "the colliding source static declaration, init, and read must share `{source_projection}`:\n{generated}"
+        );
+        assert!(
+            !source_projection.contains("__INCAN_DECORATED_TARGET"),
+            "the source and generated static spellings unexpectedly collapsed: {source_projection}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_decorator_function_collision_keeps_distinct_identifiers_and_calls()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+pub def __incan_original_target() -> int:
+  return 41
+
+@preserve()
+pub def target() -> int:
+  return 1
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let public_source_projections = generated
+            .lines()
+            .filter_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub fn __incan_v1_")
+                    .and_then(|tail| tail.split('(').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert!(
+            generated.contains("fn __incan_original_target("),
+            "the generated decorator original did not retain its private physical name:\n{generated}"
+        );
+        assert!(
+            generated.matches("__incan_original_target").count() >= 2,
+            "the decorator application did not reference the generated original by its physical name:\n{generated}"
+        );
+        assert_eq!(
+            public_source_projections.len(),
+            2,
+            "the colliding source declaration and decorated wrapper must retain two distinct public projections:\n{generated}"
+        );
+        assert!(
+            !generated.contains("@generated/decorator-original"),
+            "the collision-proof registry key leaked into generated Rust:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_module_public_function_and_static_aliases_bind_exact_projections() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let program = parse_program_result(
+            r#"
+pub def average(left: int, right: int) -> int:
+  return (left + right) // 2
+
+pub mean = alias average
+pub static total: int = 2
+pub tally = alias total
+
+pub def summarize() -> int:
+  return mean(total, tally)
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let function_projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub fn __incan_v1_")
+                    .and_then(|tail| tail.split('(').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("source function did not emit an incan-v1 projection")?;
+        let static_projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("source static did not emit an incan-v1 projection")?;
+
+        assert!(
+            generated.contains(&format!("pub use {function_projection} as mean;")),
+            "the public function alias did not bind its target projection:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!("pub use {static_projection} as tally;")),
+            "the public static alias did not bind its target projection:\n{generated}"
+        );
+        assert!(
+            !generated.contains("pub use average as mean;") && !generated.contains("pub use total as tally;"),
+            "same-module aliases fell back to raw source target names:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_ordinary_binding_shadows_outer_static_binding_alias() -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+static items: list[int] = []
+
+def count_inner() -> int:
+  let live = items
+  if true:
+    let live = [1, 2]
+    return len(live)
+  return len(live)
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+
+        assert!(
+            generated.contains("let live = vec![") && generated.contains("live.len() as i64"),
+            "the inner ordinary binding did not retain local value emission:\n{generated}"
+        );
+        assert!(
+            !generated.contains("StaticBinding::from_static(&LIVE)") && !generated.contains("LIVE.get()"),
+            "the inner ordinary binding inherited an outer static-binding classification:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_eq_magic_method_keeps_abi_slot_and_recoverable_projection() -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+model Value:
+  value: int
+
+  def __eq__(self, other: Value) -> bool:
+    return self.value == other.value
+
+def same(left: Value, right: Value) -> bool:
+  return left == right
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+
+        assert!(
+            generated.contains("impl PartialEq for Value"),
+            "source __eq__ must retain Rust's required PartialEq ABI slot:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub fn __incan_v1_")
+                && generated.contains("<Self as std::cmp::PartialEq>::eq(self, other)"),
+            "source __eq__ must expose a recoverable wrapper that invokes the ABI slot:\n{generated}"
+        );
+        assert!(
+            !generated.contains("self.__eq__(other)"),
+            "recoverable __eq__ wrapper must not call a nonexistent inherent method:\n{generated}"
+        );
+        Ok(())
     }
 
     #[test]

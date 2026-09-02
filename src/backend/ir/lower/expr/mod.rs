@@ -717,7 +717,7 @@ impl AstLowering {
             let binding_ty = Self::race_binding_type_for_awaitable(&awaitable);
 
             self.push_scope();
-            self.define_local_binding(race.binding.clone(), binding_ty, false);
+            self.define_local_binding(race.binding.node.clone(), binding_ty, false);
             let body_result = self.lower_race_arm_body(&arm.body);
             self.pop_scope();
 
@@ -729,7 +729,7 @@ impl AstLowering {
 
         Ok(TypedExpr::new(
             IrExprKind::Race {
-                binding: race.binding.clone(),
+                binding: race.binding.node.clone(),
                 arms,
             },
             result_ty,
@@ -857,7 +857,7 @@ impl AstLowering {
                     }
                     positional_index += 1;
                 }
-                ast::CallArg::Named(name, expr) => match name.as_str() {
+                ast::CallArg::Named(name, expr) => match name.node.as_str() {
                     "value" if value.is_none() => value = Some(expr),
                     "count" if count.is_none() => count = Some(expr),
                     _ => {}
@@ -1043,7 +1043,10 @@ impl AstLowering {
         if let Some(kind) = self.ident_kind_for_lowering(expr) {
             match (&expr.node, &mut lowered.kind) {
                 (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {
-                    lowered.kind = IrExprKind::StaticRead { name: name.clone() };
+                    lowered.kind = IrExprKind::StaticRead {
+                        name: name.clone(),
+                        reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+                    };
                 }
                 (ast::Expr::Ident(name), IrExprKind::Var { ref_kind, .. }) => {
                     *ref_kind = match kind {
@@ -1198,6 +1201,9 @@ impl AstLowering {
             ast::Expr::Ident(name) => {
                 let lowered_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
                 let ty = self.lookup_var(&lowered_name);
+                let emitted_reference_name = self
+                    .emitted_function_reference_name(expr_span)
+                    .unwrap_or_else(|| lowered_name.clone());
                 if self
                     .type_info
                     .as_ref()
@@ -1257,7 +1263,7 @@ impl AstLowering {
                 };
                 (
                     IrExprKind::Var {
-                        name: lowered_name.clone(),
+                        name: emitted_reference_name,
                         access,
                         ref_kind: if self.is_static_binding(&lowered_name) {
                             VarRefKind::StaticBinding
@@ -1636,7 +1642,7 @@ impl AstLowering {
                 {
                     expr_ty = IrType::StaticStr;
                 }
-                let dispatch = self
+                let mut dispatch = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_method_call(expr_span).cloned())
@@ -1748,11 +1754,26 @@ impl AstLowering {
                         .as_deref()
                         .map(|provider_crate| self.pub_external_type(provider_crate, expr_ty.clone()))
                         .unwrap_or(expr_ty);
-                    // Unknown method - keep as string-based call
+                    // Concrete Incan receivers use the compiler-proved recoverable projection even when semantic
+                    // resolution found the method through a trait. Generic and trait-object receivers keep the Rust
+                    // ABI slot because their concrete inherent wrapper is not statically nameable here.
+                    let source_projection = self.emitted_method_reference_name(expr_span, &method_name);
+                    let has_concrete_source_receiver = matches!(
+                        &receiver.ty,
+                        IrType::Struct(_) | IrType::Enum(_) | IrType::NamedGeneric(_, _) | IrType::SelfType
+                    );
+                    let emitted_method_name = if dispatch.is_none() || has_concrete_source_receiver {
+                        source_projection.unwrap_or_else(|| method_name.clone())
+                    } else {
+                        method_name.clone()
+                    };
+                    if emitted_method_name != method_name {
+                        dispatch = None;
+                    }
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
-                            method: method_name,
+                            method: emitted_method_name,
                             dispatch,
                             type_args: lowered_type_args,
                             args: args_ir,
@@ -1875,10 +1896,19 @@ impl AstLowering {
                         .and_then(|info| info.expr_type(expr_span))
                         .map(|ty| self.lower_resolved_type(ty))
                         .unwrap_or(IrType::Unknown);
+                    let property_name = if matches!(
+                        &obj.ty,
+                        IrType::Struct(_) | IrType::Enum(_) | IrType::NamedGeneric(_, _) | IrType::SelfType
+                    ) {
+                        self.emitted_method_reference_name(expr_span, &access.property)
+                            .unwrap_or_else(|| access.property.clone())
+                    } else {
+                        access.property.clone()
+                    };
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(obj),
-                            method: access.property.clone(),
+                            method: property_name,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             dispatch: None,
@@ -2177,7 +2207,7 @@ impl AstLowering {
                 let fields: Vec<(String, TypedExpr)> = args
                     .iter()
                     .map(|arg| match arg {
-                        ast::CallArg::Named(n, e) => Ok((n.clone(), self.lower_expr_spanned(e)?)),
+                        ast::CallArg::Named(n, e) => Ok((n.node.clone(), self.lower_expr_spanned(e)?)),
                         ast::CallArg::Positional(e)
                         | ast::CallArg::PositionalUnpack(e)
                         | ast::CallArg::KeywordUnpack(e) => Ok((String::new(), self.lower_expr_spanned(e)?)),

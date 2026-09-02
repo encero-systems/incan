@@ -28,7 +28,7 @@ impl Formatter {
         match arg {
             CallArg::Positional(expr) => self.format_expr(&expr.node),
             CallArg::Named(name, expr) => {
-                self.writer.write(name);
+                self.writer.write(&name.node);
                 self.writer.write("=");
                 self.format_expr(&expr.node);
             }
@@ -500,7 +500,7 @@ impl Formatter {
     /// Format an import-activated `race for value:` expression block.
     fn format_race_for_expr(&mut self, race: &RaceForExpr) {
         self.writer.write("race for ");
-        self.writer.write(&race.binding);
+        self.writer.write(&race.binding.node);
         self.writer.writeln(":");
         self.writer.indent();
         for arm in &race.arms {
@@ -744,7 +744,7 @@ impl Formatter {
             Pattern::Binding(name) => self.writer.write(name),
             Pattern::Literal(lit) => self.format_literal(lit),
             Pattern::Constructor(name, patterns) => {
-                self.write_pattern_constructor_name(name);
+                self.write_pattern_constructor_name(&name.node);
                 if !patterns.is_empty() {
                     self.writer.write("(");
                     for (i, p) in patterns.iter().enumerate() {
@@ -756,7 +756,7 @@ impl Formatter {
                                 self.format_pattern(&pat.node);
                             }
                             PatternArg::Named(name, pat) => {
-                                self.writer.write(name);
+                                self.writer.write(&name.node);
                                 self.writer.write("=");
                                 self.format_pattern(&pat.node);
                             }

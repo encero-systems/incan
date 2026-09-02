@@ -46,14 +46,17 @@ use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
 };
 use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, phase_for_typecheck_span};
-use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
+use crate::frontend::library_manifest_index::{
+    LibraryManifestIndex, LibraryManifestIndexEntry, dependency_project_root,
+};
 use crate::frontend::module::{
-    SourceModuleImportResolution, resolve_program_source_imports, self_import_diagnostic_message,
+    SourceModuleImportResolution, logical_module_name_from_source_path, resolve_program_source_imports,
+    self_import_diagnostic_message,
 };
 use crate::frontend::symbols::{FunctionInfo, ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
 use crate::frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunctionLspMetadata};
 use crate::frontend::typechecker::{
-    CAbiInteropArtifacts, CBindingType, COutputMode, CResourceAccess, c_binding_descriptor_identity,
+    CAbiInteropArtifacts, CBindingType, COutputMode, CResourceAccess, TypeCheckInfo, c_binding_descriptor_identity,
 };
 use crate::frontend::{lexer, parser, typechecker};
 #[cfg(all(test, feature = "rust_inspect"))]
@@ -67,7 +70,10 @@ use crate::library_manifest::{
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
 use crate::lsp::call_site_type_args;
-use crate::lsp::diagnostics::{compile_error_to_diagnostic_with_phase, position_to_offset, span_to_range};
+use crate::lsp::diagnostics::{
+    RelatedDeclarationSource, RelatedDeclarationSources, compile_error_to_diagnostic_with_phase,
+    compile_error_to_diagnostic_with_phase_and_sources, position_to_offset, span_to_range,
+};
 use crate::manifest::ProjectManifest;
 use crate::provider::{ProviderModuleResolution, ProviderPlan, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
@@ -78,6 +84,7 @@ use incan_core::lang::stdlib;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::constructors;
 use incan_core::lang::types::collections;
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SymbolOrigin};
 
 const EMIT_CONTRACT_MODEL_COMMAND: &str = "incan.metadata.model.emit";
 
@@ -87,6 +94,11 @@ pub struct DocumentState {
     pub source: String,
     pub ast: Option<Program>,
     pub version: i32,
+    /// Canonical source identities produced by the same typecheck as this document state.
+    ///
+    /// Navigation consumers fail closed when a reference has no recorded identity; they never recover a target from
+    /// the identifier spelling.
+    checked_identities: CheckedIdentitySnapshot,
     /// Resolved const types from the typechecker (post “const-freezing”).
     ///
     /// This is used to make hover text reflect the actual type of a const binding, even if the user annotated
@@ -113,6 +125,13 @@ pub struct DocumentState {
     provider_plan: Option<Arc<ProviderPlan>>,
     /// Active root-package features used to keep completion aligned with the compiler's declaration projection.
     active_features: BTreeSet<String>,
+}
+
+/// Source-aware canonical identity facts retained from one completed document analysis.
+#[derive(Debug, Clone, Default)]
+struct CheckedIdentitySnapshot {
+    type_info: TypeCheckInfo,
+    declaration_sources: RelatedDeclarationSources,
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +313,10 @@ impl IncanLanguageServer {
         let (deps, mut dep_summary_diags) = self
             .collect_dependency_modules(uri, &ast, source, compilation_session.as_ref())
             .await;
+        let document_module_path = lsp_metadata_module_path(module_path.as_deref());
+        let mut related_declaration_sources =
+            lsp_related_declaration_sources(uri, source, &document_module_path, &deps);
+        extend_lsp_package_declaration_sources(&mut related_declaration_sources, &library_manifest_index);
         let mut typecheck_deps = deps.clone();
         if let Some(session) = &compilation_session {
             for dep in &mut typecheck_deps {
@@ -355,6 +378,10 @@ impl IncanLanguageServer {
 
         // Step 4: Type check (with multi-file import resolution).
         let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_module_path(Some(document_module_path.clone()));
+        for dependency in &typecheck_deps {
+            checker.register_dependency_module_path_segments(&dependency.name, dependency.path_segments.clone());
+        }
         checker.set_declared_crate_names(declared_crates);
         checker.set_provider_plan(Arc::clone(&provider_plan));
         let document_provider_plan = compilation_session.as_ref().map(|_| Arc::clone(&provider_plan));
@@ -384,11 +411,12 @@ impl IncanLanguageServer {
             let metadata =
                 collect_checked_api_metadata(&ast, &checker, lsp_metadata_module_path(module_path.as_deref()));
             for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&metadata)) {
-                diagnostics.push(compile_error_to_diagnostic_with_phase(
+                diagnostics.push(compile_error_to_diagnostic_with_phase_and_sources(
                     &diagnostic.error,
                     source,
                     uri,
                     DiagnosticPhase::Typecheck,
+                    &related_declaration_sources,
                 ));
             }
             api_metadata_previews(&ast, &metadata)
@@ -419,6 +447,7 @@ impl IncanLanguageServer {
                     uri,
                     phase,
                     &rust_origin_symbols,
+                    &related_declaration_sources,
                 ));
             }
         }
@@ -431,6 +460,7 @@ impl IncanLanguageServer {
                 uri,
                 phase,
                 &rust_origin_symbols,
+                &related_declaration_sources,
             ));
         }
         diagnostics.append(&mut dep_summary_diags);
@@ -494,6 +524,10 @@ impl IncanLanguageServer {
                     source: source.to_string(),
                     ast: Some(source_ast),
                     version,
+                    checked_identities: CheckedIdentitySnapshot {
+                        type_info: checker.type_info().clone(),
+                        declaration_sources: related_declaration_sources,
+                    },
                     const_types,
                     value_types,
                     rust_origin_symbols,
@@ -792,46 +826,6 @@ impl IncanLanguageServer {
             _ => {}
         }
 
-        None
-    }
-
-    /// Find the definition location of a symbol
-    fn find_definition(&self, ast: &Program, name: &str) -> Option<Span> {
-        for decl in &ast.declarations {
-            match &decl.node {
-                Declaration::Const(konst) if konst.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Static(static_decl) if static_decl.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Function(func) if func.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Partial(partial) if partial.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Model(model) if model.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Class(class) if class.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Trait(tr) if tr.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Enum(en) if en.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::TypeAlias(alias) if alias.name == name => {
-                    return Some(decl.span);
-                }
-                Declaration::Newtype(nt) if nt.name == name => {
-                    return Some(decl.span);
-                }
-                _ => {}
-            }
-        }
         None
     }
 }
@@ -1377,6 +1371,376 @@ class Box[T with Clone]:
         let aliases = HashMap::new();
 
         assert!(classmethod_context_at_offset(&ast, offset, &aliases).is_none());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_identity_tests {
+    use std::collections::HashMap;
+
+    use incan_semantics_core::{
+        CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+    };
+    use tower_lsp::lsp_types::Url;
+
+    use super::{
+        CheckedIdentityDocument, CheckedIdentitySnapshot, RelatedDeclarationSource, RelatedDeclarationSources,
+        checked_identity_at_offset, checked_identity_hover, checked_reference_locations,
+        definition_location_for_identity, extend_lsp_package_declaration_sources,
+    };
+    use crate::frontend::api_metadata::{
+        CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
+    };
+    use crate::frontend::ast::{Program, Span};
+    use crate::frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
+    use crate::frontend::typechecker::{TypeCheckInfo, TypeChecker};
+    use crate::frontend::{lexer, parser};
+    use crate::library_manifest::LibraryManifest;
+
+    fn parse_module(source: &str, name: &str) -> Result<Program, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("{name} lex failed: {errors:?}"))?;
+        let path = format!("/workspace/src/{name}.incn");
+        parser::parse_with_module_path(&tokens, Some(&path))
+            .map_err(|errors| format!("{name} parse failed: {errors:?}"))
+    }
+
+    fn check_module(
+        source: &str,
+        module_name: &str,
+        dependencies: &[(&str, &Program)],
+    ) -> Result<(Program, TypeCheckInfo), String> {
+        let ast = parse_module(source, module_name)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec![module_name.to_string()]));
+        for (dependency_name, _) in dependencies {
+            checker.register_dependency_module_path_segments(dependency_name, vec![(*dependency_name).to_string()]);
+        }
+        checker
+            .check_with_imports(&ast, dependencies)
+            .map_err(|errors| format!("{module_name} typecheck failed: {errors:?}"))?;
+        Ok((ast, checker.type_info().clone()))
+    }
+
+    fn nth_span(source: &str, needle: &str, occurrence: usize) -> Result<Span, String> {
+        source
+            .match_indices(needle)
+            .nth(occurrence)
+            .map(|(start, matched)| Span::new(start, start + matched.len()))
+            .ok_or_else(|| format!("occurrence {occurrence} of `{needle}` not found"))
+    }
+
+    fn source_map(entries: Vec<(SymbolOrigin, Url, &str)>) -> RelatedDeclarationSources {
+        entries
+            .into_iter()
+            .map(|(origin, uri, source)| {
+                (
+                    origin,
+                    RelatedDeclarationSource {
+                        uri,
+                        source: source.to_string(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn same_spelled_locals_keep_distinct_lsp_targets_and_references() -> Result<(), String> {
+        let source = "def run() -> None:\n  if true:\n    value = 1\n    first = value\n  if true:\n    value = 2\n    second = value\n";
+        let (ast, type_info) = check_module(source, "main", &[])?;
+        let uri = Url::parse("file:///workspace/src/main.incn").map_err(|error| error.to_string())?;
+        let declarations = source_map(vec![(
+            SymbolOrigin::Module(vec!["main".to_string()]),
+            uri.clone(),
+            source,
+        )]);
+        let snapshot = CheckedIdentitySnapshot {
+            type_info,
+            declaration_sources: declarations.clone(),
+        };
+        let first_reference = nth_span(source, "value", 1)?;
+        let second_reference = nth_span(source, "value", 3)?;
+        let first = checked_identity_at_offset(&uri, &ast, source, &snapshot, first_reference.start)
+            .ok_or_else(|| "first local reference has no checked identity".to_string())?;
+        let second = checked_identity_at_offset(&uri, &ast, source, &snapshot, second_reference.start)
+            .ok_or_else(|| "second local reference has no checked identity".to_string())?;
+        assert_ne!(first.identity, second.identity);
+        let first_hover = checked_identity_hover(source, &first);
+        let second_hover = checked_identity_hover(source, &second);
+        assert_ne!(first_hover.contents, second_hover.contents);
+
+        let first_definition = definition_location_for_identity(&first.identity, &declarations)
+            .ok_or_else(|| "first local definition has no source location".to_string())?;
+        let second_definition = definition_location_for_identity(&second.identity, &declarations)
+            .ok_or_else(|| "second local definition has no source location".to_string())?;
+        assert_eq!(first_definition.range.start.line, 2);
+        assert_eq!(second_definition.range.start.line, 5);
+
+        let references = checked_reference_locations(
+            &first.identity,
+            false,
+            [CheckedIdentityDocument {
+                uri: &uri,
+                source,
+                ast: &ast,
+                snapshot: &snapshot,
+            }],
+            &declarations,
+        );
+        assert!(references.iter().any(|location| location.range.start.line == 3));
+        assert!(!references.iter().any(|location| location.range.start.line == 6));
+        Ok(())
+    }
+
+    #[test]
+    fn unreferenced_member_declarations_have_hover_definition_and_references() -> Result<(), String> {
+        let source = "model Entry:\n  value: int\n\n  property label -> str:\n    return \"entry\"\n\n  def render(self) -> int:\n    return 1\n\nenum Status:\n  READY\n";
+        let (ast, type_info) = check_module(source, "main", &[])?;
+        let uri = Url::parse("file:///workspace/src/main.incn").map_err(|error| error.to_string())?;
+        let declarations = source_map(vec![(
+            SymbolOrigin::Module(vec!["main".to_string()]),
+            uri.clone(),
+            source,
+        )]);
+        let snapshot = CheckedIdentitySnapshot {
+            type_info,
+            declaration_sources: declarations.clone(),
+        };
+
+        for (name, expected_kind, line) in [
+            ("value", SemanticSourceTargetKind::Field, 1),
+            ("label", SemanticSourceTargetKind::Property, 3),
+            ("render", SemanticSourceTargetKind::Method, 6),
+            ("READY", SemanticSourceTargetKind::Variant, 10),
+        ] {
+            let declaration_token = nth_span(source, name, 0)?;
+            let occurrence = checked_identity_at_offset(&uri, &ast, source, &snapshot, declaration_token.start)
+                .ok_or_else(|| format!("unreferenced `{name}` declaration has no checked identity"))?;
+            assert_eq!(occurrence.identity.kind, expected_kind);
+            assert_eq!(occurrence.span, declaration_token);
+
+            let hover = checked_identity_hover(source, &occurrence);
+            let hover_text = match hover.contents {
+                tower_lsp::lsp_types::HoverContents::Markup(markup) => markup.value,
+                _ => return Err("member identity hover must use markdown".to_string()),
+            };
+            assert!(hover_text.contains(&format!("resolved {}", expected_kind.as_str())));
+
+            let definition = definition_location_for_identity(&occurrence.identity, &declarations)
+                .ok_or_else(|| format!("unreferenced `{name}` declaration has no definition"))?;
+            assert_eq!(definition.uri, uri);
+            assert_eq!(definition.range.start.line, line);
+
+            let references = checked_reference_locations(
+                &occurrence.identity,
+                true,
+                [CheckedIdentityDocument {
+                    uri: &uri,
+                    source,
+                    ast: &ast,
+                    snapshot: &snapshot,
+                }],
+                &declarations,
+            );
+            assert_eq!(
+                references.len(),
+                1,
+                "declaration-only `{name}` must be its sole reference"
+            );
+            assert_eq!(references[0].range.start.line, line);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_alias_and_reexport_navigate_to_provider_identity() -> Result<(), String> {
+        let provider_source = "pub def compute() -> int:\n  return 1\n";
+        let facade_source = "pub from provider import compute as exposed\n";
+        let consumer_source = "from provider import compute as renamed\nfrom facade import exposed as execute\n\ndef use_all() -> int:\n  first = renamed()\n  return execute()\n";
+        let provider = parse_module(provider_source, "provider")?;
+        let facade = parse_module(facade_source, "facade")?;
+        let (_, provider_type_info) = check_module(provider_source, "provider", &[])?;
+        let (facade_checked, facade_type_info) = check_module(facade_source, "facade", &[("provider", &provider)])?;
+        let (consumer, type_info) = check_module(
+            consumer_source,
+            "consumer",
+            &[("provider", &provider), ("facade", &facade)],
+        )?;
+        let consumer_uri = Url::parse("file:///workspace/src/consumer.incn").map_err(|error| error.to_string())?;
+        let provider_uri = Url::parse("file:///workspace/src/provider.incn").map_err(|error| error.to_string())?;
+        let facade_uri = Url::parse("file:///workspace/src/facade.incn").map_err(|error| error.to_string())?;
+        let declarations = source_map(vec![
+            (
+                SymbolOrigin::Module(vec!["consumer".to_string()]),
+                consumer_uri.clone(),
+                consumer_source,
+            ),
+            (
+                SymbolOrigin::Module(vec!["provider".to_string()]),
+                provider_uri.clone(),
+                provider_source,
+            ),
+            (
+                SymbolOrigin::Module(vec!["facade".to_string()]),
+                facade_uri.clone(),
+                facade_source,
+            ),
+        ]);
+        let consumer_snapshot = CheckedIdentitySnapshot {
+            type_info,
+            declaration_sources: declarations.clone(),
+        };
+        let provider_snapshot = CheckedIdentitySnapshot {
+            type_info: provider_type_info,
+            declaration_sources: declarations.clone(),
+        };
+        let facade_snapshot = CheckedIdentitySnapshot {
+            type_info: facade_type_info,
+            declaration_sources: declarations.clone(),
+        };
+        let renamed_span = nth_span(consumer_source, "renamed", 1)?;
+        let execute_span = nth_span(consumer_source, "execute", 1)?;
+        let renamed = checked_identity_at_offset(
+            &consumer_uri,
+            &consumer,
+            consumer_source,
+            &consumer_snapshot,
+            renamed_span.start,
+        )
+        .ok_or_else(|| "aliased import reference has no identity".to_string())?;
+        let execute = checked_identity_at_offset(
+            &consumer_uri,
+            &consumer,
+            consumer_source,
+            &consumer_snapshot,
+            execute_span.start,
+        )
+        .ok_or_else(|| "re-exported import reference has no identity".to_string())?;
+        assert_eq!(renamed.identity, execute.identity);
+
+        let definition = definition_location_for_identity(&execute.identity, &declarations)
+            .ok_or_else(|| "provider definition has no mapped source".to_string())?;
+        assert_eq!(definition.uri, provider_uri);
+        assert_eq!(definition.range.start.line, 0);
+
+        let hover = checked_identity_hover(consumer_source, &execute);
+        let hover_text = match hover.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(markup) => markup.value,
+            _ => return Err("identity hover must use markdown".to_string()),
+        };
+        assert!(hover_text.contains("execute"));
+        assert!(hover_text.contains("provider::compute"));
+
+        let references = checked_reference_locations(
+            &execute.identity,
+            false,
+            [
+                CheckedIdentityDocument {
+                    uri: &provider_uri,
+                    source: provider_source,
+                    ast: &provider,
+                    snapshot: &provider_snapshot,
+                },
+                CheckedIdentityDocument {
+                    uri: &facade_uri,
+                    source: facade_source,
+                    ast: &facade_checked,
+                    snapshot: &facade_snapshot,
+                },
+                CheckedIdentityDocument {
+                    uri: &consumer_uri,
+                    source: consumer_source,
+                    ast: &consumer,
+                    snapshot: &consumer_snapshot,
+                },
+            ],
+            &declarations,
+        );
+        for line in [0, 1, 4, 5] {
+            assert!(
+                references.iter().any(|location| location.range.start.line == line),
+                "missing alias/re-export reference on line {line}: {references:?}"
+            );
+        }
+        assert!(references.iter().any(|location| location.uri == facade_uri));
+        assert!(!references.iter().any(|location| location.uri == provider_uri));
+        Ok(())
+    }
+
+    #[test]
+    fn package_definition_uses_real_source_and_absence_never_fabricates_a_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = tempfile::tempdir()?;
+        let source_root = provider.path().join("src");
+        std::fs::create_dir_all(&source_root)?;
+        let package_source = "pub def calculate() -> int:\n  return 1\n";
+        let package_path = source_root.join("math.incn");
+        std::fs::write(&package_path, package_source)?;
+        let crate_root = provider.path().join("target/lib");
+        std::fs::create_dir_all(&crate_root)?;
+
+        let mut manifest = LibraryManifest::new("arithmetic", "0.1.0");
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: Some(CheckedApiPackageIdentity {
+                name: "arithmetic".to_string(),
+                version: Some("0.1.0".to_string()),
+            }),
+            modules: vec![CheckedApiMetadata {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                module_path: vec!["math".to_string()],
+                declarations: Vec::new(),
+            }],
+            public_namespaces: Vec::new(),
+        });
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "maths".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root("maths", "arithmetic", &crate_root),
+            },
+        )]));
+        let mut sources = RelatedDeclarationSources::new();
+        extend_lsp_package_declaration_sources(&mut sources, &index);
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "arithmetic".to_string(),
+                module_path: vec!["math".to_string()],
+            },
+            declaration_name: "calculate".to_string(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, package_source.len()),
+        };
+        let definition = definition_location_for_identity(&identity, &sources)
+            .ok_or("locally available package source was not mapped")?;
+        let canonical_package_path = package_path.canonicalize()?;
+        assert_eq!(
+            definition.uri,
+            Url::from_file_path(canonical_package_path).map_err(|_| "invalid package source path")?
+        );
+
+        sources.clear();
+        assert!(definition_location_for_identity(&identity, &sources).is_none());
+
+        let unresolved_source = "def missing() -> None:\n  pass\n\ndef run() -> None:\n  missing()\n";
+        let unresolved_ast = parse_module(unresolved_source, "main")?;
+        let unresolved_uri = Url::parse("file:///workspace/src/main.incn")?;
+        let unresolved_offset = nth_span(unresolved_source, "missing", 1)?.start;
+        assert!(
+            checked_identity_at_offset(
+                &unresolved_uri,
+                &unresolved_ast,
+                unresolved_source,
+                &CheckedIdentitySnapshot::default(),
+                unresolved_offset,
+            )
+            .is_none()
+        );
         Ok(())
     }
 }
@@ -2671,10 +3035,110 @@ fn format_type(ty: &Type) -> String {
 
 /// Return the logical metadata module path used for LSP previews of one open document.
 fn lsp_metadata_module_path(path: Option<&Path>) -> Vec<String> {
-    path.and_then(|path| path.file_stem())
+    let Some(path) = path else {
+        return vec!["main".to_string()];
+    };
+    if let Some(module_name) = logical_module_name_from_source_path(path.to_string_lossy().as_ref()) {
+        return module_name.split('.').map(str::to_string).collect();
+    }
+    path.file_stem()
         .and_then(|stem| stem.to_str())
         .map(|stem| vec![stem.to_string()])
         .unwrap_or_else(|| vec!["main".to_string()])
+}
+
+/// Build the source map used to project canonical declaration identities into genuine LSP locations.
+fn lsp_related_declaration_sources(
+    uri: &Url,
+    source: &str,
+    document_module_path: &[String],
+    dependencies: &[ParsedModule],
+) -> RelatedDeclarationSources {
+    let mut sources = RelatedDeclarationSources::new();
+    sources.insert(
+        SymbolOrigin::Module(document_module_path.to_vec()),
+        RelatedDeclarationSource {
+            uri: uri.clone(),
+            source: source.to_string(),
+        },
+    );
+    for dependency in dependencies {
+        let Ok(uri) = Url::from_file_path(&dependency.file_path) else {
+            continue;
+        };
+        sources.insert(
+            SymbolOrigin::Module(dependency.path_segments.clone()),
+            RelatedDeclarationSource {
+                uri,
+                source: dependency.source.clone(),
+            },
+        );
+    }
+    sources
+}
+
+/// Add genuine producer-source locations for locally available compiled packages.
+///
+/// A relocated artifact does not necessarily retain its producer checkout. In that case this deliberately adds no
+/// entry: a declaration span from `.incnlib` metadata is not a valid offset into the generated Rust crate or the JSON
+/// manifest, so pointing either of those files at that span would fabricate a definition target.
+fn extend_lsp_package_declaration_sources(
+    sources: &mut RelatedDeclarationSources,
+    library_manifest_index: &LibraryManifestIndex,
+) {
+    for (_dependency_key, manifest, artifact) in library_manifest_index.loaded_entries() {
+        let Some(project_root) = dependency_project_root(&artifact.crate_root) else {
+            continue;
+        };
+        let Some(api) = manifest.contract_metadata.api.as_ref() else {
+            continue;
+        };
+        let library = api
+            .package
+            .as_ref()
+            .map(|package| package.name.as_str())
+            .unwrap_or(manifest.name.as_str());
+        for module in &api.modules {
+            let Some(path) = lsp_package_source_path(&project_root, &module.module_path) else {
+                continue;
+            };
+            let Ok(source) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(uri) = Url::from_file_path(&path) else {
+                continue;
+            };
+            sources.insert(
+                SymbolOrigin::Package {
+                    library: library.to_string(),
+                    module_path: module.module_path.clone(),
+                },
+                RelatedDeclarationSource { uri, source },
+            );
+        }
+    }
+}
+
+/// Resolve a package module only when its authored source is still present beside the generated artifact.
+fn lsp_package_source_path(project_root: &Path, module_path: &[String]) -> Option<PathBuf> {
+    for source_root in [project_root.join("src"), project_root.to_path_buf()] {
+        let joined = module_path.iter().fold(source_root, |path, segment| path.join(segment));
+        let mut candidates = Vec::with_capacity(6);
+        let mut preferred = joined.clone();
+        preferred.set_extension("incn");
+        candidates.push(preferred);
+        let mut legacy = joined.clone();
+        legacy.set_extension("incan");
+        candidates.push(legacy);
+        candidates.push(joined.join("mod.incn"));
+        candidates.push(joined.join("mod.incan"));
+        candidates.push(joined.join("__init__.incn"));
+        candidates.push(joined.join("__init__.incan"));
+        if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+            return Some(path.canonicalize().unwrap_or(path));
+        }
+    }
+    None
 }
 
 /// Build a document-level LSP diagnostic for errors that do not have a source span in the open file.
@@ -3693,6 +4157,373 @@ fn identifier_at_offset(source: &str, offset: usize) -> Option<(String, Span)> {
     }
 
     Some((source[start..end].to_string(), Span::new(start, end)))
+}
+
+/// One compiler-proven identity occurrence under an LSP cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CheckedIdentityOccurrence {
+    identity: CanonicalSymbolId,
+    span: Span,
+}
+
+/// Resolve the canonical identity under a cursor without guessing from its spelling.
+fn checked_identity_at_offset(
+    document_uri: &Url,
+    ast: &Program,
+    source: &str,
+    snapshot: &CheckedIdentitySnapshot,
+    offset: usize,
+) -> Option<CheckedIdentityOccurrence> {
+    let (identifier, token_span) = identifier_at_offset(source, offset)?;
+
+    if let Some((identity, reference_span)) = snapshot
+        .type_info
+        .references
+        .resolved_identities
+        .iter()
+        .filter_map(|((start, end), identity)| {
+            let reference_span = checked_reference_token_span(source, Span::new(*start, *end), identity)?;
+            (reference_span == token_span).then_some((identity, reference_span))
+        })
+        .min_by_key(|(_, span)| span.end.saturating_sub(span.start))
+    {
+        return Some(CheckedIdentityOccurrence {
+            identity: identity.clone(),
+            span: reference_span,
+        });
+    }
+
+    for ((start, end), bindings) in &snapshot.type_info.declarations.hir_bindings_by_span {
+        let declaration_span = Span::new(*start, *end);
+        for binding in bindings {
+            if binding.local_name != identifier {
+                continue;
+            }
+            let Some(binding_span) = checked_declaration_binding_span(ast, source, declaration_span, &identifier)
+            else {
+                continue;
+            };
+            if binding_span == token_span
+                && let Some(identity) = &binding.canonical
+            {
+                return Some(CheckedIdentityOccurrence {
+                    identity: identity.clone(),
+                    span: token_span,
+                });
+            }
+        }
+    }
+
+    for ((start, end, name), identity) in &snapshot.type_info.references.resolved_write_identities {
+        if name != &identifier {
+            continue;
+        }
+        let statement_span = Span::new(*start, *end);
+        if first_identifier_span_named(source, statement_span, name) == Some(token_span) {
+            return Some(CheckedIdentityOccurrence {
+                identity: identity.clone(),
+                span: token_span,
+            });
+        }
+    }
+
+    known_checked_identities(&snapshot.type_info)
+        .into_iter()
+        .find(|identity| {
+            identity.declaration_name == identifier
+                && snapshot
+                    .declaration_sources
+                    .get(&identity.origin)
+                    .is_some_and(|declaration_source| &declaration_source.uri == document_uri)
+                && first_identifier_span_named(source, source_span(identity.declaration_span), &identifier)
+                    == Some(token_span)
+        })
+        .map(|identity| CheckedIdentityOccurrence {
+            identity,
+            span: token_span,
+        })
+}
+
+/// Return every distinct identity retained by the checked snapshot.
+fn known_checked_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbolId> {
+    let mut seen = HashSet::new();
+    let mut identities = Vec::new();
+    let candidates = type_info
+        .references
+        .resolved_identities
+        .values()
+        .chain(type_info.references.resolved_write_identities.values())
+        .chain(type_info.declarations.declaration_identities.values())
+        .chain(type_info.declarations.member_declaration_identities.values())
+        .chain(
+            type_info
+                .declarations
+                .hir_bindings_by_span
+                .values()
+                .flatten()
+                .filter_map(|binding| binding.canonical.as_ref()),
+        );
+    for identity in candidates {
+        if seen.insert(identity.clone()) {
+            identities.push(identity.clone());
+        }
+    }
+    identities
+}
+
+/// Find the exact source token which one checked top-level binding introduced.
+fn checked_declaration_binding_span(
+    ast: &Program,
+    source: &str,
+    declaration_span: Span,
+    local_name: &str,
+) -> Option<Span> {
+    let declaration = ast
+        .declarations
+        .iter()
+        .find(|declaration| declaration.span == declaration_span)?;
+    let named_spans = identifier_spans(declaration_span, source)
+        .into_iter()
+        .filter(|(name, _)| name == local_name)
+        .map(|(_, span)| span)
+        .collect::<Vec<_>>();
+    match &declaration.node {
+        Declaration::Import(_) => named_spans.last().copied(),
+        Declaration::Alias(_) | Declaration::Partial(_) => named_spans.first().copied(),
+        declaration => {
+            let keyword = declaration_binding_keyword(declaration)?;
+            let keyword_end = identifier_spans(declaration_span, source)
+                .into_iter()
+                .find(|(name, _)| name == keyword)
+                .map(|(_, span)| span.end)?;
+            named_spans.into_iter().find(|span| span.start >= keyword_end)
+        }
+    }
+}
+
+/// Surface keyword immediately preceding a named top-level declaration.
+fn declaration_binding_keyword(declaration: &Declaration) -> Option<&'static str> {
+    match declaration {
+        Declaration::Const(_) => Some("const"),
+        Declaration::Static(_) => Some("static"),
+        Declaration::Model(_) => Some("model"),
+        Declaration::Capability(_) => Some("capability"),
+        Declaration::Class(_) => Some("class"),
+        Declaration::Trait(_) => Some("trait"),
+        Declaration::TypeAlias(_) | Declaration::Newtype(_) => Some("type"),
+        Declaration::Enum(_) => Some("enum"),
+        Declaration::Function(_) => Some("def"),
+        Declaration::TestModule(_) => Some("test"),
+        Declaration::Import(_)
+        | Declaration::Alias(_)
+        | Declaration::Partial(_)
+        | Declaration::VocabBlock(_)
+        | Declaration::Docstring(_) => None,
+    }
+}
+
+/// Return every lexer-recognized identifier or keyword token inside a checked source span.
+fn identifier_spans(span: Span, source: &str) -> Vec<(String, Span)> {
+    let Some(fragment) = source.get(span.start..span.end) else {
+        return Vec::new();
+    };
+    let Ok(tokens) = lexer::lex(fragment) else {
+        return Vec::new();
+    };
+    tokens
+        .into_iter()
+        .filter_map(|token| {
+            let name = match token.kind {
+                lexer::TokenKind::Ident(name) => name,
+                lexer::TokenKind::Keyword(id) => keywords::as_str(id).to_string(),
+                _ => return None,
+            };
+            Some((
+                name,
+                Span::new(span.start + token.span.start, span.start + token.span.end),
+            ))
+        })
+        .collect()
+}
+
+fn first_identifier_span_named(source: &str, span: Span, name: &str) -> Option<Span> {
+    identifier_spans(span, source)
+        .into_iter()
+        .find_map(|(candidate, span)| (candidate == name).then_some(span))
+}
+
+/// Narrow a reference fact that covers a qualified access or call to the token which denotes its target.
+fn checked_reference_token_span(source: &str, span: Span, identity: &CanonicalSymbolId) -> Option<Span> {
+    let fragment = source.get(span.start..span.end)?;
+    let target_end = fragment.find('(').map(|offset| span.start + offset).unwrap_or(span.end);
+    let target_span = Span::new(span.start, target_end);
+    let tokens = identifier_spans(target_span, source);
+    tokens
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &identity.declaration_name)
+        .or_else(|| tokens.last())
+        .map(|(_, span)| *span)
+}
+
+fn source_span(span: HirSourceSpan) -> Span {
+    Span::new(span.start, span.end)
+}
+
+/// Project a canonical identity to its genuine source file, if that exact source was retained by the analysis.
+fn definition_location_for_identity(
+    identity: &CanonicalSymbolId,
+    declaration_sources: &RelatedDeclarationSources,
+) -> Option<Location> {
+    let declaration_source = declaration_sources.get(&identity.origin)?;
+    let span = source_span(identity.declaration_span);
+    if span.start >= span.end || declaration_source.source.get(span.start..span.end).is_none() {
+        return None;
+    }
+    Some(Location {
+        uri: declaration_source.uri.clone(),
+        range: span_to_range(&declaration_source.source, span.start, span.end),
+    })
+}
+
+/// Render hover data from the compiler-owned identity itself, preserving alias/re-export provenance.
+fn checked_identity_hover(source: &str, occurrence: &CheckedIdentityOccurrence) -> Hover {
+    let spelling = source
+        .get(occurrence.span.start..occurrence.span.end)
+        .unwrap_or(&occurrence.identity.declaration_name);
+    let markdown = format!(
+        "```incan\n{}\n```\n\n*resolved {}*\n\nCanonical declaration: `{}`",
+        spelling,
+        occurrence.identity.kind.as_str(),
+        occurrence.identity.render_compact()
+    );
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: Some(span_to_range(source, occurrence.span.start, occurrence.span.end)),
+    }
+}
+
+/// Borrowed document inputs used by identity-based reference collection.
+struct CheckedIdentityDocument<'a> {
+    uri: &'a Url,
+    source: &'a str,
+    ast: &'a Program,
+    snapshot: &'a CheckedIdentitySnapshot,
+}
+
+/// Collect all open-document occurrences of one canonical identity.
+fn checked_reference_locations<'a>(
+    identity: &CanonicalSymbolId,
+    include_declaration: bool,
+    documents: impl IntoIterator<Item = CheckedIdentityDocument<'a>>,
+    declaration_sources: &RelatedDeclarationSources,
+) -> Vec<Location> {
+    let mut locations = Vec::new();
+    let mut seen = HashSet::new();
+
+    if include_declaration && let Some(location) = definition_location_for_identity(identity, declaration_sources) {
+        push_unique_location(&mut locations, &mut seen, location);
+    }
+
+    for document in documents {
+        for ((start, end), candidate) in &document.snapshot.type_info.references.resolved_identities {
+            if candidate == identity
+                && let Some(span) = checked_reference_token_span(document.source, Span::new(*start, *end), candidate)
+                && let Some(location) = checked_source_location(document.uri, document.source, span)
+            {
+                push_unique_location(&mut locations, &mut seen, location);
+            }
+        }
+
+        for ((start, end), bindings) in &document.snapshot.type_info.declarations.hir_bindings_by_span {
+            let declaration_span = Span::new(*start, *end);
+            for binding in bindings {
+                if binding.canonical.as_ref() != Some(identity)
+                    || canonical_declaration_is_in_document(identity, document.uri, declaration_span, document.snapshot)
+                {
+                    continue;
+                }
+                if let Some(span) = checked_declaration_binding_span(
+                    document.ast,
+                    document.source,
+                    declaration_span,
+                    &binding.local_name,
+                ) && let Some(location) = checked_source_location(document.uri, document.source, span)
+                {
+                    push_unique_location(&mut locations, &mut seen, location);
+                }
+            }
+        }
+
+        for ((start, end, name), candidate) in &document.snapshot.type_info.references.resolved_write_identities {
+            if candidate != identity {
+                continue;
+            }
+            let statement_span = Span::new(*start, *end);
+            if canonical_declaration_is_in_document(identity, document.uri, statement_span, document.snapshot) {
+                continue;
+            }
+            if let Some(span) = first_identifier_span_named(document.source, statement_span, name)
+                && let Some(location) = checked_source_location(document.uri, document.source, span)
+            {
+                push_unique_location(&mut locations, &mut seen, location);
+            }
+        }
+    }
+
+    locations.sort_by(|left, right| {
+        left.uri
+            .as_str()
+            .cmp(right.uri.as_str())
+            .then(left.range.start.line.cmp(&right.range.start.line))
+            .then(left.range.start.character.cmp(&right.range.start.character))
+            .then(left.range.end.line.cmp(&right.range.end.line))
+            .then(left.range.end.character.cmp(&right.range.end.character))
+    });
+    locations
+}
+
+fn canonical_declaration_is_in_document(
+    identity: &CanonicalSymbolId,
+    document_uri: &Url,
+    enclosing_span: Span,
+    snapshot: &CheckedIdentitySnapshot,
+) -> bool {
+    snapshot
+        .declaration_sources
+        .get(&identity.origin)
+        .is_some_and(|source| &source.uri == document_uri)
+        && source_span(identity.declaration_span) == enclosing_span
+}
+
+fn checked_source_location(uri: &Url, source: &str, span: Span) -> Option<Location> {
+    if span.start >= span.end || source.get(span.start..span.end).is_none() {
+        return None;
+    }
+    Some(Location {
+        uri: uri.clone(),
+        range: span_to_range(source, span.start, span.end),
+    })
+}
+
+fn push_unique_location(
+    locations: &mut Vec<Location>,
+    seen: &mut HashSet<(String, u32, u32, u32, u32)>,
+    location: Location,
+) {
+    let key = (
+        location.uri.to_string(),
+        location.range.start.line,
+        location.range.start.character,
+        location.range.end.line,
+        location.range.end.character,
+    );
+    if seen.insert(key) {
+        locations.push(location);
+    }
 }
 
 /// Format the LSP detail string for the contextual `cls` receiver binding.
@@ -5602,6 +6433,7 @@ fn compile_error_to_diagnostic_with_rust_context(
     uri: &Url,
     phase: DiagnosticPhase,
     rust_symbols: &[RustOriginSymbol],
+    related_sources: &RelatedDeclarationSources,
 ) -> Diagnostic {
     let mut enriched = error.clone();
     if let Some(sym) = rust_symbol_for_span(rust_symbols, error.span) {
@@ -5613,7 +6445,7 @@ fn compile_error_to_diagnostic_with_rust_context(
             enriched.notes.push(note);
         }
     }
-    compile_error_to_diagnostic_with_phase(&enriched, source, uri, phase)
+    compile_error_to_diagnostic_with_phase_and_sources(&enriched, source, uri, phase, related_sources)
 }
 
 /// Return the user-facing LSP label for one inspected Rust item category.
@@ -6042,6 +6874,8 @@ impl LanguageServer for IncanLanguageServer {
                 }),
                 // Go-to-definition
                 definition_provider: Some(OneOf::Left(true)),
+                // Canonical-identity references across open checked documents
+                references_provider: Some(OneOf::Left(true)),
                 // Document symbols (outline)
                 document_symbol_provider: Some(OneOf::Left(true)),
                 // Completions (basic)
@@ -6294,6 +7128,11 @@ impl LanguageServer for IncanLanguageServer {
                 }));
             }
 
+            if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset)
+            {
+                return Ok(Some(checked_identity_hover(&doc.source, &occurrence)));
+            }
+
             if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
                 && let Some(markdown) = unchecked_lookup_hover(&doc.source, &doc.value_types, &ident, span)
             {
@@ -6312,14 +7151,8 @@ impl LanguageServer for IncanLanguageServer {
                 let markdown = match &ty_spanned.node {
                     Type::Infer => "```incan\n_\n```\n\n*Call-site inference placeholder* — this type parameter is filled from the value arguments (RFC 054)."
                         .to_string(),
-                    Type::Simple(name) => {
-                        let mut md = format!("```incan\n{display}\n```");
-                        if self.find_definition(ast, name).is_some() {
-                            md.push_str("\n\n*Type argument* — local declaration; use go-to-definition for its source.");
-                        } else {
-                            md.push_str("\n\n*Type argument* — builtin or unqualified type name.");
-                        }
-                        md
+                    Type::Simple(_) => {
+                        format!("```incan\n{display}\n```\n\n*Unresolved builtin or unqualified type argument.*")
                     }
                     _ => format!("```incan\n{display}\n```\n\n*Type argument* at call site (RFC 054)."),
                 };
@@ -6357,6 +7190,13 @@ impl LanguageServer for IncanLanguageServer {
                     )),
                 }));
             }
+        }
+
+        if position_to_offset(&doc.source, position)
+            .and_then(|offset| identifier_at_offset(&doc.source, offset))
+            .is_some()
+        {
+            return Ok(None);
         }
 
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
@@ -6524,29 +7364,49 @@ impl LanguageServer for IncanLanguageServer {
             })));
         }
 
-        if let Some((ident, _)) = identifier_at_offset(&doc.source, offset)
-            && let Some(def_span) = self.find_definition(ast, &ident)
+        if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset)
+            && let Some(location) =
+                definition_location_for_identity(&occurrence.identity, &doc.checked_identities.declaration_sources)
         {
-            let range = span_to_range(&doc.source, def_span.start, def_span.end);
-            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                uri: uri.clone(),
-                range,
-            })));
-        }
-
-        // Find what symbol the cursor is on
-        if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
-            // Find definition of that symbol
-            if let Some(def_span) = self.find_definition(ast, &info.name) {
-                let range = span_to_range(&doc.source, def_span.start, def_span.end);
-                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                    uri: uri.clone(),
-                    range,
-                })));
-            }
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
 
         Ok(None)
+    }
+
+    /// Return references that share the exact compiler-owned canonical identity across open checked documents.
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(uri) else {
+            return Ok(None);
+        };
+        let Some(ast) = doc.ast.as_ref() else {
+            return Ok(None);
+        };
+        let Some(offset) = position_to_offset(&doc.source, position) else {
+            return Ok(None);
+        };
+        let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset)
+        else {
+            return Ok(None);
+        };
+        let document_views = docs.iter().filter_map(|(document_uri, document)| {
+            document.ast.as_ref().map(|document_ast| CheckedIdentityDocument {
+                uri: document_uri,
+                source: &document.source,
+                ast: document_ast,
+                snapshot: &document.checked_identities,
+            })
+        });
+        let locations = checked_reference_locations(
+            &occurrence.identity,
+            params.context.include_declaration,
+            document_views,
+            &doc.checked_identities.declaration_sources,
+        );
+        Ok(Some(locations))
     }
 
     /// Provide context-aware completions for decorators, imports, type arguments, symbols, and receiver bindings.

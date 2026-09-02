@@ -53,7 +53,7 @@ pub(crate) fn stmt_list_binding_use_scan(stmts: &[IrStmt], binding_name: &str) -
 /// Check whether an expression references one local binding.
 pub(crate) fn expr_uses_binding_name(expr: &IrExpr, binding_name: &str) -> bool {
     match &expr.kind {
-        IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+        IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name, .. } | IrExprKind::StaticBinding { name, .. } => {
             name == binding_name
         }
         IrExprKind::BinOp { left, right, .. } => {
@@ -329,7 +329,7 @@ fn stmt_binding_use_scan(stmt: &IrStmt, binding_name: &str) -> BindingUseScan {
 fn assign_target_uses_binding_name(assign_target: &AssignTarget, binding_name: &str) -> bool {
     match assign_target {
         AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => name == binding_name,
-        AssignTarget::Static(_) => false,
+        AssignTarget::Static { .. } => false,
         AssignTarget::Field { object, .. } => expr_uses_binding_name(object, binding_name),
         AssignTarget::Index { object, index } => {
             expr_uses_binding_name(object, binding_name) || expr_uses_binding_name(index, binding_name)

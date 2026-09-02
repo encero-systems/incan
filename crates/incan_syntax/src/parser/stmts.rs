@@ -19,10 +19,7 @@ impl<'a> Parser<'a> {
             stmt.leading_blank_lines = next_leading;
             stmts.push(stmt);
             next_leading = self.consume_inter_statement_blank_prefix();
-            if next_leading > 0
-                && self.check(&TokenKind::Dedent)
-                && self.dedent_is_followed_by_outer_statement()
-            {
+            if next_leading > 0 && self.check(&TokenKind::Dedent) && self.dedent_is_followed_by_outer_statement() {
                 self.pending_dedent_blank_lines = self.pending_dedent_blank_lines.max(next_leading);
                 next_leading = 0;
             }
@@ -156,7 +153,6 @@ impl<'a> Parser<'a> {
 
     /// Parse one raw imported vocabulary block with decorators already collected by the owning grammar position.
     fn try_vocab_block(&mut self, decorators: Vec<Spanned<Decorator>>) -> Result<Option<VocabBlockStmt>, CompileError> {
-
         let keyword_name = match &self.peek().kind {
             TokenKind::Ident(name) => name.clone(),
             TokenKind::Keyword(id) => incan_core::lang::keywords::as_str(*id).to_string(),
@@ -358,7 +354,10 @@ impl<'a> Parser<'a> {
 
     /// Return whether the current token ends an inline clause payload.
     fn current_ends_inline_vocab_clause(&self) -> bool {
-        matches!(self.peek().kind, TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof)
+        matches!(
+            self.peek().kind,
+            TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
+        )
     }
 
     /// Return `true` if there is a top-level block-header `:` before the current statement ends.
@@ -421,14 +420,14 @@ impl<'a> Parser<'a> {
                     | incan_vocab::KeywordSurfaceKind::SubBlock
             ) && self.vocab_compound_tokens_match_at(&spec.compound_tokens, self.pos + 1)
                 && match (&spec.placement, parent_keyword) {
-                (incan_vocab::KeywordPlacement::TopLevel, None) => true,
-                (incan_vocab::KeywordPlacement::TopLevel, Some(_)) => false,
-                (incan_vocab::KeywordPlacement::InBlock(allowed), Some(parent)) => {
-                    allowed.iter().any(|value| value == parent)
+                    (incan_vocab::KeywordPlacement::TopLevel, None) => true,
+                    (incan_vocab::KeywordPlacement::TopLevel, Some(_)) => false,
+                    (incan_vocab::KeywordPlacement::InBlock(allowed), Some(parent)) => {
+                        allowed.iter().any(|value| value == parent)
+                    }
+                    (incan_vocab::KeywordPlacement::InBlock(_), None) => false,
+                    _ => false,
                 }
-                (incan_vocab::KeywordPlacement::InBlock(_), None) => false,
-                _ => false,
-            }
         })
     }
 
@@ -594,10 +593,7 @@ impl<'a> Parser<'a> {
         };
 
         let pattern = self.expr_to_assert_pattern(*right)?;
-        Ok(AssertKind::IsPattern {
-            value: *left,
-            pattern,
-        })
+        Ok(AssertKind::IsPattern { value: *left, pattern })
     }
 
     /// Return true when the RHS of `assert value is <rhs>` is one of the RFC 018 pattern forms.
@@ -628,7 +624,7 @@ impl<'a> Parser<'a> {
     fn expr_to_assert_pattern(&self, expr: Spanned<Expr>) -> Result<Spanned<Pattern>, CompileError> {
         match expr.node {
             Expr::Literal(Literal::None) => Ok(Spanned::new(
-                Pattern::Constructor("None".to_string(), Vec::new()),
+                Pattern::Constructor(Spanned::new("None".to_string(), expr.span), Vec::new()),
                 expr.span,
             )),
             Expr::Call(callee, type_args, args) => {
@@ -651,7 +647,10 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 let pattern_args = self.assert_pattern_args(args, expr.span)?;
-                Ok(Spanned::new(Pattern::Constructor(name, pattern_args), expr.span))
+                Ok(Spanned::new(
+                    Pattern::Constructor(Spanned::new(name, callee.span), pattern_args),
+                    expr.span,
+                ))
             }
             _ => Err(CompileError::syntax(
                 "`assert ... is` only supports Some/Ok/Err/None patterns".to_string(),
@@ -661,11 +660,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Convert positional call arguments into the single binding/wildcard pattern allowed by RFC 018.
-    fn assert_pattern_args(
-        &self,
-        args: Vec<CallArg>,
-        span: Span,
-    ) -> Result<Vec<PatternArg>, CompileError> {
+    fn assert_pattern_args(&self, args: Vec<CallArg>, span: Span) -> Result<Vec<PatternArg>, CompileError> {
         if args.len() != 1 {
             return Err(CompileError::syntax(
                 "`assert ... is` patterns require exactly one binding or `_`".to_string(),
@@ -833,10 +828,7 @@ impl<'a> Parser<'a> {
     /// Parse a `loop` statement.
     fn loop_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
-        self.expect(
-            &TokenKind::Punctuation(PunctuationId::Colon),
-            "Expected ':' after loop",
-        )?;
+        self.expect(&TokenKind::Punctuation(PunctuationId::Colon), "Expected ':' after loop")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
         self.expect(&TokenKind::Indent, "Expected indented block")?;
         let body = self.block()?;
@@ -896,10 +888,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let end = items
-            .last()
-            .map(|item| item.span.end)
-            .unwrap_or(start);
+        let end = items.last().map(|item| item.span.end).unwrap_or(start);
         Ok(Spanned::new(Pattern::Tuple(items), Span::new(start, end)))
     }
 
@@ -924,20 +913,28 @@ impl<'a> Parser<'a> {
             BindingKind::Inferred
         };
 
-        let name = self.identifier()?;
+        let name = self.identifier_spanned()?;
 
         // Check for tuple unpacking: a, b, c = expr
         if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-            let mut names = vec![name];
+            let mut names = vec![name.node];
+            let mut name_spans = vec![name.span];
             loop {
-                names.push(self.identifier()?);
+                let name = self.identifier_spanned()?;
+                names.push(name.node);
+                name_spans.push(name.span);
                 if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                     break;
                 }
             }
             self.expect(&TokenKind::Operator(OperatorId::Eq), "Expected '=' in tuple unpacking")?;
             let value = self.expression()?;
-            return Ok(Statement::TupleUnpack(TupleUnpackStmt { binding, names, value }));
+            return Ok(Statement::TupleUnpack(TupleUnpackStmt {
+                binding,
+                names,
+                name_spans,
+                value,
+            }));
         }
 
         let ty = if self.match_token(&TokenKind::Punctuation(PunctuationId::Colon)) {
@@ -949,10 +946,13 @@ impl<'a> Parser<'a> {
 
         // Check for chained assignment: x = y = z = 5
         // Collect all targets before the final value
-        let mut targets = vec![name];
+        let mut targets = vec![name.node];
+        let mut target_spans = vec![name.span];
         while let TokenKind::Ident(_) = &self.peek().kind {
             if self.peek_next().kind == TokenKind::Operator(OperatorId::Eq) {
-                targets.push(self.identifier()?);
+                let target = self.identifier_spanned()?;
+                targets.push(target.node);
+                target_spans.push(target.span);
                 self.expect(
                     &TokenKind::Operator(OperatorId::Eq),
                     "Expected '=' in chained assignment",
@@ -969,12 +969,14 @@ impl<'a> Parser<'a> {
             Ok(Statement::ChainedAssignment(ChainedAssignmentStmt {
                 binding,
                 targets,
+                target_spans,
                 value,
             }))
         } else {
             Ok(Statement::Assignment(AssignmentStmt {
                 binding,
                 name: targets.remove(0),
+                name_span: target_spans.remove(0),
                 ty,
                 value,
             }))
@@ -996,11 +998,12 @@ impl<'a> Parser<'a> {
             // Check for compound assignment: ident += expr, ident -= expr, etc.
             let compound_op = Self::compound_op_from_token_kind(&self.peek_next().kind);
             if let Some(op) = compound_op {
-                let name = self.identifier()?;
+                let name = self.identifier_spanned()?;
                 self.advance(); // consume the compound operator
                 let value = self.expression()?;
                 return Ok(Statement::CompoundAssignment(CompoundAssignmentStmt {
-                    name,
+                    name: name.node,
+                    name_span: name.span,
                     op,
                     value,
                 }));
@@ -1093,6 +1096,7 @@ impl<'a> Parser<'a> {
                     // Fallback: simple ident compound assignment
                     return Ok(Statement::CompoundAssignment(CompoundAssignmentStmt {
                         name,
+                        name_span: expr.span,
                         op,
                         value: rhs,
                     }));
@@ -1161,11 +1165,7 @@ impl<'a> Parser<'a> {
         }
 
         if saw_tail {
-            Ok(Some(VocabExpressionItemStmt {
-                expr,
-                alias,
-                modifiers,
-            }))
+            Ok(Some(VocabExpressionItemStmt { expr, alias, modifiers }))
         } else {
             Ok(None)
         }
@@ -1207,5 +1207,4 @@ impl<'a> Parser<'a> {
             _ => None,
         }
     }
-
 }

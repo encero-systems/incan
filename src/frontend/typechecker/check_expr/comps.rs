@@ -150,16 +150,20 @@ impl TypeChecker {
             .iter()
             .map(|p| {
                 let ty = self.resolve_type_checked(&p.node.ty);
-                self.symbols.define(Symbol {
-                    name: p.node.name.clone(),
-                    kind: SymbolKind::Variable(VariableInfo {
-                        ty: ty.clone(),
-                        is_mutable: false,
-                        is_used: false,
-                    }),
-                    span: p.span,
-                    scope: 0,
-                });
+                self.symbols.define_with_target_kind(
+                    Symbol {
+                        name: p.node.name.clone(),
+                        kind: SymbolKind::Variable(VariableInfo {
+                            ty: ty.clone(),
+                            is_mutable: false,
+                            is_used: false,
+                        }),
+                        span: p.span,
+                        scope: 0,
+                    },
+                    incan_semantics_core::SemanticSourceTargetKind::Parameter,
+                );
+                self.record_write_target_identity(p.span, &p.node.name);
                 CallableParam::named(p.node.name.clone(), ty, p.node.kind)
             })
             .collect();
@@ -202,16 +206,20 @@ impl TypeChecker {
             .zip(expected_params.iter())
             .map(|(param, expected)| {
                 let ty = expected.ty.clone();
-                self.symbols.define(Symbol {
-                    name: param.node.name.clone(),
-                    kind: SymbolKind::Variable(VariableInfo {
-                        ty: ty.clone(),
-                        is_mutable: false,
-                        is_used: false,
-                    }),
-                    span: param.span,
-                    scope: 0,
-                });
+                self.symbols.define_with_target_kind(
+                    Symbol {
+                        name: param.node.name.clone(),
+                        kind: SymbolKind::Variable(VariableInfo {
+                            ty: ty.clone(),
+                            is_mutable: false,
+                            is_used: false,
+                        }),
+                        span: param.span,
+                        scope: 0,
+                    },
+                    incan_semantics_core::SemanticSourceTargetKind::Parameter,
+                );
+                self.record_write_target_identity(param.span, &param.node.name);
                 CallableParam::named(param.node.name.clone(), ty, param.node.kind)
             })
             .collect();

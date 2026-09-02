@@ -30,9 +30,9 @@ pub(super) fn lower_function_body(
     decl_span: ast::Span,
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> bir::Body {
-    let decl_id = CompilerNodeId::declaration(lowering_facts.module_identity, &function.name);
     let direct_call_id =
         CompilerNodeId::declaration_span(lowering_facts.module_identity, decl_span.start, decl_span.end);
+    let decl_id = direct_call_id.clone();
     // The bare-name map is a compatibility projection and collapses top-level overloads. A body is one physical
     // declaration, so its parameter types must come from the same span-keyed fact the direct-call identity uses.
     let binding = lowering_facts
@@ -91,6 +91,7 @@ pub(super) fn lower_function_body(
     bir::Body {
         decl_id,
         direct_call_id,
+        canonical: binding.and_then(|binding| binding.identity.clone()),
         name: function.name.clone(),
         span: hir_span(decl_span),
         locals: builder.locals,
@@ -159,7 +160,12 @@ pub(super) fn lower_method_body(
     let mut param_locals = Vec::with_capacity(method.params.len() + 1);
     if let Some(receiver) = method.receiver {
         let mutable = matches!(receiver, ast::Receiver::Mutable);
-        let self_local = builder.declare_receiver_local(receiver_ty.clone(), mutable, root_scope, hir_span(decl_span));
+        let receiver_span = method
+            .receiver_binding
+            .as_ref()
+            .map_or(decl_span, |binding| binding.span);
+        let self_local =
+            builder.declare_receiver_local(receiver_ty.clone(), mutable, root_scope, hir_span(receiver_span));
         param_locals.push(self_local);
         params.push(bir::CallableParam {
             local: self_local,
@@ -214,6 +220,7 @@ pub(super) fn lower_method_body(
     Some(bir::Body {
         decl_id,
         direct_call_id,
+        canonical: binding.and_then(|binding| binding.identity.clone()),
         name: method.name.clone(),
         span: hir_span(decl_span),
         locals: builder.locals,

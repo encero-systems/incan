@@ -82,6 +82,17 @@ impl CompilerNodeId {
         )
     }
 
+    /// Build one declaration-binding identity for a source declaration that introduces multiple bindings.
+    ///
+    /// The ordinal is the binding's checked source order within the declaration. It is not a source spelling and
+    /// carries no resolution meaning; canonical symbol identity remains the authority for what the binding names.
+    pub fn declaration_binding_span(module_identity: &str, start: usize, end: usize, binding_ordinal: usize) -> Self {
+        Self::new(
+            CompilerNodeKind::Declaration,
+            format!("{module_identity}#decl.{start}..{end}.binding.{binding_ordinal}"),
+        )
+    }
+
     /// Build an expression identity from its module and source byte span.
     pub fn expression_span(module_identity: &str, start: usize, end: usize) -> Self {
         Self::new(
@@ -130,6 +141,7 @@ impl fmt::Display for CompilerNodeId {
 pub enum SemanticFactKind {
     Type,
     SymbolTarget,
+    SymbolIdentity,
     Registry,
     RuntimeRequirement,
     Diagnostic,
@@ -143,6 +155,7 @@ impl SemanticFactKind {
         match self {
             Self::Type => "type",
             Self::SymbolTarget => "symbol_target",
+            Self::SymbolIdentity => "symbol_identity",
             Self::Registry => "registry",
             Self::RuntimeRequirement => "runtime_requirement",
             Self::Diagnostic => "diagnostic",
@@ -162,6 +175,7 @@ pub enum SemanticFactValue {
     Text(String),
     Type(IncanType),
     SourceTarget(SemanticSourceTarget),
+    CanonicalIdentity(CanonicalSymbolId),
     RegistryEntry(SemanticRegistryEntry),
     AuthorityDecision(AuthorityDecision),
     Flag(bool),
@@ -183,6 +197,11 @@ impl SemanticFactValue {
         Self::SourceTarget(value)
     }
 
+    /// Build a canonical symbol-identity fact value.
+    pub fn canonical_identity(value: CanonicalSymbolId) -> Self {
+        Self::CanonicalIdentity(value)
+    }
+
     /// Build one checked typed-registry entry fact.
     pub fn registry_entry(value: SemanticRegistryEntry) -> Self {
         Self::RegistryEntry(value)
@@ -199,6 +218,7 @@ impl SemanticFactValue {
             Self::Text(value) => format!("{value:?}"),
             Self::Type(value) => value.to_string(),
             Self::SourceTarget(value) => value.to_string(),
+            Self::CanonicalIdentity(value) => value.render_compact(),
             Self::RegistryEntry(value) => value.to_string(),
             Self::AuthorityDecision(value) => value.to_string(),
             Self::Flag(value) => value.to_string(),
@@ -906,6 +926,15 @@ impl SemanticFactStore {
             })
     }
 
+    /// Return compiler-owned canonical symbol identities for one source node.
+    pub fn symbol_identities_for(&self, subject: &CompilerNodeId) -> impl Iterator<Item = &CanonicalSymbolId> {
+        self.facts_for_kind(subject, SemanticFactKind::SymbolIdentity)
+            .filter_map(|fact| match &fact.value {
+                SemanticFactValue::CanonicalIdentity(identity) => Some(identity),
+                _ => None,
+            })
+    }
+
     /// Return all subjects that have at least one fact.
     pub fn subjects(&self) -> impl Iterator<Item = &CompilerNodeId> {
         self.facts.keys()
@@ -1126,6 +1155,10 @@ mod tests {
             "expr:pkg::module#7..11"
         );
         assert_eq!(
+            CompilerNodeId::declaration_binding_span("pkg::module", 3, 17, 1).to_string(),
+            "decl:pkg::module#decl.3..17.binding.1"
+        );
+        assert_eq!(
             CompilerNodeId::statement_span("pkg::module", 11, 19).to_string(),
             "stmt:pkg::module#stmt.11..19"
         );
@@ -1240,6 +1273,12 @@ mod tests {
     fn semantic_fact_store_extracts_typed_payloads() {
         let expr = CompilerNodeId::expression_span("pkg::main", 3, 8);
         let target = SemanticSourceTarget::from_kind_str(vec!["pkg".to_string()], "build", "function");
+        let identity = CanonicalSymbolId::module_declaration(
+            vec!["pkg".to_string()],
+            "build",
+            SemanticSourceTargetKind::Function,
+            crate::HirSourceSpan::new(10, 25),
+        );
         let mut store = SemanticFactStore::new();
 
         store.insert(SemanticFact::new(
@@ -1257,12 +1296,20 @@ mod tests {
             SemanticFactKind::SymbolTarget,
             SemanticFactValue::source_target(target.clone()),
         ));
+        store.insert(SemanticFact::new(
+            expr.clone(),
+            SemanticFactKind::SymbolIdentity,
+            SemanticFactValue::canonical_identity(identity.clone()),
+        ));
 
         let type_facts = store.type_facts_for(&expr).cloned().collect::<Vec<_>>();
         assert_eq!(type_facts, vec![IncanType::Primitive(crate::IncanPrimitiveType::Int)]);
 
         let source_targets = store.source_targets_for(&expr).cloned().collect::<Vec<_>>();
         assert_eq!(source_targets, vec![target]);
+
+        let identities = store.symbol_identities_for(&expr).cloned().collect::<Vec<_>>();
+        assert_eq!(identities, vec![identity]);
     }
 
     #[test]

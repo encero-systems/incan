@@ -2,6 +2,7 @@
 
 use super::{IrSpan, IrStmt, IrType, Mutability};
 use incan_core::interop::is_rust_capability_bound;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 /// An IR declaration
 #[derive(Debug, Clone)]
@@ -57,6 +58,8 @@ pub enum IrDeclKind {
         visibility: Visibility,
         name: String,
         target_path: Vec<String>,
+        /// Exact source declaration projected by this alias, when it targets linker-visible Incan storage or code.
+        target_canonical: Option<CanonicalSymbolId>,
         target_origin: Option<IrImportOrigin>,
         target_qualifier: Option<IrImportQualifier>,
     },
@@ -73,6 +76,8 @@ pub enum IrDeclKind {
     Static {
         visibility: Visibility,
         name: String,
+        /// Whether this storage cell comes from an exact source declaration or compiler generation.
+        provenance: IrStaticProvenance,
         ty: IrType,
         value: super::IrExpr,
     },
@@ -90,6 +95,16 @@ pub enum IrDeclKind {
 
     /// Impl block for methods on structs/enums
     Impl(IrImpl),
+}
+
+/// Provenance of one IR static storage cell.
+///
+/// This makes a source static without canonical identity unrepresentable after lowering. Compiler-generated caches
+/// and decorator bindings deliberately retain synthetic Rust names and never masquerade as source declarations.
+#[derive(Debug, Clone)]
+pub enum IrStaticProvenance {
+    Source(CanonicalSymbolId),
+    CompilerGenerated,
 }
 
 /// Direction of a lowered `interop:` edge (RFC 041).
@@ -173,6 +188,8 @@ pub struct IrRustTraitImport {
 pub struct IrImportItem {
     pub name: String,
     pub alias: Option<String>,
+    /// Compiler-owned identity of the imported declaration, when import resolution proved one.
+    pub canonical: Option<CanonicalSymbolId>,
     /// Whether this import item binds an Incan `static` storage cell.
     ///
     /// Static declarations use Rust global naming in generated code, so imported static items must emit the provider's
@@ -189,6 +206,46 @@ pub struct IrImportItem {
     /// Extension-trait imports can be used by Rust method lookup without appearing as identifiers in emitted tokens.
     /// Codegen uses this metadata to retain imports selected by frontend method-call analysis.
     pub rust_trait_import: Option<IrRustTraitImport>,
+}
+
+impl IrImportItem {
+    /// Return the provider's Rust item projection without recovering meaning from an emitted name.
+    pub fn emitted_name(&self) -> String {
+        self.canonical
+            .as_ref()
+            .filter(|identity| is_projected_source_symbol(identity))
+            .map(encode_incan_symbol_identity)
+            .unwrap_or_else(|| self.name.clone())
+    }
+
+    /// Return the local Rust binding created by this import.
+    ///
+    /// A source alias carries its target's identity, so every spelling of one function binds the same backend
+    /// projection. Source spelling remains separately available in frontend facts and package metadata.
+    pub fn emitted_binding_name(&self) -> String {
+        if self.canonical.as_ref().is_some_and(is_projected_source_symbol) {
+            return self.emitted_name();
+        }
+        self.alias.clone().unwrap_or_else(|| self.name.clone())
+    }
+
+    /// Return the source-local spelling used to decide reachability and static initialization.
+    pub fn source_binding_name(&self) -> &str {
+        self.alias.as_deref().unwrap_or(&self.name)
+    }
+}
+
+/// Return whether an import targets a linker-visible source symbol with an Incan-owned projection.
+///
+/// Top-level partial declarations emit ordinary Rust wrapper functions and therefore follow the same exact canonical
+/// import projection as source functions. Method-partial forwarding helpers are generated implementation details and
+/// never reach this import surface with a `Partial` declaration identity. Source statics are physical storage symbols,
+/// so aliases and re-exports bind the defining declaration's projection rather than minting another name.
+pub(super) fn is_projected_source_symbol(identity: &CanonicalSymbolId) -> bool {
+    matches!(
+        identity.kind,
+        SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial | SemanticSourceTargetKind::Static
+    ) && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
 }
 
 /// IR trait definition
@@ -233,6 +290,21 @@ pub struct IrImpl {
     pub associated_types: Vec<IrAssociatedType>,
     /// Methods in this impl block
     pub methods: Vec<IrFunction>,
+    /// Recoverable inherent entry points emitted beside Rust trait-ABI methods.
+    ///
+    /// Rust requires an implementation's slot spelling to match the trait declaration. A source-declared concrete
+    /// implementation therefore retains that ABI spelling inside `impl Trait for Type` and gets a separate inherent
+    /// `incan-v1` entry point carrying the implementation declaration's exact identity.
+    pub method_projections: Vec<IrMethodProjection>,
+}
+
+/// One source method whose Rust trait slot needs a separate recoverable Incan-origin entry point.
+#[derive(Debug, Clone)]
+pub struct IrMethodProjection {
+    /// Rust ABI slot invoked by the recoverable entry point.
+    pub abi_method_name: String,
+    /// Exact compiler-owned identity encoded into the inherent entry-point name.
+    pub identity: CanonicalSymbolId,
 }
 
 /// IR associated type item inside a trait impl.

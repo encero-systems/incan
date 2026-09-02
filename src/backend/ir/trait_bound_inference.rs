@@ -3196,6 +3196,7 @@ mod tests {
                 trait_type_args: Vec::new(),
                 associated_types: Vec::new(),
                 methods: vec![method],
+                method_projections: Vec::new(),
             }))],
             module_init: Vec::new(),
             source_module_name: None,

@@ -327,7 +327,7 @@ fn collect_generic_callable_name_type_params_from_assign_target(target: &AssignT
             collect_generic_callable_name_type_params_from_expr(object, out);
             collect_generic_callable_name_type_params_from_expr(index, out);
         }
-        AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static(_) => {}
+        AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
     }
 }
 
@@ -497,6 +497,14 @@ impl AstLowering {
         format!("__incan_original_{name}")
     }
 
+    /// Return the collision-proof registry key for a generated decorator original.
+    ///
+    /// This is intentionally not valid source syntax. The registry maps it to the ordinary private Rust helper name,
+    /// so hidden compiler names never reserve otherwise-valid Incan identifiers.
+    pub(in crate::backend::ir::lower) fn decorator_original_function_registry_key(name: &str) -> String {
+        format!("@generated/decorator-original/{name}")
+    }
+
     /// Return the private emitted static name that stores the decorated callable binding.
     pub(in crate::backend::ir::lower) fn decorator_static_binding_name(name: &str) -> String {
         format!("__incan_decorated_{name}")
@@ -533,27 +541,6 @@ impl AstLowering {
             expr = Spanned::new(Expr::Field(Box::new(expr), segment.clone()), span);
         }
         expr
-    }
-
-    /// Build the bottom-up decorator application expression for a function declaration.
-    pub(in crate::backend::ir::lower) fn decorator_application_expr(
-        &self,
-        function_name: &str,
-        decorators: &[Spanned<ast::Decorator>],
-    ) -> Result<Spanned<Expr>, LoweringError> {
-        let original_name = Self::decorator_original_function_name(function_name);
-        let mut current = Spanned::new(Expr::Ident(original_name), ast::Span::default());
-        for decorator in decorators.iter().rev() {
-            if !self.is_user_defined_decorator_candidate(&decorator.node) {
-                continue;
-            }
-            let callable = Self::decorator_callable_expr(decorator)?;
-            current = Spanned::new(
-                Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(current)]),
-                Self::decorator_synthetic_callee_span(),
-            );
-        }
-        Ok(current)
     }
 
     /// Build the callable expression for one decorator before it is applied to the decorated function value.
@@ -598,9 +585,10 @@ impl AstLowering {
             .iter()
             .map(|arg| match arg {
                 DecoratorArg::Positional(expr) => Ok(ast::CallArg::Positional(expr.clone())),
-                DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) => {
-                    Ok(ast::CallArg::Named(name.clone(), expr.clone()))
-                }
+                DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) => Ok(ast::CallArg::Named(
+                    ast::Spanned::new(name.clone(), ast::Span::default()),
+                    expr.clone(),
+                )),
                 DecoratorArg::Named(_, DecoratorArgValue::Type(ty)) => Err(LoweringError {
                     message: "type-valued user-defined decorator arguments cannot be lowered".to_string(),
                     span: ty.span.into(),

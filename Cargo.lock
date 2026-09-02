@@ -1465,6 +1465,7 @@ dependencies = [
  "rand 0.8.6",
  "regex",
  "rust_inspect",
+ "rustc-demangle",
  "rustix 1.1.4",
  "semver",
  "serde",

@@ -92,9 +92,9 @@ impl BodyIrModule {
     /// the declaration itself or nothing. It never consults the *reference site's* spelling or an emitted Rust name,
     /// so a consumer cannot dispatch on the text at a call site.
     ///
-    /// Matching is on the declaration span, which is unique within a module. The declared name deliberately does not
-    /// participate: bodies do not carry owner-qualified names, so a class method and a free function in one module can
-    /// both be named `render`, and a name match would hand back whichever came first.
+    /// Matching is on the complete checker-minted canonical identity. The declared name deliberately does not
+    /// participate: a class method and a free function in one module can both be named `render`, and a name match
+    /// would hand back whichever came first.
     ///
     /// `None` has three distinct causes and is never permission to fall back to [`NamedCallableTarget::name`]: the
     /// identity is owned by another module; its origin is not a project source module at all (a package, a `rust::`
@@ -103,7 +103,12 @@ impl BodyIrModule {
         if module_identity_for_path(target.module_path()?) != self.module_id.path() {
             return None;
         }
-        self.bodies.iter().find(|body| body.span == target.declaration_span)
+        let mut bodies = self
+            .bodies
+            .iter()
+            .filter(|body| body.canonical.as_ref() == Some(target));
+        let body = bodies.next()?;
+        bodies.next().is_none().then_some(body)
     }
 
     /// Render a deterministic maintainer-facing snapshot of every body in the module.
@@ -123,9 +128,10 @@ impl BodyIrModule {
         for declaration in &self.fieldless_enum_declarations {
             let _ = writeln!(
                 &mut out,
-                "fieldless_enum {} id={} variants=[{}]",
+                "fieldless_enum {} id={} canonical={} variants=[{}]",
                 declaration.name,
                 declaration.direct_declaration_id,
+                declaration.canonical.render_compact(),
                 declaration
                     .variants
                     .iter()
@@ -137,9 +143,10 @@ impl BodyIrModule {
         for declaration in &self.value_enum_declarations {
             let _ = writeln!(
                 &mut out,
-                "value_enum {} id={} backing={} variants=[{}]",
+                "value_enum {} id={} canonical={} backing={} variants=[{}]",
                 declaration.name,
                 declaration.direct_declaration_id,
+                declaration.canonical.render_compact(),
                 declaration.backing.as_str(),
                 declaration
                     .variants
@@ -165,10 +172,18 @@ impl BodyIrModule {
 pub struct NominalDeclaration {
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
+    /// RFC 120 identity minted by the checker for this declaration.
+    pub canonical: CanonicalSymbolId,
     /// Canonical source declaration name, checked again by consumers as a defence against malformed Body IR.
     pub name: String,
     /// Canonical declared field names in declaration order.
     pub fields: Vec<String>,
+    /// RFC 120 identities of [`Self::fields`] in the same declaration order.
+    ///
+    /// The parallel layout is intentional: constructor binding and stored runtime values retain the compact field
+    /// names, while a source projection must match its checked identity at the same slot before the name is used to
+    /// select storage.
+    pub field_identities: Vec<CanonicalSymbolId>,
     /// Number of declared type parameters; this profile admits only zero.
     pub type_parameter_count: usize,
 }
@@ -182,6 +197,8 @@ pub struct NominalDeclaration {
 pub struct FieldlessEnumDeclaration {
     /// Exact source-local enum declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
+    /// Checker-minted canonical identity of this enum declaration.
+    pub canonical: CanonicalSymbolId,
     /// Canonical source declaration name.
     pub name: String,
     /// Canonical zero-payload variants in source declaration order.
@@ -193,6 +210,8 @@ pub struct FieldlessEnumDeclaration {
 pub struct FieldlessEnumVariantDeclaration {
     /// Exact source-local variant declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
+    /// Checker-minted canonical identity of this member declaration.
+    pub canonical: CanonicalSymbolId,
     /// Canonical member name; aliases are intentionally not retained.
     pub name: String,
 }
@@ -200,7 +219,12 @@ pub struct FieldlessEnumVariantDeclaration {
 impl FieldlessEnumVariantDeclaration {
     /// Render the member identity for a deterministic module snapshot.
     fn render_snapshot(&self) -> String {
-        format!("variant {} id={}", self.name, self.direct_declaration_id)
+        format!(
+            "variant {} id={} canonical={}",
+            self.name,
+            self.direct_declaration_id,
+            self.canonical.render_compact()
+        )
     }
 }
 
@@ -232,6 +256,8 @@ impl ValueEnumBacking {
 pub struct ValueEnumDeclaration {
     /// Exact source-local enum declaration identity, derived from its declaration span.
     pub direct_declaration_id: CompilerNodeId,
+    /// Checker-minted canonical identity of this enum declaration.
+    pub canonical: CanonicalSymbolId,
     /// Canonical source declaration name.
     pub name: String,
     /// The only scalar carrier exposed by the admitted generated `.value()` operation.
@@ -245,6 +271,8 @@ pub struct ValueEnumDeclaration {
 pub struct ValueEnumVariantDeclaration {
     /// Exact source-local variant declaration identity, derived from its declaration span.
     pub direct_declaration_id: CompilerNodeId,
+    /// Checker-minted canonical identity of this member declaration.
+    pub canonical: CanonicalSymbolId,
     /// Canonical member name; aliases are intentionally not retained.
     pub name: String,
     /// The checked source literal exposed only through identity-validated `.value()` extraction.
@@ -255,9 +283,10 @@ impl ValueEnumVariantDeclaration {
     /// Render the member's identity and raw scalar fact for a deterministic module snapshot.
     fn render_snapshot(&self) -> String {
         format!(
-            "variant {} id={} raw={}",
+            "variant {} id={} canonical={} raw={}",
             self.name,
             self.direct_declaration_id,
+            self.canonical.render_compact(),
             self.raw_value.render_snapshot()
         )
     }
@@ -270,12 +299,16 @@ pub struct Body {
     pub decl_id: CompilerNodeId,
     /// Exact source-local identity used to dispatch a direct named Body-IR call.
     ///
-    /// [`Self::decl_id`] intentionally stays correlated with declaration-level HIR, whose named identity is useful
-    /// to existing consumers but is not collision-safe for same-name overloads. This span-based declaration identity
-    /// is retained separately so a direct executor can select precisely the declaration the typechecker chose,
-    /// without reconstructing name resolution or consulting generated Rust. It is always scoped to this
-    /// [`BodyIrModule`] and must never stand in for an imported callable identity.
+    /// For a top-level function, [`Self::decl_id`] and this identity both use the declaration span and intentionally
+    /// coincide. Method HIR does not yet have its own declaration node, so a method body retains the owner/name HIR
+    /// compatibility identity in `decl_id` while this field keeps the collision-safe method declaration span. Both
+    /// are scoped to this [`BodyIrModule`] and must never stand in for an imported callable identity.
     pub direct_call_id: CompilerNodeId,
+    /// Checker-minted canonical identity of this callable declaration, when checking proved one.
+    ///
+    /// Consumers must fail closed when this is absent or disagrees with the physical declaration. In particular,
+    /// [`Self::name`] is diagnostic source spelling and is never sufficient to select an entrypoint or child frame.
+    pub canonical: Option<CanonicalSymbolId>,
     /// Source-level function/method name.
     pub name: String,
     /// Full source span of the declaration this body was lowered from.
@@ -368,8 +401,14 @@ impl Body {
         let async_marker = if self.is_async { " async" } else { "" };
         let _ = writeln!(
             &mut out,
-            "body{async_marker} {} {} span={}..{}",
-            self.name, self.decl_id, self.span.start, self.span.end
+            "body{async_marker} {} {} span={}..{} canonical={}",
+            self.name,
+            self.decl_id,
+            self.span.start,
+            self.span.end,
+            self.canonical
+                .as_ref()
+                .map_or_else(|| "<unresolved>".to_string(), CanonicalSymbolId::render_compact)
         );
         for local in &self.locals {
             let _ = writeln!(&mut out, "  {}", local.render_snapshot());
@@ -456,6 +495,9 @@ pub struct LocalDecl {
     pub id: LocalId,
     /// Source-level binding name, or `None` for a compiler-introduced temporary.
     pub name: Option<String>,
+    /// Canonical source identity of this binding, or `None` for compiler temporaries and explicitly unresolved
+    /// recovery locals.
+    pub identity: Option<CanonicalSymbolId>,
     pub ty: IncanType,
     pub origin: LocalOrigin,
     /// Lexical scope this local is declared in.
@@ -467,12 +509,17 @@ impl LocalDecl {
     /// Render a deterministic maintainer-facing snapshot line for this local.
     fn render_snapshot(&self) -> String {
         let name = self.name.as_deref().unwrap_or("<tmp>");
+        let identity = self
+            .identity
+            .as_ref()
+            .map_or_else(|| "unproven".to_string(), CanonicalSymbolId::render_compact);
         format!(
-            "local {} {} : {} [{}] scope={} span={}..{}",
+            "local {} {} : {} [{}] identity={} scope={} span={}..{}",
             self.id.0,
             name,
             self.ty,
             self.origin.as_str(),
+            identity,
             self.scope.0,
             self.span.start,
             self.span.end
@@ -489,10 +536,10 @@ pub enum LocalOrigin {
     UserBinding,
     /// Introduced by lowering to hold an intermediate value (e.g. flattening a nested call or binary expression).
     Temporary,
-    /// A name lowering could not resolve to a parameter or local binding within this body (for example a
-    /// module-level `const`/`static`, or a reference lowering does not yet track). Modeled as an opaque local with
+    /// A source reference for which the resolver supplied no canonical identity. Modeled as an opaque local with
     /// [`OwnershipFact::Unknown`](crate::body_ir::OwnershipFact::Unknown) reads rather than silently treated as a
-    /// resolved local, per #653's "explicit unknowns" requirement.
+    /// resolved local, per #653's "explicit unknowns" requirement. Resolver-proven module storage uses a canonical
+    /// [`PlaceRoot::Global`] instead.
     External,
     /// Bound to a method's `self`/`mut self` receiver (#1102).
     ///
@@ -544,10 +591,38 @@ pub struct ScopeInfo {
     pub span: HirSourceSpan,
 }
 
-/// A place in memory: a local plus zero or more projections (field/index) into it.
+/// Root storage selected for a Body IR place.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlaceRoot {
+    /// A function-frame local selected by canonical source identity.
+    Local(LocalId),
+    /// A module-level storage declaration selected by canonical source identity.
+    Global(GlobalPlace),
+}
+
+/// Canonical module-level storage retained in a Body IR place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlobalPlace {
+    pub identity: CanonicalSymbolId,
+    pub ty: IncanType,
+    pub write_policy: GlobalWritePolicy,
+}
+
+/// Which writes a global place permits after typechecking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobalWritePolicy {
+    /// Constants cannot be written at either their root or through a projection.
+    ReadOnly,
+    /// An imported static permits mutation through a projection but cannot be rebound in this module.
+    ProjectionOnly,
+    /// A static declared by this module can be rebound and mutated through projections.
+    Rebindable,
+}
+
+/// A place in memory: a canonical local/global root plus zero or more projections (field/index) into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Place {
-    pub local: LocalId,
+    pub root: PlaceRoot,
     pub projection: Vec<PlaceElem>,
 }
 
@@ -555,17 +630,56 @@ impl Place {
     /// Build a bare place referring to a local with no projection.
     pub const fn from_local(local: LocalId) -> Self {
         Self {
-            local,
+            root: PlaceRoot::Local(local),
             projection: Vec::new(),
+        }
+    }
+
+    /// Build a bare place referring to canonical module storage with no projection.
+    pub fn from_global(global: GlobalPlace) -> Self {
+        Self {
+            root: PlaceRoot::Global(global),
+            projection: Vec::new(),
+        }
+    }
+
+    /// Return the local root when this place belongs to the current execution frame.
+    pub const fn local_id(&self) -> Option<LocalId> {
+        match &self.root {
+            PlaceRoot::Local(local) => Some(*local),
+            PlaceRoot::Global(_) => None,
+        }
+    }
+
+    /// Return canonical module storage when this place is global.
+    pub const fn global(&self) -> Option<&GlobalPlace> {
+        match &self.root {
+            PlaceRoot::Local(_) => None,
+            PlaceRoot::Global(global) => Some(global),
+        }
+    }
+
+    /// Return whether this place is a legal write target under its compiler-recorded storage policy.
+    pub fn permits_write(&self) -> bool {
+        match &self.root {
+            PlaceRoot::Local(_) => true,
+            PlaceRoot::Global(global) => match global.write_policy {
+                GlobalWritePolicy::ReadOnly => false,
+                GlobalWritePolicy::ProjectionOnly => !self.projection.is_empty(),
+                GlobalWritePolicy::Rebindable => true,
+            },
         }
     }
 
     /// Render a deterministic maintainer-facing spelling for this place.
     fn render_snapshot(&self) -> String {
-        let mut out = format!("_{}", self.local.0);
+        let mut out = match &self.root {
+            PlaceRoot::Local(local) => format!("_{}", local.0),
+            PlaceRoot::Global(global) => format!("@{}", global.identity.render_compact()),
+        };
         for elem in &self.projection {
             match elem {
-                PlaceElem::Field(name) => {
+                PlaceElem::Field { name, .. } => {
                     let _ = write!(&mut out, ".{name}");
                 }
                 PlaceElem::Index(operand) => {
@@ -592,8 +706,16 @@ impl Place {
 /// One projection step applied to a place.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlaceElem {
-    /// `.field` access.
-    Field(String),
+    /// `.field` access, with the selected source member identity when the projection came from checked source.
+    ///
+    /// Compiler-synthesized tuple/range/protocol projections carry `None`. A consumer may interpret those only in
+    /// its explicitly admitted structural profile; `None` is never permission to resolve a nominal member by name.
+    Field {
+        /// Written or compiler-synthesized field spelling retained for diagnostics and physical layout selection.
+        name: String,
+        /// Canonical member selected by typechecking, independent of the source spelling.
+        canonical: Option<CanonicalSymbolId>,
+    },
     /// `[index]` access. Boxed because the index itself is an arbitrary operand.
     Index(Box<Operand>),
     /// `[start:end:step]` slice access, mirroring `ast::SliceExpr`'s shape: each component is independently
@@ -604,6 +726,24 @@ pub enum PlaceElem {
         end: Option<Box<Operand>>,
         step: Option<Box<Operand>>,
     },
+}
+
+impl PlaceElem {
+    /// Build a source-owned field projection from the identity selected by typechecking.
+    pub fn field(name: impl Into<String>, canonical: Option<CanonicalSymbolId>) -> Self {
+        Self::Field {
+            name: name.into(),
+            canonical,
+        }
+    }
+
+    /// Build a compiler-synthesized structural projection with no source member identity.
+    pub fn synthetic_field(name: impl Into<String>) -> Self {
+        Self::Field {
+            name: name.into(),
+            canonical: None,
+        }
+    }
 }
 
 // ============================================================================
@@ -934,8 +1074,12 @@ impl Rvalue {
 pub struct ValueEnumVariantTarget {
     /// Exact source-local owner enum declaration identity.
     pub enum_declaration_id: CompilerNodeId,
+    /// Exact checker-minted owner identity selected at this reference site.
+    pub enum_canonical: CanonicalSymbolId,
     /// Exact source-local member declaration identity.
     pub variant_declaration_id: CompilerNodeId,
+    /// Exact checker-minted member identity selected at this reference site.
+    pub variant_canonical: CanonicalSymbolId,
     /// Canonical owner name, retained for malformed-Body-IR cross-checks and diagnostics.
     pub enum_name: String,
     /// Canonical member name, retained for malformed-Body-IR cross-checks and diagnostics.
@@ -946,8 +1090,13 @@ impl ValueEnumVariantTarget {
     /// Render both retained identities so snapshots cannot mistake a member spelling for its direct target fact.
     fn render_snapshot(&self) -> String {
         format!(
-            "value_enum_variant({}::{} enum_id={} variant_id={})",
-            self.enum_name, self.variant_name, self.enum_declaration_id, self.variant_declaration_id
+            "value_enum_variant({}::{} enum_id={} enum_canonical={} variant_id={} variant_canonical={})",
+            self.enum_name,
+            self.variant_name,
+            self.enum_declaration_id,
+            self.enum_canonical.render_compact(),
+            self.variant_declaration_id,
+            self.variant_canonical.render_compact()
         )
     }
 }
@@ -957,8 +1106,12 @@ impl ValueEnumVariantTarget {
 pub struct FieldlessEnumVariantTarget {
     /// Exact source-local owner enum declaration identity.
     pub enum_declaration_id: CompilerNodeId,
+    /// Exact checker-minted owner identity selected at this reference site.
+    pub enum_canonical: CanonicalSymbolId,
     /// Exact source-local member declaration identity.
     pub variant_declaration_id: CompilerNodeId,
+    /// Exact checker-minted member identity selected at this reference site.
+    pub variant_canonical: CanonicalSymbolId,
     /// Canonical owner name, retained for malformed-Body-IR cross-checks and diagnostics.
     pub enum_name: String,
     /// Canonical member name, retained for malformed-Body-IR cross-checks and diagnostics.
@@ -969,8 +1122,13 @@ impl FieldlessEnumVariantTarget {
     /// Render both retained identities so snapshots cannot mistake a unit-variant spelling for a direct target fact.
     fn render_snapshot(&self) -> String {
         format!(
-            "fieldless_enum_variant({}::{} enum_id={} variant_id={})",
-            self.enum_name, self.variant_name, self.enum_declaration_id, self.variant_declaration_id
+            "fieldless_enum_variant({}::{} enum_id={} enum_canonical={} variant_id={} variant_canonical={})",
+            self.enum_name,
+            self.variant_name,
+            self.enum_declaration_id,
+            self.enum_canonical.render_compact(),
+            self.variant_declaration_id,
+            self.variant_canonical.render_compact()
         )
     }
 }
@@ -1323,14 +1481,17 @@ pub enum Pattern {
     Literal(Constant),
     /// A tuple pattern (`(a, b)`): matches a tuple scrutinee and recursively matches/binds each element.
     Tuple(Vec<Pattern>),
-    /// A named-field constructor pattern (`Point(x=a, y=b)`): matches a model/class scrutinee and recursively
-    /// matches/binds each named field.
+    /// A named-field constructor pattern (`Point(x=a, y=b)`) outside the direct nominal profile. The optional
+    /// canonical fact preserves what checking proved, but does not by itself assert a runtime field layout.
     Struct {
+        /// Exact checker-selected constructor identity, when checking proved one.
+        canonical: Option<CanonicalSymbolId>,
         name: String,
         fields: Vec<(String, Pattern)>,
     },
     /// A source-local plain-model pattern whose exact declaration identity is retained alongside canonical named
-    /// fields. This is distinct from [`Self::Struct`], whose name-only fallback remains a visible refusal.
+    /// fields. This is distinct from [`Self::Struct`], which has no admitted direct-layout target and remains a
+    /// visible refusal even when its optional checked identity is present.
     Nominal {
         target: NominalPatternTarget,
         fields: Vec<(String, Pattern)>,
@@ -1346,8 +1507,11 @@ pub enum Pattern {
     /// `Option`/`Result`) scrutinee and recursively matches/binds each positional field. `name` is the enum type
     /// name when known, or empty when v0 lowering could not resolve it (matching the existing backend's own
     /// `Pattern::Enum { name: String::new(), .. }` fallback for a bare, non-union constructor pattern) -- a target
-    /// backend must not rely on `name` being populated.
+    /// backend must not rely on `name` being populated, and must refuse rather than reconstruct a missing
+    /// `canonical` identity.
     Enum {
+        /// Exact checker-selected constructor/member identity, when checking proved one.
+        canonical: Option<CanonicalSymbolId>,
         name: String,
         variant: String,
         fields: Vec<Pattern>,
@@ -1371,12 +1535,19 @@ impl Pattern {
                 let items: Vec<String> = items.iter().map(Pattern::render_snapshot).collect();
                 format!("({})", items.join(", "))
             }
-            Self::Struct { name, fields } => {
+            Self::Struct {
+                canonical,
+                name,
+                fields,
+            } => {
                 let fields: Vec<String> = fields
                     .iter()
                     .map(|(field_name, pat)| format!("{field_name}: {}", pat.render_snapshot()))
                     .collect();
-                format!("{name} {{ {} }}", fields.join(", "))
+                let canonical = canonical
+                    .as_ref()
+                    .map_or_else(|| "<unresolved>".to_string(), CanonicalSymbolId::render_compact);
+                format!("{name} {{ {} }} canonical={canonical}", fields.join(", "))
             }
             Self::Nominal { target, fields } => {
                 let fields: Vec<String> = fields
@@ -1392,17 +1563,25 @@ impl Pattern {
                 let fields: Vec<String> = fields.iter().map(Pattern::render_snapshot).collect();
                 format!("Result::{}({})", variant.as_str(), fields.join(", "))
             }
-            Self::Enum { name, variant, fields } => {
+            Self::Enum {
+                canonical,
+                name,
+                variant,
+                fields,
+            } => {
                 let label = if name.is_empty() {
                     variant.clone()
                 } else {
                     format!("{name}::{variant}")
                 };
+                let canonical = canonical
+                    .as_ref()
+                    .map_or_else(|| "<unresolved>".to_string(), CanonicalSymbolId::render_compact);
                 if fields.is_empty() {
-                    label
+                    format!("{label} canonical={canonical}")
                 } else {
                     let fields: Vec<String> = fields.iter().map(Pattern::render_snapshot).collect();
-                    format!("{label}({})", fields.join(", "))
+                    format!("{label}({}) canonical={canonical}", fields.join(", "))
                 }
             }
             Self::Or(items) => {
@@ -1418,6 +1597,8 @@ impl Pattern {
 pub struct NominalPatternTarget {
     /// Exact source-local model declaration identity.
     pub direct_declaration_id: CompilerNodeId,
+    /// RFC 120 identity of the selected model declaration.
+    pub canonical: CanonicalSymbolId,
     /// Canonical model name retained only for malformed-Body-IR cross-checks and diagnostics.
     pub name: String,
 }
@@ -1750,7 +1931,7 @@ pub enum AggregateKind {
     /// [`crate::AbiV0RuntimeRequirement`], the same as [`Self::Tuple`] and unlike [`Self::List`]/[`Self::Set`].
     ///
     /// Operands appear in exactly [`Self::RANGE_FIELDS`] order, and a consumer reading one back projects it by
-    /// that name (`PlaceElem::Field("start")`). Inclusivity is an *operand*, not a static property of this
+    /// that name (`PlaceElem::synthetic_field("start")`). Inclusivity is an *operand*, not a static property of this
     /// variant: `..` versus `..=` is fixed per construction site, but the site that constructs a range and the
     /// loop that later iterates it need not be the same statement, so a consumer holding only the value must be
     /// able to read which one it is instead of having to prove where it came from.
@@ -2001,10 +2182,11 @@ pub enum CallableTarget {
 
 /// One arm of a [`StatementKind::Race`].
 ///
-/// The source spells a single binding name shared by every arm (`race for value:`), but each arm re-scopes it and
-/// arms may resolve it to different types, so each arm owns its own `binding` local rather than sharing one. The
-/// body is a full [`Block`] plus a `result` operand, mirroring how [`ClosureBody`] carries a nested statement
-/// sequence with an explicit value instead of relying on a trailing-statement convention.
+/// The source spells a single binding declaration shared by every arm (`race for value:`). Each arm owns a distinct
+/// type-refined `binding` local because arm result types may differ, while those locals retain the same canonical
+/// source identity and exact header token span. The body is a full [`Block`] plus a `result` operand, mirroring how
+/// [`ClosureBody`] carries a nested statement sequence with an explicit value instead of relying on a
+/// trailing-statement convention.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaceArm {
     /// This arm's awaitable, evaluated before selection along with every other arm's.
@@ -2266,6 +2448,11 @@ fn render_symbol_path(symbol: &CanonicalSymbolId) -> String {
 pub struct MethodTarget {
     /// Source-level method name.
     pub name: String,
+    /// Canonical method declaration or compiler-owned member selected by typechecking.
+    ///
+    /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
+    /// explicitly internal path and may not use [`Self::name`] to grant source method behavior.
+    pub canonical: Option<CanonicalSymbolId>,
     /// Resolved explicit call-site type arguments, in declared type-parameter order. Empty when the call site wrote
     /// none.
     pub type_args: Vec<IncanType>,
@@ -2283,6 +2470,7 @@ impl MethodTarget {
     pub fn synthesized(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            canonical: None,
             type_args: Vec::new(),
             binding: ArgumentBinding::UnresolvedPositional,
         }
@@ -2325,6 +2513,11 @@ impl std::fmt::Display for MethodTarget {
 pub struct ConstructorTarget {
     /// Source-level nominal type name.
     pub name: String,
+    /// Canonical nominal declaration selected by typechecking.
+    ///
+    /// This is the semantic target. [`Self::direct_declaration_id`] is the physical same-module representation and
+    /// must agree with it before execution; neither may be reconstructed from [`Self::name`].
+    pub canonical: Option<CanonicalSymbolId>,
     /// Exact source-local nominal declaration selected for this construction, when the module retained one.
     ///
     /// An absent identity is not permission to look up [`Self::name`] in another compiler structure: imports,
@@ -2972,12 +3165,14 @@ mod tests {
         Body {
             decl_id: decl_id.clone(),
             direct_call_id,
+            canonical: None,
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             locals: vec![
                 LocalDecl {
                     id: local_x,
                     name: Some("x".to_string()),
+                    identity: None,
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
                     origin: LocalOrigin::Parameter,
                     scope: ScopeId(0),
@@ -2986,6 +3181,7 @@ mod tests {
                 LocalDecl {
                     id: local_y,
                     name: Some("y".to_string()),
+                    identity: None,
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
                     origin: LocalOrigin::Parameter,
                     scope: ScopeId(0),
@@ -2994,6 +3190,7 @@ mod tests {
                 LocalDecl {
                     id: local_tmp,
                     name: None,
+                    identity: None,
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
                     origin: LocalOrigin::Temporary,
                     scope: ScopeId(0),
@@ -3048,6 +3245,40 @@ mod tests {
             panic_facts: Vec::new(),
             is_async: false,
         }
+    }
+
+    fn sample_global_place(kind: SemanticSourceTargetKind, write_policy: GlobalWritePolicy) -> Place {
+        Place::from_global(GlobalPlace {
+            identity: CanonicalSymbolId::module_declaration(
+                vec!["app".to_string()],
+                "VALUE",
+                kind,
+                HirSourceSpan::new(0, 5),
+            ),
+            ty: IncanType::Primitive(IncanPrimitiveType::Int),
+            write_policy,
+        })
+    }
+
+    #[test]
+    fn global_write_policies_distinguish_rebinding_from_projection_mutation() {
+        let local = Place::from_local(LocalId(0));
+        let read_only = sample_global_place(SemanticSourceTargetKind::Const, GlobalWritePolicy::ReadOnly);
+        let mut read_only_projection = read_only.clone();
+        read_only_projection
+            .projection
+            .push(PlaceElem::synthetic_field("member"));
+        let projection_only = sample_global_place(SemanticSourceTargetKind::Static, GlobalWritePolicy::ProjectionOnly);
+        let mut mutable_projection = projection_only.clone();
+        mutable_projection.projection.push(PlaceElem::synthetic_field("member"));
+        let rebindable = sample_global_place(SemanticSourceTargetKind::Static, GlobalWritePolicy::Rebindable);
+
+        assert!(local.permits_write());
+        assert!(!read_only.permits_write());
+        assert!(!read_only_projection.permits_write());
+        assert!(!projection_only.permits_write());
+        assert!(mutable_projection.permits_write());
+        assert!(rebindable.permits_write());
     }
 
     #[test]
@@ -3335,7 +3566,7 @@ mod tests {
     #[test]
     fn slice_projection_renders_optional_components() {
         let full_slice = Place {
-            local: LocalId(0),
+            root: PlaceRoot::Local(LocalId(0)),
             projection: vec![PlaceElem::Slice {
                 start: Some(Box::new(Operand::Constant(Constant::Int(1)))),
                 end: Some(Box::new(Operand::Constant(Constant::Int(3)))),
@@ -3345,7 +3576,7 @@ mod tests {
         assert_eq!(full_slice.render_snapshot(), "_0[const(1):const(3)]");
 
         let stepped_slice = Place {
-            local: LocalId(0),
+            root: PlaceRoot::Local(LocalId(0)),
             projection: vec![PlaceElem::Slice {
                 start: None,
                 end: None,
@@ -3473,6 +3704,7 @@ mod tests {
         body.locals.push(LocalDecl {
             id: param_local,
             name: Some("z".to_string()),
+            identity: None,
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
             origin: LocalOrigin::Parameter,
             scope: ScopeId(0),
@@ -3481,6 +3713,7 @@ mod tests {
         body.locals.push(LocalDecl {
             id: capture_local,
             name: Some("x".to_string()),
+            identity: None,
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
             origin: LocalOrigin::Captured,
             scope: ScopeId(0),
@@ -3509,7 +3742,7 @@ mod tests {
                             stmts: Vec::new(),
                             result: Operand::place(
                                 Place {
-                                    local: capture_local,
+                                    root: PlaceRoot::Local(capture_local),
                                     projection: Vec::new(),
                                 },
                                 OwnershipFact::Copy,
@@ -3604,6 +3837,7 @@ mod tests {
         body.locals.push(LocalDecl {
             id: LocalId(3),
             name: Some("s".to_string()),
+            identity: None,
             ty: IncanType::Primitive(IncanPrimitiveType::Str),
             origin: LocalOrigin::UserBinding,
             scope: ScopeId(0),
@@ -3620,6 +3854,7 @@ mod tests {
         body.locals.push(LocalDecl {
             id: LocalId(3),
             name: Some("self".to_string()),
+            identity: None,
             ty: IncanType::Named("Counter".to_string()),
             origin: LocalOrigin::Receiver { mutable: true },
             scope: ScopeId(0),
@@ -3639,6 +3874,7 @@ mod tests {
         body.locals.push(LocalDecl {
             id: LocalId(3),
             name: Some("self".to_string()),
+            identity: None,
             ty: IncanType::Named("Counter".to_string()),
             origin: LocalOrigin::Receiver { mutable: false },
             scope: ScopeId(0),
@@ -3647,6 +3883,7 @@ mod tests {
         body.locals.push(LocalDecl {
             id: LocalId(4),
             name: Some("self".to_string()),
+            identity: None,
             ty: IncanType::Named("Counter".to_string()),
             origin: LocalOrigin::Receiver { mutable: true },
             scope: ScopeId(0),
@@ -3713,6 +3950,7 @@ mod tests {
                         },
                         MatchArm {
                             pattern: Pattern::Struct {
+                                canonical: None,
                                 name: "Point".to_string(),
                                 fields: vec![("x".to_string(), Pattern::Wildcard)],
                             },
@@ -3723,6 +3961,7 @@ mod tests {
                         },
                         MatchArm {
                             pattern: Pattern::Enum {
+                                canonical: None,
                                 name: String::new(),
                                 variant: "Some".to_string(),
                                 fields: vec![Pattern::Wildcard],

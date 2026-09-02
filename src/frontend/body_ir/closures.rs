@@ -37,10 +37,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut captured_operands = Vec::with_capacity(free_names.len());
         let mut capture_locals = Vec::with_capacity(free_names.len());
         let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
+        let enclosing_identity_bindings = self.identity_bindings.clone();
         for name in &free_names {
-            // A free name lowering cannot resolve to a tracked outer local (e.g. a module-level `const`) is not
-            // captured -- the closure body's own `Self::local_for_name` lookup synthesizes an `External` reference
-            // for it exactly like anywhere else, since there is nothing meaningful to read-and-rebind.
+            // A free name that does not resolve to a tracked outer local (for example module storage) is not
+            // captured. The closure body resolves that source reference independently from its canonical identity,
+            // yielding a global place for a `const`/`static` or an explicit unsupported operand for an identity
+            // Body IR cannot represent.
             let Some(&outer_local) = self.bindings.get(name) else {
                 continue;
             };
@@ -53,6 +55,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let capture_local =
                 self.declare_new_local_with_reads(name.clone(), outer_ty, closure_scope, hir_span_value, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
+            if let Some(identity) = self.locals[outer_local.index()].identity.clone() {
+                self.locals[capture_local.index()].identity = Some(identity.clone());
+                self.identity_bindings.insert(identity, capture_local);
+            }
             capture_locals.push(capture_local);
             saved_bindings.push((name.clone(), Some(outer_local)));
         }
@@ -104,6 +110,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             }
         }
+        self.identity_bindings = enclosing_identity_bindings;
         self.materialized_range_locals = saved_materialized_range_locals;
 
         let closure_body = bir::ClosureBody {
@@ -219,6 +226,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
         let target_name = target_name.clone();
+        let target_canonical = binding.identity.clone();
         let direct_call_id = self
             .local_function_declarations
             .get(&target_name)
@@ -315,9 +323,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 name: target_name,
                 direct_call_id,
                 builtin: None,
-                // A compiler-synthesized forwarding call has no source call site, so it has no spelling or import
-                // provenance to record; the declaration it forwards to is already named by `direct_call_id`.
-                canonical: None,
+                // The forwarding call has no source call site of its own, but the partial target was checked as a
+                // declaration before synthesis. Carry that declaration identity forward; `direct_call_id` is only
+                // its physical same-module representation and cannot replace semantic authority.
+                canonical: target_canonical,
                 type_args: Vec::new(),
                 binding: forwarding_binding,
             })),

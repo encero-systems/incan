@@ -848,25 +848,28 @@ impl TypeChecker {
                     positional_index += 1;
                 }
                 CallArg::Named(name, _) => {
-                    if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
+                    if let Some(first_span) = named_seen.insert(name.node.as_str(), name.span) {
                         self.errors.push(errors::duplicate_call_argument(
                             callable_display,
-                            name,
+                            &name.node,
                             first_span,
-                            arg_span,
+                            name.span,
                         ));
                     }
-                    let Some(param_index) = params_by_name.get(name.as_str()).copied() else {
-                        self.errors
-                            .push(errors::unknown_keyword_argument(callable_display, name, arg_span));
+                    let Some(param_index) = params_by_name.get(name.node.as_str()).copied() else {
+                        self.errors.push(errors::unknown_keyword_argument(
+                            callable_display,
+                            &name.node,
+                            name.span,
+                        ));
                         continue;
                     };
                     if let Some(first_span) = bound_spans[param_index] {
                         self.errors.push(errors::duplicate_call_argument(
                             callable_display,
-                            name,
+                            &name.node,
                             first_span,
-                            arg_span,
+                            name.span,
                         ));
                         continue;
                     }
@@ -1605,11 +1608,11 @@ mod validate_rust_function_call_tests {
         let count_span = Span::new(30, 31);
         let args = [
             CallArg::Named(
-                "text".to_string(),
+                Spanned::new("text".to_string(), text_span),
                 Spanned::new(Expr::Literal(Literal::String("demo".to_string())), text_span),
             ),
             CallArg::Named(
-                "count".to_string(),
+                Spanned::new("count".to_string(), count_span),
                 Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(3))), count_span),
             ),
         ];

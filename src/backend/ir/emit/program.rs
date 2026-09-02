@@ -23,9 +23,7 @@ use quote::{format_ident, quote};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::frontend::ast::TypeConstraintKey;
-use crate::frontend::symbols::{
-    NewtypePrimitiveConstraint, overload_emitted_name_prefix, overload_source_name_from_emitted,
-};
+use crate::frontend::symbols::{NewtypePrimitiveConstraint, overload_emitted_name_prefix};
 use crate::provider::SDK_PROVIDER_BUILD_ENV;
 use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
 use incan_core::lang::surface::result_methods::ResultMethodId;
@@ -34,7 +32,7 @@ use incan_core::lang::{conventions, keywords, magic_methods, stdlib as core_stdl
 
 use super::super::decl::{
     FunctionParamDefault, IrDeclKind, IrEnum, IrEnumValue, IrEnumValueType, IrFunction, IrImportOrigin,
-    IrImportQualifier, IrRustTraitImport, IrTraitBound, IrTypeParam, Visibility,
+    IrImportQualifier, IrRustTraitImport, IrStaticProvenance, IrTraitBound, IrTypeParam, Visibility,
 };
 use super::super::expr::{
     IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IrMethodDispatch, MethodKind, Pattern,
@@ -161,7 +159,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                         let Some(import) = &item.rust_trait_import else {
                             continue;
                         };
-                        let binding = item.alias.as_ref().unwrap_or(&item.name).clone();
+                        let binding = item.emitted_binding_name();
                         analyzer.rust_extension_trait_imports.insert(binding, import.clone());
                     }
                 }
@@ -279,8 +277,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Mark a top-level generated item or import binding as referenced by emitted Rust.
     fn mark_reachable_item(&mut self, name: &str) {
         self.analysis.used_imports.insert(name.to_string());
-        if self.declarations_by_name.contains_key(name) && self.analysis.reachable_items.insert(name.to_string()) {
-            self.pending.push(name.to_string());
+        let declaration_name = self.function_registry.registry_key(name);
+        if self.declarations_by_name.contains_key(declaration_name)
+            && self.analysis.reachable_items.insert(declaration_name.to_string())
+        {
+            self.pending.push(declaration_name.to_string());
         }
     }
 
@@ -582,9 +583,10 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Scan an assignment target without treating field writes as field reads.
     fn scan_assign_target(&mut self, target: &AssignTarget) {
         match target {
-            AssignTarget::Var(name) | AssignTarget::StaticBinding(name) | AssignTarget::Static(name) => {
+            AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => {
                 self.mark_reachable_item(name);
             }
+            AssignTarget::Static { name, .. } => self.mark_reachable_item(name),
             AssignTarget::Field { object, .. } => self.scan_expr(object),
             AssignTarget::Index { object, index } => {
                 self.scan_expr(object);
@@ -626,7 +628,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     fn scan_expr(&mut self, expr: &TypedExpr) {
         self.scan_non_textual_type(&expr.ty);
         match &expr.kind {
-            IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+            IrExprKind::Var { name, .. }
+            | IrExprKind::StaticRead { name, .. }
+            | IrExprKind::StaticBinding { name, .. } => {
                 self.mark_reachable_item(name);
             }
             IrExprKind::AssociatedFunction {
@@ -1341,9 +1345,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     fn object_nominal_type_name(&self, object: &TypedExpr) -> Option<String> {
         Self::nominal_type_name(&object.ty).map(str::to_string).or_else(|| {
             let name = match &object.kind {
-                IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
-                    name
-                }
+                IrExprKind::Var { name, .. }
+                | IrExprKind::StaticRead { name, .. }
+                | IrExprKind::StaticBinding { name, .. } => name,
                 _ => return None,
             };
             self.variable_types
@@ -3796,8 +3800,7 @@ impl<'a> IrEmitter<'a> {
                             && signature.return_type == ret
                     })
                     .map(|(name, _)| {
-                        let source_name = name.strip_prefix("__incan_original_").unwrap_or(name);
-                        let source_name = overload_source_name_from_emitted(source_name);
+                        let source_name = self.callable_name_local_registry().source_name(name).unwrap_or(name);
                         (name.clone(), source_name.to_string())
                     })
                     .collect::<Vec<_>>();
@@ -3817,7 +3820,7 @@ impl<'a> IrEmitter<'a> {
                 }};
                 let mut body = dynamic_lookup;
                 for (candidate, source_name) in candidates.into_iter().rev() {
-                    let candidate_ident = Self::rust_ident(&candidate);
+                    let candidate_ident = self.rust_function_ident(&candidate);
                     let source_literal = proc_macro2::Literal::string(&source_name);
                     body = quote! {
                         if std::ptr::fn_addr_eq(callable, #candidate_ident as #fn_ty) {
@@ -3875,6 +3878,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
+        self.set_static_projections(program)?;
         let mut items = Vec::new();
         let analysis =
             GeneratedUseAnalyzer::analyze(program, &self.externally_reachable_items, self.preserve_public_items);
@@ -3893,17 +3897,18 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .filter(|decl| self.should_emit_decl(decl))
             .collect();
-        let static_names: Vec<String> = emitted_declarations
+        let static_declarations: Vec<(&str, &IrStaticProvenance)> = emitted_declarations
             .iter()
             .filter_map(|decl| match &decl.kind {
-                IrDeclKind::Static { name, .. } => Some(name.clone()),
+                IrDeclKind::Static { name, provenance, .. } => Some((name.as_str(), provenance)),
                 _ => None,
             })
             .collect();
         // `program.module_init` is compiler-generated work such as `@describe` registration. It uses the same
         // once-only helper as static initialization, and must run when a callable from an otherwise static-free
         // contributing module is invoked.
-        *self.module_needs_initialization.borrow_mut() = !static_names.is_empty() || !program.module_init.is_empty();
+        *self.module_needs_initialization.borrow_mut() =
+            !static_declarations.is_empty() || !program.module_init.is_empty();
         let (imported_static_init_bindings, imported_static_module_init_bindings) =
             self.collect_imported_static_init_bindings(&emitted_declarations);
         self.set_imported_static_init_bindings(imported_static_init_bindings);
@@ -4022,14 +4027,14 @@ impl<'a> IrEmitter<'a> {
         let previous_static_initializer = self.in_static_initializer.replace(true);
         let module_init_stmts = self.emit_stmts(&program.module_init)?;
         self.in_static_initializer.replace(previous_static_initializer);
-        if !static_names.is_empty() || !imported_static_init_calls.is_empty() || !module_init_stmts.is_empty() {
-            let force_calls: Vec<TokenStream> = static_names
+        if !static_declarations.is_empty() || !imported_static_init_calls.is_empty() || !module_init_stmts.is_empty() {
+            let force_calls: Vec<TokenStream> = static_declarations
                 .iter()
-                .map(|name| {
-                    let ident = Self::rust_static_ident(name);
-                    quote! { std::sync::LazyLock::force(&#ident); }
+                .map(|(name, provenance)| {
+                    self.rust_static_declaration_ident(name, provenance)
+                        .map(|ident| quote! { std::sync::LazyLock::force(&#ident); })
                 })
-                .collect();
+                .collect::<Result<_, _>>()?;
             items.push(quote! {
                 #[inline(always)]
                 pub(crate) fn __incan_init_module_statics() {
