@@ -4549,6 +4549,13 @@ impl TypeChecker {
                 return match (kind, public_library) {
                     (SymbolKind::Function(info), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
+                        // Resolution has just selected one concrete declaration in another module, and its declared
+                        // parameters are the only place a later stage can learn how this call's arguments bind:
+                        // the callee's name is not in scope here, so no by-name lookup can recover them. Recording
+                        // them at the point of resolution is what keeps a cross-module call bindable without
+                        // re-deriving a target from the qualifier and member spellings.
+                        self.type_info
+                            .record_call_site_callable_params_exact(span, &info.params);
                         self.validate_stdlib_module_function_call(
                             callable.as_str(),
                             &info,

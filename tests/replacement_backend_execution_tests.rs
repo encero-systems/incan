@@ -2829,6 +2829,120 @@ fn replacement_cli_executes_a_call_into_a_sibling_module_with_a_replacement_rece
     Ok(())
 }
 
+/// Execute a module-qualified call, written and aliased, through the replacement route.
+///
+/// `helper.bump(41)` reaches the AST as a method call, but `helper` is a namespace, not a value. Lowering it as a
+/// receiver refused at a name that never named a place: "resolved reference `helper` has no Body IR place
+/// representation". The qualifier says where to look; the typechecker has already resolved what was found, and this
+/// executes that declaration.
+///
+/// Both spellings are pinned because they differ only in the qualifier's own binding, and an alias is the case where
+/// a name-derived target would go wrong: `provider.bump` and `helper.bump` are one declaration reached two ways.
+#[test]
+fn replacement_cli_executes_a_module_qualified_call() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        (
+            "plain",
+            "import helper\n\ndef main() -> int:\n  return helper.bump(41)\n",
+        ),
+        (
+            "aliased",
+            "import helper as provider\n\ndef main() -> int:\n  return provider.bump(41)\n",
+        ),
+    ];
+    for (name, entry_source) in cases {
+        let temporary = tempfile::tempdir()?;
+        fs::write(
+            temporary.path().join("helper.incn"),
+            "pub def bump(value: int) -> int:\n  return value + 1\n",
+        )?;
+        let entrypoint = temporary.path().join("main.incn");
+        fs::write(&entrypoint, entry_source)?;
+
+        let report_path = temporary.path().join("module-qualified-report.json");
+        let output = Command::new(incan_binary())
+            .args([
+                "build",
+                entrypoint.to_string_lossy().as_ref(),
+                "--backend",
+                "replacement",
+                "--backend-fallback",
+                "refuse",
+            ])
+            .args([
+                "--report",
+                "json",
+                "--report-output",
+                report_path.to_string_lossy().as_ref(),
+            ])
+            .output()?;
+        assert!(
+            output.status.success(),
+            "the {name} module-qualified call must execute through the replacement route. stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+        assert_eq!(
+            report["replacement_execution"]["result"], "42",
+            "the {name} module-qualified call must produce the qualified declaration's result"
+        );
+
+        let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+            temporary.path().join(".incan/backend/receipt.json"),
+        )?)?;
+        assert_eq!(receipt["executed_backend"], "replacement");
+        assert_eq!(receipt["fallback_outcome"], serde_json::json!("not_needed"));
+    }
+    Ok(())
+}
+
+/// A receiver that merely shares a module's name is still an ordinary method call.
+///
+/// The module-qualified path keys off the receiver's resolved identity rather than its spelling, so a local bound to
+/// a value keeps its own meaning even when an imported module has the same name. Getting this wrong would silently
+/// redirect a method call to a free function in another module, which is the exact failure the identity-over-spelling
+/// rule exists to prevent -- so it is pinned rather than assumed.
+#[test]
+fn a_local_sharing_a_module_name_is_not_treated_as_a_module_qualifier() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    fs::write(
+        temporary.path().join("helper.incn"),
+        "pub def bump(value: int) -> int:\n  return value + 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "import helper\n\ndef main() -> int:\n  helper = 41\n  return helper.bump()\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output.status.success(),
+        "an int has no `bump` method, so this must not execute: {combined}"
+    );
+    assert!(
+        !combined.contains("42"),
+        "the shadowing local must not be redirected to the module's declaration: {combined}"
+    );
+    Ok(())
+}
+
 /// A typed-numeric carrier crosses a module boundary, and the callee's own operations are still validated.
 ///
 /// The typed-numeric walk previously followed only same-module calls, because it selected the callee by its

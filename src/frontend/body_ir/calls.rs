@@ -824,6 +824,81 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
+    /// Lower `module.function(args)` as a direct call to the declaration its receiver qualifies.
+    ///
+    /// A module binding is a namespace, not a value. `identity_provider.imported_path(17)` reaches the AST as a
+    /// method call, but there is no receiver to read, and treating the qualifier as a place refuses at a name that
+    /// never named one. The typechecker has already resolved this call to exactly one declaration; consuming that
+    /// identity keeps the call on the direct path instead of re-deriving a target from the two spellings the source
+    /// happens to join with a dot. The receiver's own identity decides whether this applies, so a local variable
+    /// that happens to share a module's name still lowers as an ordinary method call.
+    ///
+    /// Returns `None` when the receiver is not a module, leaving every other receiver shape untouched.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_module_qualified_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        if !self
+            .type_info
+            .resolved_identity(recv.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+        {
+            return None;
+        }
+        let hir_span_value = hir_span(span);
+
+        // Without the call's own resolved identity there is no target: the module qualifier names where to look,
+        // not what was found. Refusing here rather than falling through to the method path reports the construct
+        // the source actually wrote.
+        let Some(canonical) = self.type_info.resolved_identity(span).cloned() else {
+            return Some(self.unsupported_operand(
+                format!("module-qualified call `{name}` without a resolved canonical declaration"),
+                scope,
+                hir_span_value,
+                out,
+            ));
+        };
+        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+            Ok(resolved_type_args) => resolved_type_args,
+            Err(description) => return Some(self.unsupported_operand(description, scope, hir_span_value, out)),
+        };
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let (operands, binding) =
+            match self.bind_declared_args(&format!("function `{name}`"), declared, args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => return Some(self.unsupported_operand(description, scope, hir_span_value, out)),
+            };
+        let ty = self.resolve_ty(span);
+        Some(self.push_call_temp(
+            // The declaration lives in another module, so it has no span identity in this one. `canonical` is the
+            // fact that survives the boundary, and it is the only one a consumer may dispatch on here.
+            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                name: name.to_string(),
+                direct_call_id: None,
+                canonical: Some(canonical),
+                builtin: None,
+                type_args: resolved_type_args,
+                binding,
+            })),
+            operands,
+            ty,
+            scope,
+            hir_span_value,
+            false,
+            out,
+        ))
+    }
+
     /// Lower a method call `recv.name(args)` to a [`bir::Callee::Method`] call, with the receiver prepended to
     /// `args[0]` as a [`bir::OwnershipFact::Borrow`] operand (see the inline comment on the receiver-borrow decision
     /// below).
@@ -852,6 +927,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
         if let Some(lowered) = self.lower_checked_builtin_method_call(type_args, args, span, scope, out) {
+            return lowered;
+        }
+        if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
         if self.type_info.resolved_identity(recv.span).is_some_and(|identity| {
