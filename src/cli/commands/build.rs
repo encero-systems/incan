@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::project::runner::resolved_cargo_executable;
 use crate::backend::replacement::{
-    ReplacementExecutionError, execute_prevalidated_free_function, prepare_free_function_execution,
+    ReplacementExecutionError, ReplacementExecutionGraph, execute_prevalidated_free_function,
+    prepare_free_function_execution_in_graph,
 };
 use crate::backend::selection::{
     BackendExecutionReceipt, BackendKind, BackendSelection, FallbackOutcome, FallbackPolicy, SemanticModuleProvenance,
@@ -2599,6 +2600,24 @@ struct ReplacementSessionInputs {
     module_path: Vec<String>,
     type_info: typechecker::TypeCheckInfo,
     semantic_module: SemanticModuleProvenance,
+    /// Every non-entry module the one analysis already checked, in collection order.
+    ///
+    /// The session collects and analyzes the whole root source graph and previously kept only the entrypoint, which
+    /// is all the same-module #988 profile can execute. #1260 executes a call that leaves the entry module, so the
+    /// modules that call may reach have to survive the same analysis rather than be re-collected or re-checked
+    /// later: re-analysis would produce a second checker authority, and identities minted by two analyses cannot be
+    /// compared.
+    ///
+    /// The entrypoint is deliberately not repeated here. It stays in the fields above so existing readers keep
+    /// working unchanged, and the execution graph is assembled with the entry module as its primary.
+    reachable_modules: Vec<ReplacementModuleInputs>,
+}
+
+/// One checked non-entry module retained from the replacement session's single analysis.
+struct ReplacementModuleInputs {
+    program: crate::frontend::ast::Program,
+    module_path: Vec<String>,
+    type_info: typechecker::TypeCheckInfo,
 }
 
 /// Collect and analyze the replacement entrypoint once through the project-selected compilation session.
@@ -2640,10 +2659,25 @@ fn replacement_session_inputs(
     let semantic_snapshot_rendering = semantic_snapshot.render_snapshot();
     let source_identity = digest_output(&[entry_module.source.as_str()]);
 
+    let reachable_modules = modules
+        .iter()
+        .filter(|module| module.file_path != entry_module.file_path)
+        .filter_map(|module| {
+            analysis
+                .module_analysis_for_path(&module.file_path)
+                .map(|checked| ReplacementModuleInputs {
+                    program: module.ast.clone(),
+                    module_path: module.path_segments.clone(),
+                    type_info: checked.type_info().clone(),
+                })
+        })
+        .collect();
+
     Ok(ReplacementSessionInputs {
         program: entry_module.ast.clone(),
         module_path: entry_module.path_segments.clone(),
         type_info: entry_analysis.type_info().clone(),
+        reachable_modules,
         semantic_module: SemanticModuleProvenance::new(
             semantic_snapshot.hir.id.to_string(),
             semantic_snapshot.hir.path.clone(),
@@ -2704,7 +2738,19 @@ fn build_replacement_file_report(
         &session_inputs.module_path,
         &session_inputs.type_info,
     );
-    let execution_plan = match prepare_free_function_execution(&body_ir, "main", &[]) {
+    // Lower every module the one analysis checked, not just the entrypoint. A call that leaves the entry module can
+    // only resolve if its callee's module was lowered from that same analysis; lowering it later, or from a second
+    // analysis, would mint identities that cannot be compared with the ones the entry module carries.
+    let reachable_body_ir: Vec<_> = session_inputs
+        .reachable_modules
+        .iter()
+        .map(|module| build_body_ir_module_v0(&module.program, &module.module_path, &module.type_info))
+        .collect();
+    let execution_graph = match ReplacementExecutionGraph::new(&body_ir, reachable_body_ir.iter()) {
+        Ok(graph) => graph,
+        Err(error) => return refuse_replacement_profile(&selection, error, &entrypoint),
+    };
+    let execution_plan = match prepare_free_function_execution_in_graph(execution_graph, "main", &[], None) {
         Ok(plan) => plan,
         Err(error) => return refuse_replacement_profile(&selection, error, &entrypoint),
     };

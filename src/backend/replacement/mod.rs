@@ -1318,6 +1318,25 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
     args: &'args [ReplacementValue],
     providers: Option<&Rc<ProviderRuntime>>,
 ) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
+    prepare_free_function_execution_in_graph(ReplacementExecutionGraph::single_module(module), name, args, providers)
+}
+
+/// Validate and prepare one Body-IR free function whose reachable calls may leave its own module.
+///
+/// The graph names every module a call may resolve into, entrypoint first. Validation still runs against the
+/// entrypoint's module, because that is where the selected body and its arguments live; what the graph adds is the
+/// ability for a frame to execute against the module its callee was resolved to rather than the module the call was
+/// written in.
+///
+/// A one-node graph is exactly the previous behaviour, which is why
+/// [`prepare_free_function_execution_with_providers`] delegates here rather than duplicating the validation order.
+pub fn prepare_free_function_execution_in_graph<'module, 'args>(
+    graph: ReplacementExecutionGraph<'module>,
+    name: &str,
+    args: &'args [ReplacementValue],
+    providers: Option<&Rc<ProviderRuntime>>,
+) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
+    let module = graph.primary();
     let body = named_free_function(module, name)?;
     if body.is_generator() {
         return Err(unsupported("generator body", body.span));
@@ -1334,7 +1353,7 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
     validate_reachable_typed_numeric_profile(module, body)?;
     execution_preflight::validate(module, body, providers.map(Rc::as_ref))?;
     Ok(ValidatedFreeFunctionExecution {
-        graph: ReplacementExecutionGraph::single_module(module),
+        graph,
         name: name.to_string(),
         args,
         providers: providers.cloned(),
