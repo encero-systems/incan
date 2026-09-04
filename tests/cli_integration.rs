@@ -7012,7 +7012,7 @@ pub def main() -> None:
         "incan build for union widening generated wrapper conversion",
     );
 
-    let generated_main = fs::read_to_string(tmp.path().join("target/incan/union_widening_conversion/src/main.rs"))?;
+    let generated_main = read_generated_rust(&tmp.path().join("target/incan/union_widening_conversion/src/main.rs"))?;
     assert!(
         generated_main.contains("match make_base()"),
         "expected generated Rust to convert call-result union wrappers through a match, got:\n{generated_main}"
@@ -10081,7 +10081,7 @@ def main() -> None:
     )?;
     assert_success(&build_output, "public alias of imported item build");
 
-    let generated_main = fs::read_to_string(output_dir.join("src/main.rs"))?;
+    let generated_main = read_generated_rust(&output_dir.join("src/main.rs"))?;
     assert!(
         !generated_main.contains("pub use target_builder as public_target;"),
         "public alias should not re-export the private local import binding, got:\n{generated_main}"
