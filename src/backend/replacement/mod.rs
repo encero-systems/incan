@@ -994,8 +994,97 @@ pub struct ReplacementExecution {
 /// The capability retains the exact typed Body IR, source-level function name, and concrete arguments that were
 /// validated. It lets selection/receipt code decide whether direct execution may proceed without rerunning profile
 /// validation or allowing an unvalidated Body IR body to reach the executor.
+/// The set of Body-IR modules one replacement execution may resolve a call into.
+///
+/// The executor previously held a single `&BodyIrModule`, which is exactly right for the bounded #988 profile where
+/// every reachable call is same-module: an imported callable deliberately carries no same-module `direct_call_id`,
+/// so there was nothing to resolve elsewhere. #1260 widens that to a call graph crossing one source-local module
+/// edge or one direct public path-package edge, which needs somewhere to look the callee's owning module up.
+///
+/// Resolution is by compiler-owned module identity. A module is never selected from a source spelling, an import
+/// spelling, a source path, a generated Rust name, or declaration order, which is the property that lets the same
+/// graph serve a local module edge and a package edge without the executor knowing which it crossed.
+///
+/// The single-module case remains a one-node graph, so the existing #988 behaviour is unchanged and its tests keep
+/// proving the same thing.
+#[derive(Debug, Clone)]
+pub struct ReplacementExecutionGraph<'module> {
+    primary: &'module BodyIrModule,
+    reachable: Vec<&'module BodyIrModule>,
+}
+
+impl<'module> ReplacementExecutionGraph<'module> {
+    /// Build the one-node graph that represents today's single-module execution.
+    #[must_use]
+    pub fn single_module(primary: &'module BodyIrModule) -> Self {
+        Self {
+            primary,
+            reachable: Vec::new(),
+        }
+    }
+
+    /// Build a graph whose entrypoint is `primary` and whose reachable callees may live in `reachable`.
+    ///
+    /// Duplicate module identities are rejected rather than silently de-duplicated: two modules claiming one identity
+    /// means the caller assembled the graph from disagreeing analyses, and picking either one would make dispatch
+    /// depend on assembly order.
+    pub fn new(
+        primary: &'module BodyIrModule,
+        reachable: impl IntoIterator<Item = &'module BodyIrModule>,
+    ) -> Result<Self, ReplacementExecutionError> {
+        let mut modules: Vec<&'module BodyIrModule> = Vec::new();
+        for module in reachable {
+            if module.module_id == primary.module_id || modules.iter().any(|seen| seen.module_id == module.module_id) {
+                // Anchor the refusal at the entrypoint module's first body, which is the only span this graph owns.
+                // A graph-assembly fault has no single source construct to point at, and inventing a synthetic span
+                // would put a location in a diagnostic that no source position backs.
+                let span = primary
+                    .bodies
+                    .first()
+                    .map(|body| body.span)
+                    .unwrap_or(incan_semantics_core::HirSourceSpan { start: 0, end: 0 });
+                return Err(unsupported(
+                    "duplicate module identity in the replacement execution graph",
+                    span,
+                ));
+            }
+            modules.push(module);
+        }
+        Ok(Self {
+            primary,
+            reachable: modules,
+        })
+    }
+
+    /// Return the module owning the entrypoint this execution was prepared for.
+    #[must_use]
+    pub fn primary(&self) -> &'module BodyIrModule {
+        self.primary
+    }
+
+    /// Return every module this execution may resolve into, entrypoint first.
+    pub fn modules(&self) -> impl Iterator<Item = &'module BodyIrModule> + '_ {
+        std::iter::once(self.primary).chain(self.reachable.iter().copied())
+    }
+
+    /// Resolve the module owning `module_id`, or `None` when the graph does not contain it.
+    ///
+    /// A `None` here is a refusal, not a fallback: an unresolvable callee must fail before program effects rather
+    /// than resolve against the caller's own module, which is the invariant
+    /// `a_cross_module_call_is_refused_by_the_single_module_executor` pins.
+    #[must_use]
+    pub fn module_for(&self, module_id: &CompilerNodeId) -> Option<&'module BodyIrModule> {
+        self.modules().find(|module| module.module_id == *module_id)
+    }
+}
+
 pub struct ValidatedFreeFunctionExecution<'module, 'args> {
-    module: &'module BodyIrModule,
+    /// Every module this execution may resolve a call into, entrypoint first.
+    ///
+    /// Held as a graph rather than a single module so #1260 can widen dispatch without changing this type again. The
+    /// single-module profile is a one-node graph, so today's resolution is unchanged: `graph.primary()` is the same
+    /// module the executor used before.
+    graph: ReplacementExecutionGraph<'module>,
     name: String,
     args: &'args [ReplacementValue],
     /// The provider runtime this execution's admitted provider operations were validated against.
@@ -1245,7 +1334,7 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
     validate_reachable_typed_numeric_profile(module, body)?;
     execution_preflight::validate(module, body, providers.map(Rc::as_ref))?;
     Ok(ValidatedFreeFunctionExecution {
-        module,
+        graph: ReplacementExecutionGraph::single_module(module),
         name: name.to_string(),
         args,
         providers: providers.cloned(),
@@ -1461,9 +1550,15 @@ pub fn execute_prevalidated_free_function_with_io(
     execution: ValidatedFreeFunctionExecution<'_, '_>,
     io: &mut ProgramIo<'_>,
 ) -> Result<ReplacementExecution, ReplacementExecutionError> {
-    let body = named_free_function(execution.module, &execution.name)?;
+    let body = named_free_function(execution.graph.primary(), &execution.name)?;
     let checkpoint = io.checkpoint();
-    let mut executor = BodyExecutor::new(execution.module, body, execution.args, execution.providers.clone(), io)?;
+    let mut executor = BodyExecutor::new(
+        execution.graph.primary(),
+        body,
+        execution.args,
+        execution.providers.clone(),
+        io,
+    )?;
     let (value, result_span) = if body.is_async {
         let task = executor.construct_task(body.clone(), executor.locals.clone(), body.span)?;
         (executor.drive_task(&task, body.span)?, body.span)
