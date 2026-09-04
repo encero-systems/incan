@@ -32,14 +32,22 @@ pub(super) fn validate(
         module,
         reachable,
         providers,
-        pending: vec![entry],
+        pending: vec![(module, entry)],
         visited: BTreeSet::new(),
     };
-    while let Some(body) = preflight.pending.pop() {
+    while let Some((owner, body)) = preflight.pending.pop() {
         if preflight.visited.insert(&body.direct_call_id) {
-            validate_direct_body_profile(body)?;
-            preflight.parameters(&body.params)?;
-            preflight.statements(&body.block.stmts)?;
+            // A refusal raised here carries a span measured in `owner`, which is not always the entrypoint's module
+            // once a call can leave it. Recording the module keeps the reported location and the reported span
+            // describing the same file.
+            let owner_id = owner.module_id.path();
+            validate_direct_body_profile(body).map_err(|error| error.measured_in_module(owner_id))?;
+            preflight
+                .parameters(&body.params)
+                .map_err(|error| error.measured_in_module(owner_id))?;
+            preflight
+                .statements(&body.block.stmts)
+                .map_err(|error| error.measured_in_module(owner_id))?;
         }
     }
     Ok(())
@@ -55,7 +63,7 @@ struct ExecutionPreflight<'module, 'runtime> {
     /// would surface part-way through execution instead.
     reachable: &'module [BodyIrModule],
     providers: Option<&'runtime ProviderRuntime>,
-    pending: Vec<&'module Body>,
+    pending: Vec<(&'module BodyIrModule, &'module Body)>,
     visited: BTreeSet<&'module CompilerNodeId>,
 }
 
@@ -74,9 +82,9 @@ impl<'module> ExecutionPreflight<'module, '_> {
         &self,
         target: &NamedCallableTarget,
         span: HirSourceSpan,
-    ) -> Result<&'module Body, ReplacementExecutionError> {
+    ) -> Result<(&'module BodyIrModule, &'module Body), ReplacementExecutionError> {
         if target.direct_call_id.is_some() {
-            return named_callable_body(self.module, target, span);
+            return named_callable_body(self.module, target, span).map(|body| (self.module, body));
         }
         let canonical = target.canonical.as_ref().ok_or_else(|| {
             unsupported(
@@ -90,8 +98,8 @@ impl<'module> ExecutionPreflight<'module, '_> {
         let mut resolved = self
             .reachable
             .iter()
-            .filter_map(|module| module.body_for_canonical_target(canonical));
-        let body = resolved.next().ok_or_else(|| {
+            .filter_map(|module| module.body_for_canonical_target(canonical).map(|body| (module, body)));
+        let resolved_body = resolved.next().ok_or_else(|| {
             unsupported(
                 format!(
                     "named callable `{}` resolves to a declaration outside this execution graph",
@@ -109,7 +117,7 @@ impl<'module> ExecutionPreflight<'module, '_> {
                 span,
             ));
         }
-        Ok(body)
+        Ok(resolved_body)
     }
 
     /// Inspect retained source defaults without evaluating them or substituting partial presets.

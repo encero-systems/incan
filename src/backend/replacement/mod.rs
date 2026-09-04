@@ -4113,7 +4113,9 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             BodyExecutor::with_locals(module, Rc::clone(&self.reachable), locals, local_types, steps, self.io);
         child.next_task_id = self.next_task_id;
         child.providers = self.providers.clone();
-        let result = execute(&mut child);
+        // A frame running in another module raises refusals measured in that module's source, so record it here
+        // rather than letting the failure inherit the entrypoint's file on its way out.
+        let result = execute(&mut child).map_err(|error| error.measured_in_module(module.module_id.path()));
         let BodyExecutor {
             ownership_reads,
             runtime_requirements,
