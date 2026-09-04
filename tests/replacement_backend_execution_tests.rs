@@ -30,6 +30,63 @@ fn lower_typed_body_ir(source: &str) -> Result<BodyIrModule, Box<dyn std::error:
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
 }
 
+/// Lower one named module against a shared checker so two modules can be produced for cross-module tests.
+///
+/// `lower_typed_body_ir` fixes the module path, which is right for the single-module #988 profile but cannot express
+/// a call that crosses a module edge. #1260 needs two Body-IR modules whose canonical identities were minted under
+/// their own module paths, which is what this produces.
+fn lower_named_body_ir(source: &str, module_path: &[&str]) -> Result<BodyIrModule, Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path: Vec<String> = module_path.iter().map(|part| (*part).to_string()).collect();
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+}
+
+/// Characterize the module boundary #1260 replaces: a cross-module call cannot resolve through one module.
+///
+/// `prepare_free_function_execution` and `execute_free_function` take one `&BodyIrModule`, so a body whose reachable
+/// call graph leaves that module has no way to reach its callee: an imported callable deliberately carries no
+/// same-module `direct_call_id`, and #1260 must resolve it from the compiler-owned canonical target rather than
+/// manufacture one. This pins the current boundary so the `ReplacementExecutionGraph` that replaces it has a failing
+/// test to satisfy, and so the refusal stays a refusal rather than silently executing the wrong body.
+///
+/// This passes today, so it is a characterization test rather than a failing one. Its value is the invariant it
+/// pins: a cross-module call must never resolve against the caller's own module. When #1260 makes such a call
+/// execute, this test inverts to assert the value it produces, and until then it stops a partial implementation from
+/// silently resolving the wrong body.
+#[test]
+fn a_cross_module_call_is_refused_by_the_single_module_executor() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = lower_named_body_ir("pub def provide() -> int:\n  return 7\n", &["cross_module_provider"])?;
+    let consumer = lower_named_body_ir(
+        "from cross_module_provider import provide\n\ndef main() -> int:\n  return provide()\n",
+        &["cross_module_consumer"],
+    )?;
+
+    // The provider's body exists, but it exists in the *other* module.
+    assert!(
+        provider.bodies.iter().any(|body| body.name == "provide"),
+        "the provider module must retain its own callable body"
+    );
+    assert!(
+        !consumer.bodies.iter().any(|body| body.name == "provide"),
+        "the consumer module must not contain the imported callee's body; a cross-module call has to be resolved \
+         through the module graph rather than found locally"
+    );
+
+    let executed = execute_free_function(&consumer, "main", &[]);
+    assert!(
+        executed.is_err(),
+        "executing a cross-module call against only the caller's module must refuse until #1260 supplies the \
+         execution graph, got: {executed:?}"
+    );
+    Ok(())
+}
+
 /// Legal source used to isolate malformed retained constructor facts after checked lowering.
 const PAIR_CONSTRUCTION_SOURCE: &str = r#"
 model Pair:
