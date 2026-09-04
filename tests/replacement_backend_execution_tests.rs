@@ -4206,6 +4206,157 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
     Ok(())
 }
 
+/// A Rust or Python interop boundary must refuse as a missing host, not as a construct the profile has not reached.
+///
+/// #1262 requires public diagnostics to distinguish host-capability failures from the other reasons a program is
+/// refused. Before this, `import rust::serde_json` and `import std.io` both reported "import declaration", which told
+/// a reader that the replacement route had not got round to imports yet. The truth is narrower and more useful: the
+/// route reached this import and found that executing it needs a Rust interop host it does not have.
+///
+/// The crate is named because it is the actionable identity -- it is what an eventual interop plan is selected
+/// against -- and the refusal is addressed to the file that crosses the boundary, which is not always the entry
+/// module.
+#[test]
+fn a_rust_interop_boundary_refuses_as_a_missing_host() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        (
+            "rust-crate-import",
+            "import rust::serde_json\n\ndef main() -> int:\n  return 42\n",
+            "Rust interop module import of crate `serde_json`",
+        ),
+        (
+            "rust-item-import",
+            "from rust::incan_stdlib::text import normalize\n\ndef main() -> int:\n  return 42\n",
+            "Rust interop item import of crate `incan_stdlib`",
+        ),
+        (
+            "python-import",
+            "import python \"os\"\n\ndef main() -> int:\n  return 42\n",
+            "Python interop import of `os`",
+        ),
+    ];
+    for (name, source, expected_boundary) in cases {
+        let temporary = tempfile::tempdir()?;
+        let entrypoint = temporary.path().join(format!("{name}.incn"));
+        fs::write(&entrypoint, source)?;
+        let output = Command::new(incan_binary())
+            .args([
+                "build",
+                entrypoint.to_string_lossy().as_ref(),
+                "--backend",
+                "replacement",
+                "--backend-fallback",
+                "refuse",
+            ])
+            .output()?;
+        assert!(
+            !output.status.success(),
+            "{name} must be refused by the source-only profile"
+        );
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            combined.contains("INCAN-R988-UNSUPPORTED"),
+            "{name} must be refused through the typed profile diagnostic: {combined}"
+        );
+        assert!(
+            combined.contains(expected_boundary),
+            "{name} must name the interop boundary it crosses: {combined}"
+        );
+        assert!(
+            !combined.contains("does not support import declaration"),
+            "{name} must not report an interop boundary as an unreached construct: {combined}"
+        );
+    }
+
+    // The pair that makes the distinction real: an ordinary import is still refused as a construct this profile has
+    // not reached, and never claims a missing interop host.
+    let temporary = tempfile::tempdir()?;
+    let ordinary = temporary.path().join("ordinary.incn");
+    fs::write(&ordinary, "import std.io\n\ndef main() -> int:\n  return 42\n")?;
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            ordinary.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("does not support import declaration"),
+        "a standard-library import must still refuse as an unreached construct: {combined}"
+    );
+    assert!(
+        !combined.contains("interop host"),
+        "a standard-library import must not claim a missing interop host: {combined}"
+    );
+    Ok(())
+}
+
+/// An interop refusal is addressed to the module that crosses the boundary, not to the entry module.
+///
+/// #1318 admitted local module imports into the profile, so the first Rust boundary a program reaches is now often in
+/// a module the entry file merely imported. A refusal that pointed at the entry module would send a reader to a file
+/// containing nothing to fix.
+#[test]
+fn a_rust_interop_refusal_names_the_module_that_crosses_the_boundary() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let helpers = temporary.path().join("helpers.incn");
+    fs::write(
+        &helpers,
+        "from rust::incan_stdlib::text import normalize\n\npub def helper() -> int:\n  return 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helpers import helper\n\ndef main() -> int:\n  return helper()\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "a Rust interop boundary must be refused wherever it is declared"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("Rust interop item import of crate `incan_stdlib`"),
+        "an imported module's interop boundary must be named: {combined}"
+    );
+    assert!(
+        combined.contains(&format!("primary Incan source location: {}", helpers.display()))
+            || combined.contains("helpers.incn:"),
+        "the refusal must address the module that crosses the boundary: {combined}"
+    );
+    assert!(
+        !combined.contains("main.incn:0.."),
+        "the refusal must not be addressed to the entry module: {combined}"
+    );
+    Ok(())
+}
+
 /// Duplicate standard-library activation is a canonical binding error before backend selection begins.
 #[test]
 fn duplicate_async_activation_fails_during_typechecking() -> Result<(), Box<dyn std::error::Error>> {

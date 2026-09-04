@@ -2551,6 +2551,31 @@ fn replacement_local_module_import(import: &crate::frontend::ast::ImportDecl) ->
     first.as_str() != incan_core::lang::stdlib::STDLIB_ROOT
 }
 
+/// Describe a Rust-interop import in terms of the boundary it crosses, when it is one.
+///
+/// A `rust::` import is refused for a different reason than an ordinary one, and #1262 requires the difference to be
+/// visible: a reader has to be able to tell a construct this profile has not reached yet from a boundary that needs a
+/// host it does not have. Reporting both as "import declaration" told them neither, and named the wrong thing to go
+/// looking for.
+///
+/// The crate is named because it is the actionable part. Which crate a call would have entered is what a reader needs
+/// to know, and it is the identity the eventual interop plan is selected against.
+fn replacement_rust_interop_boundary(import: &crate::frontend::ast::ImportDecl) -> Option<String> {
+    let (crate_name, form) = match &import.kind {
+        ImportKind::RustCrate { crate_name, .. } => (crate_name, "module import"),
+        ImportKind::RustFrom { crate_name, .. } => (crate_name, "item import"),
+        ImportKind::Python(module) => {
+            return Some(format!(
+                "Python interop import of `{module}`, which this backend has no host for"
+            ));
+        }
+        _ => return None,
+    };
+    Some(format!(
+        "Rust interop {form} of crate `{crate_name}`: executing it needs a Rust interop host, and this route has none"
+    ))
+}
+
 /// Return the first unsupported source-module boundary with its original Incan source span.
 fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> Option<ReplacementExecutionError> {
     if let Some(rust_module) = &program.rust_module_path {
@@ -2590,9 +2615,11 @@ fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> 
                 continue;
             }
             let description = if exact_async_activation {
-                "duplicate `import std.async` replacement activation"
+                "duplicate `import std.async` replacement activation".to_string()
+            } else if let Some(boundary) = replacement_rust_interop_boundary(import) {
+                boundary
             } else {
-                "import declaration"
+                "import declaration".to_string()
             };
             return Some(ReplacementExecutionError::unsupported_profile(
                 description,
