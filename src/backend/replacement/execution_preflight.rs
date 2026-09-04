@@ -7,10 +7,11 @@
 
 use std::collections::BTreeSet;
 
-use incan_semantics_core::CompilerNodeId;
 use incan_semantics_core::body_ir::{
-    Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee, Rvalue, Statement, StatementKind,
+    Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee, NamedCallableTarget, Rvalue,
+    Statement, StatementKind,
 };
+use incan_semantics_core::{CompilerNodeId, HirSourceSpan};
 
 use super::{
     ReplacementExecutionError, named_callable_body, provider::ProviderRuntime, unsupported,
@@ -23,11 +24,13 @@ use super::{
 /// worklist breaks recursive call cycles without omitting the rest of a body.
 pub(super) fn validate(
     module: &BodyIrModule,
+    reachable: &[BodyIrModule],
     entry: &Body,
     providers: Option<&ProviderRuntime>,
 ) -> Result<(), ReplacementExecutionError> {
     let mut preflight = ExecutionPreflight {
         module,
+        reachable,
         providers,
         pending: vec![entry],
         visited: BTreeSet::new(),
@@ -45,12 +48,70 @@ pub(super) fn validate(
 /// Borrowed traversal state; visited declaration identities bound recursion without storing runtime evidence.
 struct ExecutionPreflight<'module, 'runtime> {
     module: &'module BodyIrModule,
+    /// Modules other than the entry's that a resolved call may reach.
+    ///
+    /// Preflight has to follow a call across a module edge for the same reason it follows one inside a module: an
+    /// admitted profile is proved before any program effect runs, and a body left unvisited is a body whose refusals
+    /// would surface part-way through execution instead.
+    reachable: &'module [BodyIrModule],
     providers: Option<&'runtime ProviderRuntime>,
     pending: Vec<&'module Body>,
     visited: BTreeSet<&'module CompilerNodeId>,
 }
 
 impl<'module> ExecutionPreflight<'module, '_> {
+    /// Resolve one named callee to the body preflight must also validate.
+    ///
+    /// A same-module call keeps the existing route: `direct_call_id` is a span identity that exists only for a
+    /// declaration physically present in this module, so its presence already proves locality and
+    /// `named_callable_body` applies the checks it always did.
+    ///
+    /// An imported callee has no such span identity and resolves on the canonical identity the typechecker selected,
+    /// never on its spelling. Preflight must follow it: refusing here because the callee is elsewhere would make an
+    /// imported body's refusals surface part-way through execution, which is the property this pass exists to
+    /// prevent.
+    fn resolve_callee(
+        &self,
+        target: &NamedCallableTarget,
+        span: HirSourceSpan,
+    ) -> Result<&'module Body, ReplacementExecutionError> {
+        if target.direct_call_id.is_some() {
+            return named_callable_body(self.module, target, span);
+        }
+        let canonical = target.canonical.as_ref().ok_or_else(|| {
+            unsupported(
+                format!(
+                    "named callable `{}` without a canonical declaration target",
+                    target.name
+                ),
+                span,
+            )
+        })?;
+        let mut resolved = self
+            .reachable
+            .iter()
+            .filter_map(|module| module.body_for_canonical_target(canonical));
+        let body = resolved.next().ok_or_else(|| {
+            unsupported(
+                format!(
+                    "named callable `{}` resolves to a declaration outside this execution graph",
+                    target.name
+                ),
+                span,
+            )
+        })?;
+        if resolved.next().is_some() {
+            return Err(unsupported(
+                format!(
+                    "named callable `{}` resolves to more than one module in this execution graph",
+                    target.name
+                ),
+                span,
+            ));
+        }
+        Ok(body)
+    }
+
     /// Inspect retained source defaults without evaluating them or substituting partial presets.
     fn parameters(&mut self, params: &'module [CallableParam]) -> Result<(), ReplacementExecutionError> {
         for parameter in params {
@@ -84,13 +145,12 @@ impl<'module> ExecutionPreflight<'module, '_> {
                     args,
                     ..
                 } if target.builtin.is_none()
-                    && target.direct_call_id.is_some()
+                    && (target.direct_call_id.is_some() || target.canonical.is_some())
                     && args.iter().all(|argument| argument.as_one().is_some())
                     && validate_argument_binding_profile(&target.binding) =>
                 {
                     // Invalid bindings and spreads belong to the caller's structural gate, not the target's host.
-                    self.pending
-                        .push(named_callable_body(self.module, target, statement.span)?);
+                    self.pending.push(self.resolve_callee(target, statement.span)?);
                 }
                 StatementKind::Assign { rvalue, .. } => self.rvalue(rvalue)?,
                 StatementKind::If {

@@ -1373,7 +1373,12 @@ pub fn prepare_free_function_execution_in_graph<'module, 'args>(
     validate_scalar_arguments(args, body.span)?;
     validate_selected_parameter_arguments(&body.params, args)?;
     validate_reachable_typed_numeric_profile(module, body)?;
-    execution_preflight::validate(module, body, providers.map(Rc::as_ref))?;
+    let preflight_reachable: Vec<BodyIrModule> = graph
+        .modules()
+        .filter(|candidate| candidate.module_id != module.module_id)
+        .cloned()
+        .collect();
+    execution_preflight::validate(module, &preflight_reachable, body, providers.map(Rc::as_ref))?;
     Ok(ValidatedFreeFunctionExecution {
         graph,
         name: name.to_string(),
@@ -1593,13 +1598,7 @@ pub fn execute_prevalidated_free_function_with_io(
 ) -> Result<ReplacementExecution, ReplacementExecutionError> {
     let body = named_free_function(execution.graph.primary(), &execution.name)?;
     let checkpoint = io.checkpoint();
-    let mut executor = BodyExecutor::new(
-        execution.graph.primary(),
-        body,
-        execution.args,
-        execution.providers.clone(),
-        io,
-    )?;
+    let mut executor = BodyExecutor::new(&execution.graph, body, execution.args, execution.providers.clone(), io)?;
     let (value, result_span) = if body.is_async {
         let task = executor.construct_task(body.clone(), executor.locals.clone(), body.span)?;
         (executor.drive_task(&task, body.span)?, body.span)
@@ -3872,6 +3871,12 @@ fn validate_write_place(
 /// Mutable interpreter state for one Body-IR execution.
 struct BodyExecutor<'run, 'writer> {
     module: BodyIrModule,
+    /// Modules other than this frame's own that a resolved call may execute against.
+    ///
+    /// Shared rather than cloned per frame: a nested frame inherits the same set, and the graph is immutable for the
+    /// life of one execution. `module` stays owned because a frame executes against exactly one module and every
+    /// existing lookup reads it directly.
+    reachable: Rc<Vec<BodyIrModule>>,
     locals: BTreeMap<LocalId, ReplacementValue>,
     /// Checked local types for the currently selected declaration or its nested source-local frame.
     local_types: BTreeMap<LocalId, IncanType>,
@@ -3903,14 +3908,23 @@ struct BodyExecutor<'run, 'writer> {
 impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// Bind the already-typechecked call arguments to their Body-IR parameter locals.
     fn new(
-        module: &BodyIrModule,
+        graph: &ReplacementExecutionGraph<'_>,
         body: &Body,
         args: &[ReplacementValue],
         providers: Option<Rc<ProviderRuntime>>,
         io: &'run mut ProgramIo<'writer>,
     ) -> Result<Self, ReplacementExecutionError> {
+        let module = graph.primary();
+        let reachable = Rc::new(
+            graph
+                .modules()
+                .filter(|candidate| candidate.module_id != module.module_id)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         let mut executor = Self {
             module: module.clone(),
+            reachable,
             locals: BTreeMap::new(),
             local_types: BTreeMap::new(),
             ownership_reads: Vec::new(),
@@ -3932,6 +3946,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// Build an isolated executor for a nested callable, default computation, or suspended generator frame.
     fn with_locals(
         module: &BodyIrModule,
+        reachable: Rc<Vec<BodyIrModule>>,
         locals: BTreeMap<LocalId, ReplacementValue>,
         local_types: BTreeMap<LocalId, IncanType>,
         steps: usize,
@@ -3939,6 +3954,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     ) -> Self {
         Self {
             module: module.clone(),
+            reachable,
             locals,
             local_types,
             ownership_reads: Vec::new(),
@@ -4031,7 +4047,8 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         steps: usize,
         execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
     ) -> Result<T, ReplacementExecutionError> {
-        let mut child = BodyExecutor::with_locals(module, locals, local_types, steps, self.io);
+        let mut child =
+            BodyExecutor::with_locals(module, Rc::clone(&self.reachable), locals, local_types, steps, self.io);
         child.next_task_id = self.next_task_id;
         child.providers = self.providers.clone();
         let result = execute(&mut child);
@@ -4820,7 +4837,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         args: &[&Operand],
         span: HirSourceSpan,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
-        let body = named_callable_body(&self.module, target, span)?.clone();
+        let (callee_module, body) = self.resolve_named_callable(target, span)?;
         validate_direct_body_profile(&body)?;
         if body.is_async && !target.type_args.is_empty() {
             return Err(unsupported("generic async callable target", span));
@@ -4850,7 +4867,9 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 )),
             })));
         }
-        self.execute_child(locals, self.steps, |child| {
+        let frame_module = callee_module.unwrap_or_else(|| self.module.clone());
+        let local_types_for_frame = self.local_types.clone();
+        self.execute_child_in_module(&frame_module, locals, local_types_for_frame, self.steps, |child| {
             child.record_body(&body);
             match child.execute_block(&body.block)? {
                 Flow::Return(Some(value), return_span) => {
@@ -4862,6 +4881,59 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 }
             }
         })
+    }
+
+    /// Resolve a named call to its declaration, and to the module that owns it when that is not this frame's own.
+    ///
+    /// A same-module call keeps its existing path exactly: `direct_call_id` is a span identity that only exists for a
+    /// declaration physically present here, so its presence already proves the callee is local and
+    /// `named_callable_body` performs the same checks it always did. `None` for the owning module means "this
+    /// frame's module", so nothing about same-module execution changes.
+    ///
+    /// A call whose callee is imported has no such span identity, and this is the only case that consults the wider
+    /// graph. It resolves on the canonical identity the typechecker selected, never on the callee's spelling: an
+    /// import spelling, alias, or source path is not a dispatch key, and a same-named declaration in a reachable
+    /// module must not answer for a different one.
+    fn resolve_named_callable(
+        &self,
+        target: &NamedCallableTarget,
+        span: HirSourceSpan,
+    ) -> Result<(Option<BodyIrModule>, Body), ReplacementExecutionError> {
+        if target.direct_call_id.is_some() {
+            return Ok((None, named_callable_body(&self.module, target, span)?.clone()));
+        }
+        let canonical = target.canonical.as_ref().ok_or_else(|| {
+            unsupported(
+                format!(
+                    "named callable `{}` without a same-module declaration identity or a canonical target",
+                    target.name
+                ),
+                span,
+            )
+        })?;
+        let mut resolved = self
+            .reachable
+            .iter()
+            .filter_map(|module| module.body_for_canonical_target(canonical).map(|body| (module, body)));
+        let (module, body) = resolved.next().ok_or_else(|| {
+            unsupported(
+                format!(
+                    "named callable `{}` resolves to a declaration outside this execution graph",
+                    target.name
+                ),
+                span,
+            )
+        })?;
+        if resolved.next().is_some() {
+            return Err(unsupported(
+                format!(
+                    "named callable `{}` resolves to more than one module in this execution graph",
+                    target.name
+                ),
+                span,
+            ));
+        }
+        Ok((Some(module.clone()), body.clone()))
     }
 
     /// Capture one admitted map or filter adapter without polling its source or callback.
@@ -7812,8 +7884,14 @@ mod tests {
         let mut stdout = std::io::sink();
         let mut stderr = std::io::sink();
         let mut io = ProgramIo::new(&mut stdout, &mut stderr);
-        let mut executor =
-            BodyExecutor::with_locals(&module, BTreeMap::new(), BTreeMap::new(), MAX_EXECUTION_STEPS, &mut io);
+        let mut executor = BodyExecutor::with_locals(
+            &module,
+            Rc::new(Vec::new()),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            MAX_EXECUTION_STEPS,
+            &mut io,
+        );
         let mut generator = ReplacementGenerator {
             frame: GeneratorFrame::new(
                 BTreeMap::new(),
@@ -7899,7 +7977,7 @@ mod tests {
         let mut stdout = std::io::sink();
         let mut stderr = std::io::sink();
         let mut io = ProgramIo::new(&mut stdout, &mut stderr);
-        let mut executor = BodyExecutor::with_locals(&module, locals, BTreeMap::new(), 0, &mut io);
+        let mut executor = BodyExecutor::with_locals(&module, Rc::new(Vec::new()), locals, BTreeMap::new(), 0, &mut io);
         let arms = [
             RaceArm {
                 awaitable: Operand::place(Place::from_local(winner_local), OwnershipFact::Borrow, false),

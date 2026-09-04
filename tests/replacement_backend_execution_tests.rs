@@ -4,7 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use incan::backend::replacement::{ReplacementExecutionGraph, ReplacementValue, execute_free_function};
+use incan::backend::replacement::{
+    ReplacementExecutionGraph, ReplacementValue, execute_free_function, execute_prevalidated_free_function,
+    prepare_free_function_execution_in_graph,
+};
 use incan::backend::selection::{
     BackendKind, FallbackOutcome, FallbackPolicy, ShadowComparisonState, digest_output, finalize_receipt,
     select_backend,
@@ -146,6 +149,47 @@ fn a_graph_refuses_duplicate_module_identities() -> Result<(), Box<dyn std::erro
         ReplacementExecutionGraph::new(&module, std::iter::once(&twin)).is_err(),
         "two modules claiming one identity must refuse rather than resolve by assembly order"
     );
+    Ok(())
+}
+
+/// Two independently checked modules cannot express a resolved cross-module call.
+///
+/// This records why #1260's executable proof lives in a session-backed integration fixture rather than here. Each
+/// module below is checked by its own `TypeChecker`, so the consumer's checker never sees the provider and the call
+/// stays unresolved: `direct_call_id`, `binding`, and `canonical` are all absent. There is nothing for the execution
+/// graph to resolve, and a test that lowered two modules separately and expected a cross-module call to execute
+/// would be asserting against a call the frontend never resolved.
+///
+/// `CompilationSession::analyze_modules` is the only checker authority for a source graph, which is what makes a
+/// call across a module edge carry the canonical identity dispatch resolves on.
+#[test]
+fn independently_checked_modules_do_not_resolve_a_cross_module_call() -> Result<(), Box<dyn std::error::Error>> {
+    let consumer = lower_named_body_ir(
+        "from unseen_provider import provide\n\ndef main() -> int:\n  return provide()\n",
+        &["unresolved_consumer"],
+    )?;
+    let unresolved =
+        consumer
+            .bodies
+            .iter()
+            .flat_map(|body| body.block.stmts.iter())
+            .filter_map(|statement| match &statement.kind {
+                StatementKind::Call {
+                    callee:
+                        incan_semantics_core::body_ir::Callee::Function(
+                            incan_semantics_core::body_ir::CallableTarget::Named(target),
+                        ),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .find(|target| target.name == "provide");
+    if let Some(target) = unresolved {
+        assert!(
+            target.direct_call_id.is_none() && target.canonical.is_none(),
+            "a call the frontend never resolved must carry neither identity, got: {target:?}"
+        );
+    }
     Ok(())
 }
 
