@@ -3957,6 +3957,9 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     }
 
     /// Execute an isolated frame against the local-type table owned by that frame's declaration.
+    ///
+    /// The frame runs in this executor's own module, which is correct for every same-module call in the #988 profile.
+    /// A frame whose callee was resolved to another module goes through [`Self::execute_child_in_module`] instead.
     fn execute_child_with_local_types<T>(
         &mut self,
         locals: BTreeMap<LocalId, ReplacementValue>,
@@ -3964,7 +3967,30 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         steps: usize,
         execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
     ) -> Result<T, ReplacementExecutionError> {
-        let mut child = BodyExecutor::with_locals(&self.module, locals, local_types, steps, self.io);
+        let module = self.module.clone();
+        self.execute_child_in_module(&module, locals, local_types, steps, execute)
+    }
+
+    /// Execute an isolated frame that is owned by `module` rather than by this executor's own module.
+    ///
+    /// Every nested frame -- callable, generator, task, default computation, and adapter -- reaches its executor
+    /// through here, so this is the one place a cross-module call changes what a child frame executes against. The
+    /// caller passes the module the callee was *resolved* to, never the module the call was written in: a frame that
+    /// kept the caller's module would resolve an imported body against the wrong declaration table, which is the
+    /// failure `a_cross_module_call_is_refused_by_the_single_module_executor` exists to prevent.
+    ///
+    /// Evidence merging is unchanged and deliberately module-agnostic. Ownership reads, runtime requirements, body
+    /// snapshots, step count, task identities, and lifecycle events belong to the one receipt-bound execution rather
+    /// than to whichever module a frame happened to run in, so they merge upward the same way across a module edge.
+    fn execute_child_in_module<T>(
+        &mut self,
+        module: &BodyIrModule,
+        locals: BTreeMap<LocalId, ReplacementValue>,
+        local_types: BTreeMap<LocalId, IncanType>,
+        steps: usize,
+        execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
+    ) -> Result<T, ReplacementExecutionError> {
+        let mut child = BodyExecutor::with_locals(module, locals, local_types, steps, self.io);
         child.next_task_id = self.next_task_id;
         child.providers = self.providers.clone();
         let result = execute(&mut child);
