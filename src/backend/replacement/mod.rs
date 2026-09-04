@@ -1067,6 +1067,28 @@ impl<'module> ReplacementExecutionGraph<'module> {
         std::iter::once(self.primary).chain(self.reachable.iter().copied())
     }
 
+    /// Resolve the declaration a canonical target selects, together with the module that owns it.
+    ///
+    /// This is the cross-module counterpart to [`BodyIrModule::body_for_canonical_target`], which answers only for
+    /// the module it is asked. Each module in the graph is asked in turn, and that method already refuses a target
+    /// whose module path is not its own, so a match means the owning module was found rather than a same-named
+    /// declaration in the wrong place.
+    ///
+    /// Two modules answering for one canonical identity is a contradiction rather than an ambiguity to break by
+    /// order: an identity names exactly one declaration site. `None` is returned instead, because dispatching to
+    /// either would make the choice depend on graph assembly order.
+    #[must_use]
+    pub fn body_for_canonical_target(
+        &self,
+        target: &incan_semantics_core::CanonicalSymbolId,
+    ) -> Option<(&'module BodyIrModule, &'module Body)> {
+        let mut found = self
+            .modules()
+            .filter_map(|module| module.body_for_canonical_target(target).map(|body| (module, body)));
+        let first = found.next()?;
+        found.next().is_none().then_some(first)
+    }
+
     /// Resolve the module owning `module_id`, or `None` when the graph does not contain it.
     ///
     /// A `None` here is a refusal, not a fallback: an unresolvable callee must fail before program effects rather

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use incan::backend::replacement::{ReplacementValue, execute_free_function};
+use incan::backend::replacement::{ReplacementExecutionGraph, ReplacementValue, execute_free_function};
 use incan::backend::selection::{
     BackendKind, FallbackOutcome, FallbackPolicy, ShadowComparisonState, digest_output, finalize_receipt,
     select_backend,
@@ -83,6 +83,68 @@ fn a_cross_module_call_is_refused_by_the_single_module_executor() -> Result<(), 
         executed.is_err(),
         "executing a cross-module call against only the caller's module must refuse until #1260 supplies the \
          execution graph, got: {executed:?}"
+    );
+    Ok(())
+}
+
+/// A canonical target owned by another module resolves through the execution graph, not through the caller.
+///
+/// This is the mechanism #1260 dispatches on. `direct_call_id` is a span identity and exists only for a declaration
+/// physically present in the calling module, which is why an imported callable has none. The canonical identity
+/// answers the different question of *which declaration was selected*, and survives the module boundary, so the
+/// graph resolves it by asking each module in turn rather than by matching a name.
+///
+/// The negative half matters as much as the positive: asking the consumer's own module for the same target must
+/// still return nothing. A resolution that succeeded locally would mean the executor could dispatch to a same-named
+/// declaration in the wrong module, which is exactly the failure the canonical identity exists to prevent.
+#[test]
+fn a_canonical_target_resolves_to_its_owning_module_through_the_graph() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = lower_named_body_ir(
+        "pub def provide() -> int:\n  return 7\n",
+        &["graph_resolution_provider"],
+    )?;
+    let consumer = lower_named_body_ir("def main() -> int:\n  return 1\n", &["graph_resolution_consumer"])?;
+
+    let provided = provider
+        .bodies
+        .iter()
+        .find(|body| body.name == "provide")
+        .ok_or("the provider module must retain its callable body")?;
+    let target = provided
+        .canonical
+        .as_ref()
+        .ok_or("the provider body must carry a canonical identity")?;
+
+    // The consumer alone cannot resolve it: the identity is owned by another module.
+    assert!(
+        consumer.body_for_canonical_target(target).is_none(),
+        "a canonical target owned by another module must not resolve against the caller's own module"
+    );
+
+    let graph = ReplacementExecutionGraph::new(&consumer, std::iter::once(&provider))?;
+    let (owner, body) = graph
+        .body_for_canonical_target(target)
+        .ok_or("the graph must resolve a canonical target owned by a reachable module")?;
+    assert_eq!(
+        owner.module_id, provider.module_id,
+        "resolution must report the module that owns the declaration"
+    );
+    assert_eq!(body.name, "provide", "resolution must return the selected declaration");
+    Ok(())
+}
+
+/// A graph refuses to be built from two modules claiming one identity.
+///
+/// Assembling a graph from disagreeing analyses is a caller fault, and accepting it would make dispatch depend on
+/// assembly order. Refusing at construction keeps that fault at the boundary that produced it rather than surfacing
+/// later as a call resolving to whichever module happened to be first.
+#[test]
+fn a_graph_refuses_duplicate_module_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let module = lower_named_body_ir("def main() -> int:\n  return 1\n", &["duplicate_identity"])?;
+    let twin = lower_named_body_ir("def main() -> int:\n  return 2\n", &["duplicate_identity"])?;
+    assert!(
+        ReplacementExecutionGraph::new(&module, std::iter::once(&twin)).is_err(),
+        "two modules claiming one identity must refuse rather than resolve by assembly order"
     );
     Ok(())
 }
