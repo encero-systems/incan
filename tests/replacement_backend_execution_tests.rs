@@ -2910,6 +2910,10 @@ fn replacement_cli_follows_a_typed_numeric_call_into_the_module_that_declares_it
         combined.contains("INCAN-R988-UNSUPPORTED") && combined.contains("aggregate construction"),
         "the callee module's unadmitted operation must be named: {combined}"
     );
+    assert!(
+        combined.contains("helper.incn:") && !combined.contains("main.incn:"),
+        "a refusal measured in the callee's module must report that module's source: {combined}"
+    );
     Ok(())
 }
 
@@ -3069,6 +3073,12 @@ fn replacement_cli_refuses_an_unsupported_declaration_in_a_sibling_module() -> R
     assert!(
         combined.contains("INCAN-R988-UNSUPPORTED") && combined.contains("non-function top-level declaration"),
         "missing typed refusal for the sibling module's declaration: {combined}"
+    );
+    // The span was measured in `helper.incn`, so the reported location has to be `helper.incn`. Reporting the
+    // entrypoint alongside another file's offsets points a reader at unrelated source.
+    assert!(
+        combined.contains("helper.incn:") && !combined.contains("main.incn:"),
+        "a refusal raised in a sibling module must report that module's source: {combined}"
     );
     assert!(
         !temporary.path().join(".incan/backend/receipt.json").exists(),

@@ -1189,6 +1189,12 @@ pub enum ReplacementExecutionError {
         span_start: usize,
         /// End byte offset duplicated for typed error formatting.
         span_end: usize,
+        /// Module identity the span was measured in, when it is not the executed entrypoint's.
+        ///
+        /// A span is a byte range and means nothing without the file it was measured in. While only the entrypoint
+        /// could raise a refusal this was implicit; once a call can leave that module, a refusal raised in another
+        /// one has to say so or the diagnostic points at the wrong file.
+        module_id: Option<String>,
     },
     /// A selected operation reached a source-observable runtime failure.
     #[error("replacement backend runtime failure at original Incan source span {span_start}..{span_end}: {detail}")]
@@ -1263,6 +1269,38 @@ pub enum ReplacementExecutionError {
 }
 
 impl ReplacementExecutionError {
+    /// Record the module a refusal's span was measured in, when it is not the executed entrypoint's.
+    ///
+    /// Applied where a walk crosses into another module, so every refusal raised beyond that point carries its own
+    /// source rather than inheriting the entrypoint's. An error that already names a module keeps it: the innermost
+    /// module that refused is the one that owns the span.
+    pub(crate) fn measured_in_module(self, module: &str) -> Self {
+        match self {
+            Self::Unsupported {
+                description,
+                span,
+                span_start,
+                span_end,
+                module_id,
+            } => Self::Unsupported {
+                description,
+                span,
+                span_start,
+                span_end,
+                module_id: module_id.or_else(|| Some(module.to_string())),
+            },
+            other => other,
+        }
+    }
+
+    /// Return the module identity a refusal's span was measured in, when it is not the entrypoint's.
+    pub(crate) fn measured_module(&self) -> Option<&str> {
+        match self {
+            Self::Unsupported { module_id, .. } => module_id.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Construct a typed, source-span-preserving refusal for an unsupported source-profile boundary.
     #[must_use]
     pub fn unsupported_profile(description: impl Into<String>, span: HirSourceSpan) -> Self {
@@ -1824,7 +1862,7 @@ fn validate_typed_numeric_body_profile(
     if !visited.insert(body.direct_call_id.clone()) {
         return Ok(());
     }
-    validate_typed_numeric_types(body)?;
+    validate_typed_numeric_types(body).map_err(|error| error.measured_in_module(module.module_id.path()))?;
     for parameter in &body.params {
         if let CallableParamDefault::Source(computation) = &parameter.default {
             validate_typed_numeric_statements(graph, module, body, &computation.stmts, visited)?;
@@ -1832,6 +1870,7 @@ fn validate_typed_numeric_body_profile(
         }
     }
     validate_typed_numeric_statements(graph, module, body, &body.block.stmts, visited)
+        .map_err(|error| error.measured_in_module(module.module_id.path()))
 }
 
 /// Validate a statement sequence for typed-numeric carrier movement and explicit operation refusals.
@@ -7319,6 +7358,7 @@ fn unsupported(description: impl Into<String>, span: HirSourceSpan) -> Replaceme
         span,
         span_start: span.start,
         span_end: span.end,
+        module_id: None,
     }
 }
 
