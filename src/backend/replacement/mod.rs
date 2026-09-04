@@ -3227,7 +3227,12 @@ fn validate_call_profile(
             true
         }
         Callee::Function(CallableTarget::Named(target)) => {
-            target.direct_call_id.is_some()
+            // `direct_call_id` is a span identity that only exists for a same-module declaration, so requiring it made
+            // locality the admission criterion. #1260 executes calls that leave the entry module, where the frontend
+            // resolves the callee to a canonical identity instead. Resolution is the property this gate actually
+            // needs: an unresolved call carries neither. Whether the execution graph holds that identity's body is
+            // decided at dispatch, which reports its own error rather than being silently admitted here.
+            (target.direct_call_id.is_some() || target.canonical.is_some())
                 && target.builtin.is_none()
                 && validate_argument_binding_profile(&target.binding)
         }

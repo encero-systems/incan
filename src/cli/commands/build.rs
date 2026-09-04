@@ -2514,6 +2514,25 @@ fn replacement_profile_cli_error(error: ReplacementExecutionError, entrypoint: &
     }
 }
 
+/// Whether one import names another module of the project currently being built.
+///
+/// #1260 executes a call that leaves the entry module, so an import naming a sibling of that module is now inside the
+/// profile: the session analyzes the whole source graph at once, and the execution graph resolves the callee's
+/// canonical identity to the module that declares it. Everything reaching outside that graph stays refused -- the
+/// standard library, a `pub::` package dependency, and every Rust or Python interop form each bring a boundary the
+/// source-only profile has no evidence for, and each is owned by a separate child of #989.
+fn replacement_local_module_import(import: &crate::frontend::ast::ImportDecl) -> bool {
+    let path = match &import.kind {
+        ImportKind::Module(path) | ImportKind::From { module: path, .. } => path,
+        // `pub::` dependencies, Rust crates and Python modules are other packages by construction.
+        _ => return false,
+    };
+    let Some(first) = path.segments.first() else {
+        return false;
+    };
+    first.as_str() != incan_core::lang::stdlib::STDLIB_ROOT
+}
+
 /// Return the first unsupported source-module boundary with its original Incan source span.
 fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> Option<ReplacementExecutionError> {
     if let Some(rust_module) = &program.rust_module_path {
@@ -2541,6 +2560,9 @@ fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> 
             );
             if exact_async_activation && !async_activation_seen {
                 async_activation_seen = true;
+                continue;
+            }
+            if !exact_async_activation && replacement_local_module_import(import) {
                 continue;
             }
             let description = if exact_async_activation {
@@ -2730,7 +2752,27 @@ fn build_replacement_file_report(
         session_inputs.semantic_module.source_identity(),
         options.backend.fallback_policy,
     );
-    if let Some(error) = replacement_module_profile_error(&session_inputs.program) {
+    // Every module the call can reach has to satisfy the profile, not only the entrypoint. Allowing a local import
+    // means an unsupported declaration is now reachable from a file the entry never names, and refusing it here keeps
+    // the boundary a property of the executed graph rather than of whichever file happened to be the entrypoint.
+    let profile_error = replacement_module_profile_error(&session_inputs.program).or_else(|| {
+        session_inputs
+            .reachable_modules
+            .iter()
+            // The one analysis also checks the standard-library modules the graph pulled in, which arrive under the
+            // generated `__incan_std` namespace rather than the source `std` spelling. Those are not project source
+            // and were never meant to satisfy a source-only profile -- `import std.async` legitimately reaches stdlib
+            // modules full of classes and imports. Only the project's own modules are executed here, so only they are
+            // held to the profile.
+            .filter(|module| {
+                !matches!(
+                    module.module_path.first().map(String::as_str),
+                    Some(incan_core::lang::stdlib::STDLIB_ROOT | incan_core::lang::stdlib::INCAN_STD_NAMESPACE)
+                )
+            })
+            .find_map(|module| replacement_module_profile_error(&module.program))
+    });
+    if let Some(error) = profile_error {
         return refuse_replacement_profile(&selection, error, &entrypoint);
     }
     let body_ir = build_body_ir_module_v0(

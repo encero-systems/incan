@@ -4,10 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use incan::backend::replacement::{
-    ReplacementExecutionGraph, ReplacementValue, execute_free_function, execute_prevalidated_free_function,
-    prepare_free_function_execution_in_graph,
-};
+use incan::backend::replacement::{ReplacementExecutionGraph, ReplacementValue, execute_free_function};
 use incan::backend::selection::{
     BackendKind, FallbackOutcome, FallbackPolicy, ShadowComparisonState, digest_output, finalize_receipt,
     select_backend,
@@ -2760,6 +2757,121 @@ fn replacement_cli_executes_typed_body_ir_and_persists_a_replacement_receipt() -
         receipt["identity"]
             .as_str()
             .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    Ok(())
+}
+
+/// Execute a call that leaves the entry module through the replacement route, with a #986 receipt.
+///
+/// This is #1260's local-module positive fixture. Everything before it executed inside one module, where a callee
+/// carries a same-module `direct_call_id`. Here `main` calls a function declared in a sibling module, so the frontend
+/// resolves the callee to a canonical identity instead and the execution graph has to find the module that declares
+/// it. The result is asserted from the report rather than the receipt, because the receipt stays receipt-only.
+#[test]
+fn replacement_cli_executes_a_call_into_a_sibling_module_with_a_replacement_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    fs::write(
+        temporary.path().join("helper.incn"),
+        "pub def bump(value: int) -> int:\n  return value + 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helper import bump\n\ndef main() -> int:\n  return bump(41)\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("cross-module-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "a call into a sibling module must execute through the replacement route. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("cross-module-report.json"))?)?;
+    assert_eq!(
+        report["replacement_execution"]["result"], "42",
+        "the sibling module's declaration must produce the source-observable result"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "direct replacement execution must not create a legacy generated-project directory"
+    );
+
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["selection"]["selected_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], serde_json::json!("not_needed"));
+    Ok(())
+}
+
+/// A sibling module is held to the same source-only profile as the entrypoint.
+///
+/// Allowing a local import means an unsupported declaration becomes reachable from a file the entrypoint never names.
+/// The refusal must still happen, so the boundary is a property of the executed graph rather than of whichever file
+/// happened to be the entrypoint.
+#[test]
+fn replacement_cli_refuses_an_unsupported_declaration_in_a_sibling_module() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    fs::write(
+        temporary.path().join("helper.incn"),
+        "pub class Holder:\n  value: int\n\npub def bump(value: int) -> int:\n  return value + 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helper import bump\n\ndef main() -> int:\n  return bump(41)\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "an unsupported declaration in a reachable module must be refused"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("INCAN-R988-UNSUPPORTED") && combined.contains("non-function top-level declaration"),
+        "missing typed refusal for the sibling module's declaration: {combined}"
+    );
+    assert!(
+        !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "a refused profile must not publish a replacement receipt"
     );
     Ok(())
 }
