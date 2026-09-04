@@ -2828,6 +2828,90 @@ fn replacement_cli_executes_a_call_into_a_sibling_module_with_a_replacement_rece
     Ok(())
 }
 
+/// A typed-numeric carrier crosses a module boundary, and the callee's own operations are still validated.
+///
+/// The typed-numeric walk previously followed only same-module calls, because it selected the callee by its
+/// same-module span identity. A cross-module callee was therefore refused outright. Admitting one is only sound if
+/// its operations are validated too, so both directions are pinned here: the admitted call executes, and an
+/// operation the profile does not admit is still refused when it lives in the *callee's* module rather than the
+/// entrypoint's.
+#[test]
+fn replacement_cli_follows_a_typed_numeric_call_into_the_module_that_declares_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let admitted = tempfile::tempdir()?;
+    fs::write(
+        admitted.path().join("helper.incn"),
+        "pub def widen(value: u8) -> u8:\n  return value\n",
+    )?;
+    let entrypoint = admitted.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helper import widen\n\ndef main() -> u8:\n  start: u8 = 41\n  return widen(start)\n",
+    )?;
+    let report_path = admitted.path().join("typed-numeric-report.json");
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            report_path.to_string_lossy().as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "an admitted typed-numeric call must cross the module boundary. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    assert_eq!(report["replacement_execution"]["result"], "41");
+
+    // The same shape, with an operation the carrier profile does not admit moved into the callee's module. A refusal
+    // here is the evidence that the walk actually entered `helper.incn` rather than trusting the call.
+    let refused = tempfile::tempdir()?;
+    fs::write(
+        refused.path().join("helper.incn"),
+        "pub def widen(value: u8) -> u8:\n  values: List[u8] = [value]\n  return values[0]\n",
+    )?;
+    let refused_entrypoint = refused.path().join("main.incn");
+    fs::write(
+        &refused_entrypoint,
+        "from helper import widen\n\ndef main() -> u8:\n  start: u8 = 41\n  return widen(start)\n",
+    )?;
+    let refusal = Command::new(incan_binary())
+        .args([
+            "build",
+            refused_entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !refusal.status.success(),
+        "an unadmitted typed-numeric operation in the callee's module must still be refused"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&refusal.stdout),
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+    assert!(
+        combined.contains("INCAN-R988-UNSUPPORTED") && combined.contains("aggregate construction"),
+        "the callee module's unadmitted operation must be named: {combined}"
+    );
+    Ok(())
+}
+
 /// A sibling module is held to the same source-only profile as the entrypoint.
 ///
 /// Allowing a local import means an unsupported declaration becomes reachable from a file the entrypoint never names.

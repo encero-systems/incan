@@ -1372,7 +1372,7 @@ pub fn prepare_free_function_execution_in_graph<'module, 'args>(
     }
     validate_scalar_arguments(args, body.span)?;
     validate_selected_parameter_arguments(&body.params, args)?;
-    validate_reachable_typed_numeric_profile(module, body)?;
+    validate_reachable_typed_numeric_profile(&graph, module, body)?;
     let preflight_reachable: Vec<BodyIrModule> = graph
         .modules()
         .filter(|candidate| candidate.module_id != module.module_id)
@@ -1806,15 +1806,17 @@ impl TypedNumericProfileKind {
 /// lossless widening, direct calls, scalar conversions and Display output, while keeping arithmetic, Debug,
 /// aggregates, methods and other unproved behavior explicitly non-green under #988.
 fn validate_reachable_typed_numeric_profile(
+    graph: &ReplacementExecutionGraph<'_>,
     module: &BodyIrModule,
     root: &Body,
 ) -> Result<(), ReplacementExecutionError> {
     let mut visited = BTreeSet::new();
-    validate_typed_numeric_body_profile(module, root, &mut visited)
+    validate_typed_numeric_body_profile(graph, module, root, &mut visited)
 }
 
 /// Validate one reachable body once, following its source defaults and identity-selected sibling calls.
 fn validate_typed_numeric_body_profile(
+    graph: &ReplacementExecutionGraph<'_>,
     module: &BodyIrModule,
     body: &Body,
     visited: &mut BTreeSet<CompilerNodeId>,
@@ -1825,28 +1827,30 @@ fn validate_typed_numeric_body_profile(
     validate_typed_numeric_types(body)?;
     for parameter in &body.params {
         if let CallableParamDefault::Source(computation) = &parameter.default {
-            validate_typed_numeric_statements(module, body, &computation.stmts, visited)?;
+            validate_typed_numeric_statements(graph, module, body, &computation.stmts, visited)?;
             let _ = typed_numeric_operand_kind(body, &computation.result, computation.span)?;
         }
     }
-    validate_typed_numeric_statements(module, body, &body.block.stmts, visited)
+    validate_typed_numeric_statements(graph, module, body, &body.block.stmts, visited)
 }
 
 /// Validate a statement sequence for typed-numeric carrier movement and explicit operation refusals.
 fn validate_typed_numeric_statements(
+    graph: &ReplacementExecutionGraph<'_>,
     module: &BodyIrModule,
     body: &Body,
     statements: &[Statement],
     visited: &mut BTreeSet<CompilerNodeId>,
 ) -> Result<(), ReplacementExecutionError> {
     for statement in statements {
-        validate_typed_numeric_statement(module, body, statement, visited)?;
+        validate_typed_numeric_statement(graph, module, body, statement, visited)?;
     }
     Ok(())
 }
 
 /// Validate one normalized statement without executing its effects.
 fn validate_typed_numeric_statement(
+    graph: &ReplacementExecutionGraph<'_>,
     module: &BodyIrModule,
     body: &Body,
     statement: &Statement,
@@ -1854,10 +1858,10 @@ fn validate_typed_numeric_statement(
 ) -> Result<(), ReplacementExecutionError> {
     match &statement.kind {
         StatementKind::Assign { rvalue, .. } => {
-            validate_typed_numeric_rvalue(module, body, rvalue, statement.span, visited)
+            validate_typed_numeric_rvalue(graph, module, body, rvalue, statement.span, visited)
         }
         StatementKind::Call { callee, args, .. } => {
-            validate_typed_numeric_call(module, body, callee, args, statement.span, visited)
+            validate_typed_numeric_call(graph, module, body, callee, args, statement.span, visited)
         }
         StatementKind::Drop { .. } | StatementKind::Continue | StatementKind::Unsupported { .. } => Ok(()),
         StatementKind::If {
@@ -1866,14 +1870,14 @@ fn validate_typed_numeric_statement(
             else_block,
         } => {
             refuse_typed_numeric_operand(body, cond, statement.span, "condition")?;
-            validate_typed_numeric_statements(module, body, &then_block.stmts, visited)?;
+            validate_typed_numeric_statements(graph, module, body, &then_block.stmts, visited)?;
             if let Some(else_block) = else_block {
-                validate_typed_numeric_statements(module, body, &else_block.stmts, visited)?;
+                validate_typed_numeric_statements(graph, module, body, &else_block.stmts, visited)?;
             }
             Ok(())
         }
         StatementKind::Loop { body: loop_body } => {
-            validate_typed_numeric_statements(module, body, &loop_body.stmts, visited)
+            validate_typed_numeric_statements(graph, module, body, &loop_body.stmts, visited)
         }
         StatementKind::Break { value } => {
             if let Some(value) = value {
@@ -1920,7 +1924,7 @@ fn validate_typed_numeric_statement(
         StatementKind::Race { arms, .. } => {
             for arm in arms {
                 refuse_typed_numeric_operand(body, &arm.awaitable, statement.span, "race awaitable")?;
-                validate_typed_numeric_statements(module, body, &arm.body.stmts, visited)?;
+                validate_typed_numeric_statements(graph, module, body, &arm.body.stmts, visited)?;
                 let _ = typed_numeric_operand_kind(body, &arm.result, statement.span)?;
             }
             Ok(())
@@ -1930,6 +1934,7 @@ fn validate_typed_numeric_statement(
 
 /// Validate one rvalue, admitting carrier movement and refusing unproved typed-numeric operations.
 fn validate_typed_numeric_rvalue(
+    graph: &ReplacementExecutionGraph<'_>,
     module: &BodyIrModule,
     body: &Body,
     rvalue: &Rvalue,
@@ -2010,11 +2015,11 @@ fn validate_typed_numeric_rvalue(
             }
             for parameter in params {
                 if let CallableParamDefault::Source(computation) = &parameter.default {
-                    validate_typed_numeric_statements(module, body, &computation.stmts, visited)?;
+                    validate_typed_numeric_statements(graph, module, body, &computation.stmts, visited)?;
                     let _ = typed_numeric_operand_kind(body, &computation.result, computation.span)?;
                 }
             }
-            validate_typed_numeric_statements(module, body, &closure.stmts, visited)?;
+            validate_typed_numeric_statements(graph, module, body, &closure.stmts, visited)?;
             let _ = typed_numeric_operand_kind(body, &closure.result, span)?;
             Ok(())
         }
@@ -2027,17 +2032,17 @@ fn validate_typed_numeric_rvalue(
             for operand in captured_operands {
                 let _ = typed_numeric_operand_kind(body, operand, span)?;
             }
-            validate_typed_numeric_statements(module, body, &generator.stmts, visited)
+            validate_typed_numeric_statements(graph, module, body, &generator.stmts, visited)
         }
         Rvalue::Match { scrutinee, arms } => {
             refuse_typed_numeric_operand(body, scrutinee, span, "match")?;
             for arm in arms {
                 validate_typed_numeric_pattern(&arm.pattern, span)?;
-                validate_typed_numeric_statements(module, body, &arm.guard_stmts, visited)?;
+                validate_typed_numeric_statements(graph, module, body, &arm.guard_stmts, visited)?;
                 if let Some(guard) = &arm.guard {
                     refuse_typed_numeric_operand(body, guard, span, "match guard")?;
                 }
-                validate_typed_numeric_statements(module, body, &arm.body_stmts, visited)?;
+                validate_typed_numeric_statements(graph, module, body, &arm.body_stmts, visited)?;
                 let _ = typed_numeric_operand_kind(body, &arm.result, span)?;
             }
             Ok(())
@@ -2048,6 +2053,7 @@ fn validate_typed_numeric_rvalue(
 
 /// Validate one call that receives a typed-numeric operand and follow any retained same-module target.
 fn validate_typed_numeric_call(
+    graph: &ReplacementExecutionGraph<'_>,
     module: &BodyIrModule,
     body: &Body,
     callee: &Callee,
@@ -2062,12 +2068,21 @@ fn validate_typed_numeric_call(
         .flatten()
         .collect::<Vec<_>>();
 
+    // Follow the callee into whichever module declares it. A same-module target is reached by its span identity; one
+    // that left the module carries a canonical identity instead, and the graph owns that resolution. Following both is
+    // what makes admitting a cross-module call below sound: the callee's own operations are validated under the same
+    // contract, in its own module, rather than being trusted because the call site could not see them.
     if let Callee::Function(CallableTarget::Named(target)) = callee
-        && target.direct_call_id.is_some()
         && target.builtin.is_none()
     {
-        let called = named_callable_body(module, target, span)?;
-        validate_typed_numeric_body_profile(module, called, visited)?;
+        if target.direct_call_id.is_some() {
+            let called = named_callable_body(module, target, span)?;
+            validate_typed_numeric_body_profile(graph, module, called, visited)?;
+        } else if let Some(canonical) = target.canonical.as_ref()
+            && let Some((owner, called)) = graph.body_for_canonical_target(canonical)
+        {
+            validate_typed_numeric_body_profile(graph, owner, called, visited)?;
+        }
     }
     let Some(kind) = kinds.first().copied() else {
         return Ok(());
@@ -2082,7 +2097,10 @@ fn validate_typed_numeric_call(
                 format!("`{}` conversion", target.name),
                 span,
             )),
-            None if target.direct_call_id.is_some() => Ok(()),
+            // A direct call is admitted whether the declaration is in this module or another one the graph resolved.
+            // `direct_call_id` alone made locality the criterion; the callee's operations are validated above either
+            // way, so the distinction the profile actually cares about is that the frontend resolved the call at all.
+            None if target.direct_call_id.is_some() || target.canonical.is_some() => Ok(()),
             other => Err(typed_numeric_operation_refusal(
                 kind,
                 format!(
