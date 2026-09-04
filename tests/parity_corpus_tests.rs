@@ -102,9 +102,10 @@ const ISINSTANCE_TARGETS_SOURCE: &str = include_str!("fixtures/replacement/isins
 
 use parity_corpus::{
     BehaviorCategory, CheckedIdentityGraph, ComparisonOutcome, Disposition, EvidenceLane, IdentityAssertions,
-    IdentityBindingForm, IdentityConformancePlan, IdentityConformanceSubject, IdentityCoverageCell, IdentityNamespace,
-    IdentityReplacementPlan, IdentityScope, IdentitySourceModule, OverallState, ParityCase, ReceiptRef,
-    ReleaseArtifactAssertions, SourceIdentityConformancePlan, behavior_observation_identity, exact_rust_identifier,
+    IdentityBindingForm, IdentityConformancePlan, IdentityConformanceSubject, IdentityCoverageCell,
+    IdentityGraphDeferral, IdentityGraphEntrypoint, IdentityNamespace, IdentityReplacementPlan, IdentityScope,
+    IdentitySourceModule, OverallState, ParityCase, ReceiptRef, ReleaseArtifactAssertions,
+    SourceIdentityConformancePlan, behavior_observation_identity, exact_rust_identifier,
     identity_conformance_evidence_identity, validate_corpus, validate_identity_coverage,
 };
 
@@ -1930,6 +1931,109 @@ def aliased_path_block_scope() -> int:
     return 0
 
 "#;
+
+/// Every matrix cell the replacement route executes across the module boundary, with the value it must return.
+///
+/// The returned values are deliberately distinct so a call that reached the wrong declaration is a wrong number
+/// rather than a coincidence: were `lexical_alias` resolved to `imported_lexical`, this row would return 3 where 5
+/// is required, and both are real declarations that execute.
+///
+/// Member cells are absent on purpose and are declared in [`IDENTITY_MATRIX_DEFERRED`] instead.
+const IDENTITY_MATRIX_ENTRYPOINTS: &[IdentityGraphEntrypoint] = &[
+    IdentityGraphEntrypoint {
+        function: "local_lexical_function_scope",
+        expected: 1,
+    },
+    IdentityGraphEntrypoint {
+        function: "local_lexical_block_scope",
+        expected: 1,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_lexical_function_scope",
+        expected: 3,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_lexical_block_scope",
+        expected: 3,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_lexical_function_scope",
+        expected: 5,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_lexical_block_scope",
+        expected: 5,
+    },
+    IdentityGraphEntrypoint {
+        function: "reexported_lexical_function_scope",
+        expected: 7,
+    },
+    IdentityGraphEntrypoint {
+        function: "reexported_lexical_block_scope",
+        expected: 7,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_path_function_scope",
+        expected: 17,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_path_block_scope",
+        expected: 17,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_path_function_scope",
+        expected: 19,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_path_block_scope",
+        expected: 19,
+    },
+];
+
+/// Matrix cells the replacement route refuses today, each bound to the issue that owns closing the gap.
+///
+/// Every member cell in the matrix reads a field through a model method, and the direct profile retains a model
+/// declaration only when it has no methods (`is_direct_replacement_plain_model`), so the constructor is refused
+/// before the method is ever reached. That is a language-matrix gap owned by #1291, not an import one: the same
+/// refusal occurs for `LocalMember`, which crosses no module boundary at all. #1260 and #1261 supply what these
+/// cells still need after that lands -- the imported, aliased, and re-exported identities they construct through.
+///
+/// The runner requires each of these to actually be refused. A deferral that quietly starts working fails this row
+/// rather than passing unnoticed, so the day #1291 lands, someone has to come back and promote these cells.
+const IDENTITY_MATRIX_DEFERRED: &[IdentityGraphDeferral] = &[
+    IdentityGraphDeferral {
+        function: "local_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "local_member_block_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "imported_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "imported_member_block_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "aliased_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "aliased_member_block_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "reexported_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "reexported_member_block_scope",
+        owning_issue: 1291,
+    },
+];
 
 const IDENTITY_MATRIX_MODULES: &[IdentitySourceModule] = &[
     IdentitySourceModule {
@@ -3848,11 +3952,12 @@ fn seed_corpus() -> Vec<ParityCase> {
                 modules: IDENTITY_MATRIX_MODULES,
                 root_module: "identity_matrix",
                 verify: verify_identity_matrix,
-                replacement: IdentityReplacementPlan::Unavailable {
-                    owning_issue: 989,
-                    reason: "#989 owns cross-package/import/re-export replacement execution; this row executes the checked graph, HIR, Body IR, and generated canonical projections only",
+                replacement: IdentityReplacementPlan::Graph {
+                    root_module: "identity_matrix",
+                    entrypoints: IDENTITY_MATRIX_ENTRYPOINTS,
+                    deferred: IDENTITY_MATRIX_DEFERRED,
                 },
-                comparison_reason: "#989 owns cross-package/import/re-export replacement execution, so no paired source-observable comparison was available",
+                comparison_reason: "the checked graph and the cross-module replacement route both executed, but no independent legacy execution was run for a source-observable comparison",
             })),
             replacement_execution: None,
         },
@@ -4199,7 +4304,8 @@ fn rfc_120_rows_publish_real_conformance_evidence_without_fabricating_legacy_exe
         );
         if matches!(
             row.id,
-            "parity-987-120-02-let-shadow"
+            "parity-987-120-01-identity-matrix"
+                | "parity-987-120-02-let-shadow"
                 | "parity-987-120-03-mut-shadow"
                 | "parity-987-120-04-generic-binder"
                 | "parity-987-120-05-builtin-rebinding"
@@ -4222,7 +4328,9 @@ fn rfc_120_rows_publish_real_conformance_evidence_without_fabricating_legacy_exe
         .and_then(|row| row.identity_conformance.as_ref())
         .ok_or("RFC 120 identity matrix evidence is missing")?;
     assert_eq!(matrix.coverage_cells.len(), 26);
-    assert_eq!(matrix.replacement_unavailable_issue, Some(989));
+    // The matrix used to record #989 as owning an unavailable replacement route. #1260 and #1261 made cross-module
+    // execution real, so the row now carries an executed output identity instead of an owner for its absence.
+    assert_eq!(matrix.replacement_unavailable_issue, None);
 
     let artifact = rows
         .iter()

@@ -43,8 +43,9 @@
 
 use incan::backend::IrCodegen;
 use incan::backend::replacement::{
-    OwnershipReadProjection, ReplacementValue, RuntimeRequirementProjection, TaskLifecycleProjection,
-    execute_prevalidated_free_function, prepare_free_function_execution,
+    OwnershipReadProjection, ReplacementExecutionGraph, ReplacementValue, RuntimeRequirementProjection,
+    TaskLifecycleProjection, execute_prevalidated_free_function, prepare_free_function_execution,
+    prepare_free_function_execution_in_graph,
 };
 use incan::backend::selection::{
     BackendKind, BackendSelection, BackendSelectionError, FallbackPolicy, ShadowComparisonState, digest_output,
@@ -1194,8 +1195,45 @@ pub(crate) enum IdentityReplacementPlan {
         arguments: fn() -> Vec<ReplacementValue>,
         expected: fn() -> ReplacementValue,
     },
+    /// Execute every declared entrypoint against a replacement graph spanning the checked modules.
+    ///
+    /// This is the cross-module form of [`IdentityReplacementPlan::Direct`]. A row uses it when its entrypoints
+    /// call across the module boundary rather than staying inside one module's Body IR, which is exactly the
+    /// surface #1260 and #1261 made executable: the callee's identity is resolved through the graph rather than
+    /// through the caller module's own bodies.
+    Graph {
+        root_module: &'static str,
+        entrypoints: &'static [IdentityGraphEntrypoint],
+        deferred: &'static [IdentityGraphDeferral],
+    },
     /// The checked graph is executable through its compiler carriers, but replacement package execution is not.
     Unavailable { owning_issue: u32, reason: &'static str },
+}
+
+/// One entrypoint a graph replacement plan executes, with the integer result the checked route must produce.
+///
+/// Entrypoints are scalar and argument-free on purpose. The claim under test is that a call reaching another
+/// module resolves to one declaration and returns that declaration's result; parameter passing and richer value
+/// shapes are already covered by the single-module rows and would only add noise here.
+#[derive(Clone, Copy)]
+pub(crate) struct IdentityGraphEntrypoint {
+    /// Free function in the plan's root module.
+    pub(crate) function: &'static str,
+    /// Value the entrypoint must return.
+    pub(crate) expected: i64,
+}
+
+/// One entrypoint a graph replacement plan cannot execute yet, bound to the issue that owns closing the gap.
+///
+/// The runner requires the refusal to be real: it prepares the entrypoint and fails the row if preparation
+/// succeeds. A gap that closes without anyone noticing would otherwise leave a stale deferral behind, which is the
+/// same "unavailable counted as fine" failure the corpus exists to prevent.
+#[derive(Clone, Copy)]
+pub(crate) struct IdentityGraphDeferral {
+    /// Free function in the plan's root module.
+    pub(crate) function: &'static str,
+    /// Issue that owns making this entrypoint executable.
+    pub(crate) owning_issue: u32,
 }
 
 /// Data-driven multi-module identity-conformance evaluation.
@@ -1540,6 +1578,113 @@ fn try_execute_identity_conformance_plan(
                             None,
                             behavior_outcome,
                         )
+                    }
+                    IdentityReplacementPlan::Graph {
+                        root_module,
+                        entrypoints,
+                        deferred,
+                    } => {
+                        if entrypoints.is_empty() {
+                            return Err("a graph replacement plan must declare at least one entrypoint".to_string());
+                        }
+                        let root = graph.module(root_module)?;
+                        let selection = select_backend(
+                            BackendKind::Replacement,
+                            true,
+                            true,
+                            graph.source_graph_identity.clone(),
+                            FallbackPolicy::Refuse,
+                        );
+                        let executed_backend = resolve_execution(&selection, true)
+                            .map_err(|error| format!("identity replacement selection failed: {error}"))?;
+
+                        // Each entrypoint is executed against a graph rebuilt over the same modules. Building it per
+                        // entrypoint rather than once keeps every execution independent, so one row cannot observe
+                        // state another left behind -- the property a cross-module claim most needs to be free of.
+                        let mut per_entrypoint_identities: Vec<String> = Vec::new();
+                        let mut behavior_outcome = ComparisonOutcome::Match;
+                        for entrypoint in entrypoints {
+                            let reachable = graph
+                                .modules
+                                .iter()
+                                .filter(|module| module.name != root_module)
+                                .map(|module| &module.body_ir);
+                            let execution_graph = ReplacementExecutionGraph::new(&root.body_ir, reachable)
+                                .map_err(|error| format!("identity replacement graph assembly failed: {error}"))?;
+                            let execution_plan = prepare_free_function_execution_in_graph(
+                                execution_graph,
+                                entrypoint.function,
+                                &[],
+                                None,
+                            )
+                            .map_err(|error| {
+                                format!(
+                                    "identity replacement execution refused `{}`: {error}",
+                                    entrypoint.function
+                                )
+                            })?;
+                            let execution = execute_prevalidated_free_function(execution_plan).map_err(|error| {
+                                format!(
+                                    "identity replacement execution failed `{}`: {error}",
+                                    entrypoint.function
+                                )
+                            })?;
+                            if execution.value != ReplacementValue::Int(entrypoint.expected) {
+                                behavior_outcome = ComparisonOutcome::Mismatch {
+                                    detail: format!(
+                                        "identity replacement `{}` returned {:?}, expected Int({})",
+                                        entrypoint.function, execution.value, entrypoint.expected
+                                    ),
+                                };
+                                break;
+                            }
+                            per_entrypoint_identities.push(execution.output_identity);
+                        }
+
+                        // Prove every deferral is still real. A cell that starts executing must fail this row so it
+                        // gets promoted, rather than sitting in the deferred list claiming a gap that closed.
+                        for deferral in deferred {
+                            if deferral.owning_issue == 0 {
+                                return Err(format!(
+                                    "deferred entrypoint `{}` must name the issue that owns closing the gap",
+                                    deferral.function
+                                ));
+                            }
+                            let reachable = graph
+                                .modules
+                                .iter()
+                                .filter(|module| module.name != root_module)
+                                .map(|module| &module.body_ir);
+                            let execution_graph = ReplacementExecutionGraph::new(&root.body_ir, reachable)
+                                .map_err(|error| format!("identity replacement graph assembly failed: {error}"))?;
+                            if prepare_free_function_execution_in_graph(execution_graph, deferral.function, &[], None)
+                                .is_ok()
+                            {
+                                return Err(format!(
+                                    "deferred entrypoint `{}` now prepares successfully; #{} closed, so promote it \
+                                     into the executed entrypoints",
+                                    deferral.function, deferral.owning_issue
+                                ));
+                            }
+                        }
+
+                        // The row's output identity covers every entrypoint it executed, so dropping one changes it.
+                        // A single entrypoint's identity would let the others silently disappear.
+                        let borrowed: Vec<&str> = per_entrypoint_identities.iter().map(String::as_str).collect();
+                        let output_identity = digest_output(&borrowed);
+                        let shadow = unavailable_shadow_comparison(selection.shadow_requested, plan.comparison_reason);
+                        let receipt = finalize_receipt(
+                            &selection,
+                            executed_backend,
+                            output_identity.clone(),
+                            shadow,
+                            DIAGNOSTIC_SCHEMA_VERSION,
+                        )
+                        .map_err(|error| format!("identity replacement receipt failed: {error}"))?;
+                        receipt
+                            .verify_identity()
+                            .map_err(|error| format!("identity replacement receipt verification failed: {error}"))?;
+                        (Some(output_identity), Some(receipt.identity), None, behavior_outcome)
                     }
                     IdentityReplacementPlan::Unavailable { owning_issue, reason } => {
                         if owning_issue == 0 || !reason.contains(&format!("#{owning_issue}")) {
