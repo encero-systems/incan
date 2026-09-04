@@ -1,5 +1,6 @@
 //! End-to-end proof for the bounded #988 Body-IR replacement executor.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -2908,6 +2909,122 @@ fn replacement_cli_follows_a_typed_numeric_call_into_the_module_that_declares_it
     assert!(
         combined.contains("INCAN-R988-UNSUPPORTED") && combined.contains("aggregate construction"),
         "the callee module's unadmitted operation must be named: {combined}"
+    );
+    Ok(())
+}
+
+/// A facade chain executes, and its direct, re-exported and aliased bindings name one canonical declaration.
+///
+/// This is #1261's facade fixture. `provider` declares `compute`; `facade` re-exports it and aliases it as `renamed`;
+/// the entrypoint reaches it all three ways in a single expression. The arithmetic is chosen so the total only
+/// balances when every binding actually reaches `compute` -- 2 + 11 + 29 -- rather than asserting three separate
+/// calls that could each be satisfied differently.
+///
+/// Execution alone would not show that the three bindings are the *same* declaration, so identity is asserted
+/// separately through `incan inspect codegraph`. That is a public projection: it reports declaration ids and call
+/// targets without exposing compiler-session state, Body IR, or generated Rust names, which is the boundary #1261
+/// requires its metadata evidence to respect.
+#[test]
+fn replacement_cli_executes_a_facade_chain_whose_bindings_share_one_declaration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let source_dir = temporary.path().join("src");
+    fs::create_dir_all(&source_dir)?;
+    fs::write(
+        temporary.path().join("incan.toml"),
+        "[project]\nname = \"facade_chain\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        source_dir.join("provider.incn"),
+        "pub def compute(value: int) -> int:\n  return value + 1\n",
+    )?;
+    fs::write(
+        source_dir.join("facade.incn"),
+        "pub from provider import compute\n\npub renamed = alias compute\n",
+    )?;
+    let entrypoint = source_dir.join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from provider import compute\nfrom facade import compute as reexported, renamed\n\ndef main() -> int:\n  return compute(1) + reexported(10) + renamed(28)\n",
+    )?;
+
+    let report_path = temporary.path().join("facade-report.json");
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            report_path.to_string_lossy().as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "the facade chain must execute through the replacement route. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    assert_eq!(
+        report["replacement_execution"]["result"], "42",
+        "the total only balances when the direct, re-exported and aliased bindings all reach `compute`"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], serde_json::json!("not_needed"));
+
+    // The same chain, inspected: every call must name the one declaration in `provider`.
+    let codegraph = Command::new(incan_binary())
+        .args(["inspect", "codegraph", "src", "--format", "jsonl"])
+        .current_dir(temporary.path())
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("INCAN_NO_BANNER", "1")
+        .output()?;
+    assert!(
+        codegraph.status.success(),
+        "codegraph inspection must succeed. stderr:\n{}",
+        String::from_utf8_lossy(&codegraph.stderr)
+    );
+    let mut call_targets: Vec<(String, String)> = Vec::new();
+    for line in String::from_utf8_lossy(&codegraph.stdout).lines() {
+        let record: serde_json::Value = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+        if record["record"] != serde_json::json!("call") {
+            continue;
+        }
+        let (Some(callee), Some(target)) = (record["callee"].as_str(), record["target_id"].as_str()) else {
+            continue;
+        };
+        call_targets.push((callee.to_string(), target.to_string()));
+    }
+    call_targets.sort();
+    let observed: Vec<&str> = call_targets.iter().map(|(callee, _)| callee.as_str()).collect();
+    assert_eq!(
+        observed,
+        ["compute", "reexported", "renamed"],
+        "the fixture must record one call through each binding, got {call_targets:?}"
+    );
+    let distinct: BTreeSet<&str> = call_targets.iter().map(|(_, target)| target.as_str()).collect();
+    assert_eq!(
+        distinct.len(),
+        1,
+        "a direct import, a re-export and an alias must name one declaration, got {distinct:?}"
+    );
+    let target = distinct.iter().next().ok_or("expected one resolved declaration")?;
+    assert!(
+        target.contains("provider.incn") && target.ends_with(":compute"),
+        "the shared declaration must be `compute` in the provider module, got {target}"
     );
     Ok(())
 }

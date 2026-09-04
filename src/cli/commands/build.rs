@@ -2543,8 +2543,14 @@ fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> 
     }
     let mut async_activation_seen = false;
     for declaration in &program.declarations {
-        if matches!(declaration.node, Declaration::Function(_) | Declaration::Docstring(_))
-            || matches!(&declaration.node, Declaration::Model(model) if is_direct_replacement_plain_model(model))
+        // An alias is a binding to a declaration, not a declaration of its own: it introduces a second name for a
+        // symbol that already exists and is admitted, or refused, on its own terms wherever it is declared. Refusing
+        // the binding would refuse a name rather than any behavior, and the target is reached through the same
+        // canonical identity either way -- which is the property #1261 exists to prove.
+        if matches!(
+            declaration.node,
+            Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Alias(_)
+        ) || matches!(&declaration.node, Declaration::Model(model) if is_direct_replacement_plain_model(model))
             || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_fieldless_enum(enum_decl))
             || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_value_enum(enum_decl))
         {
