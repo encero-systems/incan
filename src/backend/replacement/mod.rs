@@ -27,6 +27,7 @@ pub mod hashed;
 mod list_iteration;
 pub mod program_io;
 pub mod provider;
+pub mod source_profile;
 
 pub use program_io::{ProgramIo, ProgramIoError, ProgramOutput};
 

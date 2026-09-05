@@ -15,11 +15,11 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use incan_semantics_core::HirSourceSpan;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::project::runner::resolved_cargo_executable;
+use crate::backend::replacement::source_profile::{module_is_held_to_source_profile, source_profile_refusal};
 use crate::backend::replacement::{
     ReplacementExecutionError, ReplacementExecutionGraph, execute_prevalidated_free_function,
     prepare_free_function_execution_in_graph,
@@ -40,10 +40,7 @@ use crate::frontend::api_metadata::{
     materialize_checked_api_public_namespaces, validate_checked_api_docstrings,
 };
 use crate::frontend::ast::{Declaration, Decorator, Expr, ImportKind, Literal, Span, Spanned, Statement, Visibility};
-use crate::frontend::body_ir::{
-    build_body_ir_module_v0, is_direct_replacement_fieldless_enum, is_direct_replacement_plain_model,
-    is_direct_replacement_value_enum,
-};
+use crate::frontend::body_ir::build_body_ir_module_v0;
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
 use crate::frontend::library_exports::{
     CheckedExportKind, CheckedNamedExport, LibraryExportBindingRegistry, collect_checked_public_exports,
@@ -2532,108 +2529,6 @@ fn replacement_refusal_source<'a>(
         .map_or(entrypoint, |module| module.file_path.as_path())
 }
 
-/// Whether one import names another module of the project currently being built.
-///
-/// #1260 executes a call that leaves the entry module, so an import naming a sibling of that module is now inside the
-/// profile: the session analyzes the whole source graph at once, and the execution graph resolves the callee's
-/// canonical identity to the module that declares it. Everything reaching outside that graph stays refused -- the
-/// standard library, a `pub::` package dependency, and every Rust or Python interop form each bring a boundary the
-/// source-only profile has no evidence for, and each is owned by a separate child of #989.
-fn replacement_local_module_import(import: &crate::frontend::ast::ImportDecl) -> bool {
-    let path = match &import.kind {
-        ImportKind::Module(path) | ImportKind::From { module: path, .. } => path,
-        // `pub::` dependencies, Rust crates and Python modules are other packages by construction.
-        _ => return false,
-    };
-    let Some(first) = path.segments.first() else {
-        return false;
-    };
-    first.as_str() != incan_core::lang::stdlib::STDLIB_ROOT
-}
-
-/// Describe a Rust-interop import in terms of the boundary it crosses, when it is one.
-///
-/// A `rust::` import is refused for a different reason than an ordinary one, and #1262 requires the difference to be
-/// visible: a reader has to be able to tell a construct this profile has not reached yet from a boundary that needs a
-/// host it does not have. Reporting both as "import declaration" told them neither, and named the wrong thing to go
-/// looking for.
-///
-/// The crate is named because it is the actionable part. Which crate a call would have entered is what a reader needs
-/// to know, and it is the identity the eventual interop plan is selected against.
-fn replacement_rust_interop_boundary(import: &crate::frontend::ast::ImportDecl) -> Option<String> {
-    let (crate_name, form) = match &import.kind {
-        ImportKind::RustCrate { crate_name, .. } => (crate_name, "module import"),
-        ImportKind::RustFrom { crate_name, .. } => (crate_name, "item import"),
-        ImportKind::Python(module) => {
-            return Some(format!(
-                "Python interop import of `{module}`, which this backend has no host for"
-            ));
-        }
-        _ => return None,
-    };
-    Some(format!(
-        "Rust interop {form} of crate `{crate_name}`: executing it needs a Rust interop host, and this route has none"
-    ))
-}
-
-/// Return the first unsupported source-module boundary with its original Incan source span.
-fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> Option<ReplacementExecutionError> {
-    if let Some(rust_module) = &program.rust_module_path {
-        return Some(ReplacementExecutionError::unsupported_profile(
-            "Rust interop `rust.module` directive",
-            HirSourceSpan::new(rust_module.span.start, rust_module.span.end),
-        ));
-    }
-    let mut async_activation_seen = false;
-    for declaration in &program.declarations {
-        // An alias is a binding to a declaration, not a declaration of its own: it introduces a second name for a
-        // symbol that already exists and is admitted, or refused, on its own terms wherever it is declared. Refusing
-        // the binding would refuse a name rather than any behavior, and the target is reached through the same
-        // canonical identity either way -- which is the property #1261 exists to prove.
-        if matches!(
-            declaration.node,
-            Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Alias(_)
-        ) || matches!(&declaration.node, Declaration::Model(model) if is_direct_replacement_plain_model(model))
-            || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_fieldless_enum(enum_decl))
-            || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_value_enum(enum_decl))
-        {
-            continue;
-        }
-        if let Declaration::Import(import) = &declaration.node {
-            let exact_async_activation = matches!(
-                (&import.visibility, &import.kind, &import.alias),
-                (Visibility::Private, ImportKind::Module(path), None)
-                    if !path.is_absolute
-                        && path.parent_levels == 0
-                        && path.segments == ["std", "async"]
-            );
-            if exact_async_activation && !async_activation_seen {
-                async_activation_seen = true;
-                continue;
-            }
-            if !exact_async_activation && replacement_local_module_import(import) {
-                continue;
-            }
-            let description = if exact_async_activation {
-                "duplicate `import std.async` replacement activation".to_string()
-            } else if let Some(boundary) = replacement_rust_interop_boundary(import) {
-                boundary
-            } else {
-                "import declaration".to_string()
-            };
-            return Some(ReplacementExecutionError::unsupported_profile(
-                description,
-                HirSourceSpan::new(declaration.span.start, declaration.span.end),
-            ));
-        }
-        return Some(ReplacementExecutionError::unsupported_profile(
-            "non-function top-level declaration",
-            HirSourceSpan::new(declaration.span.start, declaration.span.end),
-        ));
-    }
-    None
-}
-
 /// Refuse one unsupported replacement profile through the canonical #986 selection boundary.
 ///
 /// The resolver must reject the availability claim before the profile diagnostic reaches the CLI. If a future
@@ -2812,25 +2707,15 @@ fn build_replacement_file_report(
     // A refusal carries a span, and a span only means something beside the file it was measured in. Reporting every
     // refusal against the entrypoint was harmless while only the entrypoint could raise one; now that a reachable
     // module can, the pair has to travel together or the diagnostic points at the wrong file.
-    let profile_error = replacement_module_profile_error(&session_inputs.program)
+    let profile_error = source_profile_refusal(&session_inputs.program)
         .map(|error| (error, entrypoint.clone()))
         .or_else(|| {
             session_inputs
                 .reachable_modules
                 .iter()
-                // The one analysis also checks the standard-library modules the graph pulled in, which arrive under the
-                // generated `__incan_std` namespace rather than the source `std` spelling. Those are not project source
-                // and were never meant to satisfy a source-only profile -- `import std.async` legitimately reaches
-                // stdlib modules full of classes and imports. Only the project's own modules are
-                // executed here, so only they are held to the profile.
-                .filter(|module| {
-                    !matches!(
-                        module.module_path.first().map(String::as_str),
-                        Some(incan_core::lang::stdlib::STDLIB_ROOT | incan_core::lang::stdlib::INCAN_STD_NAMESPACE)
-                    )
-                })
+                .filter(|module| module_is_held_to_source_profile(&module.module_path))
                 .find_map(|module| {
-                    replacement_module_profile_error(&module.program).map(|error| (error, module.file_path.clone()))
+                    source_profile_refusal(&module.program).map(|error| (error, module.file_path.clone()))
                 })
         });
     if let Some((error, source_path)) = profile_error {
