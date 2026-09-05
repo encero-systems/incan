@@ -2,12 +2,18 @@
 
 use super::super::super::decl::{IrDeclKind, IrRustTraitImport};
 use super::super::AstLowering;
+use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::module::canonicalize_source_module_segments;
+use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 impl AstLowering {
     /// Lower an import declaration.
-    pub(in crate::backend::ir::lower) fn lower_import(&self, i: &ast::ImportDecl) -> IrDeclKind {
+    pub(in crate::backend::ir::lower) fn lower_import(
+        &self,
+        i: &ast::ImportDecl,
+        span: ast::Span,
+    ) -> Result<IrDeclKind, LoweringError> {
         let (path, ast_items) = match &i.kind {
             ast::ImportKind::Module(p) => (canonicalize_source_module_segments(&p.segments), vec![]),
             ast::ImportKind::From { module, items } => {
@@ -83,6 +89,7 @@ impl AstLowering {
                         .map(|emitted_name| super::super::super::decl::IrImportItem {
                             name: emitted_name.clone(),
                             alias: None,
+                            canonical: self.overload_import_identity(binding_name, emitted_name),
                             is_static: false,
                             force_reexport,
                             rust_trait_import: None,
@@ -105,6 +112,11 @@ impl AstLowering {
                 vec![super::super::super::decl::IrImportItem {
                     name: item.name.clone(),
                     alias: item.alias.clone(),
+                    canonical: self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.resolved_import_identity(binding_name))
+                        .cloned(),
                     is_static: self
                         .type_info
                         .as_ref()
@@ -129,14 +141,30 @@ impl AstLowering {
         }
         let ir_items = deduped_items;
 
-        IrDeclKind::Import {
+        if let Some(item) = ir_items.iter().find(|item| {
+            item.is_static
+                && !item.canonical.as_ref().is_some_and(|identity| {
+                    matches!(identity.kind, SemanticSourceTargetKind::Static)
+                        && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                })
+        }) {
+            return Err(LoweringError {
+                message: format!(
+                    "linker-visible Incan static import `{}` reached lowering without its compiler-owned canonical identity",
+                    item.source_binding_name()
+                ),
+                span: span.into(),
+            });
+        }
+
+        Ok(IrDeclKind::Import {
             visibility: Self::map_visibility(i.visibility),
             origin,
             qualifier,
             path,
             alias: i.alias.clone(),
             items: ir_items,
-        }
+        })
     }
 
     /// Return concrete Rust function names needed to import one overload binding.
@@ -151,5 +179,20 @@ impl AstLowering {
             .filter_map(|overload| overload.info.emitted_name.clone())
             .collect::<Vec<_>>();
         (!names.is_empty()).then_some(names)
+    }
+
+    /// Return the exact overload identity paired with one frontend-selected provider name.
+    fn overload_import_identity(
+        &self,
+        binding_name: &str,
+        emitted_name: &str,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        self.type_info
+            .as_ref()?
+            .function_overloads(binding_name)?
+            .iter()
+            .find(|overload| overload.info.emitted_name.as_deref() == Some(emitted_name))?
+            .identity
+            .clone()
     }
 }

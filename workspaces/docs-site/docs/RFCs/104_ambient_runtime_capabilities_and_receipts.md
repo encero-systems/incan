@@ -1,6 +1,6 @@
 # RFC 104: Ambient Runtime Capabilities and Receipts
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-05-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -97,13 +97,13 @@ def fetch_status() -> int:
     return response.status.code
 ```
 
-A normal run may behave just like a normal program:
+A normal run observes authority-bearing operations while keeping ordinary development unblocked:
 
 ```text
 incan run status.incn
 ```
 
-An observed run asks the runtime to emit a machine-readable report:
+The run can export those observed facts as a machine-readable report:
 
 ```text
 incan run status.incn --report json
@@ -225,8 +225,8 @@ A host may also supply a capability ceiling: a maximum grant set sourced from ou
 
 The runtime should support at least these conceptual modes:
 
-- `permissive`: operations run normally and receipts may be disabled.
-- `observe`: operations run normally and receipts are emitted.
+- `permissive`: operations run normally with reporting explicitly disabled; this is an escape hatch rather than the default.
+- `observe`: operations run normally and receipts are emitted; this is the default for ordinary development.
 - `governed`: operations require granted capabilities and receipts are emitted.
 
 The user-facing shape is:
@@ -236,7 +236,7 @@ incan run app.incn --report json
 incan run app.incn --allow host.env.read,host.http.request --report json
 ```
 
-`incan run` defaults to `permissive`: ordinary local development stays ordinary, and nothing is denied or exported without an explicit flag. `incan test` defaults to `governed` with nothing pre-granted, so a test that unexpectedly reaches the real filesystem or network fails with a capability diagnostic instead of silently succeeding -- the same test-isolation property most test frameworks already enforce by convention, made structural here instead. A typed action runs under whatever mode and grants its invoking context provides (a CI job's explicit `--allow`, a host's policy-selected grant set); this RFC does not define a third default distinct from `incan run` and `incan test`, since actions are never invoked in a vacuum.
+`incan run` defaults to `observe`: ordinary local development stays ordinary and records authority facts without unexpectedly denying an undeclared access. `permissive` is an explicit escape hatch for runs that must disable observation. `incan test` defaults to `governed` with nothing pre-granted, so a test that unexpectedly reaches the real filesystem or network fails with a capability diagnostic instead of silently succeeding -- the same test-isolation property most test frameworks already enforce by convention, made structural here instead. A typed action runs under whatever mode and grants its invoking context provides (a CI job's explicit `--allow`, a host's policy-selected grant set); this RFC does not define a third default distinct from `incan run` and `incan test`, since actions are never invoked in a vacuum.
 
 ### Capability declarations
 
@@ -488,11 +488,54 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 - **LSP / Docs tooling**: editors and docs can surface capability declarations, required grants, denial diagnostics, and report artifacts.
 - **Policy / CI / Agents**: policy and automation can consume capability declarations, action dry-runs, receipt schemas, and actual receipts to decide whether runs, actions, generated artifacts, or proposed changes are acceptable.
 
+## Implementation Plan
+
+### Phase 1: Compiler-owned declarations and decision facts
+
+- Resolve capability declarations and provider-operation requirements as canonical semantic identities.
+- Preserve capability, operation, source span, execution mode, effective grant or denial, ceiling, and denial reason in one generic authority decision.
+- Apply authority only when an admitted authority-bearing operation is invoked, never when its module is imported.
+
+### Phase 2: Project policy and execution boundaries
+
+- Let a Loaf project declare target selection, execution policy, and environment grants without allowing source to grant host authority to itself.
+- Have Oven enforce the selected project policy and link each execution to the stable authority decision.
+
+### Phase 3: Receipts and report consumers
+
+- Extend the #1028 operation-receipt, redaction, replay, and report work across stdlib and package boundaries.
+- Keep receipts linked to authority decisions rather than duplicating authority or policy semantics.
+
+### Phase 4: Remaining language and tooling integration
+
+- Add typed-action declaration alignment, standard-library host capability families, diagnostics, semantic inspection, and user-facing documentation.
+
+## Progress Checklist
+
+### Compiler semantic facts
+
+- [x] Parse and resolve source capability declarations as checked canonical identities.
+- [x] Publish provider-operation capability requirements and lower an admitted call to a canonical provider-operation plan.
+- [x] Establish a generic authority-decision fact and a first invocation-time provider consumer without provider-local allow/deny fields.
+- [ ] Connect the project-owned Loaf policy, target selection, and environment grants to the authority decision source.
+- [ ] Have Oven enforce selected project policy and record the stable decision link for all later execution consumers.
+
+### Runtime and package integration
+
+- [ ] Implement broad standard-library host capability publishers and constraint matchers.
+- [ ] Integrate package declarations and typed-action capability alignment.
+
+### Receipts, inspection, and documentation
+
+- [ ] Complete #1028 durable receipt production, redaction, replay, and report surfaces.
+- [ ] Expose static declarations and runtime facts through semantic inspection.
+- [ ] Document the user-facing policy, report, and diagnostic surfaces.
+
 ## Design Decisions
 
 - **Capability identities are checked symbols, not strings:** a capability's fully-qualified identity is derived from where it is declared (package or toolchain identity plus module path), never typed by the author. Two packages cannot collide on a capability name because the namespace segment comes from an identity a registry already enforces as unique. A capability reference at a use site resolves like an import; a misspelled or nonexistent reference is a compile error, not a runtime surprise.
 - **Capability declarations live in source**, as a first-class `capability` declaration form, because deriving identity from declaration location requires the declaration to be real, compiler-resolved syntax rather than manifest or metadata.
-- **Default run modes:** `incan run` defaults to `permissive`; `incan test` defaults to `governed` with nothing pre-granted, enforcing the same test-isolation property most test frameworks already assume by convention. Typed actions run under whatever mode and grants their invoking context provides; there is no third default.
+- **Default run modes:** `incan run` defaults to `observe`; it records authority facts without unexpectedly denying ordinary development access. `permissive` is an explicit escape hatch that disables observation, while `incan test` defaults to `governed` with nothing pre-granted, enforcing the same test-isolation property most test frameworks already assume by convention. Typed actions run under whatever mode and grants their invoking context provides; there is no third default.
 - **Minimum stable host capability set is exactly the nine already proposed** in Reference-level explanation (`host.env.read`, `host.fs.read`, `host.fs.write`, `host.process.spawn`, `host.http.request`, `host.clock.read`, `host.random`, `host.model.invoke`, `host.tool.invoke`), fixed and not package-extensible.
 - **Scoped grants:** a capability declares its own typed `scope` schema (host capabilities via `std.runtime`'s own declarations, package capabilities via their own). Scope values bind at grant time, never in a static declaration such as `@action(caps=[...])`, and are checked against the real operation's attributes at the moment it happens, independent of the declaring code.
 - **No implicit host-capability grants:** a package capability's `requires` list documents which host capabilities its implementation needs, for tooling and policy to inspect, but granting the package capability never automatically grants what it requires. Those must always be listed and granted separately.

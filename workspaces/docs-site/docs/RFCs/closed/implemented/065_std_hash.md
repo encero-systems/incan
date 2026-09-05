@@ -10,7 +10,7 @@
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
     - RFC 064 (`std.encoding` binary-text encoding and decoding)
 - **Issue:** https://github.com/encero-systems/incan/issues/343
-- **RFC PR:** —
+- **RFC PR:** [#578](https://github.com/encero-systems/incan/pull/578)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

@@ -54,11 +54,10 @@
 //! told. Body IR v0 carries no acknowledgement fact a consumer could weigh, so the honest answer is a named
 //! refusal owned by #1162 rather than a silent inline. See [`BodyBuilder::refuse_unsafe_region`].
 //!
-//! Two coverage limits are silent rather than marked, and both are deliberate. Expression-position `yield` (the
-//! two-way send/receive protocol) is a stub in the existing Rust-emission backend too, so there is no behavior to
-//! preserve; the typechecker rejects a bare `yield` with no value before lowering runs. Newtype and enum method
-//! bodies produce no [`bir::Body`] at all rather than an `Unsupported` one (#1163) -- see
-//! [`lower_owner_method_bodies`].
+//! One coverage limit is silent rather than marked, and it is deliberate. Expression-position `yield` (the two-way
+//! send/receive protocol) is a stub in the existing Rust-emission backend too, so there is no behavior to preserve;
+//! the typechecker rejects a bare `yield` with no value before lowering runs. Model, class, trait-default, newtype,
+//! and enum method bodies all lower through [`lower_owner_method_bodies`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -119,9 +118,9 @@ use crate::provider::ProviderPlan;
 /// Those refusals are a safety net, never the normal path; the desugar pass keeps ownership of the real diagnostic
 /// when a vocabulary's library manifest is unavailable.
 ///
-/// The bounded replacement and comparison profiles have no project manifest or feature graph, so they deliberately
-/// use [`apply_body_ir_input_contract`]'s empty feature projection. A command that receives a non-default package
-/// feature selection must reject it before reaching this boundary rather than silently treating it as featureless.
+/// Manifest-free comparison helpers deliberately use [`apply_body_ir_input_contract`]'s empty feature projection. The
+/// direct replacement CLI instead receives an already desugared, feature-projected program and its checked lowering
+/// bridge from `CompilationSession`; it must not apply a second projection or recreate the typecheck authority here.
 pub fn build_body_ir_module_v0(
     program: &ast::Program,
     module_path: &[String],
@@ -133,8 +132,8 @@ pub fn build_body_ir_module_v0(
 /// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
 ///
 /// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller
-/// owes Body IR the same debt. The replacement CLI, parity corpus, and source-observable comparison route use this
-/// helper; a caller that skips it hands lowering a program the legacy path would never have produced, which is the
+/// owes Body IR the same debt. The parity corpus and source-observable comparison route use this helper; a caller that
+/// skips it hands lowering a program the legacy path would never have produced, which is the
 /// divergence #1166 closes.
 ///
 /// The legacy pipeline owes Body IR a desugared, feature-projected program, and it pays that debt at parse time:
@@ -204,17 +203,17 @@ fn build_body_ir_module_v0_with_provider_operations(
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
-    let nominal_declarations = collect_local_nominal_declarations(program, &module_identity);
+    let nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
     let local_nominal_declarations = nominal_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalNominalDeclarations>();
-    let fieldless_enum_declarations = collect_local_fieldless_enum_declarations(program, &module_identity);
+    let fieldless_enum_declarations = collect_local_fieldless_enum_declarations(program, &module_identity, type_info);
     let local_fieldless_enum_declarations = fieldless_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalFieldlessEnumDeclarations>();
-    let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity);
+    let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity, type_info);
     let local_value_enum_declarations = value_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
@@ -227,7 +226,6 @@ fn build_body_ir_module_v0_with_provider_operations(
         local_fieldless_enum_declarations: &local_fieldless_enum_declarations,
         local_value_enum_declarations: &local_value_enum_declarations,
         module_identity: &module_identity,
-        module_path,
         provider_operations,
     };
     let mut bodies = program
@@ -331,9 +329,10 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 /// Plain source-local models whose checked declaration layout is retained for direct nominal execution.
 ///
 /// This frontend map intentionally contains only non-generic, behavior-free models. It is used only while lowering
-/// a checked constructor call to attach an exact declaration identity; the resulting [`bir::NominalDeclaration`]
-/// records are the direct executor's sole layout authority. Classes, trait-adopting models, and models carrying
-/// methods/properties/aliases are absent rather than being approximated as inert field bags.
+/// a checked constructor call to attach the exact declaration identity and selected field layout. The direct executor
+/// compares that target snapshot with the resulting [`bir::NominalDeclaration`] before binding slots. Classes,
+/// trait-adopting models, and models carrying methods/properties/aliases are absent rather than being approximated
+/// as inert field bags.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
@@ -362,7 +361,6 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
     local_value_enum_declarations: &'source LocalValueEnumDeclarations,
     module_identity: &'source str,
-    module_path: &'source [String],
     /// Provider operations this compilation admits, keyed by canonical identity rather than by any spelling.
     provider_operations: &'source ProviderOperationCatalog,
 }
@@ -459,8 +457,6 @@ struct BodyBuilder<'type_info, 'source> {
     local_value_enum_declarations: &'source LocalValueEnumDeclarations,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
     module_identity: &'source str,
-    /// Owning module path, used to build the RFC 120 origin of a declaration this module owns.
-    module_path: &'source [String],
     /// Provider operations this compilation admits, consulted only by canonical identity (see `provider_ops`).
     provider_operations: &'source ProviderOperationCatalog,
     /// Checked return type of the function/method currently being lowered, used only to retain `?` error routing.
@@ -473,6 +469,10 @@ struct BodyBuilder<'type_info, 'source> {
     /// shadow. Nested lowering paths snapshot and restore the map at their lexical boundary, so branch/loop/arm
     /// names remain available to their Body-IR statements without leaking into following source.
     bindings: HashMap<String, bir::LocalId>,
+    /// Canonical source binding -> frame local. This is the semantic lookup used for every resolver-proven read or
+    /// write; [`Self::bindings`] remains only as a lexical bookkeeping projection for lowering constructs that
+    /// introduce and restore source names.
+    identity_bindings: HashMap<CanonicalSymbolId, bir::LocalId>,
     /// Names lowering could not resolve to a tracked local (e.g. module-level `const`/`static`), reused across
     /// repeated reads instead of allocating a fresh external local per read.
     external_locals: HashMap<String, bir::LocalId>,
@@ -513,12 +513,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             local_fieldless_enum_declarations: lowering_facts.local_fieldless_enum_declarations,
             local_value_enum_declarations: lowering_facts.local_value_enum_declarations,
             module_identity: lowering_facts.module_identity,
-            module_path: lowering_facts.module_path,
             provider_operations: lowering_facts.provider_operations,
             owner_return_type,
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
+            identity_bindings: HashMap::new(),
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             moved_out: HashSet::new(),
@@ -590,23 +590,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         total_reads: usize,
     ) -> bir::LocalId {
+        let source_span = ast::Span::new(span.start, span.end);
+        let identity = self.type_info.resolved_write_identity(source_span, &name).cloned();
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
             id,
             name: Some(name.clone()),
+            identity: identity.clone(),
             ty,
             origin: bir::LocalOrigin::UserBinding,
             scope,
             span,
         });
         self.bindings.insert(name, id);
+        if let Some(identity) = identity {
+            self.identity_bindings.insert(identity, id);
+        }
         self.remaining_reads.insert(id, total_reads);
         id
     }
 
     /// Declare a method's `self`/`mut self` receiver as a [`bir::LocalOrigin::Receiver`] local, bound under the
-    /// name `"self"` in [`Self::bindings`] exactly like an ordinary local so [`Self::local_for_name`] resolves
+    /// name `"self"` in [`Self::bindings`] exactly like an ordinary local so [`Self::place_for_name`] resolves
     /// `self` reads without a separate lookup path.
     ///
     /// Unlike [`Self::declare_new_local`], no last-use countdown is seeded: a receiver is always a Rust-level
@@ -620,17 +626,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         span: HirSourceSpan,
     ) -> bir::LocalId {
+        let source_span = ast::Span::new(span.start, span.end);
+        let identity = self.type_info.resolved_write_identity(source_span, "self").cloned();
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
             id,
             name: Some("self".to_string()),
+            identity: identity.clone(),
             ty,
             origin: bir::LocalOrigin::Receiver { mutable },
             scope,
             span,
         });
         self.bindings.insert("self".to_string(), id);
+        if let Some(identity) = identity {
+            self.identity_bindings.insert(identity, id);
+        }
         id
     }
 
@@ -643,6 +655,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals.push(bir::LocalDecl {
             id,
             name: None,
+            identity: None,
             ty,
             origin: bir::LocalOrigin::Temporary,
             scope,
@@ -651,13 +664,50 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         id
     }
 
-    /// Resolve a source identifier to a local, synthesizing a cached [`bir::LocalOrigin::External`] local for names
-    /// v0 cannot bind (module-level `const`/`static`, or anything else lowering does not yet track) instead of
-    /// panicking on an unresolved name.
-    fn local_for_name(&mut self, name: &str, span: HirSourceSpan) -> bir::LocalId {
-        if let Some(&id) = self.bindings.get(name) {
-            return id;
+    /// Resolve one source reference from the canonical identity recorded by typechecking.
+    ///
+    /// A proven local identity must select a frame local with that same identity. Proven `const`/`static` references
+    /// become canonical global places. Any other proven identity that has no Body IR value representation returns
+    /// `None`, so the caller emits an explicit unsupported node instead of silently changing meaning through a
+    /// spelling lookup. Only a genuinely unproven reference may use the legacy `External` recovery local.
+    fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
+        if let Some(identity) = self.type_info.resolved_identity(span).cloned() {
+            if let Some(&id) = self.identity_bindings.get(&identity) {
+                return Some(bir::Place::from_local(id));
+            }
+            return self.global_place(identity, ty.clone()).map(bir::Place::from_global);
         }
+
+        Some(bir::Place::from_local(
+            self.external_local_for_name(name, hir_span(span)),
+        ))
+    }
+
+    /// Select a canonical module-storage root when `identity` denotes a `const` or `static`.
+    fn global_place(&self, identity: CanonicalSymbolId, ty: IncanType) -> Option<bir::GlobalPlace> {
+        let write_policy = match identity.kind {
+            SemanticSourceTargetKind::Const => bir::GlobalWritePolicy::ReadOnly,
+            SemanticSourceTargetKind::Static => {
+                let declared_here = identity
+                    .module_path()
+                    .is_some_and(|path| body_ir_module_identity(path) == self.module_identity);
+                if declared_here {
+                    bir::GlobalWritePolicy::Rebindable
+                } else {
+                    bir::GlobalWritePolicy::ProjectionOnly
+                }
+            }
+            _ => return None,
+        };
+        Some(bir::GlobalPlace {
+            identity,
+            ty,
+            write_policy,
+        })
+    }
+
+    /// Allocate the explicit recovery local for a reference whose resolver supplied no identity.
+    fn external_local_for_name(&mut self, name: &str, span: HirSourceSpan) -> bir::LocalId {
         if let Some(&id) = self.external_locals.get(name) {
             return id;
         }
@@ -666,6 +716,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals.push(bir::LocalDecl {
             id,
             name: Some(name.to_string()),
+            identity: None,
             ty: IncanType::Unknown,
             origin: bir::LocalOrigin::External,
             scope: bir::ScopeId(0),
@@ -705,7 +756,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             };
             return (fact, false);
         }
-        if self.is_receiver_local(place.local) {
+        let Some(local) = place.local_id() else {
+            return (
+                if is_copy {
+                    bir::OwnershipFact::Copy
+                } else {
+                    bir::OwnershipFact::Clone
+                },
+                false,
+            );
+        };
+        if self.is_receiver_local(local) {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
             } else {
@@ -714,17 +775,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return (fact, false);
         }
         if is_copy {
-            if let Some(remaining) = self.remaining_reads.get_mut(&place.local) {
+            if let Some(remaining) = self.remaining_reads.get_mut(&local) {
                 *remaining = remaining.saturating_sub(1);
             }
             return (bir::OwnershipFact::Copy, false);
         }
-        let Some(remaining) = self.remaining_reads.get_mut(&place.local) else {
+        let Some(remaining) = self.remaining_reads.get_mut(&local) else {
             return (bir::OwnershipFact::Unknown, false);
         };
         *remaining = remaining.saturating_sub(1);
         if *remaining == 0 {
-            self.moved_out.insert(place.local);
+            self.moved_out.insert(local);
             (bir::OwnershipFact::Move, true)
         } else {
             (bir::OwnershipFact::Clone, false)
@@ -919,8 +980,8 @@ pub(crate) fn replacement_compatibility_body_ir_contribution()
             planned_feature_at_boundary(
                 "call.partial-binding",
                 "Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.",
-                1152,
-                "Body IR carries the source contract; direct local callable targets remain visibly refused until the callable runtime slice executes them.",
+                988,
+                "Body IR and closed #1152 carry the source and callable-runtime substrate; open #988 owns the direct local callable forms that remain visibly refused.",
                 "src/frontend/typechecker/check_expr/calls.rs",
                 "fn check_call",
                 "fn lower_call",
@@ -929,8 +990,8 @@ pub(crate) fn replacement_compatibility_body_ir_contribution()
             planned_feature_at_boundary(
                 "call.stored-callables",
                 "Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.",
-                1152,
-                "Direct execution deliberately refuses local callable targets; this is the coherent callable-frame profile.",
+                988,
+                "Closed #1152 delivered the coherent callable-frame substrate; open #988 owns broadening the local callable targets that direct execution still refuses.",
                 "src/frontend/typechecker/check_expr/calls.rs",
                 "fn check_call",
                 "fn lower_call",

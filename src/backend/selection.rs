@@ -37,6 +37,41 @@ use serde::{Deserialize, Serialize};
 /// shape grew rather than silently meeting an unfamiliar variant body.
 pub const BACKEND_SELECTION_SCHEMA_VERSION: u32 = 2;
 
+/// Stable reference to the session-owned semantic module behind one backend execution.
+///
+/// The values are compiler data-model identities rather than source paths, so a persisted receipt can name the
+/// checked semantic authority without leaking a machine-local path or exposing private HIR/Body-IR structures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticModuleProvenance {
+    module_id: String,
+    module_path: String,
+    source_identity: String,
+    semantic_snapshot_identity: String,
+}
+
+impl SemanticModuleProvenance {
+    /// Build provenance for one session-owned semantic module and its deterministic source and snapshot identities.
+    #[must_use]
+    pub(crate) fn new(
+        module_id: String,
+        module_path: String,
+        source_identity: String,
+        semantic_snapshot_identity: String,
+    ) -> Self {
+        Self {
+            module_id,
+            module_path,
+            source_identity,
+            semantic_snapshot_identity,
+        }
+    }
+
+    /// Return the source identity that must agree with the bound backend selection.
+    pub(crate) fn source_identity(&self) -> &str {
+        &self.source_identity
+    }
+}
+
 /// Implementation revision of the current Rust-emission ("legacy") backend.
 ///
 /// Independent of [`crate::version::INCAN_VERSION`]: increase it only when a change to the
@@ -242,6 +277,12 @@ pub struct BackendExecutionReceipt {
     pub diagnostic_contract_version: u32,
     /// Content-derived identity of the produced output or artifact.
     pub output_identity: String,
+    /// Session-owned semantic module used by this execution, when the backend consumed one directly.
+    ///
+    /// This remains absent for existing execution routes. Omitting it also preserves their historical receipt identity
+    /// and schema-2 wire shape; a direct replacement execution binds it into the receipt identity below.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_module: Option<SemanticModuleProvenance>,
 }
 
 /// Typed failure while selecting a backend or verifying a selection/receipt's content identity.
@@ -389,19 +430,42 @@ pub fn finalize_receipt(
     shadow_comparison: ShadowComparisonState,
     diagnostic_contract_version: u32,
 ) -> Result<BackendExecutionReceipt, BackendSelectionError> {
+    finalize_receipt_with_semantic_module(
+        selection,
+        executed_backend,
+        output_identity,
+        shadow_comparison,
+        diagnostic_contract_version,
+        None,
+    )
+}
+
+/// Bind a real execution outcome to its declared selection, optionally retaining its checked semantic-module authority.
+///
+/// The optional provenance exists for direct semantic consumers such as the replacement backend. Existing routes pass
+/// `None`, retaining their historical receipt payload and identity exactly.
+pub(crate) fn finalize_receipt_with_semantic_module(
+    selection: &BackendSelection,
+    executed_backend: BackendKind,
+    output_identity: impl Into<String>,
+    shadow_comparison: ShadowComparisonState,
+    diagnostic_contract_version: u32,
+    semantic_module: Option<SemanticModuleProvenance>,
+) -> Result<BackendExecutionReceipt, BackendSelectionError> {
     selection.verify_identity()?;
     let output_identity = output_identity.into();
     let fallback_outcome = fallback_outcome_for_execution(selection, executed_backend)?;
     let compiler_version = crate::version::INCAN_VERSION.to_string();
-    let identity = receipt_identity(
-        &selection.identity,
-        &compiler_version,
+    let identity = receipt_identity(ReceiptIdentityInputs {
+        selection_identity: &selection.identity,
+        compiler_version: &compiler_version,
         executed_backend,
-        &shadow_comparison,
+        shadow_comparison: &shadow_comparison,
         fallback_outcome,
         diagnostic_contract_version,
-        &output_identity,
-    );
+        output_identity: &output_identity,
+        semantic_module: semantic_module.as_ref(),
+    });
     Ok(BackendExecutionReceipt {
         schema_version: BACKEND_SELECTION_SCHEMA_VERSION,
         identity,
@@ -412,6 +476,7 @@ pub fn finalize_receipt(
         fallback_outcome,
         diagnostic_contract_version,
         output_identity,
+        semantic_module,
     })
 }
 
@@ -483,15 +548,16 @@ impl BackendExecutionReceipt {
                 expected: BACKEND_SELECTION_SCHEMA_VERSION,
             });
         }
-        let actual = receipt_identity(
-            &self.selection.identity,
-            &self.compiler_version,
-            self.executed_backend,
-            &self.shadow_comparison,
-            self.fallback_outcome,
-            self.diagnostic_contract_version,
-            &self.output_identity,
-        );
+        let actual = receipt_identity(ReceiptIdentityInputs {
+            selection_identity: &self.selection.identity,
+            compiler_version: &self.compiler_version,
+            executed_backend: self.executed_backend,
+            shadow_comparison: &self.shadow_comparison,
+            fallback_outcome: self.fallback_outcome,
+            diagnostic_contract_version: self.diagnostic_contract_version,
+            output_identity: &self.output_identity,
+            semantic_module: self.semantic_module.as_ref(),
+        });
         if actual != self.identity {
             return Err(BackendSelectionError::ReceiptIdentityMismatch {
                 expected: self.identity.clone(),
@@ -521,25 +587,47 @@ fn selection_identity(
     ))
 }
 
-/// Digest the fields that make up a [`BackendExecutionReceipt`]'s content identity.
+/// Immutable fields that determine a backend execution receipt's content identity.
 ///
-/// Takes the bound selection's own `identity` rather than its full field set, so tampering with
-/// any selection field is caught by [`BackendSelection::verify_identity`] and any tampering with
-/// the receipt's own fields (including swapping in a different, validly-identified selection) is
-/// caught here.
-fn receipt_identity(
-    selection_identity: &str,
-    compiler_version: &str,
+/// Keeping these fields together avoids a fragile positional argument list at the receipt boundary while making the
+/// optional semantic-module authority part of the same identity contract as the selection and execution evidence.
+struct ReceiptIdentityInputs<'receipt> {
+    selection_identity: &'receipt str,
+    compiler_version: &'receipt str,
     executed_backend: BackendKind,
-    shadow_comparison: &ShadowComparisonState,
+    shadow_comparison: &'receipt ShadowComparisonState,
     fallback_outcome: FallbackOutcome,
     diagnostic_contract_version: u32,
-    output_identity: &str,
-) -> String {
-    digest_content(&format!(
-        "{selection_identity}\n{compiler_version}\n{executed_backend:?}\n{shadow_comparison:?}\n\
-         {fallback_outcome:?}\n{diagnostic_contract_version}\n{output_identity}\n"
-    ))
+    output_identity: &'receipt str,
+    semantic_module: Option<&'receipt SemanticModuleProvenance>,
+}
+
+/// Digest the fields that make up a [`BackendExecutionReceipt`]'s content identity.
+///
+/// Takes the bound selection's own `identity` rather than its full field set, so tampering with any selection field is
+/// caught by [`BackendSelection::verify_identity`] and any tampering with the receipt's own fields (including swapping
+/// in a different, validly-identified selection) is caught here.
+fn receipt_identity(inputs: ReceiptIdentityInputs<'_>) -> String {
+    let mut content = format!(
+        "{}\n{}\n{:?}\n{:?}\n{:?}\n{}\n{}\n",
+        inputs.selection_identity,
+        inputs.compiler_version,
+        inputs.executed_backend,
+        inputs.shadow_comparison,
+        inputs.fallback_outcome,
+        inputs.diagnostic_contract_version,
+        inputs.output_identity,
+    );
+    if let Some(semantic_module) = inputs.semantic_module {
+        content.push_str(&format!(
+            "semantic-module\n{}\n{}\n{}\n{}\n",
+            semantic_module.module_id,
+            semantic_module.module_path,
+            semantic_module.source_identity,
+            semantic_module.semantic_snapshot_identity,
+        ));
+    }
+    digest_content(&content)
 }
 
 /// Render a `sha256:`-prefixed hex digest of `content`.
@@ -723,6 +811,58 @@ mod tests {
     }
 
     #[test]
+    fn semantic_module_provenance_is_bound_to_receipt_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let selection = select_backend(
+            BackendKind::Replacement,
+            true,
+            false,
+            "sha256:source",
+            FallbackPolicy::Refuse,
+        );
+        let executed = resolve_execution(&selection, true)?;
+        let legacy_receipt = finalize_receipt(
+            &selection,
+            executed,
+            "sha256:output",
+            ShadowComparisonState::NotRequested,
+            1,
+        )?;
+        let legacy_payload = serde_json::to_value(&legacy_receipt)?;
+        assert!(
+            legacy_payload
+                .as_object()
+                .is_some_and(|receipt| !receipt.contains_key("semantic_module")),
+            "existing execution receipts must retain their historical wire shape"
+        );
+
+        let mut receipt = finalize_receipt_with_semantic_module(
+            &selection,
+            executed,
+            "sha256:output",
+            ShadowComparisonState::NotRequested,
+            1,
+            Some(SemanticModuleProvenance::new(
+                "module:main".to_string(),
+                "main".to_string(),
+                "sha256:source".to_string(),
+                "sha256:semantic-snapshot".to_string(),
+            )),
+        )?;
+        receipt.verify_identity()?;
+
+        let semantic_module = receipt
+            .semantic_module
+            .as_mut()
+            .ok_or("expected direct replacement receipt provenance")?;
+        semantic_module.semantic_snapshot_identity = "sha256:tampered-snapshot".to_string();
+        let Err(error) = receipt.verify_identity() else {
+            return Err("semantic-module receipt tampering must be detected".into());
+        };
+        assert!(matches!(error, BackendSelectionError::ReceiptIdentityMismatch { .. }));
+        Ok(())
+    }
+
+    #[test]
     fn mismatched_receipt_identity_is_detected() -> Result<(), BackendSelectionError> {
         let selection = refuse_selection(BackendKind::Legacy, false);
         let mut receipt = finalize_receipt(
@@ -816,15 +956,16 @@ mod tests {
             from: BackendKind::Legacy,
             to: BackendKind::Replacement,
         };
-        receipt.identity = receipt_identity(
-            &receipt.selection.identity,
-            &receipt.compiler_version,
-            receipt.executed_backend,
-            &receipt.shadow_comparison,
-            receipt.fallback_outcome,
-            receipt.diagnostic_contract_version,
-            &receipt.output_identity,
-        );
+        receipt.identity = receipt_identity(ReceiptIdentityInputs {
+            selection_identity: &receipt.selection.identity,
+            compiler_version: &receipt.compiler_version,
+            executed_backend: receipt.executed_backend,
+            shadow_comparison: &receipt.shadow_comparison,
+            fallback_outcome: receipt.fallback_outcome,
+            diagnostic_contract_version: receipt.diagnostic_contract_version,
+            output_identity: &receipt.output_identity,
+            semantic_module: receipt.semantic_module.as_ref(),
+        });
 
         let Err(error) = receipt.verify_identity() else {
             panic!("identity verification must reject an undeclared execution even with a matching hash");

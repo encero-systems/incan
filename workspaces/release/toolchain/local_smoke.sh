@@ -134,12 +134,12 @@ package_toolchain() {
   printf 'Packaging toolchain for %s into %s\n' "$host_target" "$dist_dir"
   # Packaging records the compiler that sealed this archive's Loafs, and manifest preparation refuses anything
   # that is not a concrete Rust release. A developer whose default toolchain is nightly would otherwise package an
-  # archive that cannot be described by a publishable manifest, so prefer a stable toolchain here the way CI does.
+  # archive that cannot be described by a publishable manifest, so select the exact supported toolchain used by CI.
   if [ -z "${RUSTC:-}" ] && command -v rustup >/dev/null 2>&1; then
-    local stable_rustc
-    if stable_rustc="$(rustup which --toolchain stable rustc 2>/dev/null)" && [ -x "$stable_rustc" ]; then
-      export RUSTC="$stable_rustc"
-      printf 'Using stable rustc for packaging: %s\n' "$("$stable_rustc" --version)"
+    local supported_rustc
+    if supported_rustc="$(rustup which --toolchain 1.98.0 rustc 2>/dev/null)" && [ -x "$supported_rustc" ]; then
+      export RUSTC="$supported_rustc"
+      printf 'Using supported rustc for packaging: %s\n' "$("$supported_rustc" --version)"
     fi
   fi
   "${root}/workspaces/release/toolchain/package_archive.sh" "$host_target" --out-dir "$dist_dir"

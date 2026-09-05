@@ -1,0 +1,11 @@
+"""Exercise set and dictionary length through one result-bearing fixture."""
+
+
+def collection_len() -> int:
+    """Encode populated and empty collection lengths in one deterministic integer."""
+    values = {1, 1, 2}
+    mapping = {"a": 1, "a": 2, "b": 3}
+    empty_values: set[int] = Set()
+    empty_mapping: dict[str, int] = Dict()
+    println("collection len")
+    return len(values) * 1000 + len(mapping) * 100 + len(empty_values) * 10 + len(empty_mapping)

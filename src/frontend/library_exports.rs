@@ -11,12 +11,15 @@ use crate::frontend::ast::{
     TypeAliasDecl, TypeParam, UnaryOp, Visibility,
 };
 use crate::frontend::decorator_resolution;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::symbols::{
-    CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, PropertyInfo, ResolvedType,
-    SymbolKind, TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, VariableInfo, resolve_type,
+    BindingRegistration, CallableParam, ClassInfo, FieldInfo, FunctionInfo, ImplementationTypeParamInfo, MethodInfo,
+    ModelInfo, NewtypeInfo, PropertyInfo, ResolvedType, SymbolKind, TraitInfo, TypeBoundInfo, TypeInfo,
+    ValueEnumBacking, ValueEnumValue, VariableInfo, register_binding, resolve_type,
 };
 use crate::frontend::typechecker::{PartialProjectionTargetKind, TypeChecker};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 #[derive(Clone, Copy)]
 struct DefaultPathContext<'a> {
@@ -38,8 +41,8 @@ impl<'a> DefaultPathContext<'a> {
         let Some(first) = path.first() else {
             return path;
         };
-        if let Some(imported_path) = self.checker.import_aliases.get(first) {
-            let mut canonical = imported_path.clone();
+        if let Some(imported_path) = self.checker.import_binding_path(first) {
+            let mut canonical = imported_path.to_vec();
             canonical.extend(path.into_iter().skip(1));
             return canonical;
         }
@@ -86,11 +89,13 @@ pub struct CheckedTypeBound {
     pub source_name: Option<String>,
     pub type_args: Vec<ResolvedType>,
     pub module_path: Option<Vec<String>>,
+    pub implementation_type_params: Vec<ImplementationTypeParamInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CheckedField {
     pub name: String,
+    pub canonical: Option<CanonicalSymbolId>,
     pub ty: ResolvedType,
     /// Source-level Incan type spelling retained for reflection across compiled-library boundaries.
     pub surface_type_name: Option<String>,
@@ -105,12 +110,14 @@ pub struct CheckedField {
 #[derive(Debug, Clone)]
 pub struct CheckedProperty {
     pub name: String,
+    pub canonical: Option<CanonicalSymbolId>,
     pub return_type: ResolvedType,
 }
 
 #[derive(Debug, Clone)]
 pub struct CheckedMethod {
     pub name: String,
+    pub canonical: Option<CanonicalSymbolId>,
     pub alias_of: Option<String>,
     pub type_params: Vec<CheckedTypeParam>,
     pub receiver: Option<crate::frontend::ast::Receiver>,
@@ -138,6 +145,8 @@ pub struct CheckedExportIdentity {
     pub source_path: Vec<String>,
     /// Public projection layered on top of `source_path`, such as an alias, reexport, or partial preset.
     pub projection: CheckedExportProjection,
+    /// Canonical declaration identity selected by the frontend, absent only when resolution stayed unproven.
+    pub canonical: Option<CanonicalSymbolId>,
 }
 
 impl CheckedExportIdentity {
@@ -146,6 +155,7 @@ impl CheckedExportIdentity {
         Self {
             source_path,
             projection: CheckedExportProjection::Direct,
+            canonical: None,
         }
     }
 
@@ -154,6 +164,7 @@ impl CheckedExportIdentity {
         Self {
             source_path,
             projection: CheckedExportProjection::Alias { target_path },
+            canonical: None,
         }
     }
 
@@ -162,6 +173,7 @@ impl CheckedExportIdentity {
         Self {
             source_path,
             projection: CheckedExportProjection::Reexport { target_path },
+            canonical: None,
         }
     }
 
@@ -173,7 +185,14 @@ impl CheckedExportIdentity {
                 target_path,
                 target_kind,
             },
+            canonical: None,
         }
+    }
+
+    /// Attach the exact declaration identity proven for this public spelling.
+    pub fn with_canonical(mut self, canonical: Option<CanonicalSymbolId>) -> Self {
+        self.canonical = canonical;
+        self
     }
 }
 
@@ -333,6 +352,7 @@ pub struct CheckedTraitExport {
 #[derive(Debug, Clone)]
 pub struct CheckedEnumVariant {
     pub name: String,
+    pub canonical: Option<CanonicalSymbolId>,
     pub fields: Vec<ResolvedType>,
     pub value: Option<ValueEnumValue>,
 }
@@ -406,6 +426,26 @@ pub struct CheckedNamedExport {
     pub kind: CheckedExportKind,
 }
 
+/// Frontend-owned registry for names projected through a library entrypoint.
+///
+/// Library reexport resolution still needs module-graph facts supplied by the build pipeline, but whether a projected
+/// name collides — and which diagnostic that collision produces — is a frontend binding decision. Keeping the state
+/// and diagnostic here prevents the CLI from maintaining a second collision rule beside the symbol resolver.
+#[derive(Debug, Default)]
+pub struct LibraryExportBindingRegistry {
+    bindings: HashMap<String, Span>,
+}
+
+impl LibraryExportBindingRegistry {
+    /// Register one projected public name, preserving the first source site on collision.
+    pub fn register(&mut self, name: &str, span: Span) -> Result<(), CompileError> {
+        match register_binding(&mut self.bindings, name.to_string(), span) {
+            BindingRegistration::Registered => Ok(()),
+            BindingRegistration::Collision { existing } => Err(errors::duplicate_library_export(name, existing, span)),
+        }
+    }
+}
+
 /// Collect checked public exports from one program while preserving alias identity.
 pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
     let mut exports = Vec::new();
@@ -416,7 +456,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_function_export(function, checker, decl.span) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
-                        identity: checked_direct_identity(checker, &export.name),
+                        identity: checked_direct_identity_at_span(checker, &export.name, decl.span),
                         kind: CheckedExportKind::Function(export),
                     });
                 }
@@ -505,7 +545,8 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                             checked_export_source_path(checker, &export.name),
                             export.target_path.clone(),
                             export.target_kind,
-                        ),
+                        )
+                        .with_canonical(checked_binding_canonical(checker, &export.name)),
                         kind: CheckedExportKind::Partial(export),
                     });
                 }
@@ -528,6 +569,25 @@ fn checked_export_source_path(checker: &TypeChecker, name: &str) -> Vec<String> 
 /// Return direct identity metadata for an export that is not projecting another declaration.
 fn checked_direct_identity(checker: &TypeChecker, name: &str) -> CheckedExportIdentity {
     CheckedExportIdentity::direct(checked_export_source_path(checker, name))
+        .with_canonical(checked_binding_canonical(checker, name))
+}
+
+/// Return direct identity metadata for a function declaration whose spelling may name an overload set.
+fn checked_direct_identity_at_span(checker: &TypeChecker, name: &str, span: Span) -> CheckedExportIdentity {
+    let canonical = checker
+        .type_info()
+        .declarations
+        .function_bindings_by_span
+        .get(&(span.start, span.end))
+        .and_then(|binding| binding.identity.clone())
+        .or_else(|| checked_binding_canonical(checker, name));
+    CheckedExportIdentity::direct(checked_export_source_path(checker, name)).with_canonical(canonical)
+}
+
+/// Return the symbol table's authoritative identity for one active public binding.
+fn checked_binding_canonical(checker: &TypeChecker, name: &str) -> Option<CanonicalSymbolId> {
+    let symbol_id = checker.symbols.lookup(name)?;
+    checker.symbols.identity_of(symbol_id).cloned()
 }
 
 /// Build checked public export entries for a module-level alias.
@@ -536,7 +596,8 @@ fn checked_alias_exports(alias: &AliasDecl, checker: &TypeChecker) -> Vec<Checke
         return Vec::new();
     };
     let target_path = DefaultPathContext::for_checker(checker).canonical_value_path(alias.target.segments.clone());
-    let identity = CheckedExportIdentity::alias(checked_export_source_path(checker, &alias.name), target_path.clone());
+    let identity = CheckedExportIdentity::alias(checked_export_source_path(checker, &alias.name), target_path.clone())
+        .with_canonical(checked_binding_canonical(checker, &alias.name));
     if let SymbolKind::FunctionOverloads(overloads) = &symbol.kind {
         return checked_overload_function_exports(alias.name.clone(), overloads, identity);
     }
@@ -592,7 +653,8 @@ fn checked_source_import_item_exports(
             let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
             let mut target_path = base_path.clone();
             target_path.push(item.name.clone());
-            let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone());
+            let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone())
+                .with_canonical(checked_binding_canonical(checker, &exported_name));
             if let Some(overloads) = checker.type_info().function_overloads(&exported_name) {
                 return checked_overload_function_exports(exported_name, overloads, identity);
             }
@@ -621,7 +683,8 @@ fn checked_import_item_exports(
             let mut target_path = base_path.clone();
             target_path.push(item.name.clone());
             let symbol_kind = checker.lookup_symbol(exported_name.as_str()).map(|symbol| &symbol.kind);
-            let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone());
+            let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone())
+                .with_canonical(checked_binding_canonical(checker, &exported_name));
             checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind, identity)
         })
         .collect()
@@ -661,7 +724,9 @@ fn checked_overload_function_exports(
             let export = checked_alias_function_export(&exported_name, &overload.info);
             CheckedNamedExport {
                 name: export.name.clone(),
-                identity: identity.clone(),
+                identity: identity
+                    .clone()
+                    .with_canonical(overload.identity.clone().or_else(|| identity.canonical.clone())),
                 kind: CheckedExportKind::Function(export),
             }
         })
@@ -829,7 +894,7 @@ fn checked_preset_value(expr: &Expr, context: DefaultPathContext<'_>) -> Checked
                 let crate::frontend::ast::CallArg::Named(field, value) = arg else {
                     return CheckedPresetValue::Unsupported;
                 };
-                fields.push((field.clone(), checked_preset_value(&value.node, context)));
+                fields.push((field.node.clone(), checked_preset_value(&value.node, context)));
             }
             CheckedPresetValue::ModelLiteral {
                 name: name.clone(),
@@ -842,7 +907,7 @@ fn checked_preset_value(expr: &Expr, context: DefaultPathContext<'_>) -> Checked
                 let crate::frontend::ast::CallArg::Named(field, value) = arg else {
                     return CheckedPresetValue::Unsupported;
                 };
-                fields.push((field.clone(), checked_preset_value(&value.node, context)));
+                fields.push((field.node.clone(), checked_preset_value(&value.node, context)));
             }
             CheckedPresetValue::ModelLiteral {
                 name: name.clone(),
@@ -910,7 +975,7 @@ fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) 
                         value: checked_param_default(value, context),
                     },
                     crate::frontend::ast::CallArg::Named(name, value) => CheckedParamDefaultArg {
-                        name: Some(name.clone()),
+                        name: Some(name.node.clone()),
                         value: checked_param_default(value, context),
                     },
                     crate::frontend::ast::CallArg::PositionalUnpack(_)
@@ -1232,6 +1297,11 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
 
         variants.push(CheckedEnumVariant {
             name: variant.node.name.clone(),
+            canonical: Some(checker.symbols.member_declaration_identity(
+                &variant.node.name,
+                SemanticSourceTargetKind::Variant,
+                variant.span,
+            )),
             fields,
             value: enum_info
                 .value_enum
@@ -1349,6 +1419,7 @@ fn checked_trait_bound(bound: &TraitBound, checker: &TypeChecker) -> CheckedType
             .map(|type_arg| resolve_type(&type_arg.node, &checker.symbols))
             .collect(),
         module_path: checker.trait_bound_module_path(&bound.name),
+        implementation_type_params: Vec::new(),
     }
 }
 
@@ -1361,6 +1432,7 @@ fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
             source_name: bound.source_name.clone(),
             type_args: bound.type_args.clone(),
             module_path: bound.module_path.clone(),
+            implementation_type_params: bound.implementation_type_params.clone(),
         })
         .collect()
 }
@@ -1433,6 +1505,7 @@ fn map_fields(
             used.insert(name.as_str());
             entries.push(CheckedField {
                 name: name.clone(),
+                canonical: info.identity.clone(),
                 ty: map_type(name, info)?,
                 surface_type_name: info.surface_type_name.clone(),
                 visibility: info.visibility,
@@ -1454,6 +1527,7 @@ fn map_fields(
             .map(|(name, info)| {
                 Some(CheckedField {
                     name: name.clone(),
+                    canonical: info.identity.clone(),
                     ty: map_type(name, info)?,
                     surface_type_name: info.surface_type_name.clone(),
                     visibility: info.visibility,
@@ -1478,6 +1552,7 @@ fn map_public_properties(properties: &HashMap<String, PropertyInfo>, checker: &T
             checker.canonicalize_public_library_nominals(&mut return_type);
             CheckedProperty {
                 name: name.clone(),
+                canonical: property.identity.clone(),
                 return_type,
             }
         })
@@ -1600,13 +1675,14 @@ fn map_method_overloads_with_defaults(
 
 /// Return whether a method belongs in public API metadata.
 fn is_exported_method_name(name: &str) -> bool {
-    !name.starts_with('_') || name.starts_with("__")
+    !name.starts_with('_') || name.starts_with("__") || matches!(name, "_checked_current_unit" | "_checked_package")
 }
 
 /// Convert one semantic method entry into the checked export shape.
 fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
     CheckedMethod {
         name: name.to_string(),
+        canonical: info.identity.clone(),
         alias_of: info.alias_of.clone(),
         type_params: info
             .type_params
@@ -1624,6 +1700,7 @@ fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
                         source_name: bound.source_name,
                         type_args: bound.type_args,
                         module_path: bound.module_path,
+                        implementation_type_params: bound.implementation_type_params,
                     })
                     .collect(),
             })
@@ -1784,5 +1861,30 @@ mod tests {
             checked_preset_value(&value, DefaultPathContext::for_checker(&checker)),
             CheckedPresetValue::Unsupported
         );
+    }
+
+    #[test]
+    fn compiler_registry_materializers_cross_compiled_provider_boundaries() {
+        assert!(is_exported_method_name("_checked_current_unit"));
+        assert!(is_exported_method_name("_checked_package"));
+        assert!(!is_exported_method_name("_private_helper"));
+    }
+
+    #[test]
+    fn library_export_registry_owns_duplicate_detection_and_diagnostic() -> Result<(), String> {
+        let mut registry = LibraryExportBindingRegistry::default();
+        let first = Span::new(4, 10);
+        let duplicate = Span::new(20, 26);
+
+        assert!(registry.register("render", first).is_ok());
+        let error = match registry.register("render", duplicate) {
+            Ok(()) => return Err("the second projected name did not collide".to_string()),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.message, "Duplicate library export `render` in `src/lib.incn`");
+        assert_eq!(error.span, duplicate);
+        assert_eq!(error.related_spans().first().map(|related| related.span), Some(first));
+        Ok(())
     }
 }

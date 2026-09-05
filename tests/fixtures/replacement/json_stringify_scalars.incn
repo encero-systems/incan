@@ -1,0 +1,14 @@
+"""Exercise scalar JSON serialization and escaping through one joined result."""
+
+
+def observe() -> str:
+    """Return serialized integer, boolean, string, and null values in source order."""
+    positive = json_stringify(7)
+    negative = json_stringify(-42)
+    maximum = json_stringify(9223372036854775807)
+    minimum_probe = json_stringify(-9223372036854775807)
+    yes = json_stringify(true)
+    no = json_stringify(false)
+    escaped = json_stringify("quote:\" slash:\\ line:\n tab:\t café 😀")
+    absent = json_stringify(None)
+    return f"{positive}|{negative}|{maximum}|{minimum_probe}|{yes}|{no}|{escaped}|{absent}"

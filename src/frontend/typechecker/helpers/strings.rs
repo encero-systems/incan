@@ -37,9 +37,39 @@ pub fn frozen_bytes_ty() -> ResolvedType {
     ResolvedType::FrozenBytes
 }
 
+/// Return one canonical string-method identity and its resolved result type, if the receiver admits it.
+///
+/// Returning the identity beside the type lets a later compiler stage retain the typechecker's selected operation
+/// without resolving the source spelling a second time. Callers that only need the result type should use
+/// [`string_method_return`].
+pub fn string_method_identity_and_return(method: &str, include_len: bool) -> Option<(StringMethodId, ResolvedType)> {
+    let id = string_methods::from_str(method)?;
+    let result = string_method_return_for_id(id, include_len)?;
+    Some((id, result))
+}
+
+/// Return one canonical method identity for a runtime `str` receiver.
+///
+/// Runtime strings admit the shared Unicode-scalar `len` operation, but not the separate `is_empty` surface that
+/// `FrozenStr` currently exposes. Keeping this distinction explicit avoids broadening one method while selecting
+/// the other for direct execution.
+pub fn runtime_string_method_identity_and_return(method: &str) -> Option<(StringMethodId, ResolvedType)> {
+    let id = string_methods::from_str(method)?;
+    let result = if id == StringMethodId::Len {
+        ResolvedType::Int
+    } else {
+        string_method_return_for_id(id, false)?
+    };
+    Some((id, result))
+}
+
 /// Return the resolved type for a supported string method, if known.
 pub fn string_method_return(method: &str, include_len: bool) -> Option<ResolvedType> {
-    let id = string_methods::from_str(method)?;
+    string_method_identity_and_return(method, include_len).map(|(_, result)| result)
+}
+
+/// Return the resolved type associated with one already-resolved string-method identity.
+fn string_method_return_for_id(id: StringMethodId, include_len: bool) -> Option<ResolvedType> {
     match id {
         StringMethodId::Upper
         | StringMethodId::Lower

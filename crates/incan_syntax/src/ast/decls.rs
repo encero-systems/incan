@@ -4,7 +4,7 @@
 use incan_core::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Expr, Ident, ImportPath, IntLiteral, PartialArg, Spanned, Statement, Type, Visibility};
+use super::{Expr, Ident, ImportPath, IntLiteral, PartialArg, Span, Spanned, Statement, Type, Visibility};
 
 // ============================================================================
 // Models (data containers with validation)
@@ -360,6 +360,8 @@ pub struct MethodDecl {
     /// Method-scoped generic parameters declared after the method name.
     pub type_params: Vec<TypeParam>,
     pub receiver: Option<Receiver>,
+    /// Exact source receiver binding; present for classmethod `cls` even though `receiver` remains `None`.
+    pub receiver_binding: Option<Spanned<Ident>>,
     pub params: Vec<Spanned<Param>>,
     /// Optional trait implementation target, written before the return arrow: `for Display`.
     pub trait_target: Option<Spanned<TraitBound>>,
@@ -477,6 +479,8 @@ pub enum DecoratorArgValue {
 pub struct TypeParam {
     pub name: Ident,
     pub bounds: Vec<TraitBound>,
+    /// Exact declaration-token span used by canonical identity and collision diagnostics.
+    pub span: Span,
 }
 
 impl TypeParam {
@@ -485,6 +489,7 @@ impl TypeParam {
         Self {
             name,
             bounds: Vec::new(),
+            span: Span::default(),
         }
     }
 }

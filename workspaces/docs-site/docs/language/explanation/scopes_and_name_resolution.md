@@ -40,7 +40,7 @@ Internally this is implemented by the compiler’s symbol table (`lookup()` sear
 !!! note "Coming from Rust?"
     The spirit is similar (lexical scopes, `mut` for reassignment), but the surface syntax differs:
 
-    - Incan’s `let x = ...` is the explicit way to introduce a **new binding** in the current scope (often used for shadowing).
+    - Incan’s `let x = ...` and `mut x = ...` are the explicit ways to introduce a **new binding** in the current scope. `let` creates an immutable binding; `mut` creates a mutable one. Either form can intentionally shadow an outer binding.
     - Plain `x = ...` is context-sensitive: it either **reassigns** an existing `mut` binding, or introduces a new immutable binding if `x` doesn’t exist yet.
 
 ## What counts as a scope in Incan?
@@ -94,7 +94,7 @@ For the exact alias syntax, supported target kinds, public export rules, and dia
 
 ### Core builtin function names
 
-Core builtin functions such as `len`, `sum`, and `zip` are ambient fallback bindings. A real lexical binding at module scope takes precedence over that fallback, whether it comes from a direct declaration or an explicit import. This is ordinary name resolution, not an error or a special builtin rule.
+Core builtin functions such as `len`, `sum`, and `zip` are ambient fallback bindings. A real lexical binding at module scope takes precedence over that fallback, whether it comes from a direct declaration or an explicit import. This is ordinary name resolution, not an error or a special builtin rule. The output functions are deliberately different: `print` and its `println` alias are immutable language bindings and cannot be redefined or replaced by an import.
 
 ```incan
 def len(value: int) -> int:
@@ -106,7 +106,7 @@ def report() -> int:
     return local_result + builtin_result
 ```
 
-Use `std.builtins.<name>` when a module has intentionally reused a builtin-function spelling but a particular call needs the core builtin. The qualified form always selects the core builtin; it is not affected by the local binding.
+Use `std.builtins.<name>` when a module has intentionally reused an ordinary builtin-function spelling but a particular call needs the core builtin. The qualified form always selects the core builtin; it is not affected by the local binding.
 
 ### Function / method scope
 
@@ -174,7 +174,7 @@ The current rule is:
 
 - A binding is **immutable by default**.
 - You can only reassign a binding if it was declared `mut`.
-- Shadowing an outer name is done with `let` (a new binding in the inner scope).
+- Shadowing an outer name is done with `let` for a new immutable binding or `mut` for a new mutable binding in the inner scope.
 
 Example:
 
@@ -200,11 +200,11 @@ def shadows_in_block() -> int:
     return x  # still 1
 ```
 
-Notes on `let`:
+Notes on explicit bindings:
 
-- `let x = ...` is the explicit form for “**introduce a new binding** in the current scope”.
-- It’s **optional** when introducing a name for the first time (plain `x = ...` will do that if `x` doesn’t exist yet), but `let` is how you make **shadowing** unambiguous and readable in nested scopes.
-- `mut x = ...` introduces a **new mutable** binding. Reassigning later uses plain `x = ...` (and requires that `x` was introduced with `mut`).
+- `let x = ...` explicitly introduces a new immutable binding in the current scope; `mut x = ...` explicitly introduces a new mutable binding.
+- An explicit form is optional when introducing a name for the first time (plain `x = ...` will do that if `x` does not exist yet), but `let` or `mut` is how you make shadowing unambiguous and readable in nested scopes.
+- Reassigning later uses plain `x = ...` and requires that the active binding was introduced with `mut`.
 
 You get an error if you write this:
 
@@ -245,7 +245,7 @@ add1 = (x) => x + 1
 
 Closures introduce their own function scope (parameters are local to the closure body). Names from outer scopes can be **read** by normal lexical lookup.
 
-Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be `mut`). Shadow with `let` if you want a closure-local name.
+Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be `mut`). Use `let` for a new immutable closure-local binding or `mut` for a new mutable one.
 
 Example:
 
@@ -263,7 +263,7 @@ def closure_capture() -> int:
 
 - **“Why did `x = ...` inside an `if` error?”**
     - If `x` already exists, plain `x = ...` is treated as a reassignment, so `x` must be `mut`.
-    - If you intended a new block-local `x`, use `let x = ...` in the block.
+    - If you intended a new block-local `x`, use `let x = ...` for an immutable binding or `mut x = ...` for a mutable one.
 
 - **“Why does `x = ...` sometimes require `mut`?”**
     - Only *reassignment* requires `mut`. Plain assignment is inferred: it reassigns if `x` already exists; otherwise it creates a new immutable binding.

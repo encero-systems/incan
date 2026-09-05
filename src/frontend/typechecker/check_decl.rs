@@ -19,8 +19,8 @@ use super::type_info::{
     RegistryExplicitEntryInfo,
 };
 use super::{
-    DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, TestingFixtureInfo, TypeChecker,
-    YieldContext,
+    DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface,
+    TestingFixtureInfo, TypeChecker, YieldContext,
 };
 use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
 use incan_core::lang::decorators::{self, DecoratorId};
@@ -95,6 +95,7 @@ pub(in crate::frontend::typechecker) struct TraitMethodEntry {
     pub origin_trait: String,
     pub origin_type_args: Vec<ResolvedType>,
     pub origin_module_path: Option<Vec<String>>,
+    pub implementation_type_params: Vec<ImplementationTypeParamInfo>,
     pub info: MethodInfo,
 }
 
@@ -183,7 +184,10 @@ fn fixture_function_span(func: &FunctionDecl) -> Span {
 }
 
 /// Return whether a decorator resolves to the RFC 004 `std.testing.fixture` marker path.
-fn is_possible_testing_fixture_decorator(dec: &Decorator, aliases: &HashMap<String, Vec<String>>) -> bool {
+fn is_possible_testing_fixture_decorator(
+    dec: &Decorator,
+    aliases: &impl crate::frontend::decorator_resolution::DecoratorPrefixLookup,
+) -> bool {
     let resolved = crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases);
     resolved.len() == 3
         && resolved[0] == stdlib::STDLIB_ROOT
@@ -194,7 +198,7 @@ fn is_possible_testing_fixture_decorator(dec: &Decorator, aliases: &HashMap<Stri
 /// Return whether any declaration in this slice of AST may be a `std.testing.fixture`.
 fn declarations_may_contain_testing_fixture(
     declarations: &[Spanned<Declaration>],
-    aliases: &HashMap<String, Vec<String>>,
+    aliases: &impl crate::frontend::decorator_resolution::DecoratorPrefixLookup,
 ) -> Option<Span> {
     for decl in declarations {
         match &decl.node {
@@ -224,7 +228,7 @@ impl TypeChecker {
     /// order.
     pub(crate) fn collect_testing_fixture_names(&mut self, program: &Program) {
         self.testing_fixture_names.clear();
-        let Some(span) = declarations_may_contain_testing_fixture(&program.declarations, &self.import_aliases) else {
+        let Some(span) = declarations_may_contain_testing_fixture(&program.declarations, &self.symbols) else {
             return;
         };
         let Some(semantics) = self.testing_marker_semantics.clone() else {
@@ -246,8 +250,7 @@ impl TypeChecker {
         for decl in declarations {
             match &decl.node {
                 Declaration::Function(func)
-                    if resolve_testing_fixture_marker_args(&func.decorators, &self.import_aliases, semantics)
-                        .is_some() =>
+                    if resolve_testing_fixture_marker_args(&func.decorators, &self.symbols, semantics).is_some() =>
                 {
                     self.testing_fixture_names.insert(func.name.clone());
                 }
@@ -267,7 +270,7 @@ impl TypeChecker {
     ) -> Option<TestingFixtureMarkerArgs> {
         if !decorators
             .iter()
-            .any(|decorator| is_possible_testing_fixture_decorator(&decorator.node, &self.import_aliases))
+            .any(|decorator| is_possible_testing_fixture_decorator(&decorator.node, &self.symbols))
         {
             return None;
         }
@@ -279,7 +282,7 @@ impl TypeChecker {
             ));
             return None;
         };
-        resolve_testing_fixture_marker_args(decorators, &self.import_aliases, semantics)
+        resolve_testing_fixture_marker_args(decorators, &self.symbols, semantics)
     }
 
     /// Enforce source-language ordering and default rules for `*args` / `**kwargs` declarations.
@@ -840,11 +843,11 @@ impl TypeChecker {
                     .push(errors::alias_collides_with_builtin(type_name, alias, field.span));
             }
 
-            if let Some(prev_span) = seen_aliases.get(alias) {
+            if let BindingRegistration::Collision { existing } =
+                register_binding(&mut seen_aliases, alias.clone(), field.span)
+            {
                 self.errors
-                    .push(errors::duplicate_alias(type_name, alias, *prev_span, field.span));
-            } else {
-                seen_aliases.insert(alias.clone(), field.span);
+                    .push(errors::duplicate_alias(type_name, alias, existing, field.span));
             }
         }
     }
@@ -1171,6 +1174,7 @@ impl TypeChecker {
                 origin_trait: trait_name.to_string(),
                 origin_type_args: trait_args.to_vec(),
                 origin_module_path: origin_module_path.map(<[String]>::to_vec),
+                implementation_type_params: Vec::new(),
                 info: method_info.clone(),
             });
         }
@@ -1389,17 +1393,20 @@ impl TypeChecker {
                     origin_trait: adoption.name.clone(),
                     origin_type_args: Vec::new(),
                     origin_module_path: None,
+                    implementation_type_params: adoption.implementation_type_params.clone(),
                     info,
                 });
         }
         let root = self
-            .lookup_semantic_trait_info(&adoption.name)
+            .lookup_trait_adoption_info(adoption)
             .cloned()
             .or_else(|| {
-                adoption
-                    .module_path
-                    .as_ref()
-                    .and_then(|module_path| self.stdlib_cache.lookup_trait(module_path, &adoption.name))
+                let module_path = adoption.module_path.as_ref()?;
+                let source_name = adoption
+                    .source_name
+                    .as_deref()
+                    .or_else(|| adoption.name.rsplit('.').next())?;
+                self.stdlib_cache.lookup_trait(module_path, source_name)
             })
             .or_else(|| {
                 stdlib::trait_method_module_segments(&adoption.name)
@@ -1451,6 +1458,7 @@ impl TypeChecker {
                     origin_trait: origin_trait.clone(),
                     origin_type_args,
                     origin_module_path,
+                    implementation_type_params: adoption.implementation_type_params.clone(),
                     info: info.clone(),
                 })
             }
@@ -1492,6 +1500,7 @@ impl TypeChecker {
                             origin == &rest[0].0 && self.method_sigs_compatible(candidate, exp0)
                         })
                         .and_then(|(_, module_path, _, _)| module_path.clone()),
+                    implementation_type_params: adoption.implementation_type_params.clone(),
                     info: exp0.clone(),
                 })
             }
@@ -1505,7 +1514,7 @@ impl TypeChecker {
         property: &str,
         ambiguity_span: Span,
     ) -> Option<PropertyInfo> {
-        let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
+        let root = self.lookup_trait_adoption_info(adoption)?.clone();
         let root_info = if adoption.type_args.is_empty() {
             root
         } else {
@@ -1971,10 +1980,11 @@ impl TypeChecker {
         for adoption in adoptions {
             let args_key = Self::trait_args_key(&adoption.args);
             let key = (adoption.name.clone(), args_key.clone());
-            if seen.insert(key, adoption.span).is_some() {
+            if let BindingRegistration::Collision { existing } = register_binding(&mut seen, key, adoption.span) {
                 self.errors.push(errors::duplicate_trait_instantiation(
                     &adoption.name,
                     &args_key,
+                    existing,
                     adoption.span,
                 ));
             }
@@ -2072,46 +2082,57 @@ impl TypeChecker {
         }
 
         for (method_name, overloads) in method_overloads {
-            if overloads.len() <= 1 {
-                continue;
-            }
-            let obligations = obligations_by_method.get(method_name).map(Vec::as_slice).unwrap_or(&[]);
-            let mut matched_obligations = vec![false; obligations.len()];
-            let mut overload_matches: Vec<Option<usize>> = vec![None; overloads.len()];
-            for (idx, overload) in overloads.iter().enumerate() {
-                let matched_index = obligations
+            for surface in [MemberBindingSurface::Type, MemberBindingSurface::Instance] {
+                let surface_overloads = overloads
                     .iter()
                     .enumerate()
-                    .find(|(obligation_idx, (origin_trait, expected))| {
-                        !matched_obligations[*obligation_idx]
-                            && Self::method_trait_target_matches(overload, origin_trait)
-                            && self.method_sigs_compatible(expected, overload)
-                    })
-                    .map(|(obligation_idx, _)| obligation_idx);
-                if let Some(obligation_idx) = matched_index {
-                    matched_obligations[obligation_idx] = true;
-                    overload_matches[idx] = Some(obligation_idx);
-                }
-            }
-            let has_trait_backed_overload = overload_matches.iter().any(Option::is_some);
-            for (idx, overload) in overloads.iter().enumerate() {
-                if overload_matches[idx].is_some() {
+                    .filter(|(_, method)| surface.accepts_method(method))
+                    .collect::<Vec<_>>();
+                if surface_overloads.len() <= 1 {
                     continue;
                 }
-                let shares_call_shape = overloads
-                    .iter()
-                    .enumerate()
-                    .any(|(other_idx, other)| other_idx != idx && self.method_call_shapes_same(overload, other));
-                if has_trait_backed_overload && !shares_call_shape {
-                    continue;
-                }
-                let span = method_spans
+                let obligations = obligations_by_method
                     .get(method_name)
-                    .and_then(|spans| spans.get(idx).copied())
-                    .or_else(|| method_spans.get(method_name).and_then(|spans| spans.first().copied()))
-                    .unwrap_or_default();
-                self.errors
-                    .push(errors::duplicate_method_not_trait_backed(type_name, method_name, span));
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, method)| surface.accepts_method(method))
+                    .collect::<Vec<_>>();
+                let mut matched_obligations = vec![false; obligations.len()];
+                let mut overload_matches: Vec<Option<usize>> = vec![None; surface_overloads.len()];
+                for (idx, (_, overload)) in surface_overloads.iter().enumerate() {
+                    let matched_index = obligations
+                        .iter()
+                        .enumerate()
+                        .find(|(obligation_idx, (origin_trait, expected))| {
+                            !matched_obligations[*obligation_idx]
+                                && Self::method_trait_target_matches(overload, origin_trait)
+                                && self.method_sigs_compatible(expected, overload)
+                        })
+                        .map(|(obligation_idx, _)| obligation_idx);
+                    if let Some(obligation_idx) = matched_index {
+                        matched_obligations[obligation_idx] = true;
+                        overload_matches[idx] = Some(obligation_idx);
+                    }
+                }
+                let has_trait_backed_overload = overload_matches.iter().any(Option::is_some);
+                for (idx, (source_idx, overload)) in surface_overloads.iter().enumerate() {
+                    if overload_matches[idx].is_some() {
+                        continue;
+                    }
+                    let shares_call_shape = surface_overloads.iter().enumerate().any(|(other_idx, (_, other))| {
+                        other_idx != idx && self.method_call_shapes_same(overload, other)
+                    });
+                    if has_trait_backed_overload && !shares_call_shape {
+                        continue;
+                    }
+                    let span = method_spans
+                        .get(method_name)
+                        .and_then(|spans| spans.get(*source_idx).copied())
+                        .or_else(|| method_spans.get(method_name).and_then(|spans| spans.first().copied()))
+                        .unwrap_or_default();
+                    self.errors
+                        .push(errors::duplicate_method_not_trait_backed(type_name, method_name, span));
+                }
             }
         }
     }
@@ -2187,15 +2208,36 @@ impl TypeChecker {
             Declaration::Import(_) => {} // Already handled
             Declaration::Const(konst) => self.check_const(konst, decl.span),
             Declaration::Static(static_decl) => self.check_static(static_decl, decl.span),
-            Declaration::Model(model) => self.check_model(model),
-            Declaration::Class(class) => self.check_class(class),
-            Declaration::Trait(tr) => self.check_trait(tr),
+            Declaration::Model(model) => {
+                self.validate_protected_type_param_bindings(&model.type_params, decl.span);
+                self.check_model(model);
+            }
+            Declaration::Class(class) => {
+                self.validate_protected_type_param_bindings(&class.type_params, decl.span);
+                self.check_class(class);
+            }
+            Declaration::Trait(tr) => {
+                self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
+                self.check_trait(tr);
+            }
             Declaration::Alias(_) => {} // Alias targets are validated during collection.
             Declaration::Partial(partial) => self.check_partial_decl(partial),
-            Declaration::TypeAlias(alias) => self.check_type_alias(alias),
-            Declaration::Newtype(nt) => self.check_newtype(nt),
-            Declaration::Enum(en) => self.check_enum(en),
-            Declaration::Function(func) => self.check_function(func, decl.span),
+            Declaration::TypeAlias(alias) => {
+                self.validate_protected_type_param_bindings(&alias.type_params, decl.span);
+                self.check_type_alias(alias);
+            }
+            Declaration::Newtype(nt) => {
+                self.validate_protected_type_param_bindings(&nt.type_params, decl.span);
+                self.check_newtype(nt);
+            }
+            Declaration::Enum(en) => {
+                self.validate_protected_type_param_bindings(&en.type_params, decl.span);
+                self.check_enum(en);
+            }
+            Declaration::Function(func) => {
+                self.validate_protected_type_param_bindings(&func.type_params, decl.span);
+                self.check_function(func, decl.span);
+            }
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::VocabBlock(_) => self.errors.push(CompileError::syntax(
                 "raw vocabulary declarations must be desugared before type checking".to_string(),
@@ -2203,6 +2245,17 @@ impl TypeChecker {
             )),
             Declaration::Capability(cap) => self.check_capability_decl(cap, decl.span),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
+        }
+    }
+
+    /// Reject protected builtin spellings in a declaration-owned generic parameter list.
+    ///
+    /// Generic parameters are inserted into the ordinary lexical symbol table, so they can displace a bare callable
+    /// root even though their source role is type-only. [`TypeParam`] retains no individual source span; callers pass
+    /// the nearest enclosing declaration or method span rather than fabricating a byte range.
+    fn validate_protected_type_param_bindings(&mut self, type_params: &[TypeParam], owner_span: Span) {
+        for type_param in type_params {
+            self.validate_protected_builtin_binding(&type_param.name, owner_span);
         }
     }
 
@@ -2304,12 +2357,15 @@ impl TypeChecker {
     fn check_type_alias(&mut self, alias: &TypeAliasDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
         for param in &alias.type_params {
-            self.symbols.define(Symbol {
-                name: param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
         self.validate_type_param_bound_type_names(&alias.type_params);
         let _ = self.resolve_type_checked(&alias.target);
@@ -2434,7 +2490,11 @@ impl TypeChecker {
 
     /// Validate preset expressions for same-type method partial declarations.
     fn check_method_partials(&mut self, owner: &str, partials: &[Spanned<MethodPartialDecl>]) {
-        for partial in partials {
+        let active_partials = partials
+            .iter()
+            .filter(|partial| self.member_binding_is_active(partial.span))
+            .collect::<Vec<_>>();
+        for partial in active_partials {
             let Some(target) = self.method_info_for_owner(owner, &partial.node.target).cloned() else {
                 for arg in &partial.node.args {
                     self.check_expr(&arg.value);
@@ -2466,7 +2526,7 @@ impl TypeChecker {
     }
 
     /// Return collected method metadata for an owner type or trait surface.
-    fn method_info_for_owner(&self, owner: &str, method: &str) -> Option<&MethodInfo> {
+    pub(super) fn method_info_for_owner(&self, owner: &str, method: &str) -> Option<&MethodInfo> {
         if let Some(info) = self.lookup_trait_info(owner) {
             return info.methods.get(method);
         }
@@ -2482,15 +2542,6 @@ impl TypeChecker {
     /// Typecheck an inline test module declaration.
     fn check_test_module(&mut self, test_module: &TestModuleDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
-        let outer_import_aliases = self.import_aliases.clone();
-        let inline_program = Program {
-            declarations: test_module.body.clone(),
-            ..Program::default()
-        };
-        self.import_aliases
-            .extend(crate::frontend::decorator_resolution::collect_import_aliases(
-                &inline_program,
-            ));
         let previous_validation_state = self.validate_source_type_names;
         self.validate_source_type_names = false;
         self.collect_declarations_for_check(&test_module.body);
@@ -2501,7 +2552,6 @@ impl TypeChecker {
         for decl in &test_module.body {
             self.check_declaration(decl);
         }
-        self.import_aliases = outer_import_aliases;
         self.symbols.exit_scope();
     }
 
@@ -2698,13 +2748,16 @@ impl TypeChecker {
                 ));
                 return;
             };
-            let target = match name.as_str() {
+            let target = match name.node.as_str() {
                 "key" => &mut key,
                 "subject" => &mut subject,
                 "descriptor" => &mut descriptor,
                 _ => {
                     self.errors.push(CompileError::type_error(
-                        format!("registry.entry does not accept checked registry argument `{name}`"),
+                        format!(
+                            "registry.entry does not accept checked registry argument `{}`",
+                            name.node
+                        ),
                         value.span,
                     ));
                     return;
@@ -2712,7 +2765,7 @@ impl TypeChecker {
             };
             if target.replace(value).is_some() {
                 self.errors.push(CompileError::type_error(
-                    format!("registry.entry received duplicate `{name}` argument"),
+                    format!("registry.entry received duplicate `{}` argument", name.node),
                     value.span,
                 ));
                 return;
@@ -2726,13 +2779,14 @@ impl TypeChecker {
             ));
             return;
         };
-        let subject_kind = match self.registry_explicit_subject_kind(subject) {
-            Ok(subject_kind) => subject_kind,
-            Err(message) => {
-                self.errors.push(CompileError::type_error(message, subject.span));
-                return;
-            }
-        };
+        let (subject_kind, subject_constructor_identity, checked_constructor_identity) =
+            match self.registry_explicit_subject(subject) {
+                Ok(subject) => subject,
+                Err(message) => {
+                    self.errors.push(CompileError::type_error(message, subject.span));
+                    return;
+                }
+            };
         if !definition.subjects.contains(&subject_kind) {
             self.errors.push(CompileError::type_error(
                 format!("registry `{registry_name}` does not enable SubjectKind.{subject_kind}"),
@@ -2789,6 +2843,21 @@ impl TypeChecker {
             ));
             return;
         }
+        let Some(entry_method_identity) = self
+            .type_info
+            .resolved_identity(static_decl.value.span)
+            .filter(|identity| {
+                identity.kind == incan_semantics_core::SemanticSourceTargetKind::Method
+                    && identity.declaration_name == "entry"
+            })
+            .cloned()
+        else {
+            self.errors.push(CompileError::type_error(
+                "registry.entry must resolve to the source-owned Registry.entry declaration".to_string(),
+                static_decl.value.span,
+            ));
+            return;
+        };
         self.type_info
             .registry
             .explicit_entries
@@ -2797,6 +2866,9 @@ impl TypeChecker {
                 key: key_value,
                 descriptor: descriptor_value,
                 subject_kind,
+                entry_method_identity,
+                subject_constructor_identity,
+                checked_constructor_identity,
                 entry_name: static_decl.name.clone(),
                 declaration_span: (span.start, span.end),
                 key_span: (key.span.start, key.span.end),
@@ -2805,8 +2877,15 @@ impl TypeChecker {
             });
     }
 
-    /// Resolve the bounded explicit registry subject surface without evaluating a source expression.
-    fn registry_explicit_subject_kind(&self, subject: &Spanned<Expr>) -> Result<SemanticRegistrySubjectKind, String> {
+    /// Resolve the bounded explicit registry subject and the exact source artifacts that lowering may substitute.
+    ///
+    /// The public placeholder and compiler-reserved materializer are both ordinary Incan methods, so this frontend
+    /// boundary retains their canonical identities instead of asking lowering to reconstruct either artifact from a
+    /// method spelling. The expression has already been typechecked before this validator runs.
+    fn registry_explicit_subject(
+        &self,
+        subject: &Spanned<Expr>,
+    ) -> Result<(SemanticRegistrySubjectKind, CanonicalSymbolId, CanonicalSymbolId), String> {
         let Expr::MethodCall(receiver, method, _, arguments) = &subject.node else {
             return Err(
                 "registry.entry subject must be RegistrySubject.current_unit() or RegistrySubject.package()"
@@ -2819,14 +2898,35 @@ impl TypeChecker {
                     .to_string(),
             );
         }
-        match method.as_str() {
-            "current_unit" => Ok(SemanticRegistrySubjectKind::CompilationUnit),
-            "package" => Ok(SemanticRegistrySubjectKind::Package),
+        let (subject_kind, checked_constructor_name) = match method.as_str() {
+            "current_unit" => (SemanticRegistrySubjectKind::CompilationUnit, "_checked_current_unit"),
+            "package" => (SemanticRegistrySubjectKind::Package, "_checked_package"),
             _ => Err(
                 "registry.entry subject must be RegistrySubject.current_unit() or RegistrySubject.package()"
                     .to_string(),
-            ),
-        }
+            )?,
+        };
+        let subject_constructor_identity = self
+            .type_info
+            .resolved_identity(subject.span)
+            .filter(|identity| {
+                identity.kind == incan_semantics_core::SemanticSourceTargetKind::Method
+                    && identity.declaration_name == *method
+            })
+            .cloned()
+            .ok_or_else(|| {
+                "registry.entry subject must resolve to the compiler-owned RegistrySubject constructor".to_string()
+            })?;
+        let checked_constructor_identity = self
+            .method_info_for_owner("RegistrySubject", checked_constructor_name)
+            .and_then(|method| method.identity.clone())
+            .filter(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Method)
+            .ok_or_else(|| {
+                format!(
+                    "registry.entry cannot resolve compiler-owned RegistrySubject.{checked_constructor_name} materializer"
+                )
+            })?;
+        Ok((subject_kind, subject_constructor_identity, checked_constructor_identity))
     }
 
     /// Return whether a checked description or explicit entry already owns `key` in `registry_name`.
@@ -2884,7 +2984,7 @@ impl TypeChecker {
         }
         let subjects = match arguments.as_slice() {
             [CallArg::Positional(value)] => value,
-            [CallArg::Named(name, value)] if name == "subjects" => value,
+            [CallArg::Named(name, value)] if name.node == "subjects" => value,
             _ => {
                 return Err("Registry.define requires exactly one `subjects` argument".to_string());
             }
@@ -2926,7 +3026,7 @@ impl TypeChecker {
     /// construction semantics for a checked descriptor snapshot.
     fn validate_descriptor_derive_attachment(&mut self, decorators: &[Spanned<Decorator>], kind: &str) {
         for decorator in decorators {
-            if self.decorator_id_with_import_aliases(&decorator.node) != Some(DecoratorId::Derive) {
+            if self.decorator_id(&decorator.node) != Some(DecoratorId::Derive) {
                 continue;
             }
             for argument in &decorator.node.args {
@@ -3193,12 +3293,15 @@ impl TypeChecker {
 
         // Define type parameters
         for param in &model.type_params {
-            self.symbols.define(Symbol {
-                name: param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin), // Type var placeholder
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
 
         // Check traits exist and are satisfied (models can adopt storage-free traits, RFC 000).
@@ -3240,8 +3343,12 @@ impl TypeChecker {
             };
             resolved_trait_adoptions.push(resolved);
         }
-        let model_fields: Vec<_> = model
+        let active_model_fields = model
             .fields
+            .iter()
+            .filter(|field| self.member_binding_is_active(field.span))
+            .collect::<Vec<_>>();
+        let model_fields: Vec<_> = active_model_fields
             .iter()
             .map(|field| (field.node.name.as_str(), self.resolve_type_checked(&field.node.ty)))
             .collect();
@@ -3270,12 +3377,17 @@ impl TypeChecker {
         }
 
         // Define fields in scope
-        for field in &model.fields {
+        for field in active_model_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
             self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
+                    identity: Some(self.symbols.member_declaration_identity(
+                        &field.node.name,
+                        SemanticSourceTargetKind::Field,
+                        field.span,
+                    )),
                     surface_type_name: Some(crate::frontend::symbols::field_surface_type_name(
                         &field.node.ty.node,
                         &ty,
@@ -3312,12 +3424,22 @@ impl TypeChecker {
         }
 
         // Check methods
-        for method in &model.methods {
+        let active_model_methods = model
+            .methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .collect::<Vec<_>>();
+        for method in active_model_methods {
             self.check_method_with_owner_type_params(&method.node, method.span, &model.name, &model.type_params);
         }
         self.check_method_partials(&model.name, &model.method_partials);
-        for property in &model.properties {
-            self.check_property(&property.node, &model.name);
+        let active_model_properties = model
+            .properties
+            .iter()
+            .filter(|property| self.member_binding_is_active(property.span))
+            .collect::<Vec<_>>();
+        for property in active_model_properties {
+            self.check_property(property, &model.name, &model.type_params);
         }
 
         if has_validate {
@@ -3595,12 +3717,15 @@ impl TypeChecker {
 
         // Define type parameters before resolving class fields, trait adoptions, and method signatures.
         for param in &class.type_params {
-            self.symbols.define(Symbol {
-                name: param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
 
         self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
@@ -3657,8 +3782,12 @@ impl TypeChecker {
             };
             resolved_trait_adoptions.push(resolved);
         }
-        let class_fields: Vec<_> = class
+        let active_class_fields = class
             .fields
+            .iter()
+            .filter(|field| self.member_binding_is_active(field.span))
+            .collect::<Vec<_>>();
+        let class_fields: Vec<_> = active_class_fields
             .iter()
             .map(|field| (field.node.name.as_str(), self.resolve_type_checked(&field.node.ty)))
             .collect();
@@ -3672,7 +3801,7 @@ impl TypeChecker {
 
         // RFC 021: Field aliases are NOT supported on class declarations.
         // Reject any field metadata on class fields.
-        for field in &class.fields {
+        for field in &active_class_fields {
             if field.node.metadata.alias.is_some() {
                 self.errors.push(errors::alias_not_supported_on_class(
                     &class.name,
@@ -3690,11 +3819,16 @@ impl TypeChecker {
         }
 
         // Define fields
-        for field in &class.fields {
+        for field in active_class_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
+                    identity: Some(self.symbols.member_declaration_identity(
+                        &field.node.name,
+                        SemanticSourceTargetKind::Field,
+                        field.span,
+                    )),
                     surface_type_name: Some(crate::frontend::symbols::field_surface_type_name(
                         &field.node.ty.node,
                         &ty,
@@ -3727,12 +3861,22 @@ impl TypeChecker {
         }
 
         // Check methods
-        for method in &class.methods {
+        let active_class_methods = class
+            .methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .collect::<Vec<_>>();
+        for method in active_class_methods {
             self.check_method_with_owner_type_params(&method.node, method.span, &class.name, &class.type_params);
         }
         self.check_method_partials(&class.name, &class.method_partials);
-        for property in &class.properties {
-            self.check_property(&property.node, &class.name);
+        let active_class_properties = class
+            .properties
+            .iter()
+            .filter(|property| self.member_binding_is_active(property.span))
+            .collect::<Vec<_>>();
+        for property in active_class_properties {
+            self.check_property(property, &class.name, &class.type_params);
         }
         if let Some(TypeInfo::Class(info)) = self.lookup_type_info(&class.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&class.methods);
@@ -3830,14 +3974,16 @@ impl TypeChecker {
 
         // Trait API annotations are collected before source names can be validated. Re-establish the trait's generic
         // scope and revisit every declaration-only surface during the semantic pass.
-        let trait_type_params: Vec<String> = tr.type_params.iter().map(|param| param.name.clone()).collect();
         for param in &tr.type_params {
-            self.symbols.define(Symbol {
-                name: param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
         self.validate_type_param_bound_type_names(&tr.type_params);
         for supertrait in &tr.traits {
@@ -3882,25 +4028,29 @@ impl TypeChecker {
         self.current_trait_name = Some(tr.name.clone());
         self.validate_trait_partial_inherited_overrides(&tr.name, &tr.method_partials);
 
-        for method in &tr.methods {
+        let active_trait_methods = tr
+            .methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .collect::<Vec<_>>();
+        for method in active_trait_methods {
             self.validate_decorators_allowing_user_defined(&method.node.decorators);
             self.reject_registry_description_decorators(&method.node.decorators, "trait method");
             let prev_method_seen = self.current_trait_missing_requires_emitted.take();
             self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
             // Trait methods are checked against `Self` (the eventual adopter type). Abstract methods have no body, but
             // their parameter, return, target, and generic-bound annotations still form part of the public trait API.
-            self.check_method_with_self_ty(
-                &method.node,
-                method.span,
-                ResolvedType::SelfType,
-                &trait_type_params,
-                &tr.type_params,
-            );
+            self.check_method_with_self_ty(&method.node, method.span, ResolvedType::SelfType, &tr.type_params);
             self.current_trait_missing_requires_emitted = prev_method_seen;
             self.apply_user_defined_method_decorators(&method.node, &tr.name);
         }
         self.check_method_partials(&tr.name, &tr.method_partials);
-        for property in &tr.properties {
+        let active_trait_properties = tr
+            .properties
+            .iter()
+            .filter(|property| self.member_binding_is_active(property.span))
+            .collect::<Vec<_>>();
+        for property in active_trait_properties {
             let _ = self.resolve_type_checked(&property.node.return_type);
             if property.node.body.is_some() {
                 self.errors.push(errors::trait_property_body_not_supported(
@@ -4085,12 +4235,15 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Block);
 
         for param in &nt.type_params {
-            self.symbols.define(Symbol {
-                name: param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
         self.validate_type_param_bound_type_names(&nt.type_params);
 
@@ -4247,7 +4400,12 @@ impl TypeChecker {
         }
 
         // Check methods (reuse the standard method-checking logic so parameters are in scope).
-        for method in &nt.methods {
+        let active_newtype_methods = nt
+            .methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .collect::<Vec<_>>();
+        for method in active_newtype_methods {
             if method.node.body.is_some() {
                 self.check_method_with_owner_type_params(&method.node, method.span, &nt.name, &nt.type_params);
             }
@@ -4416,12 +4574,15 @@ impl TypeChecker {
         let derives = self.extract_derive_names(&en.decorators);
 
         for param in &en.type_params {
-            self.symbols.define(Symbol {
-                name: param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
 
         let mut resolved_trait_adoptions = Vec::new();
@@ -4467,7 +4628,12 @@ impl TypeChecker {
         self.check_value_enum_decl(en);
         self.check_enum_variant_aliases(en);
         // Check variant field types exist
-        for variant in &en.variants {
+        let active_variants = en
+            .variants
+            .iter()
+            .filter(|variant| self.member_binding_is_active(variant.span))
+            .collect::<Vec<_>>();
+        for variant in active_variants {
             for field_ty in &variant.node.fields {
                 let resolved = self.resolve_type_checked(field_ty);
                 if matches!(resolved, ResolvedType::Unknown) {
@@ -4477,7 +4643,12 @@ impl TypeChecker {
             }
         }
 
-        for method in &en.methods {
+        let active_methods = en
+            .methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .collect::<Vec<_>>();
+        for method in active_methods {
             self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
@@ -4495,13 +4666,18 @@ impl TypeChecker {
 
     /// Validate enum variant aliases against the variant namespace.
     fn check_enum_variant_aliases(&mut self, en: &EnumDecl) {
-        let variants: HashSet<&str> = en.variants.iter().map(|variant| variant.node.name.as_str()).collect();
-        let mut aliases: HashSet<&str> = HashSet::new();
-        for alias in &en.variant_aliases {
-            if variants.contains(alias.node.name.as_str()) || !aliases.insert(alias.node.name.as_str()) {
-                self.errors
-                    .push(errors::duplicate_definition(&alias.node.name, alias.span));
-            }
+        let variants: HashSet<&str> = en
+            .variants
+            .iter()
+            .filter(|variant| self.member_binding_is_active(variant.span))
+            .map(|variant| variant.node.name.as_str())
+            .collect();
+        let active_aliases = en
+            .variant_aliases
+            .iter()
+            .filter(|alias| self.member_binding_is_active(alias.span))
+            .collect::<Vec<_>>();
+        for alias in active_aliases {
             if !variants.contains(alias.node.target.as_str()) {
                 self.errors.push(errors::unknown_symbol(&alias.node.target, alias.span));
             }
@@ -4935,7 +5111,10 @@ impl TypeChecker {
             match arg {
                 DecoratorArg::Positional(expr) => args.push(CallArg::Positional(expr.clone())),
                 DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) => {
-                    args.push(CallArg::Named(name.clone(), expr.clone()));
+                    args.push(CallArg::Named(
+                        Spanned::new(name.clone(), Span::default()),
+                        expr.clone(),
+                    ));
                 }
                 DecoratorArg::Named(_, DecoratorArgValue::Type(ty)) => {
                     self.errors
@@ -4988,7 +5167,7 @@ impl TypeChecker {
         subject_kind: SemanticRegistrySubjectKind,
     ) {
         for decorator in decorators {
-            if self.decorator_id_with_import_aliases(&decorator.node) != Some(DecoratorId::Describe) {
+            if self.decorator_id(&decorator.node) != Some(DecoratorId::Describe) {
                 continue;
             }
             let [
@@ -5136,9 +5315,7 @@ impl TypeChecker {
         let decorators = func
             .decorators
             .iter()
-            .filter(|decorator| {
-                self.decorator_id_with_import_aliases(&decorator.node) == Some(DecoratorId::ProviderOperation)
-            })
+            .filter(|decorator| self.decorator_id(&decorator.node) == Some(DecoratorId::ProviderOperation))
             .collect::<Vec<_>>();
         if decorators.is_empty() {
             return;
@@ -5171,6 +5348,8 @@ impl TypeChecker {
         let Some(required_capability) = self.provider_operation_capability_identity(&path, capability.span) else {
             return;
         };
+        self.type_info
+            .record_resolved_identity(capability.span, required_capability.clone());
         let Some(module_path) = self.current_module_path.clone() else {
             self.errors.push(CompileError::type_error(
                 "@provider_operation requires a compiler-known module identity".to_string(),
@@ -5199,13 +5378,14 @@ impl TypeChecker {
         let rendered = path.join(".");
         let (name, module) = path.split_last()?;
         if module.is_empty() {
-            let Some(symbol) = self.lookup_symbol(name).cloned() else {
+            let Some(symbol_id) = self.symbols.lookup(name) else {
                 self.errors.push(CompileError::type_error(
                     format!("@provider_operation capability `{rendered}` is unresolved"),
                     span,
                 ));
                 return None;
             };
+            let symbol = self.symbols.get(symbol_id)?;
             if !matches!(symbol.kind, SymbolKind::Capability(_)) {
                 self.errors.push(CompileError::type_error(
                     format!("@provider_operation reference `{rendered}` does not name a capability"),
@@ -5213,22 +5393,36 @@ impl TypeChecker {
                 ));
                 return None;
             }
-            let Some(module_path) = self.current_module_path.clone() else {
+            let Some(identity) = self.symbols.identity_of(symbol_id).cloned() else {
                 self.errors.push(CompileError::type_error(
-                    "@provider_operation requires a compiler-known module identity".to_string(),
+                    format!("@provider_operation capability `{rendered}` has no compiler-proven identity"),
                     span,
                 ));
                 return None;
             };
-            return Some(CanonicalSymbolId::module_declaration(
-                module_path,
-                name.clone(),
-                SemanticSourceTargetKind::Capability,
-                HirSourceSpan::new(symbol.span.start, symbol.span.end),
-            ));
+            return Some(identity);
         }
-        let import = ImportPath::simple(module.to_vec());
-        match self.dependency_member_identity(&import, name) {
+        let (root, nested) = module.split_first()?;
+        let Some(mut module_path) = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
+            _ => None,
+        }) else {
+            self.errors.push(CompileError::type_error(
+                format!("@provider_operation capability `{rendered}` is unresolved"),
+                span,
+            ));
+            return None;
+        };
+        module_path.extend(nested.iter().cloned());
+        let identity = if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
+            self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
+                .ok()
+                .flatten()
+                .and_then(|resolved| resolved.canonical)
+        } else {
+            self.dependency_member_identity(&ImportPath::simple(module_path), name)
+        };
+        match identity {
             Some(identity) if identity.kind == SemanticSourceTargetKind::Capability => Some(identity),
             Some(_) => {
                 self.errors.push(CompileError::type_error(
@@ -5255,7 +5449,7 @@ impl TypeChecker {
     /// concrete subject-identity contract.
     fn reject_registry_description_decorators(&mut self, decorators: &[Spanned<Decorator>], target: &str) {
         for decorator in decorators {
-            if self.decorator_id_with_import_aliases(&decorator.node) == Some(DecoratorId::Describe) {
+            if self.decorator_id(&decorator.node) == Some(DecoratorId::Describe) {
                 self.errors.push(CompileError::type_error(
                     format!("@describe is currently supported only on concrete functions and methods, not a {target}"),
                     decorator.span,
@@ -5392,7 +5586,7 @@ impl TypeChecker {
                 return Err("@describe Descriptor model literals require named fields without spreads".to_string());
             };
             fields.push((
-                field.clone(),
+                field.node.clone(),
                 self.registry_structural_value_with_consts(value, expanding_consts)?,
             ));
         }
@@ -5499,12 +5693,15 @@ impl TypeChecker {
 
         // Define type parameters so explicit generic bounds are visible in function-level type resolution.
         for param in &func.type_params {
-            self.symbols.define(Symbol {
-                name: param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
         let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
         self.current_type_param_bound_details.push(active_bounds);
@@ -5515,16 +5712,21 @@ impl TypeChecker {
         // binding. The function body still receives its ordinary parameter locals below.
         for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
             let ty = local_type_for_param(param.node.kind, resolved_ty);
-            self.symbols.define(Symbol {
-                name: param.node.name.clone(),
-                kind: SymbolKind::Variable(VariableInfo {
-                    ty,
-                    is_mutable: false,
-                    is_used: false,
-                }),
-                span: param.span,
-                scope: 0,
-            });
+            self.validate_protected_builtin_binding(&param.node.name, param.span);
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.node.name.clone(),
+                    kind: SymbolKind::Variable(VariableInfo {
+                        ty,
+                        is_mutable: false,
+                        is_used: false,
+                    }),
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::Parameter,
+            );
+            self.record_write_target_identity(param.span, &param.node.name);
         }
 
         let return_type = self.resolve_type_checked(&func.return_type);
@@ -5641,6 +5843,7 @@ impl TypeChecker {
                                     .map(|type_arg| self.resolve_type_checked(type_arg))
                                     .collect(),
                                 module_path,
+                                implementation_type_params: Vec::new(),
                             }
                         })
                         .collect(),
@@ -5709,13 +5912,13 @@ impl TypeChecker {
                     .collect(),
             )
         };
-        self.check_method_with_self_ty(method, method_span, owner_self_ty, &owner_type_params, owner_params);
+        self.check_method_with_self_ty(method, method_span, owner_self_ty, owner_params);
         self.current_method_owner = previous_owner;
         self.apply_user_defined_method_decorators(method, owner);
     }
 
     /// Validate a model or class computed property body using the concrete nominal owner as immutable `self`.
-    pub(crate) fn check_property(&mut self, property: &PropertyDecl, owner: &str) {
+    pub(crate) fn check_property(&mut self, property: &Spanned<PropertyDecl>, owner: &str, owner_params: &[TypeParam]) {
         let owner_type_params = self
             .lookup_type_info(owner)
             .map(|info| match info {
@@ -5736,7 +5939,7 @@ impl TypeChecker {
                     .collect(),
             )
         };
-        self.check_property_with_self_ty(property, owner_self_ty, &owner_type_params);
+        self.check_property_with_self_ty(&property.node, property.span, owner_self_ty, owner_params);
         self.current_method_owner = previous_owner;
     }
 
@@ -5744,32 +5947,37 @@ impl TypeChecker {
     fn check_property_with_self_ty(
         &mut self,
         property: &PropertyDecl,
+        property_span: Span,
         self_ty: ResolvedType,
-        owner_type_params: &[String],
+        owner_params: &[TypeParam],
     ) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: Some(Receiver::Immutable),
         });
 
-        for type_param in owner_type_params {
-            self.symbols.define(Symbol {
-                name: type_param.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
+        for type_param in owner_params {
+            self.symbols.define_refined_binding(Symbol {
+                name: type_param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                span: type_param.span,
                 scope: 0,
             });
         }
 
-        self.symbols.define(Symbol {
-            name: "self".to_string(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty: self_ty.clone(),
-                is_mutable: false,
-                is_used: true,
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
+        self.symbols.define_with_target_kind(
+            Symbol {
+                name: "self".to_string(),
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty: self_ty.clone(),
+                    is_mutable: false,
+                    is_used: true,
+                }),
+                // Properties have an implicit `self`, so the property declaration is its source provenance.
+                span: property_span,
+                scope: 0,
+            },
+            SemanticSourceTargetKind::Receiver,
+        );
 
         let return_type = self.resolve_type_checked(&property.return_type);
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
@@ -5804,9 +6012,9 @@ impl TypeChecker {
         method: &MethodDecl,
         method_span: Span,
         self_ty: ResolvedType,
-        owner_type_params: &[String],
         owner_params: &[TypeParam],
     ) {
+        self.validate_protected_type_param_bindings(&method.type_params, method_span);
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
@@ -5814,23 +6022,26 @@ impl TypeChecker {
         self.validate_surface_modifier_typecheck_actions(&method.surface_modifiers, &method.return_type);
 
         // Define owner type parameters so generic wrappers can use them in bodies and annotations.
-        for type_param in owner_type_params {
-            self.symbols.define(Symbol {
-                name: type_param.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
+        for type_param in owner_params {
+            self.symbols.define_refined_binding(Symbol {
+                name: type_param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                span: type_param.span,
                 scope: 0,
             });
         }
 
         // Define method type parameters so generic methods can use them in signatures and bodies.
         for type_param in &method.type_params {
-            self.symbols.define(Symbol {
-                name: type_param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin),
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: type_param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: type_param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
         }
         if let Some(target) = &method.trait_target {
             let trait_name = target.node.name.as_str();
@@ -5846,24 +6057,63 @@ impl TypeChecker {
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params);
 
-        // Define self if present
-        if let Some(receiver) = method.receiver {
+        // Define the source receiver with its exact declaration token. Classmethod `cls` remains absent from the
+        // legacy receiver enum because it emits as an associated function, but it is still a source binding with a
+        // canonical receiver identity.
+        if let Some(receiver) = method.receiver
+            && method
+                .receiver_binding
+                .as_ref()
+                .is_none_or(|binding| binding.node == "self")
+        {
             let is_mutable = matches!(receiver, Receiver::Mutable);
             if is_mutable {
                 self.mutable_bindings.insert("self".to_string());
             }
-            self.symbols.define(Symbol {
-                name: "self".to_string(),
-                kind: SymbolKind::Variable(VariableInfo {
-                    ty: self_ty.clone(),
-                    is_mutable,
-                    is_used: true,
-                }),
-                span: Span::default(),
-                scope: 0,
-            });
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: "self".to_string(),
+                    kind: SymbolKind::Variable(VariableInfo {
+                        ty: self_ty.clone(),
+                        is_mutable,
+                        is_used: true,
+                    }),
+                    span: method
+                        .receiver_binding
+                        .as_ref()
+                        .map_or(method_span, |binding| binding.span),
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::Receiver,
+            );
+            self.record_write_target_identity(
+                method
+                    .receiver_binding
+                    .as_ref()
+                    .map_or(method_span, |binding| binding.span),
+                "self",
+            );
         }
         let is_classmethod = Self::method_has_decorator(method, DecoratorId::ClassMethod);
+        if is_classmethod
+            && let Some(receiver_binding) = &method.receiver_binding
+            && receiver_binding.node == "cls"
+        {
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: "cls".to_string(),
+                    kind: SymbolKind::Variable(VariableInfo {
+                        ty: ResolvedType::TypeToken(Box::new(self_ty.clone())),
+                        is_mutable: false,
+                        is_used: true,
+                    }),
+                    span: receiver_binding.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::Receiver,
+            );
+            self.record_write_target_identity(receiver_binding.span, "cls");
+        }
         let previous_classmethod_self_ty = self.current_classmethod_self_ty.take();
         if is_classmethod {
             self.current_classmethod_self_ty = Some(self_ty.clone());
@@ -5880,16 +6130,21 @@ impl TypeChecker {
                 param.node.default.is_some(),
             ));
             let ty = local_type_for_param(param.node.kind, resolved_ty);
-            self.symbols.define(Symbol {
-                name: param.node.name.clone(),
-                kind: SymbolKind::Variable(VariableInfo {
-                    ty,
-                    is_mutable: false,
-                    is_used: false,
-                }),
-                span: param.span,
-                scope: 0,
-            });
+            self.validate_protected_builtin_binding(&param.node.name, param.span);
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.node.name.clone(),
+                    kind: SymbolKind::Variable(VariableInfo {
+                        ty,
+                        is_mutable: false,
+                        is_used: false,
+                    }),
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::Parameter,
+            );
+            self.record_write_target_identity(param.span, &param.node.name);
         }
 
         let return_type = self.resolve_type_checked(&method.return_type);
@@ -5898,6 +6153,11 @@ impl TypeChecker {
             FunctionBindingInfo {
                 params: checked_params,
                 return_type: return_type.clone(),
+                identity: Some(self.symbols.member_declaration_identity(
+                    &method.name,
+                    SemanticSourceTargetKind::Method,
+                    method_span,
+                )),
             },
         );
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);

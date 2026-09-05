@@ -7,7 +7,7 @@
     - RFC 022 (namespaced stdlib modules and compiler handoff)
     - RFC 023 (compilable stdlib and Rust module binding)
 - **Issue:** https://github.com/encero-systems/incan/issues/294
-- **RFC PR:** —
+- **RFC PR:** [#584](https://github.com/encero-systems/incan/pull/584)
 - **Written against:** v0.2
 - **Shipped in:** 0.3.0-dev.46
 

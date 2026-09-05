@@ -2,7 +2,8 @@
 //!
 //! Tracks all named entities (types, functions, variables, traits) and their scopes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 
 use crate::frontend::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
 use incan_core::interop::RustItemMetadata;
@@ -18,12 +19,168 @@ use incan_core::lang::types::numerics;
 use incan_core::lang::types::numerics::NumericTypeId;
 use incan_core::lang::types::stringlike;
 use incan_core::lang::types::stringlike::StringLikeId;
+use incan_semantics_core::{
+    CanonicalSymbolId, HirSourceSpan, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+};
 
 /// Unique identifier for symbols
 pub type SymbolId = usize;
 
+/// Result of registering one binding key in RFC 120's shared collision mechanism.
+///
+/// Registration is intentionally first-wins. A caller may still retain metadata for the rejected declaration, but
+/// the active binding remains the first declaration until the caller reports the collision. This keeps invalid
+/// programs deterministic and lets every construct preserve its existing diagnostic wording while sharing one
+/// answer to the collision question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingRegistration<V> {
+    /// This key was vacant and now owns `value`.
+    Registered,
+    /// This key was already active; `existing` remains registered.
+    Collision { existing: V },
+}
+
+/// Register one binding key, preserving the first active binding on collision.
+///
+/// Symbol scopes, field aliases, trait instantiations, and public-library exports all call this function. Their keys
+/// describe the relevant RFC 120 namespace or construct-specific subdomain; their diagnostics remain at the call
+/// site, but no caller reimplements first-wins collision detection.
+pub fn register_binding<K, V>(bindings: &mut HashMap<K, V>, key: K, value: V) -> BindingRegistration<V>
+where
+    K: Eq + Hash,
+    V: Clone,
+{
+    match bindings.entry(key) {
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(value);
+            BindingRegistration::Registered
+        }
+        std::collections::hash_map::Entry::Occupied(entry) => BindingRegistration::Collision {
+            existing: entry.get().clone(),
+        },
+    }
+}
+
+/// One name-registration collision produced by [`SymbolTable`].
+#[derive(Debug, Clone)]
+pub struct SymbolBindingCollision {
+    pub name: String,
+    pub namespace: SymbolNamespace,
+    pub existing_span: Span,
+    pub incoming_span: Span,
+    pub existing_identity: Option<CanonicalSymbolId>,
+    pub incoming_identity: Option<CanonicalSymbolId>,
+    pub existing_is_import: bool,
+    pub incoming_is_import: bool,
+}
+
+/// Collision key within one lexical scope.
+///
+/// A variant's owner distinguishes two enums' same-spelled members even though their convenience bindings coexist in
+/// the module scope. Other members are already separated by their owning type's scope.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BindingKey {
+    namespace: SymbolNamespace,
+    owner: Option<String>,
+    name: String,
+}
+
+#[derive(Debug)]
+struct BindingTransaction {
+    previous: HashMap<String, Option<SymbolId>>,
+    collision_len: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingDefinitionMode {
+    RejectCollision,
+    AllowExplicitShadow,
+    PreserveExistingLookup,
+}
+
+#[derive(Debug, Clone)]
+enum BindingIdentity {
+    /// Mint an identity from this declaration site.
+    Declaration,
+    /// Preserve the resolved target identity; `None` remains explicitly unproven.
+    Target(Option<CanonicalSymbolId>),
+}
+
+/// Classify one symbol-table definition into its RFC 120 declaration category, when the kind decides it.
+///
+/// `None` marks the shapes a [`SymbolKind`] alone cannot classify: overload sets (each overload owns a span-keyed
+/// identity; a set-level one would name an arbitrary member), `Type(Builtin)` placeholders (a generic binder and an
+/// imported-type stub share that representation, so the defining site must state the category), and module bindings
+/// (module-path-namespace identities are deferred until a consumer needs them). A `Variable` defaults to `Local`;
+/// parameter and receiver sites state their category explicitly via `SymbolTable::define_with_target_kind`.
+fn default_identity_kind(kind: &SymbolKind) -> Option<SemanticSourceTargetKind> {
+    match kind {
+        SymbolKind::Variable(_) => Some(SemanticSourceTargetKind::Local),
+        SymbolKind::Static(_) => Some(SemanticSourceTargetKind::Static),
+        SymbolKind::Function(_) => Some(SemanticSourceTargetKind::Function),
+        SymbolKind::FunctionOverloads(_) => None,
+        SymbolKind::Type(TypeInfo::Class(_)) => Some(SemanticSourceTargetKind::Class),
+        SymbolKind::Type(TypeInfo::Model(_)) => Some(SemanticSourceTargetKind::Model),
+        SymbolKind::Type(TypeInfo::TypeAlias) => Some(SemanticSourceTargetKind::TypeAlias),
+        SymbolKind::Type(TypeInfo::Newtype(info)) => Some(if info.is_rusttype {
+            SemanticSourceTargetKind::Rusttype
+        } else {
+            SemanticSourceTargetKind::Newtype
+        }),
+        SymbolKind::Type(TypeInfo::Enum(_)) => Some(SemanticSourceTargetKind::Enum),
+        SymbolKind::Type(TypeInfo::Builtin) => None,
+        SymbolKind::Trait(_) => Some(SemanticSourceTargetKind::Trait),
+        SymbolKind::Capability(_) => Some(SemanticSourceTargetKind::Capability),
+        SymbolKind::Variant(_) => Some(SemanticSourceTargetKind::Variant),
+        SymbolKind::Field(_) => Some(SemanticSourceTargetKind::Field),
+        SymbolKind::Property(_) => Some(SemanticSourceTargetKind::Property),
+        SymbolKind::Module(_) => None,
+        SymbolKind::RustItem(_) => Some(SemanticSourceTargetKind::RustItem),
+    }
+}
+
+/// Return which RFC 120 namespace an identity of this declaration category lives in.
+///
+/// Member declarations (fields, methods, properties, variants) are owned by their nominal type and reached
+/// `.`-directed, so their identities carry the member namespace even where a bare lexical convenience binding exists
+/// (a variant's bare spelling defers to real lexical bindings; the identity belongs to the member declaration).
+/// Everything the scope table binds otherwise is ordinary lexical.
+fn identity_namespace_for_kind(kind: &SemanticSourceTargetKind) -> SymbolNamespace {
+    match kind {
+        SemanticSourceTargetKind::Field
+        | SemanticSourceTargetKind::Method
+        | SemanticSourceTargetKind::Property
+        | SemanticSourceTargetKind::Variant => SymbolNamespace::Member,
+        SemanticSourceTargetKind::Module => SymbolNamespace::ModulePath,
+        _ => SymbolNamespace::OrdinaryLexical,
+    }
+}
+
+/// Return the canonical root identity for one compiler-owned builtin function.
+///
+/// This is shared by symbol registration and downstream checked-IR consumers so the builtin registry has one
+/// identity projection. Callers must already hold a [`BuiltinFnId`]; this function never classifies source spelling.
+pub(crate) fn canonical_builtin_function_identity(builtin: BuiltinFnId) -> Option<CanonicalSymbolId> {
+    builtins::BUILTIN_FUNCTIONS
+        .iter()
+        .find(|entry| entry.id == builtin)
+        .map(|entry| canonical_builtin_identity(entry.canonical))
+}
+
+/// Build one canonical identity from a compiler-owned builtin registry entry.
+fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
+    CanonicalSymbolId {
+        namespace: SymbolNamespace::OrdinaryLexical,
+        origin: SymbolOrigin::Builtin,
+        declaration_name: canonical_name.to_string(),
+        kind: SemanticSourceTargetKind::Builtin,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    }
+}
+
 /// Canonical semantic name for anonymous union types (RFC 029).
-pub const UNION_TYPE_NAME: &str = "Union";
+pub const UNION_TYPE_NAME: &str = incan_core::lang::types::UNION_TYPE_NAME;
 
 /// Separator used in generated Rust symbols for source overload implementations.
 const OVERLOAD_EMITTED_NAME_SEPARATOR: &str = "_overload_";
@@ -64,19 +221,10 @@ pub(crate) fn overload_emitted_name_prefix(source_name: &str) -> String {
 
 /// Return whether a generated Rust symbol names one overload implementation.
 pub(crate) fn is_overload_emitted_name(name: &str) -> bool {
-    overload_source_name_from_emitted(name) != name
-}
-
-/// Recover the source binding name from one generated overload implementation name.
-pub(crate) fn overload_source_name_from_emitted(name: &str) -> &str {
     let Some((source_name, hash)) = name.rsplit_once(OVERLOAD_EMITTED_NAME_SEPARATOR) else {
-        return name;
+        return false;
     };
-    if hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        source_name
-    } else {
-        name
-    }
+    !source_name.is_empty() && hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Symbol table managing all named entities
@@ -85,7 +233,56 @@ pub struct SymbolTable {
     symbols: Vec<Symbol>,
     scopes: Vec<Scope>,
     current_scope: usize,
-    current_scope_binding_transaction: Option<HashMap<String, Option<SymbolId>>>,
+    current_scope_binding_transaction: Option<BindingTransaction>,
+    /// RFC 120 canonical identities, minted once per definition and keyed by [`SymbolId`].
+    ///
+    /// This side map is the compiler's single declaration-site assignment point: every named definition that the
+    /// table can classify receives its identity here, at [`Self::define`] time, instead of each downstream consumer
+    /// re-deriving one from module path plus spelling. A definition the table cannot classify (an overload set, a
+    /// placeholder whose defining site did not state its kind) deliberately has no entry — absent means unproven,
+    /// never "rebuild it from the name".
+    identities: HashMap<SymbolId, CanonicalSymbolId>,
+    /// Module path owning locally-declared symbols, used as the minted [`SymbolOrigin`].
+    ///
+    /// Empty until the typechecker learns the module path; identities minted before that carry an empty module
+    /// origin, which `module_identity_for_path` renders as `<module>` — the same anonymous-module convention the
+    /// fact store already uses.
+    module_path: Vec<String>,
+    /// Defining package for declarations checked as part of a compiled-library artifact.
+    ///
+    /// Source modules normally use [`SymbolOrigin::Module`]. A library producer sets this before collecting its
+    /// modules so the identity embedded in its Rust symbols is exactly the package identity later hydrated by
+    /// consumers from the `.incnlib` contract.
+    package_identity: Option<String>,
+    /// True only while [`Self::add_builtins`] runs, so [`Self::define`] leaves identity assignment to the explicit
+    /// registry identities that loop attaches (builtin aliases must carry the canonical registry spelling, which the
+    /// generic mint cannot know).
+    minting_builtins: bool,
+    /// Temporary lexical view used while collecting one dependency's checked interface.
+    ///
+    /// Dependency declarations are metadata, not active consumer source bindings. Keeping this map separate from the
+    /// root scope makes them available while one interface is collected and makes them disappear atomically before
+    /// consumer source is checked. A fresh map is used for each dependency so equal spellings from sibling modules
+    /// cannot overwrite one another.
+    dependency_interface_bindings: Option<HashMap<String, SymbolId>>,
+    /// Historical symbols created inside dependency-interface views.
+    ///
+    /// The symbols remain inspectable after the temporary view closes, but they must not be exported as declarations
+    /// owned by the consumer module even when older collection paths minted a consumer-shaped identity for them.
+    dependency_interface_symbol_ids: HashSet<SymbolId>,
+    /// Symbols defined through [`Self::define_import_binding`], marked so a later-arriving import-resolution proof
+    /// can be attached to exactly the binding it proves (see [`Self::backfill_import_identity`]) and never to an
+    /// unrelated same-spelled definition.
+    import_bindings: HashSet<SymbolId>,
+    /// Checked source path associated with each import or alias binding that resolves through a source import.
+    ///
+    /// This is keyed by symbol id so rejected collisions and later shadows cannot overwrite the active binding's
+    /// meaning. Rust and Python imports deliberately have no source binding path here.
+    import_binding_paths: HashMap<SymbolId, Vec<String>>,
+    /// Registration key for every non-builtin symbol that participates in collision detection.
+    binding_keys: HashMap<SymbolId, BindingKey>,
+    /// Collisions awaiting typechecker-owned diagnostics.
+    binding_collisions: Vec<SymbolBindingCollision>,
 }
 
 impl SymbolTable {
@@ -96,11 +293,66 @@ impl SymbolTable {
             scopes: vec![Scope::new(None, ScopeKind::Module)],
             current_scope: 0,
             current_scope_binding_transaction: None,
+            identities: HashMap::new(),
+            module_path: Vec::new(),
+            package_identity: None,
+            minting_builtins: false,
+            dependency_interface_bindings: None,
+            dependency_interface_symbol_ids: HashSet::new(),
+            import_bindings: HashSet::new(),
+            import_binding_paths: HashMap::new(),
+            binding_keys: HashMap::new(),
+            binding_collisions: Vec::new(),
         };
 
         // Add builtin types
+        table.minting_builtins = true;
         table.add_builtins();
+        table.minting_builtins = false;
         table
+    }
+
+    /// Record the module path that owns subsequently-defined local declarations.
+    ///
+    /// Called by the typechecker as soon as it knows its module identity, before user declarations are collected.
+    /// Builtins are already defined by then and keep their [`SymbolOrigin::Builtin`] identities.
+    pub fn set_module_path(&mut self, module_path: Vec<String>) {
+        self.module_path = module_path;
+    }
+
+    /// Record that subsequently checked declarations are owned by one compiled package.
+    pub fn set_package_identity(&mut self, package_identity: Option<String>) {
+        self.package_identity = package_identity;
+    }
+
+    /// Return the origin that owns declarations in the currently checked module.
+    fn declaration_origin(&self) -> SymbolOrigin {
+        self.package_identity
+            .as_ref()
+            .map(|library| SymbolOrigin::Package {
+                library: library.clone(),
+                module_path: self.module_path.clone(),
+            })
+            .unwrap_or_else(|| SymbolOrigin::Module(self.module_path.clone()))
+    }
+
+    /// Return the RFC 120 canonical identity minted for a defined symbol, if the definition proved one.
+    ///
+    /// Absent means the definition was not classifiable at its site (overload set, unclassified placeholder,
+    /// module binding) or was an import whose target resolution did not prove an identity. Consumers must treat
+    /// absence as "unproven" and fail closed rather than reconstruct an identity from the symbol's spelling.
+    pub fn identity_of(&self, id: SymbolId) -> Option<&CanonicalSymbolId> {
+        self.identities.get(&id)
+    }
+
+    /// Return the canonical root identity for one builtin function registry entry.
+    ///
+    /// This deliberately bypasses lexical lookup: an ordinary builtin such as `len` may be shadowed locally, while
+    /// an explicit `std.builtins.len` resolution still needs the compiler-owned builtin identity. Some builtin
+    /// functions are recognized directly by the typechecker and do not need a physical root-scope symbol, but every
+    /// closed registry id still has the same canonical registry identity.
+    pub fn builtin_function_identity(&self, builtin: BuiltinFnId) -> Option<CanonicalSymbolId> {
+        canonical_builtin_function_identity(builtin)
     }
 
     /// Populate the root scope with built-in type symbols.
@@ -108,42 +360,45 @@ impl SymbolTable {
         // Builtin types (from the canonical `incan_core::lang::types` registries).
         //
         // We define both canonical spellings and aliases so name lookup stays robust and we avoid
-        // drift between the compiler and the language vocabulary registries.
-        let mut builtin_types: Vec<&'static str> = Vec::new();
+        // drift between the compiler and the language vocabulary registries. Each entry pairs the
+        // defined spelling with its canonical registry spelling, so every alias records the one RFC 120
+        // registry identity instead of minting a second identity per spelling.
+        let mut builtin_types: Vec<(&'static str, &'static str)> = Vec::new();
         for t in numerics::NUMERIC_TYPES {
-            builtin_types.push(t.canonical);
-            builtin_types.extend_from_slice(t.aliases);
+            builtin_types.push((t.canonical, t.canonical));
+            builtin_types.extend(t.aliases.iter().map(|alias| (*alias, t.canonical)));
         }
         for t in stringlike::STRING_LIKE_TYPES {
-            builtin_types.push(t.canonical);
-            builtin_types.extend_from_slice(t.aliases);
+            builtin_types.push((t.canonical, t.canonical));
+            builtin_types.extend(t.aliases.iter().map(|alias| (*alias, t.canonical)));
         }
         for t in collections::COLLECTION_TYPES {
-            builtin_types.push(t.canonical);
-            builtin_types.extend_from_slice(t.aliases);
+            builtin_types.push((t.canonical, t.canonical));
+            builtin_types.extend(t.aliases.iter().map(|alias| (*alias, t.canonical)));
         }
         for t in surface_types::SURFACE_TYPES {
             // RFC 022: stdlib-scoped types must be explicitly imported (e.g. `from std.web import App`).
             // Only truly global surface types (Rust interop helpers) are injected here.
             if surface_types::is_global(t.item.id) {
-                builtin_types.push(t.item.canonical);
-                builtin_types.extend_from_slice(t.item.aliases);
+                builtin_types.push((t.item.canonical, t.item.canonical));
+                builtin_types.extend(t.item.aliases.iter().map(|alias| (*alias, t.item.canonical)));
             }
         }
         // Unit-ish types that are not yet modeled in `incan_core::lang::types`.
-        builtin_types.push(conventions::UNIT_TYPE_NAME);
-        builtin_types.push(conventions::NONE_TYPE_NAME);
-        builtin_types.push(UNION_TYPE_NAME);
+        builtin_types.push((conventions::UNIT_TYPE_NAME, conventions::UNIT_TYPE_NAME));
+        builtin_types.push((conventions::NONE_TYPE_NAME, conventions::NONE_TYPE_NAME));
+        builtin_types.push((UNION_TYPE_NAME, UNION_TYPE_NAME));
 
         // Deduplicate to avoid defining the same builtin twice.
         let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
-        for name in builtin_types.into_iter().filter(|n| seen.insert(*n)) {
-            self.define(Symbol {
+        for (name, canonical) in builtin_types.into_iter().filter(|(n, _)| seen.insert(*n)) {
+            let id = self.define(Symbol {
                 name: name.to_string(),
                 kind: SymbolKind::Type(TypeInfo::Builtin),
                 span: Span::default(),
                 scope: 0,
             });
+            self.record_builtin_identity(id, canonical);
         }
 
         // Builtin traits
@@ -152,7 +407,7 @@ impl SymbolTable {
                 TraitId::Awaitable => vec!["T".to_string()],
                 _ => Vec::new(),
             };
-            self.define(Symbol {
+            let id = self.define(Symbol {
                 name: info.canonical.to_string(),
                 kind: SymbolKind::Trait(TraitInfo {
                     type_params,
@@ -165,53 +420,62 @@ impl SymbolTable {
                 span: Span::default(),
                 scope: 0,
             });
+            self.record_builtin_identity(id, info.canonical);
         }
 
         // Builtin variants for Result and Option
         // Ok(T) and Err(E) for Result
-        self.define(Symbol {
+        let id = self.define(Symbol {
             name: constructors::as_str(constructors::ConstructorId::Ok).to_string(),
             kind: SymbolKind::Variant(VariantInfo {
+                identity: None,
                 enum_name: collections::as_str(CollectionTypeId::Result).to_string(),
                 fields: vec![ResolvedType::TypeVar("T".to_string())],
             }),
             span: Span::default(),
             scope: 0,
         });
-        self.define(Symbol {
+        self.record_builtin_identity(id, constructors::as_str(constructors::ConstructorId::Ok));
+        let id = self.define(Symbol {
             name: constructors::as_str(constructors::ConstructorId::Err).to_string(),
             kind: SymbolKind::Variant(VariantInfo {
+                identity: None,
                 enum_name: collections::as_str(CollectionTypeId::Result).to_string(),
                 fields: vec![ResolvedType::TypeVar("E".to_string())],
             }),
             span: Span::default(),
             scope: 0,
         });
+        self.record_builtin_identity(id, constructors::as_str(constructors::ConstructorId::Err));
         // Some(T) and None for Option
-        self.define(Symbol {
+        let id = self.define(Symbol {
             name: constructors::as_str(constructors::ConstructorId::Some).to_string(),
             kind: SymbolKind::Variant(VariantInfo {
+                identity: None,
                 enum_name: collections::as_str(CollectionTypeId::Option).to_string(),
                 fields: vec![ResolvedType::TypeVar("T".to_string())],
             }),
             span: Span::default(),
             scope: 0,
         });
-        self.define(Symbol {
+        self.record_builtin_identity(id, constructors::as_str(constructors::ConstructorId::Some));
+        let id = self.define(Symbol {
             name: constructors::as_str(constructors::ConstructorId::None).to_string(),
             kind: SymbolKind::Variant(VariantInfo {
+                identity: None,
                 enum_name: collections::as_str(CollectionTypeId::Option).to_string(),
                 fields: vec![],
             }),
             span: Span::default(),
             scope: 0,
         });
+        self.record_builtin_identity(id, constructors::as_str(constructors::ConstructorId::None));
 
         // Builtin functions
         for name in std::iter::once(builtins::as_str(BuiltinFnId::Print))
             .chain(builtins::aliases(BuiltinFnId::Print).iter().copied())
         {
-            self.define(Symbol {
+            let id = self.define(Symbol {
                 name: name.to_string(),
                 kind: SymbolKind::Function(FunctionInfo {
                     params: vec![CallableParam::named("msg", ResolvedType::Str, ParamKind::Normal)],
@@ -225,8 +489,9 @@ impl SymbolTable {
                 span: Span::default(),
                 scope: 0,
             });
+            self.record_builtin_identity(id, builtins::as_str(BuiltinFnId::Print));
         }
-        self.define(Symbol {
+        let id = self.define(Symbol {
             name: builtins::as_str(BuiltinFnId::Len).to_string(),
             kind: SymbolKind::Function(FunctionInfo {
                 params: vec![CallableParam::named(
@@ -244,8 +509,9 @@ impl SymbolTable {
             span: Span::default(),
             scope: 0,
         });
+        self.record_builtin_identity(id, builtins::as_str(BuiltinFnId::Len));
         // range() builtin - returns an iterator
-        self.define(Symbol {
+        let id = self.define(Symbol {
             name: builtins::as_str(BuiltinFnId::Range).to_string(),
             kind: SymbolKind::Function(FunctionInfo {
                 params: vec![CallableParam::named("n", ResolvedType::Int, ParamKind::Normal)],
@@ -259,6 +525,7 @@ impl SymbolTable {
             span: Span::default(),
             scope: 0,
         });
+        self.record_builtin_identity(id, builtins::as_str(BuiltinFnId::Range));
     }
 
     /// Enter a new scope
@@ -275,36 +542,550 @@ impl SymbolTable {
         }
     }
 
-    /// Define a new symbol in the current scope
-    pub fn define(&mut self, mut symbol: Symbol) -> SymbolId {
-        self.record_current_scope_binding_before_change(&symbol.name);
-        symbol.scope = self.current_scope;
-        let id = self.symbols.len();
-        self.scopes[self.current_scope].symbols.insert(symbol.name.clone(), id);
-        self.symbols.push(symbol);
+    /// Define a new symbol in the current scope through the shared RFC 120 registration mechanism.
+    pub fn define(&mut self, symbol: Symbol) -> SymbolId {
+        self.define_registered(
+            symbol,
+            BindingIdentity::Declaration,
+            false,
+            BindingDefinitionMode::RejectCollision,
+        )
+    }
+
+    /// Define a binding introduced through an explicit `let` or `mut` shadowing form.
+    ///
+    /// RFC 120 makes these forms declarations even when the spelling is already active in this scope. The new
+    /// declaration replaces the active registration without producing a duplicate-binding diagnostic; later plain
+    /// assignment and reference lookup therefore select the new binding and its fresh canonical identity.
+    pub fn define_explicit_shadow(&mut self, symbol: Symbol) -> SymbolId {
+        self.define_registered(
+            symbol,
+            BindingIdentity::Declaration,
+            false,
+            BindingDefinitionMode::AllowExplicitShadow,
+        )
+    }
+
+    /// Define a compiler-generated refinement of the currently-active binding.
+    ///
+    /// Branch narrowing changes the binding's type inside a nested scope but does not declare a new source object.
+    /// The synthetic symbol therefore replaces the active registration while preserving the declaration identity it
+    /// refines. An unresolved refinement retains the ordinary declaration-site fallback for recovery paths.
+    pub fn define_refined_binding(&mut self, symbol: Symbol) -> SymbolId {
+        let identity = self
+            .lookup(&symbol.name)
+            .and_then(|id| self.identities.get(&id))
+            .cloned();
+        let identity = identity.map_or(BindingIdentity::Declaration, |identity| {
+            BindingIdentity::Target(Some(identity))
+        });
+        self.define_registered(symbol, identity, false, BindingDefinitionMode::AllowExplicitShadow)
+    }
+
+    /// Define a symbol whose identity kind the defining site states explicitly.
+    ///
+    /// The generic [`Self::define`] mint classifies a definition from its [`SymbolKind`], which cannot distinguish a
+    /// parameter from a local (both are `Variable`) or a generic-binder placeholder from a builtin type (both are
+    /// `Type(Builtin)`). Sites that know the RFC 120 declaration category pass it here so the minted identity records
+    /// what was declared rather than how the table happens to represent it.
+    pub fn define_with_target_kind(&mut self, symbol: Symbol, kind: SemanticSourceTargetKind) -> SymbolId {
+        let identity = self.mint_identity_with_kind(&symbol, self.current_scope, kind);
+        self.define_registered(
+            symbol,
+            BindingIdentity::Target(Some(identity)),
+            false,
+            BindingDefinitionMode::RejectCollision,
+        )
+    }
+
+    /// Define an import, alias, or re-export binding carrying its resolved target's identity.
+    ///
+    /// RFC 120: a binding created by an import is a binding to an *existing* canonical symbol — it must carry the
+    /// declaring module's identity, never one minted from the importing module. `target_identity` is the identity
+    /// import resolution proved (see `TypeChecker::dependency_member_identity`); `None` records the binding as
+    /// unproven rather than inventing a consumer-module identity for it.
+    pub fn define_import_binding(&mut self, symbol: Symbol, target_identity: Option<CanonicalSymbolId>) -> SymbolId {
+        self.define_registered(
+            symbol,
+            BindingIdentity::Target(target_identity),
+            true,
+            BindingDefinitionMode::RejectCollision,
+        )
+    }
+
+    /// Define a source alias carrying its target's identity without classifying the binding as an import.
+    ///
+    /// Aliases and imports both preserve a resolved declaration identity, but only syntactic imports participate in
+    /// ambiguous-import diagnostics. An unresolved alias remains identity-less rather than minting an alias-site
+    /// declaration identity.
+    pub fn define_alias_binding(&mut self, symbol: Symbol, target_identity: Option<CanonicalSymbolId>) -> SymbolId {
+        self.define_registered(
+            symbol,
+            BindingIdentity::Target(target_identity),
+            false,
+            BindingDefinitionMode::RejectCollision,
+        )
+    }
+
+    /// Define a checked source import and retain the exact path accepted for its local binding.
+    ///
+    /// The binding path is distinct from canonical declaration identity: an import may resolve through a facade while
+    /// its identity names the module that owns the declaration. Decorator and trait resolution need the accepted
+    /// source path, so they consume this sidecar rather than reconstructing it from raw AST imports.
+    pub fn define_import_binding_at_path(
+        &mut self,
+        symbol: Symbol,
+        target_identity: Option<CanonicalSymbolId>,
+        binding_path: Vec<String>,
+    ) -> SymbolId {
+        let id = self.define_import_binding(symbol, target_identity);
+        self.import_binding_paths.insert(id, binding_path);
         id
+    }
+
+    /// Define a source alias that preserves both its target identity and its checked import binding path.
+    pub fn define_alias_binding_at_path(
+        &mut self,
+        symbol: Symbol,
+        target_identity: Option<CanonicalSymbolId>,
+        binding_path: Vec<String>,
+    ) -> SymbolId {
+        let id = self.define_alias_binding(symbol, target_identity);
+        self.import_binding_paths.insert(id, binding_path);
+        id
+    }
+
+    /// Define an import whose represented target kind is sufficient to mint its canonical identity.
+    ///
+    /// Rust item metadata carries the declaring crate path directly, so Rust imports use this path instead of asking
+    /// their collector to duplicate the table's identity construction. Source imports continue to pass the identity
+    /// proven by module resolution to [`Self::define_import_binding`]; module placeholders remain explicitly unproven.
+    pub fn define_import_binding_with_inferred_target(&mut self, symbol: Symbol) -> SymbolId {
+        let target_identity = self.mint_identity(&symbol);
+        self.define_registered(
+            symbol,
+            BindingIdentity::Target(target_identity),
+            true,
+            BindingDefinitionMode::RejectCollision,
+        )
+    }
+
+    /// Define an inferred-identity import reached through a checked source import path.
+    pub fn define_import_binding_with_inferred_target_at_path(
+        &mut self,
+        symbol: Symbol,
+        binding_path: Vec<String>,
+    ) -> SymbolId {
+        let id = self.define_import_binding_with_inferred_target(symbol);
+        self.import_binding_paths.insert(id, binding_path);
+        id
+    }
+
+    /// Remove a symbol's minted identity after its definition stops naming one declaration.
+    ///
+    /// The one current case is a module function symbol converted in place into an overload set: the identity minted
+    /// for the first declaration would otherwise keep naming an arbitrary member of the set. Overload declarations
+    /// keep their own span-keyed identities on `FunctionBindingInfo`.
+    pub fn clear_identity(&mut self, id: SymbolId) {
+        self.identities.remove(&id);
+    }
+
+    /// Attach a later-proven import-resolution identity to the import binding it proves.
+    ///
+    /// Import materialization and identity proof do not always happen in one order, so a binding defined before its
+    /// proof was recorded starts identity-less. This attaches the proof to the *current* binding for `name` only
+    /// when that binding was defined as an import binding and still has no identity — a local declaration or
+    /// overload set that has since shadowed the import keeps its own facts, and a binding that already carries an
+    /// identity is never overwritten.
+    pub fn backfill_import_identity(&mut self, name: &str, identity: &CanonicalSymbolId) {
+        let Some(id) = self.lookup(name) else {
+            return;
+        };
+        if self.import_bindings.contains(&id) && !self.identities.contains_key(&id) {
+            self.identities.insert(id, identity.clone());
+        }
+    }
+
+    /// Return whether a retained symbol is the binding ordinary lookup currently selects.
+    ///
+    /// Rejected definitions remain in the arena for diagnostics and identity evidence. Side tables keyed only by a
+    /// spelling must therefore commit their metadata only when this returns `true`; otherwise they would become
+    /// last-wins while lexical lookup remains first-wins.
+    pub(crate) fn is_active_lookup_binding(&self, id: SymbolId) -> bool {
+        self.get(id).is_some_and(|symbol| self.lookup(&symbol.name) == Some(id))
+    }
+
+    /// Return the checked source import path associated with the active binding for `name`.
+    pub(crate) fn import_binding_path(&self, name: &str) -> Option<&[String]> {
+        let id = self.lookup(name)?;
+        self.import_binding_paths.get(&id).map(Vec::as_slice)
+    }
+
+    /// Iterate checked source import paths for active module-scope bindings.
+    pub(crate) fn active_import_binding_paths(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.scopes[0].symbols.iter().filter_map(|(name, id)| {
+            self.import_binding_paths
+                .get(id)
+                .map(|path| (name.as_str(), path.as_slice()))
+        })
+    }
+
+    /// Iterate active top-level source bindings in definition order for the HIR handoff.
+    ///
+    /// The symbol arena preserves definition order while the root lookup map does not. Filtering through that map
+    /// keeps first-wins collision semantics: rejected later definitions remain available for diagnostics but do not
+    /// become HIR bindings. Builtins and dependency-interface declarations have no consumer source declaration.
+    pub(crate) fn active_module_source_bindings(
+        &self,
+    ) -> impl Iterator<Item = (Span, &str, Option<&CanonicalSymbolId>)> + '_ {
+        self.symbols.iter().enumerate().filter_map(|(id, symbol)| {
+            if symbol.scope != 0
+                || symbol.span == Span::default()
+                || self.dependency_interface_symbol_ids.contains(&id)
+                || self.scopes[0].symbols.get(&symbol.name) != Some(&id)
+            {
+                return None;
+            }
+            Some((symbol.span, symbol.name.as_str(), self.identities.get(&id)))
+        })
     }
 
     /// Define a symbol without replacing an existing same-scope lookup binding.
     ///
     /// Enum variants need to remain available to whole-table consumers such as match exhaustiveness and qualified
     /// pattern resolution, but a variant named like an imported type must not steal the bare identifier from that type.
-    pub fn define_preserving_existing_binding(&mut self, mut symbol: Symbol) -> SymbolId {
+    pub fn define_preserving_existing_binding(&mut self, symbol: Symbol) -> SymbolId {
+        self.define_registered(
+            symbol,
+            BindingIdentity::Declaration,
+            false,
+            BindingDefinitionMode::PreserveExistingLookup,
+        )
+    }
+
+    /// Define an alias that preserves both the target identity and any already-active bare lookup binding.
+    pub fn define_alias_preserving_existing_binding(
+        &mut self,
+        symbol: Symbol,
+        target_identity: Option<CanonicalSymbolId>,
+    ) -> SymbolId {
+        self.define_registered(
+            symbol,
+            BindingIdentity::Target(target_identity),
+            false,
+            BindingDefinitionMode::PreserveExistingLookup,
+        )
+    }
+
+    /// Register and retain one symbol definition.
+    ///
+    /// `identity` decides whether this binding mints a declaration identity or preserves a resolved target identity.
+    /// A missing target identity stays missing rather than becoming an alias-site declaration. Builtins
+    /// occupy the fallback tier and deliberately bypass source-binding registration, so a source declaration such as
+    /// `len` can replace that lookup spelling without a collision. `mode` records the source binding form: ordinary
+    /// definitions reject collisions, explicit `let`/`mut` declarations replace an active registration, and member
+    /// convenience bindings such as enum variants retain metadata without stealing an ordinary lexical lookup.
+    fn define_registered(
+        &mut self,
+        mut symbol: Symbol,
+        identity: BindingIdentity,
+        is_import: bool,
+        mode: BindingDefinitionMode,
+    ) -> SymbolId {
         self.record_current_scope_binding_before_change(&symbol.name);
         symbol.scope = self.current_scope;
         let id = self.symbols.len();
-        self.scopes[self.current_scope]
-            .symbols
-            .entry(symbol.name.clone())
-            .or_insert(id);
+        let identity = match identity {
+            BindingIdentity::Declaration => self.mint_identity(&symbol),
+            BindingIdentity::Target(identity) => identity,
+        };
+        if let Some(identity) = identity {
+            self.identities.insert(id, identity);
+        }
+        if is_import {
+            self.import_bindings.insert(id);
+        }
+
+        let name = symbol.name.clone();
         self.symbols.push(symbol);
+
+        if self.minting_builtins {
+            self.scopes[self.current_scope].symbols.insert(name, id);
+            return id;
+        }
+        if let Some(bindings) = &mut self.dependency_interface_bindings {
+            bindings.insert(name, id);
+            self.dependency_interface_symbol_ids.insert(id);
+            return id;
+        }
+
+        let key = self.binding_key(id);
+        if key.namespace == SymbolNamespace::OrdinaryLexical
+            && let Some(existing) = self.immutable_builtin_binding(&name)
+        {
+            self.binding_keys.insert(id, key.clone());
+            self.record_binding_collision(existing, id, &key, is_import);
+            return id;
+        }
+        if mode == BindingDefinitionMode::AllowExplicitShadow {
+            self.scopes[self.current_scope]
+                .binding_registrations
+                .insert(key.clone(), id);
+            self.binding_keys.insert(id, key);
+            self.scopes[self.current_scope].symbols.insert(name, id);
+            return id;
+        }
+        let registration = register_binding(
+            &mut self.scopes[self.current_scope].binding_registrations,
+            key.clone(),
+            id,
+        );
+        self.binding_keys.insert(id, key.clone());
+        match registration {
+            BindingRegistration::Registered => {
+                if mode == BindingDefinitionMode::PreserveExistingLookup {
+                    self.scopes[self.current_scope].symbols.entry(name).or_insert(id);
+                } else {
+                    self.scopes[self.current_scope].symbols.insert(name, id);
+                }
+            }
+            BindingRegistration::Collision { existing } => {
+                self.record_binding_collision(existing, id, &key, is_import);
+                // The first registration remains the active lookup binding. The rejected symbol and its identity are
+                // retained for complete diagnostics and recovery analysis, but invalid source cannot silently change
+                // what later references mean.
+            }
+        }
         id
+    }
+
+    /// Build the collision key for one already-retained symbol.
+    fn binding_key(&self, id: SymbolId) -> BindingKey {
+        let symbol = &self.symbols[id];
+        let namespace = if self.import_bindings.contains(&id) {
+            SymbolNamespace::OrdinaryLexical
+        } else if let Some(identity) = self.identities.get(&id) {
+            identity.namespace
+        } else {
+            default_identity_kind(&symbol.kind)
+                .map(|kind| identity_namespace_for_kind(&kind))
+                .unwrap_or(SymbolNamespace::OrdinaryLexical)
+        };
+        let owner = match &symbol.kind {
+            SymbolKind::Variant(info) => Some(info.enum_name.clone()),
+            _ => None,
+        };
+        BindingKey {
+            namespace,
+            owner,
+            name: symbol.name.clone(),
+        }
+    }
+
+    /// Return the root builtin binding when `name` is one of the immutable output-function spellings.
+    ///
+    /// Unlike ordinary builtins, this check is global across lexical scopes and applies before explicit-shadow mode:
+    /// no ordinary lexical declaration or import binding may reuse `print` or `println`. Member names live in a
+    /// separate namespace and do not replace either builtin.
+    fn immutable_builtin_binding(&self, name: &str) -> Option<SymbolId> {
+        (builtins::from_str(name) == Some(BuiltinFnId::Print))
+            .then(|| self.scopes[0].symbols.get(name).copied())
+            .flatten()
+    }
+
+    /// Retain both sides of one rejected registration for typechecker-owned diagnostics.
+    fn record_binding_collision(&mut self, existing: SymbolId, incoming: SymbolId, key: &BindingKey, is_import: bool) {
+        self.binding_collisions.push(SymbolBindingCollision {
+            name: self.symbols[incoming].name.clone(),
+            namespace: key.namespace,
+            existing_span: self.symbols[existing].span,
+            incoming_span: self.symbols[incoming].span,
+            existing_identity: self.identities.get(&existing).cloned(),
+            incoming_identity: self.identities.get(&incoming).cloned(),
+            existing_is_import: self.import_bindings.contains(&existing),
+            incoming_is_import: is_import,
+        });
+    }
+
+    // ---- RFC 120 canonical identity minting ----
+
+    /// Mint the canonical identity for one definition, when its symbol kind classifies it.
+    ///
+    /// Returns `None` while builtins are being registered (their loop attaches explicit registry identities so alias
+    /// spellings share the canonical entry), for overload sets (each overload declaration owns a span-keyed identity
+    /// of its own; a set-level identity would name an arbitrary member), and for definitions whose kind is a
+    /// placeholder the site must classify via [`Self::define_with_target_kind`].
+    fn mint_identity(&self, symbol: &Symbol) -> Option<CanonicalSymbolId> {
+        if self.minting_builtins {
+            return None;
+        }
+        let kind = default_identity_kind(&symbol.kind)?;
+        Some(self.mint_identity_with_kind(symbol, symbol.scope, kind))
+    }
+
+    /// Build one canonical identity for a definition with an already-decided declaration category.
+    ///
+    /// A `rust::` item's identity is anchored to its crate path with a zero declaration span: it has no Incan
+    /// declaration site, and the zero span keeps every module's import of one item structurally equal instead of
+    /// splitting per import site. Everything else is owned by the current module and anchored at its declaration
+    /// span, with the defining scope as discriminant for bindings that are not module-unique.
+    fn mint_identity_with_kind(
+        &self,
+        symbol: &Symbol,
+        scope: usize,
+        kind: SemanticSourceTargetKind,
+    ) -> CanonicalSymbolId {
+        let mut kind = kind;
+        let mut namespace = identity_namespace_for_kind(&kind);
+        let (origin, declaration_name, declaration_span) = match &symbol.kind {
+            SymbolKind::RustItem(info) => {
+                if info.binding != RustImportBindingKind::FromImport {
+                    namespace = SymbolNamespace::ModulePath;
+                    kind = SemanticSourceTargetKind::Module;
+                }
+                (
+                    SymbolOrigin::RustCrate(info.path.split("::").map(str::to_string).collect()),
+                    info.path.rsplit("::").next().unwrap_or(&symbol.name).to_string(),
+                    HirSourceSpan::new(0, 0),
+                )
+            }
+            _ => (
+                self.declaration_origin(),
+                symbol.name.clone(),
+                HirSourceSpan::new(symbol.span.start, symbol.span.end),
+            ),
+        };
+        // A member is owned by its nominal type and distinguished by its declaration span, not by which table scope
+        // its convenience binding happened to be defined in — so member identities never carry a scope discriminant
+        // and compare equal however they are reached.
+        let scope_discriminant =
+            (namespace != SymbolNamespace::Member && scope != 0).then_some(ScopeDiscriminant(scope));
+        CanonicalSymbolId {
+            namespace,
+            origin,
+            declaration_name,
+            kind,
+            scope_discriminant,
+            declaration_span,
+        }
+    }
+
+    /// Iterate the identities of module-scope declarations this module owns, paired with their declaration spans.
+    ///
+    /// Yields only definitions whose identity origin is the current module and whose declaration span is real:
+    /// builtins carry the registry origin and zero spans, and cross-module import bindings carry the declaring
+    /// module's origin, so neither can masquerade as a local declaration. A binding to a *same-module* declaration
+    /// (an `alias` targeting a local symbol) does pass the filter and yields its binding site paired with the
+    /// target declaration's identity — which is the RFC 120 answer for that site: the alias is a second binding to
+    /// the existing declaration, not a second declaration.
+    pub fn local_declaration_identities(&self) -> impl Iterator<Item = (Span, &CanonicalSymbolId)> + '_ {
+        self.symbols.iter().enumerate().filter_map(|(id, symbol)| {
+            if symbol.scope != 0 || symbol.span == Span::default() || self.dependency_interface_symbol_ids.contains(&id)
+            {
+                return None;
+            }
+            let identity = self.identities.get(&id)?;
+            let owned_here = match (&identity.origin, self.package_identity.as_deref()) {
+                (SymbolOrigin::Module(path), None) => path == &self.module_path,
+                (SymbolOrigin::Package { library, module_path }, Some(package)) => {
+                    library == package && module_path == &self.module_path
+                }
+                _ => false,
+            };
+            if !owned_here {
+                return None;
+            }
+            Some((symbol.span, identity))
+        })
+    }
+
+    /// Mint the canonical identity of one module-level declaration owned by the current module.
+    ///
+    /// The table is the single minting authority for RFC 120 identities, so sites that record declaration facts
+    /// outside the symbol table (function/partial bindings, method bindings) obtain their identity here rather than
+    /// assembling one from module path plus spelling themselves.
+    pub fn module_declaration_identity(
+        &self,
+        name: &str,
+        kind: SemanticSourceTargetKind,
+        span: Span,
+    ) -> CanonicalSymbolId {
+        CanonicalSymbolId {
+            namespace: identity_namespace_for_kind(&kind),
+            origin: self.declaration_origin(),
+            declaration_name: name.to_string(),
+            kind,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(span.start, span.end),
+        }
+    }
+
+    /// Build the canonical identity of one compiler-proven source or package module path.
+    ///
+    /// Module namespaces have no declaration token in the importing file, so their provenance anchor is zero. Their
+    /// structural owner is the checked module graph path: project and `std` modules retain a module origin, while
+    /// `pub::` paths retain their package owner. Rust namespace imports use the dedicated Rust branch in the mint.
+    pub fn module_path_identity(path: &[String]) -> Option<CanonicalSymbolId> {
+        let declaration_name = path.last()?.clone();
+        let origin = match path {
+            [root, library, rest @ ..] if root == "pub" => SymbolOrigin::Package {
+                library: library.clone(),
+                module_path: rest.to_vec(),
+            },
+            _ => SymbolOrigin::Module(path.to_vec()),
+        };
+        Some(CanonicalSymbolId {
+            namespace: SymbolNamespace::ModulePath,
+            origin,
+            declaration_name,
+            kind: SemanticSourceTargetKind::Module,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 0),
+        })
+    }
+
+    /// Mint the canonical identity of one member declaration owned by a nominal type in the current module.
+    ///
+    /// Members live in RFC 120's member namespace: they are reached `.`-directed from an owner type, never through
+    /// the scope chain, so a member and a lexical binding sharing one spelling never compare equal. Two owners'
+    /// same-named members stay distinct through their declaration spans.
+    pub fn member_declaration_identity(
+        &self,
+        name: &str,
+        kind: SemanticSourceTargetKind,
+        span: Span,
+    ) -> CanonicalSymbolId {
+        CanonicalSymbolId {
+            namespace: SymbolNamespace::Member,
+            origin: self.declaration_origin(),
+            declaration_name: name.to_string(),
+            kind,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(span.start, span.end),
+        }
+    }
+
+    /// Attach the explicit registry identity for one builtin definition.
+    ///
+    /// Builtin alias spellings (`i64` for `int`, `println` for `print`) are separate table entries, but RFC 120's
+    /// builtin fallback tier has one canonical entry per builtin — so every alias records the canonical registry
+    /// spelling as its declaration name and all spellings compare equal.
+    fn record_builtin_identity(&mut self, id: SymbolId, canonical_name: &str) {
+        self.identities.insert(id, canonical_builtin_identity(canonical_name));
     }
 
     /// Look up a symbol by name in the current scope chain
     pub fn lookup(&self, name: &str) -> Option<SymbolId> {
         let mut scope_idx = self.current_scope;
         loop {
+            if scope_idx == 0
+                && let Some(id) = self
+                    .dependency_interface_bindings
+                    .as_ref()
+                    .and_then(|bindings| bindings.get(name))
+            {
+                return Some(*id);
+            }
             if let Some(&id) = self.scopes[scope_idx].symbols.get(name) {
                 return Some(id);
             }
@@ -319,34 +1100,96 @@ impl SymbolTable {
 
     /// Look up a symbol only in the current scope (no parent lookup)
     pub fn lookup_local(&self, name: &str) -> Option<SymbolId> {
+        if self.current_scope == 0
+            && let Some(id) = self
+                .dependency_interface_bindings
+                .as_ref()
+                .and_then(|bindings| bindings.get(name))
+        {
+            return Some(*id);
+        }
         self.scopes[self.current_scope].symbols.get(name).copied()
+    }
+
+    /// Drain symbol-definition collisions for typechecker-owned diagnostics.
+    pub(crate) fn take_binding_collisions(&mut self) -> Vec<SymbolBindingCollision> {
+        std::mem::take(&mut self.binding_collisions)
+    }
+
+    /// Open a fresh temporary lookup view for one dependency interface.
+    pub(crate) fn begin_dependency_interface_bindings(&mut self) {
+        debug_assert!(self.dependency_interface_bindings.is_none());
+        self.dependency_interface_bindings = Some(HashMap::new());
+    }
+
+    /// Drop the active dependency-interface view before another module or consumer source is checked.
+    pub(crate) fn finish_dependency_interface_bindings(&mut self) {
+        debug_assert!(self.dependency_interface_bindings.is_some());
+        self.dependency_interface_bindings = None;
     }
 
     /// Start recording the previous value of each current-scope binding changed by subsequent definitions.
     pub(crate) fn begin_current_scope_binding_transaction(&mut self) {
         debug_assert!(self.current_scope_binding_transaction.is_none());
-        self.current_scope_binding_transaction = Some(HashMap::new());
+        self.current_scope_binding_transaction = Some(BindingTransaction {
+            previous: HashMap::new(),
+            collision_len: self.binding_collisions.len(),
+        });
     }
 
     /// Finish the active binding transaction and return only the names it touched.
     pub(crate) fn finish_current_scope_binding_transaction(&mut self) -> HashMap<String, Option<SymbolId>> {
-        self.current_scope_binding_transaction.take().unwrap_or_default()
+        let Some(transaction) = self.current_scope_binding_transaction.take() else {
+            return HashMap::new();
+        };
+        // Dependency-import transactions temporarily materialize bindings only to collect checked public metadata.
+        // Their collisions are not collisions in the consumer's lexical scope and must not leak into its diagnostics.
+        self.binding_collisions.truncate(transaction.collision_len);
+        transaction.previous
     }
 
     /// Record one binding before its first change in the active transaction.
     fn record_current_scope_binding_before_change(&mut self, name: &str) {
-        let previous = self.scopes[self.current_scope].symbols.get(name).copied();
+        let previous = if self.current_scope == 0 {
+            self.dependency_interface_bindings
+                .as_ref()
+                .and_then(|bindings| bindings.get(name).copied())
+                .or_else(|| self.scopes[self.current_scope].symbols.get(name).copied())
+        } else {
+            self.scopes[self.current_scope].symbols.get(name).copied()
+        };
         if let Some(transaction) = &mut self.current_scope_binding_transaction {
-            transaction.entry(name.to_string()).or_insert(previous);
+            transaction.previous.entry(name.to_string()).or_insert(previous);
         }
     }
 
     /// Restore or remove one name binding in the current scope without deleting historical symbol metadata.
     pub(crate) fn restore_current_scope_binding(&mut self, name: &str, binding: Option<SymbolId>) {
+        if self.current_scope == 0
+            && let Some(bindings) = &mut self.dependency_interface_bindings
+        {
+            if let Some(symbol_id) = binding {
+                bindings.insert(name.to_string(), symbol_id);
+            } else {
+                bindings.remove(name);
+            }
+            return;
+        }
+        if let Some(current) = self.scopes[self.current_scope].symbols.get(name).copied()
+            && let Some(key) = self.binding_keys.get(&current)
+            && self.scopes[self.current_scope].binding_registrations.get(key) == Some(&current)
+        {
+            self.scopes[self.current_scope].binding_registrations.remove(key);
+        }
         if let Some(symbol_id) = binding {
             self.scopes[self.current_scope]
                 .symbols
                 .insert(name.to_string(), symbol_id);
+            if let Some(key) = self.binding_keys.get(&symbol_id).cloned() {
+                self.scopes[self.current_scope]
+                    .binding_registrations
+                    .insert(key, symbol_id);
+            }
         } else {
             self.scopes[self.current_scope].symbols.remove(name);
         }
@@ -416,21 +1259,44 @@ impl SymbolTable {
     }
 }
 
+/// Build the canonical identity for a source-owned type/object member.
+///
+/// This is shared by the live symbol table and source stdlib extraction so both paths retain the declaring module
+/// and declaration span. Callers without exact Incan declaration provenance must leave member identity absent.
+pub(crate) fn source_member_identity(
+    module_path: &[String],
+    name: &str,
+    kind: SemanticSourceTargetKind,
+    span: Span,
+) -> CanonicalSymbolId {
+    CanonicalSymbolId {
+        namespace: SymbolNamespace::Member,
+        origin: SymbolOrigin::Module(module_path.to_vec()),
+        declaration_name: name.to_string(),
+        kind,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(span.start, span.end),
+    }
+}
+
 /// A scope containing symbol definitions
 #[derive(Debug)]
 pub struct Scope {
     pub parent: Option<usize>,
     pub kind: ScopeKind,
     pub symbols: HashMap<String, SymbolId>,
+    binding_registrations: HashMap<BindingKey, SymbolId>,
     pub return_type: Option<ResolvedType>,
 }
 
 impl Scope {
+    /// Create an empty lexical scope with independent lookup and collision-registration state.
     pub fn new(parent: Option<usize>, kind: ScopeKind) -> Self {
         Self {
             parent,
             kind,
             symbols: HashMap::new(),
+            binding_registrations: HashMap::new(),
             return_type: None,
         }
     }
@@ -549,6 +1415,12 @@ pub struct FunctionInfo {
 pub struct FunctionOverloadInfo {
     pub info: FunctionInfo,
     pub span: Span,
+    /// Canonical declaration identity of this overload candidate.
+    ///
+    /// An overload-set symbol cannot carry one declaration identity because each candidate has its own source
+    /// declaration. Keeping the identity beside the candidate preserves that distinction through aliases, imports,
+    /// compiled-library manifests, and call resolution. `None` is an explicitly unproven external candidate.
+    pub identity: Option<CanonicalSymbolId>,
 }
 
 /// Callable parameter metadata preserved after type resolution.
@@ -716,6 +1588,11 @@ pub struct EnumInfo {
     /// Explicit traits adopted by this enum, preserving generic trait arguments when present.
     pub trait_adoptions: Vec<TypeBoundInfo>,
     pub variants: Vec<String>,
+    /// Canonical declaration identities for variants and their same-enum aliases.
+    ///
+    /// Alias spellings point at the target variant's identity. Missing entries are explicitly unproven and must not
+    /// be reconstructed from the enum/member spelling.
+    pub variant_identities: HashMap<String, CanonicalSymbolId>,
     /// Positional payload fields for each canonical variant name.
     pub variant_fields: HashMap<String, Vec<ResolvedType>>,
     /// Variant alias name to canonical variant name.
@@ -835,6 +1712,8 @@ pub struct ModuleInfo {
 /// Variant information
 #[derive(Debug, Clone)]
 pub struct VariantInfo {
+    /// Canonical identity of the enum member declaration, when provenance is available.
+    pub identity: Option<CanonicalSymbolId>,
     pub enum_name: String,
     pub fields: Vec<ResolvedType>,
 }
@@ -842,6 +1721,8 @@ pub struct VariantInfo {
 /// Field information
 #[derive(Debug, Clone)]
 pub struct FieldInfo {
+    /// Canonical identity of the source field declaration, when declaration provenance is available.
+    pub identity: Option<CanonicalSymbolId>,
     pub ty: ResolvedType,
     /// Canonical Incan source spelling retained for reflection and documentation.
     ///
@@ -971,6 +1852,8 @@ fn resolved_type_contains_rust_path(ty: &ResolvedType) -> bool {
 /// Computed property information.
 #[derive(Debug, Clone)]
 pub struct PropertyInfo {
+    /// Canonical identity of the source property declaration, when declaration provenance is available.
+    pub identity: Option<CanonicalSymbolId>,
     pub return_type: ResolvedType,
     pub visibility: crate::frontend::ast::Visibility,
     pub owner: Option<String>,
@@ -981,6 +1864,8 @@ pub struct PropertyInfo {
 /// Method information
 #[derive(Debug, Clone)]
 pub struct MethodInfo {
+    /// Canonical identity of the source method declaration, when declaration provenance is available.
+    pub identity: Option<CanonicalSymbolId>,
     pub type_params: Vec<String>,
     pub type_param_bounds: HashMap<String, Vec<String>>,
     pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
@@ -1000,6 +1885,32 @@ pub struct TypeBoundInfo {
     pub source_name: Option<String>,
     pub type_args: Vec<ResolvedType>,
     pub module_path: Option<Vec<String>>,
+    /// Compiler-resolved generic header attached to this exact adopted-trait implementation.
+    pub implementation_type_params: Vec<ImplementationTypeParamInfo>,
+}
+
+/// One implementation-header type parameter retained from checked library metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplementationTypeParamInfo {
+    pub name: String,
+    pub bounds: Vec<ImplementationTraitBoundInfo>,
+}
+
+/// One exact implementation requirement retained from checked library metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplementationTraitBoundInfo {
+    pub trait_path: String,
+    pub type_args: Vec<ResolvedType>,
+    pub associated_types: Vec<(String, ResolvedType)>,
+    pub origin: ImplementationTraitBoundOriginInfo,
+}
+
+/// Origin classification for an implementation-only bound before IR lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImplementationTraitBoundOriginInfo {
+    Standard,
+    RustCapability,
+    SourceCallable,
 }
 
 /// Resolved type (after type checking)
@@ -1605,17 +2516,151 @@ mod tests {
     use super::*;
     use crate::ast::{Span, Spanned, Type};
 
+    /// Builtins that are checker-recognized without a physical root symbol still receive the one registry identity.
     #[test]
-    fn test_overload_source_name_from_emitted_requires_generated_hash_suffix() {
+    fn every_builtin_function_registry_entry_has_a_canonical_identity() -> Result<(), String> {
+        let table = SymbolTable::new();
+        for entry in builtins::BUILTIN_FUNCTIONS {
+            let identity = table
+                .builtin_function_identity(entry.id)
+                .ok_or_else(|| format!("missing canonical identity for builtin `{}`", entry.canonical))?;
+            assert_eq!(identity.namespace, SymbolNamespace::OrdinaryLexical);
+            assert_eq!(identity.origin, SymbolOrigin::Builtin);
+            assert_eq!(identity.declaration_name, entry.canonical);
+            assert_eq!(identity.kind, SemanticSourceTargetKind::Builtin);
+            assert_eq!(identity.scope_discriminant, None);
+            assert_eq!(identity.declaration_span, HirSourceSpan::new(0, 0));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_package_declarations_are_minted_in_the_package_origin() -> Result<(), String> {
+        let mut table = SymbolTable::new();
+        table.set_package_identity(Some("incan_stdlib_system".to_string()));
+        table.set_module_path(vec!["fs".to_string(), "path".to_string()]);
+        let id = table.define_with_target_kind(
+            Symbol {
+                name: "helper".to_string(),
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty: ResolvedType::Int,
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span: Span::new(10, 20),
+                scope: 0,
+            },
+            SemanticSourceTargetKind::Function,
+        );
+        let identity = table.identity_of(id).ok_or("missing package-owned identity")?;
+
+        assert_eq!(
+            identity.origin,
+            SymbolOrigin::Package {
+                library: "incan_stdlib_system".to_string(),
+                module_path: vec!["fs".to_string(), "path".to_string()],
+            }
+        );
+        assert_eq!(identity.declaration_name, "helper");
+        assert_eq!(identity.kind, SemanticSourceTargetKind::Function);
+        Ok(())
+    }
+
+    #[test]
+    fn shared_binding_registration_preserves_the_first_site_and_reports_the_collision() {
+        let mut bindings = HashMap::new();
+        let first = Span::new(4, 8);
+        let second = Span::new(20, 24);
+
+        assert_eq!(
+            register_binding(&mut bindings, "name".to_string(), first),
+            BindingRegistration::Registered
+        );
+        assert_eq!(
+            register_binding(&mut bindings, "name".to_string(), second),
+            BindingRegistration::Collision { existing: first }
+        );
+        assert_eq!(bindings.get("name"), Some(&first));
+    }
+
+    #[test]
+    fn dependency_interface_bindings_are_temporary_and_transactional() -> Result<(), String> {
+        let mut table = SymbolTable::new();
+        let builtin_len = table.lookup("len").ok_or("missing builtin len")?;
+        let builtin_len_identity = table
+            .builtin_function_identity(BuiltinFnId::Len)
+            .ok_or("missing canonical builtin len identity")?;
+        table.begin_dependency_interface_bindings();
+        let external = table.define_import_binding(
+            Symbol {
+                name: "External".to_string(),
+                kind: SymbolKind::Type(TypeInfo::TypeAlias),
+                span: Span::new(4, 12),
+                scope: 0,
+            },
+            None,
+        );
+        assert_eq!(table.lookup("External"), Some(external));
+
+        let interface_len = table.define_import_binding(
+            Symbol {
+                name: "len".to_string(),
+                kind: SymbolKind::Module(ModuleInfo {
+                    path: vec!["dependency".to_string()],
+                    is_python: false,
+                }),
+                span: Span::new(20, 23),
+                scope: 0,
+            },
+            None,
+        );
+        assert_eq!(
+            table.lookup("len"),
+            Some(interface_len),
+            "the active dependency interface must resolve before root builtins"
+        );
+        assert_eq!(
+            table.builtin_function_identity(BuiltinFnId::Len),
+            Some(builtin_len_identity),
+            "explicit builtin resolution must bypass the active dependency view"
+        );
+
+        table.begin_current_scope_binding_transaction();
+        let replacement = table.define_import_binding(
+            Symbol {
+                name: "External".to_string(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::new(30, 38),
+                scope: 0,
+            },
+            None,
+        );
+        assert_eq!(table.lookup("External"), Some(replacement));
+        let previous = table.finish_current_scope_binding_transaction();
+        table.restore_current_scope_binding("External", previous.get("External").copied().flatten());
+        assert_eq!(
+            table.lookup("External"),
+            Some(external),
+            "the dependency-local import transaction must restore the interface view"
+        );
+
+        table.finish_dependency_interface_bindings();
+        assert_eq!(table.lookup("External"), None);
+        assert_eq!(table.lookup("len"), Some(builtin_len));
+        assert!(
+            table.get(external).is_some(),
+            "historical interface metadata remains inspectable"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_overload_emitted_name_validation_requires_generated_hash_suffix() {
         let emitted = overload_emitted_name("cast", 0xd28281f54a5b9ea6);
 
-        assert_eq!(overload_source_name_from_emitted(&emitted), "cast");
         assert!(is_overload_emitted_name(&emitted));
-        assert_eq!(
-            overload_source_name_from_emitted("cast_overload_suffix"),
-            "cast_overload_suffix"
-        );
         assert!(!is_overload_emitted_name("cast_overload_suffix"));
+        assert!(is_overload_emitted_name("__incan_overload_d28281f54a5b9ea6"));
     }
 
     #[test]

@@ -52,6 +52,15 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
             },
             Example {
                 code: r#"def main() -> None:
+    assert int("1_000") == 1000
+    assert float("1_000.50") == 1000.5
+"#,
+                note: Some(
+                    "Numeric strings accept `_` only between digits. Invalid placement raises the canonical `ValueError` with the original input spelling.",
+                ),
+            },
+            Example {
+                code: r#"def main() -> None:
     # range step cannot be zero (Python-like)
     for i in range(0, 5, 0):
         print(i)

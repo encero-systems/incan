@@ -27,13 +27,13 @@ INCAN_TEST_OVEN_COMPILER_SUITE_REPORT ?=
 INCAN_TEST_OVEN_TEST_ONE_REPORT ?=
 # The pinned publisher Cargo supplies the unstable unit graph and the package-qualified Rust-inspection tests that
 # exercise Cargo's nightly-only metadata flags. Loaf receipts and direct-rustc suite execution use the selected
-# consumer toolchain, so stable and MSRV gates prove their advertised compiler rather than nightly. The named
+# consumer toolchain, so the pinned Rust 1.98.0 gates prove their advertised compiler rather than nightly. The named
 # publisher/test-fixture boundary remains explicit; normal Oven build/run/test remains direct-rustc.
-INCAN_TEST_PREWARM_TOOLCHAIN ?= stable
+INCAN_TEST_PREWARM_TOOLCHAIN ?= 1.98.0
 INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24
 INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
-INCAN_TEST_LOAF_TOOLCHAIN ?= stable
-INCAN_TEST_SUITE_TOOLCHAIN ?= stable
+INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
+INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
 	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)" \
@@ -398,10 +398,11 @@ test-prewarm-sdk:
 .PHONY: shadow-comparison-evidence  ## test - Stage Oven and prove the #1146 source-observable comparison actually ran
 # The bounded #1146 comparison's legacy route is Oven-owned, so it needs a published direct-rustc plan. Without
 # one the comparison is honestly unavailable and every corpus row stays non-green -- which a default test run
-# cannot distinguish from a comparison that was never implemented. This target stages the plan once, then runs the
-# two relevant suites with INCAN_SHADOW_REQUIRE_LEGACY_ROUTE=1 so an unstaged or failing comparison is a hard
-# failure rather than a reported skip. It is the only place that can prove the intended green corpus row.
-shadow-comparison-evidence:
+# cannot distinguish from a comparison that was never implemented. This target stages the exact plans, then runs the
+# relevant suites with INCAN_SHADOW_REQUIRE_LEGACY_ROUTE=1 so an unstaged or failing comparison is a hard failure
+# rather than a reported skip. Each distinct source-session provider closure gets its own exact receipt; the
+# comparator selects from that ordered list rather than treating a broader or narrower closure as authority.
+shadow-comparison-evidence: test-prewarm-sdk
 	@echo "\033[1mStaging Oven and proving the #1146 source-observable comparison...\033[0m"
 	@set -e; \
 		if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
@@ -413,19 +414,30 @@ shadow-comparison-evidence:
 		rm -rf -- "$$stage"; \
 		mkdir -p "$$stage"; \
 		$(SHADOW_STAGE_ENV) ./target/debug/incan new shadow_probe --yes --dir "$$stage/shadow_probe" >/dev/null; \
+		$(SHADOW_STAGE_ENV) ./target/debug/incan new shadow_json_probe --yes --dir "$$stage/shadow_json_probe" >/dev/null; \
+		cp "$(CURDIR)/tests/fixtures/replacement/json_stringify_scalars.incn" "$$stage/shadow_json_probe/src/main.incn"; \
+		printf '\n\ndef main() -> None:\n    println(observe())\n' >> "$$stage/shadow_json_probe/src/main.incn"; \
 		$(SHADOW_STAGE_ENV) ./target/debug/incan oven bake --project "$$stage/shadow_probe" >/dev/null; \
-		receipt="$$stage/shadow_probe/.incan/oven/executable-debug-receipt.json"; \
-		test -f "$$receipt" || { echo "Oven bake did not publish an executable debug receipt" >&2; exit 1; }; \
-		$(SHADOW_TEST_ENV) INCAN_SHADOW_OVEN_RECEIPT="$$receipt" \
-			cargo test --test shadow_comparison_tests --test parity_corpus_tests
+		$(SHADOW_STAGE_ENV) ./target/debug/incan oven bake --project "$$stage/shadow_json_probe" >/dev/null; \
+		core_receipt="$$stage/shadow_probe/.incan/oven/executable-debug-receipt.json"; \
+		json_receipt="$$stage/shadow_json_probe/.incan/oven/executable-debug-receipt.json"; \
+		for receipt in "$$core_receipt" "$$json_receipt"; do \
+			test -f "$$receipt" || { echo "Oven bake did not publish executable debug receipt $$receipt" >&2; exit 1; }; \
+		done; \
+		$(SHADOW_TEST_ENV) INCAN_SHADOW_OVEN_RECEIPT="$$core_receipt$(SHADOW_RECEIPT_PATH_SEPARATOR)$$json_receipt" \
+			cargo test --test shadow_comparison_tests --test parity_corpus_tests \
+				--test replacement_enumerate_zip_shadow_tests --test replacement_enumerate_zip_parity_cases \
+				--test replacement_scalar_conversion_shadow_tests \
+				--test replacement_isinstance_shadow_tests
 	@echo "\033[32m✓ the #1146 comparison ran under Oven authority and its corpus row is green\033[0m"
 
 # Oven home the staged comparison publishes its direct-rustc plan into, kept out of the developer's own store.
 INCAN_SHADOW_OVEN_HOME ?= $(CURDIR)/target/incan_shadow_oven_home
 INCAN_SHADOW_STAGE_ROOT ?= $(CURDIR)/target/incan_shadow_stage
 INCAN_SHADOW_RUSTC ?= $(shell rustup which rustc)
-SHADOW_STAGE_ENV = $(TEST_ENV) INCAN_HOME="$(INCAN_SHADOW_OVEN_HOME)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1
-SHADOW_TEST_ENV = $(TEST_ENV) CARGO_NET_OFFLINE=true \
+SHADOW_RECEIPT_PATH_SEPARATOR ?= :
+SHADOW_STAGE_ENV = $(TEST_RUNTIME_ENV) INCAN_HOME="$(INCAN_SHADOW_OVEN_HOME)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1
+SHADOW_TEST_ENV = $(TEST_RUNTIME_ENV) CARGO_NET_OFFLINE=true \
 	INCAN_SHADOW_OVEN_HOME="$(INCAN_SHADOW_OVEN_HOME)" \
 	INCAN_SHADOW_RUSTC="$(INCAN_SHADOW_RUSTC)" \
 	INCAN_SHADOW_REQUIRE_LEGACY_ROUTE=1

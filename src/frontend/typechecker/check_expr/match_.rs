@@ -114,7 +114,7 @@ impl TypeChecker {
             self.symbols.enter_scope(ScopeKind::Block);
             self.check_pattern(&arm.node.pattern, expected_ty);
             if let (Some((name, info, span)), Some(ty)) = (&subject_binding, narrowed_subject_ty.clone()) {
-                self.symbols.define(Symbol {
+                self.symbols.define_refined_binding(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
                         ty,
@@ -178,7 +178,7 @@ impl TypeChecker {
     ) {
         match &pattern.node {
             Pattern::Constructor(name, _) => {
-                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
+                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
                     && let Some(member_ty) = self.union_pattern_target_type(subject_ty, ctor_name)
                 {
@@ -204,6 +204,33 @@ impl TypeChecker {
         }
     }
 
+    /// Record a constructor pattern that resolved through the active lexical binding.
+    pub(in crate::frontend::typechecker) fn record_pattern_lexical_identity(&mut self, name: &str, span: Span) {
+        let identity = self
+            .symbols
+            .lookup(name)
+            .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+            .cloned();
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+    }
+
+    /// Record the source enum variant selected by a checked constructor pattern.
+    fn record_incan_enum_pattern_identity(&mut self, expected_ty: &ResolvedType, variant: &str, span: Span) {
+        let enum_name = match expected_ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return,
+        };
+        let identity = match self.lookup_semantic_type_info(enum_name) {
+            Some(TypeInfo::Enum(info)) => info.variant_identities.get(variant).cloned(),
+            _ => None,
+        };
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+    }
+
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
     pub(in crate::frontend::typechecker) fn check_pattern(
         &mut self,
@@ -213,6 +240,7 @@ impl TypeChecker {
         match &pattern.node {
             Pattern::Wildcard => {}
             Pattern::Binding(name) => {
+                self.validate_protected_builtin_binding(name, pattern.span);
                 self.symbols.define(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
@@ -223,6 +251,7 @@ impl TypeChecker {
                     span: pattern.span,
                     scope: 0,
                 });
+                self.record_write_target_identity(pattern.span, name);
             }
             Pattern::Group(inner) => {
                 self.check_pattern(inner, expected_ty);
@@ -232,10 +261,11 @@ impl TypeChecker {
             }
             Pattern::Literal(_) => {}
             Pattern::Constructor(name, sub_patterns) => {
-                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
+                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
                     && let Some(member_ty) = self.union_pattern_target_type(expected_ty, ctor_name)
                 {
+                    self.record_pattern_lexical_identity(ctor_name, name.span);
                     let mut positional = None;
                     for arg in sub_patterns {
                         match arg {
@@ -244,7 +274,8 @@ impl TypeChecker {
                                 break;
                             }
                             PatternArg::Named(_, pat) => {
-                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                                self.errors
+                                    .push(errors::named_pattern_not_supported(&name.node, pat.span));
                             }
                         }
                     }
@@ -264,6 +295,7 @@ impl TypeChecker {
                                 && type_name == collections::as_str(CollectionTypeId::Result)
                                 && !args.is_empty()
                             {
+                                self.record_pattern_lexical_identity(ctor_name, name.span);
                                 let mut positional = None;
                                 for arg in sub_patterns {
                                     match arg {
@@ -272,7 +304,8 @@ impl TypeChecker {
                                             break;
                                         }
                                         PatternArg::Named(_, pat) => {
-                                            self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                                            self.errors
+                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
                                         }
                                     }
                                 }
@@ -287,6 +320,7 @@ impl TypeChecker {
                                 && type_name == collections::as_str(CollectionTypeId::Result)
                                 && args.len() >= 2
                             {
+                                self.record_pattern_lexical_identity(ctor_name, name.span);
                                 let mut positional = None;
                                 for arg in sub_patterns {
                                     match arg {
@@ -295,7 +329,8 @@ impl TypeChecker {
                                             break;
                                         }
                                         PatternArg::Named(_, pat) => {
-                                            self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                                            self.errors
+                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
                                         }
                                     }
                                 }
@@ -310,6 +345,7 @@ impl TypeChecker {
                                 && type_name == collections::as_str(CollectionTypeId::Option)
                                 && !args.is_empty()
                             {
+                                self.record_pattern_lexical_identity(ctor_name, name.span);
                                 let mut positional = None;
                                 for arg in sub_patterns {
                                     match arg {
@@ -318,7 +354,8 @@ impl TypeChecker {
                                             break;
                                         }
                                         PatternArg::Named(_, pat) => {
-                                            self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                                            self.errors
+                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
                                         }
                                     }
                                 }
@@ -329,15 +366,16 @@ impl TypeChecker {
                             }
                         }
                         ConstructorId::None => {
+                            self.record_pattern_lexical_identity(ctor_name, name.span);
                             return;
                         }
                     }
                 }
 
-                let ctor_name = if name.contains("::") {
-                    name.split("::").last().unwrap_or(name)
+                let ctor_name = if name.node.contains("::") {
+                    name.node.split("::").last().unwrap_or(&name.node)
                 } else {
-                    name.as_str()
+                    name.node.as_str()
                 };
 
                 let model_or_class_fields = match expected_ty {
@@ -353,6 +391,7 @@ impl TypeChecker {
                 };
 
                 if let Some((type_name, fields)) = model_or_class_fields {
+                    self.record_pattern_lexical_identity(type_name, name.span);
                     let mut provided = HashSet::new();
                     for arg in sub_patterns {
                         match arg {
@@ -362,14 +401,26 @@ impl TypeChecker {
                             }
                             PatternArg::Named(field_name, pat) => {
                                 let Some((canonical_name, info)) =
-                                    self.resolve_field_info(&fields, field_name, true, true)
+                                    self.resolve_field_info(&fields, &field_name.node, true, true)
                                 else {
-                                    self.errors.push(errors::missing_field(type_name, field_name, pat.span));
+                                    self.errors.push(errors::missing_field(
+                                        type_name,
+                                        &field_name.node,
+                                        field_name.span,
+                                    ));
                                     continue;
                                 };
 
+                                if let Some(identity) = info.identity.clone() {
+                                    self.type_info.record_resolved_identity(field_name.span, identity);
+                                }
+
                                 if self.private_field_is_inaccessible(type_name, info) {
-                                    self.errors.push(errors::private_field(type_name, field_name, pat.span));
+                                    self.errors.push(errors::private_field(
+                                        type_name,
+                                        &field_name.node,
+                                        field_name.span,
+                                    ));
                                     continue;
                                 }
 
@@ -402,7 +453,7 @@ impl TypeChecker {
                     enum_qualifier_opt,
                 );
                 let rust_resolution =
-                    self.rust_enum_constructor_payload_types(expected_ty, name.as_str(), positional_count);
+                    self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), positional_count);
                 let field_types: Option<Vec<ResolvedType>> =
                     incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
                         Some(RustEnumPatternResolution::PayloadTypes(fields)) => Some(fields.clone()),
@@ -411,8 +462,11 @@ impl TypeChecker {
 
                 match field_types {
                     Some(fields) => {
+                        if incan_resolution.is_some() {
+                            self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
+                        }
                         self.check_constructor_subpatterns_enum_like(
-                            name.as_str(),
+                            name.node.as_str(),
                             sub_patterns,
                             Some(fields.as_slice()),
                         );
@@ -420,17 +474,17 @@ impl TypeChecker {
                     None => {
                         let permissive = self.match_subject_allows_unknown_rust_enum_payloads(
                             expected_ty,
-                            name.as_str(),
+                            name.node.as_str(),
                             rust_resolution.as_ref(),
                         );
                         if !permissive && !matches!(expected_ty, ResolvedType::Unknown) {
                             self.errors.push(errors::unknown_match_constructor_pattern(
-                                name.as_str(),
+                                name.node.as_str(),
                                 &expected_ty.to_string(),
                                 pattern.span,
                             ));
                         }
-                        self.check_constructor_subpatterns_enum_like(name.as_str(), sub_patterns, None);
+                        self.check_constructor_subpatterns_enum_like(name.node.as_str(), sub_patterns, None);
                     }
                 }
             }
@@ -509,7 +563,7 @@ impl TypeChecker {
                 continue;
             };
             self.symbols.define(Symbol {
-                name,
+                name: name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
                     ty: binding.ty.clone(),
                     is_mutable: false,
@@ -518,6 +572,13 @@ impl TypeChecker {
                 span: binding.span,
                 scope: 0,
             });
+            for (_, bindings) in &binding_sets {
+                if let Some(alternative_binding) = bindings.get(&name) {
+                    // Every syntactic write in a valid OR-pattern introduces the one binding visible to the arm
+                    // body. Overwrite the provisional isolated-scope facts with that final binding identity.
+                    self.record_write_target_identity(alternative_binding.span, &name);
+                }
+            }
         }
     }
 
@@ -781,7 +842,8 @@ impl TypeChecker {
                         .option_inner_type()
                         .is_some_and(|inner| inner.union_members().is_some())
                 {
-                    let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols));
+                    let target_ty =
+                        self.expand_type_aliases(resolve_type(&Type::Simple(name.node.clone()), &self.symbols));
                     if let Some(target_members) = target_ty.union_members() {
                         for member in target_members {
                             covered.insert(member.to_string());
@@ -789,10 +851,10 @@ impl TypeChecker {
                         return;
                     }
                     target_ty.to_string()
-                } else if name.contains("::") {
-                    name.split("::").last().unwrap_or(name).to_string()
+                } else if name.node.contains("::") {
+                    name.node.split("::").last().unwrap_or(&name.node).to_string()
                 } else {
-                    name.clone()
+                    name.node.clone()
                 };
                 covered.insert(variant_name);
             }

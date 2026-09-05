@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 019 (test runner and CLI), RFC 001 (language portions; superseded), RFC 002 (language portions; superseded)
 - **Issue:** https://github.com/encero-systems/incan/issues/76
-- **RFC PR:** —
+- **RFC PR:** [#410](https://github.com/encero-systems/incan/pull/410)
 - **Implementation PRs:** https://github.com/encero-systems/incan/pull/410, https://github.com/encero-systems/incan/pull/435
 - **Written against:** v0.1
 - **Shipped in:** v0.3

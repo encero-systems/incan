@@ -30,18 +30,19 @@ pub(crate) fn legacy_route_is_required() -> bool {
     std::env::var_os(REQUIRE_LEGACY_ROUTE_ENV).is_some_and(|value| !value.is_empty() && value != "0")
 }
 
-/// Report why a comparison could not run, failing instead when this environment demands one.
+/// Report why a comparison could not run, failing when this environment demands one.
 ///
-/// Returns `Some(reason)` when the caller should report the skip and stop; returns `None` when the legacy route
-/// is staged and the caller must proceed.
+/// Returns `Ok(Some(reason))` when the caller should report the optional skip and stop, and `Ok(None)` when the
+/// legacy route is staged and the caller must proceed. A required but unstaged route returns an error so test
+/// harnesses preserve their ordinary `Result` failure flow.
 #[allow(dead_code)]
-pub(crate) fn unstaged_legacy_route_reason() -> Option<String> {
+pub(crate) fn unstaged_legacy_route_reason() -> Result<Option<String>, ShadowUnavailable> {
     match legacy_capability() {
-        Ok(_) => None,
-        Err(unavailable) if legacy_route_is_required() => panic!(
+        Ok(_) => Ok(None),
+        Err(unavailable) if legacy_route_is_required() => Err(ShadowUnavailable::new(format!(
             "{REQUIRE_LEGACY_ROUTE_ENV} is set but the legacy comparison route is not staged: {}",
             unavailable.reason
-        ),
-        Err(unavailable) => Some(unavailable.reason),
+        ))),
+        Err(unavailable) => Ok(Some(unavailable.reason)),
     }
 }

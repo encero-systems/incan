@@ -21,9 +21,14 @@ use crate::frontend::library_exports::{
     CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
 };
 use crate::frontend::registry_metadata::CheckedRegistryMetadataPackage;
-use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ValueEnumBacking, ValueEnumValue};
+use crate::frontend::symbols::{
+    CallableParam, ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo,
+    NewtypePrimitiveConstraint, ValueEnumBacking, ValueEnumValue,
+};
 use incan_core::interop::RustItemMetadata;
-use incan_semantics_core::{AbiV0RuntimeRequirement, CanonicalSymbolId, SemanticSourceTargetKind};
+use incan_semantics_core::{
+    AbiV0RuntimeRequirement, CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+};
 
 /// Errors surfaced while reading, writing, parsing, serializing, or validating `.incnlib` manifests.
 #[derive(Debug, thiserror::Error)]
@@ -111,7 +116,7 @@ pub struct PartialExport {
 }
 
 /// Semantic kind of the callable target projected by a public partial.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PartialTargetKindExport {
     Function,
@@ -177,7 +182,7 @@ pub struct LibraryContractMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<CheckedRegistryMetadataPackage>,
     /// Stable semantic identities for public exports.
-    #[serde(default, skip_serializing_if = "LibraryIdentityGraph::is_empty")]
+    #[serde(default = "legacy_library_identity_graph")]
     pub identity_graph: LibraryIdentityGraph,
     /// Generic compiled-provider facts used by SDK and ordinary package consumers.
     #[serde(default, skip_serializing_if = "CompiledProviderMetadata::is_empty")]
@@ -451,7 +456,10 @@ fn provider_cargo_default_features() -> bool {
 }
 
 /// Serialized schema version for the public export identity graph.
-pub const LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION: u32 = 1;
+pub const LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION: u32 = 2;
+
+/// Identity-graph schema emitted before canonical symbol identities crossed compiled-library boundaries.
+pub const LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION: u32 = 1;
 
 /// Serializable semantic identity graph for exported library declarations.
 ///
@@ -478,7 +486,7 @@ impl Default for LibraryIdentityGraph {
 }
 
 impl LibraryIdentityGraph {
-    /// Build the serialized identity graph from checked public exports while deduplicating overload-set projections.
+    /// Build the serialized identity graph from checked public exports while preserving distinct overload identities.
     pub fn from_checked_exports(package_name: &str, exports: &[CheckedNamedExport]) -> Self {
         let mut graph = Self {
             schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
@@ -487,17 +495,84 @@ impl LibraryIdentityGraph {
                 .map(|export| export_identity_from_checked(package_name, export))
                 .collect(),
         };
-        graph.exports.sort_by(|left, right| {
-            left.public_name
-                .cmp(&right.public_name)
+        graph.sort_and_deduplicate();
+        graph
+    }
+
+    /// Extend the graph with declarations exposed through checked public module namespaces.
+    ///
+    /// `api.public_namespaces` owns the consumer-visible path, while `checked_modules` owns the compiler-selected
+    /// declaration identities. Joining them by the namespace's exact source-module path avoids inferring identity from
+    /// the public spelling and preserves overload, alias, and reexport targets independently.
+    pub fn extend_checked_api_exports(
+        &mut self,
+        package_name: &str,
+        api: &CheckedApiMetadataPackage,
+        checked_modules: &[(Vec<String>, Vec<CheckedNamedExport>)],
+    ) -> Result<(), LibraryManifestError> {
+        for namespace in &api.public_namespaces {
+            for member in &namespace.members {
+                let (source_name, source_module_path) = member.source_path.split_last().ok_or_else(|| {
+                    LibraryManifestError::Invalid(format!(
+                        "checked public namespace member `{}` has an empty source path",
+                        member.name
+                    ))
+                })?;
+                let module_exports = checked_modules
+                    .iter()
+                    .find(|(module_path, _)| module_path == source_module_path)
+                    .map(|(_, exports)| exports)
+                    .ok_or_else(|| {
+                        LibraryManifestError::Invalid(format!(
+                            "checked public namespace member `{}` refers to unknown source module `{}`",
+                            member.name,
+                            source_module_path.join(".")
+                        ))
+                    })?;
+                let mut matched = false;
+                for export in module_exports.iter().filter(|export| export.name == *source_name) {
+                    matched = true;
+                    let mut entry = export_identity_from_checked(package_name, export);
+                    entry.public_name = member.name.clone();
+                    entry.public_path = std::iter::once(package_name.to_string())
+                        .chain(namespace.path.iter().cloned())
+                        .chain(std::iter::once(member.name.clone()))
+                        .collect();
+                    self.exports.push(entry);
+                }
+                if !matched {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "checked public namespace member `{}` has no checked export in source module `{}`",
+                        member.name,
+                        source_module_path.join(".")
+                    )));
+                }
+            }
+        }
+        self.sort_and_deduplicate();
+        Ok(())
+    }
+
+    /// Order exported identities deterministically and collapse entries publishing one declaration at one path.
+    ///
+    /// Two entries are the same export when they agree on where they are published and on which declaration they
+    /// name. Being spelled differently does not make them distinct: a declaration reachable by more than one route --
+    /// directly and through a facade, or republished into a parent namespace from two sibling modules -- yields one
+    /// record per route, each carrying the path of the route it came from, and every one of them carries the same
+    /// canonical identity. Keying deduplication on those spellings kept each route as its own entry, and the graph
+    /// then failed its own duplicate-export check on a program that was perfectly valid.
+    ///
+    /// `source_path` still participates in the ordering so the surviving entry is chosen deterministically rather
+    /// than by input order.
+    fn sort_and_deduplicate(&mut self) {
+        self.exports.sort_by(|left, right| {
+            left.public_path
+                .cmp(&right.public_path)
+                .then(left.canonical.cmp(&right.canonical))
                 .then(left.source_path.cmp(&right.source_path))
         });
-        graph.exports.dedup_by(|left, right| {
-            left.public_name == right.public_name
-                && left.source_path == right.source_path
-                && left.projection == right.projection
-        });
-        graph
+        self.exports
+            .dedup_by(|left, right| left.public_path == right.public_path && left.canonical == right.canonical);
     }
 
     /// Return whether the graph has no public export identities to serialize.
@@ -508,13 +583,76 @@ impl LibraryIdentityGraph {
     /// Return the first identity entry for a public export name, which represents the shared projection for overload
     /// sets.
     pub fn entry_for_public_name(&self, name: &str) -> Option<&ExportIdentity> {
-        self.exports.iter().find(|entry| entry.public_name == name)
+        self.exports
+            .iter()
+            .find(|entry| entry.public_path.len() == 2 && entry.public_name == name)
+    }
+
+    /// Return every canonical overload identity published for one public function spelling, in declaration order.
+    pub fn function_identities_for_public_name(&self, name: &str) -> Vec<Option<CanonicalSymbolId>> {
+        self.exports
+            .iter()
+            .filter(|entry| {
+                entry.public_path.len() == 2 && entry.public_name == name && entry.kind == ExportIdentityKind::Function
+            })
+            .map(|entry| entry.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate))
+            .collect()
+    }
+
+    /// Return every canonical overload identity published at one exact package-visible path.
+    pub fn function_identities_for_public_path(&self, public_path: &[String]) -> Vec<Option<CanonicalSymbolId>> {
+        self.exports
+            .iter()
+            .filter(|entry| entry.kind == ExportIdentityKind::Function && entry.public_path == public_path)
+            .map(|entry| entry.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate))
+            .collect()
+    }
+
+    /// Return the one canonical identity published for a non-overloaded public spelling.
+    ///
+    /// Multiple distinct identities are ambiguous and therefore produce no aggregate identity. Overload consumers
+    /// use [`Self::function_identities_for_public_name`] instead.
+    pub fn canonical_for_public_name(&self, name: &str) -> Option<CanonicalSymbolId> {
+        let mut candidates = self
+            .exports
+            .iter()
+            .filter(|entry| entry.public_path.len() == 2 && entry.public_name == name)
+            .filter_map(|entry| entry.canonical.as_ref()?.hydrate());
+        let first = candidates.next()?;
+        candidates.all(|candidate| candidate == first).then_some(first)
+    }
+
+    /// Return the one canonical identity published at one exact package-visible path.
+    pub fn canonical_for_public_path(&self, public_path: &[String]) -> Option<CanonicalSymbolId> {
+        let mut candidates = self
+            .exports
+            .iter()
+            .filter(|entry| entry.public_path == public_path)
+            .filter_map(|entry| entry.canonical.as_ref()?.hydrate());
+        let first = candidates.next()?;
+        candidates.all(|candidate| candidate == first).then_some(first)
     }
 }
 
-/// Return the current identity graph schema version when deserializing manifests that predate the field.
+/// Return the legacy identity graph schema version when deserializing manifests that predate the field.
 fn default_identity_graph_schema_version() -> u32 {
-    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION
+    LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION
+}
+
+/// Decode an omitted identity graph as the legacy schema that actually omitted the field.
+fn legacy_library_identity_graph() -> LibraryIdentityGraph {
+    LibraryIdentityGraph {
+        schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+        exports: Vec::new(),
+    }
+}
+
+/// Decode a manifest that omitted the whole contract-metadata envelope without claiming current identity facts.
+pub(super) fn legacy_library_contract_metadata() -> LibraryContractMetadata {
+    LibraryContractMetadata {
+        identity_graph: legacy_library_identity_graph(),
+        ..LibraryContractMetadata::default()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -529,6 +667,129 @@ pub struct ExportIdentity {
     pub kind: ExportIdentityKind,
     /// Projection layered on top of `source_path`, such as a direct export, alias, reexport, or partial preset.
     pub projection: ExportIdentityProjection,
+    /// Stable compiled-artifact representation of the declaration this public spelling resolves to.
+    ///
+    /// Schema-v1 manifests omitted this field. A v2 producer must provide it; a legacy consumer sees `None` and stays
+    /// explicitly unproven rather than reconstructing identity from `source_path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
+}
+
+/// Stable `.incnlib` representation of one compiler-owned canonical symbol identity.
+///
+/// This is deliberately not a serialized [`crate::frontend::symbols::SymbolId`], whose integer value is local to one
+/// compiler process. Producer-local module origins are rebased to a package origin at publication, making equal
+/// module paths from two compiled packages remain distinct in a consumer compilation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CanonicalIdentityExport {
+    pub namespace: CanonicalIdentityNamespaceExport,
+    pub origin: CanonicalIdentityOriginExport,
+    pub declaration_name: String,
+    pub kind: String,
+    pub declaration_span: CanonicalIdentitySpanExport,
+}
+
+impl CanonicalIdentityExport {
+    /// Project a frontend identity into the stable compiled-package identity domain.
+    pub fn from_canonical(package_name: &str, identity: &CanonicalSymbolId) -> Option<Self> {
+        if identity.scope_discriminant.is_some() || matches!(identity.kind, SemanticSourceTargetKind::Other(_)) {
+            return None;
+        }
+        let origin = match &identity.origin {
+            SymbolOrigin::Module(module_path) => CanonicalIdentityOriginExport::Package {
+                library: package_name.to_string(),
+                module_path: module_path.clone(),
+            },
+            SymbolOrigin::Package { library, module_path } => CanonicalIdentityOriginExport::Package {
+                library: library.clone(),
+                module_path: module_path.clone(),
+            },
+            SymbolOrigin::RustCrate(path) => CanonicalIdentityOriginExport::RustCrate { path: path.clone() },
+            SymbolOrigin::Builtin => CanonicalIdentityOriginExport::Builtin,
+        };
+        Some(Self {
+            namespace: identity.namespace.into(),
+            origin,
+            declaration_name: identity.declaration_name.clone(),
+            kind: identity.kind.as_str().to_string(),
+            declaration_span: CanonicalIdentitySpanExport {
+                start: u64::try_from(identity.declaration_span.start).ok()?,
+                end: u64::try_from(identity.declaration_span.end).ok()?,
+            },
+        })
+    }
+
+    /// Hydrate the compiler-owned identity represented by a validated manifest record.
+    pub fn hydrate(&self) -> Option<CanonicalSymbolId> {
+        let kind = SemanticSourceTargetKind::from_kind_str(&self.kind);
+        if matches!(kind, SemanticSourceTargetKind::Other(_)) {
+            return None;
+        }
+        let origin = match &self.origin {
+            CanonicalIdentityOriginExport::Package { library, module_path } => SymbolOrigin::Package {
+                library: library.clone(),
+                module_path: module_path.clone(),
+            },
+            CanonicalIdentityOriginExport::RustCrate { path } => SymbolOrigin::RustCrate(path.clone()),
+            CanonicalIdentityOriginExport::Builtin => SymbolOrigin::Builtin,
+        };
+        Some(CanonicalSymbolId {
+            namespace: self.namespace.into(),
+            origin,
+            declaration_name: self.declaration_name.clone(),
+            kind,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(
+                usize::try_from(self.declaration_span.start).ok()?,
+                usize::try_from(self.declaration_span.end).ok()?,
+            ),
+        })
+    }
+}
+
+/// Stable namespace vocabulary for compiled canonical identities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonicalIdentityNamespaceExport {
+    OrdinaryLexical,
+    Member,
+    ModulePath,
+}
+
+impl From<SymbolNamespace> for CanonicalIdentityNamespaceExport {
+    fn from(namespace: SymbolNamespace) -> Self {
+        match namespace {
+            SymbolNamespace::OrdinaryLexical => Self::OrdinaryLexical,
+            SymbolNamespace::Member => Self::Member,
+            SymbolNamespace::ModulePath => Self::ModulePath,
+        }
+    }
+}
+
+impl From<CanonicalIdentityNamespaceExport> for SymbolNamespace {
+    fn from(namespace: CanonicalIdentityNamespaceExport) -> Self {
+        match namespace {
+            CanonicalIdentityNamespaceExport::OrdinaryLexical => Self::OrdinaryLexical,
+            CanonicalIdentityNamespaceExport::Member => Self::Member,
+            CanonicalIdentityNamespaceExport::ModulePath => Self::ModulePath,
+        }
+    }
+}
+
+/// Stable origin vocabulary for identities that survive a compiled-package boundary.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CanonicalIdentityOriginExport {
+    Package { library: String, module_path: Vec<String> },
+    RustCrate { path: Vec<String> },
+    Builtin,
+}
+
+/// Stable byte-offset provenance for one declaration in the published source projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CanonicalIdentitySpanExport {
+    pub start: u64,
+    pub end: u64,
 }
 
 impl ExportIdentity {
@@ -543,7 +804,7 @@ impl ExportIdentity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportIdentityKind {
     /// Public function or overload set.
@@ -707,6 +968,49 @@ pub struct TypeBoundExport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub module_path: Option<Vec<String>>,
     pub type_args: Vec<TypeRef>,
+    /// Compiler-resolved generic header required by this exact trait implementation.
+    ///
+    /// These are deliberately separate from the owning type's declared generic bounds: they constrain use of this
+    /// implementation, not construction or every other operation on the type. The header can repeat declared owner
+    /// bounds alongside backend-inferred requirements. Older manifests omit the field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub implementation_type_params: Vec<ImplementationTypeParamExport>,
+}
+
+/// One implementation-header type parameter published with a checked trait adoption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImplementationTypeParamExport {
+    pub name: String,
+    pub bounds: Vec<ImplementationTraitBoundExport>,
+}
+
+/// One exact requirement on an implementation type parameter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImplementationTraitBoundExport {
+    pub trait_path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_args: Vec<TypeRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub associated_types: Vec<ImplementationAssociatedTypeExport>,
+    #[serde(default)]
+    pub origin: ImplementationTraitBoundOriginExport,
+}
+
+/// One associated-type equality carried by an inferred implementation bound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImplementationAssociatedTypeExport {
+    pub name: String,
+    pub ty: TypeRef,
+}
+
+/// Stable origin classification for an inferred implementation bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImplementationTraitBoundOriginExport {
+    #[default]
+    Standard,
+    RustCapability,
+    SourceCallable,
 }
 
 /// Stable manifest-level type reference used by library exports.
@@ -741,6 +1045,8 @@ pub enum TypeRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldExport {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
     pub ty: TypeRef,
     /// Source-level Incan type spelling used by reflection and documentation.
     ///
@@ -769,6 +1075,9 @@ pub struct FieldExport {
 pub struct PropertyExport {
     /// Source-level property name.
     pub name: String,
+    /// Canonical member declaration identity, absent only for legacy manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
     /// Property result type available to compiled-library consumers.
     pub return_type: TypeRef,
 }
@@ -807,6 +1116,9 @@ pub enum ReceiverExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodExport {
     pub name: String,
+    /// Canonical member declaration identity, distinct for same-name overloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias_of: Option<String>,
     pub type_params: Vec<TypeParamExport>,
@@ -1029,6 +1341,9 @@ pub enum EnumValueTypeExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumVariantExport {
     pub name: String,
+    /// Canonical enum-member declaration identity, absent only for legacy manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
     pub fields: Vec<TypeRef>,
     /// Raw value for RFC 032 value enum variants.
     #[serde(default)]
@@ -1177,7 +1492,7 @@ impl LibraryManifest {
     ) -> Self {
         let name = name.into();
         let mut manifest = Self::new(name.clone(), version);
-        manifest.exports = LibraryExports::from_checked_exports(checked_exports);
+        manifest.exports = LibraryExports::from_checked_exports(&name, checked_exports);
         manifest.contract_metadata.identity_graph = LibraryIdentityGraph::from_checked_exports(&name, checked_exports);
         manifest
             .exports
@@ -1226,7 +1541,7 @@ impl LibraryManifest {
 
 impl LibraryExports {
     /// Build manifest exports from checked frontend exports.
-    fn from_checked_exports(exports: &[CheckedNamedExport]) -> Self {
+    fn from_checked_exports(package_name: &str, exports: &[CheckedNamedExport]) -> Self {
         let mut model = Self::default();
 
         for export in exports {
@@ -1246,19 +1561,23 @@ impl LibraryExports {
                         .push(type_alias_export_from_checked(type_alias_export));
                 }
                 CheckedExportKind::Model(model_export) => {
-                    model.models.push(model_export_from_checked(model_export));
+                    model.models.push(model_export_from_checked(package_name, model_export));
                 }
                 CheckedExportKind::Class(class_export) => {
-                    model.classes.push(class_export_from_checked(class_export));
+                    model
+                        .classes
+                        .push(class_export_from_checked(package_name, class_export));
                 }
                 CheckedExportKind::Trait(trait_export) => {
-                    model.traits.push(trait_export_from_checked(trait_export));
+                    model.traits.push(trait_export_from_checked(package_name, trait_export));
                 }
                 CheckedExportKind::Enum(enum_export) => {
-                    model.enums.push(enum_export_from_checked(enum_export));
+                    model.enums.push(enum_export_from_checked(package_name, enum_export));
                 }
                 CheckedExportKind::Newtype(newtype_export) => {
-                    model.newtypes.push(newtype_export_from_checked(newtype_export));
+                    model
+                        .newtypes
+                        .push(newtype_export_from_checked(package_name, newtype_export));
                 }
                 CheckedExportKind::Const(const_export) => {
                     model.consts.push(const_export_from_checked(const_export));
@@ -1417,6 +1736,11 @@ fn export_identity_from_checked(package_name: &str, export: &CheckedNamedExport)
         source_path: export.identity.source_path.clone(),
         kind: export_identity_kind_from_checked(&export.kind),
         projection: export_identity_projection_from_checked(&export.identity),
+        canonical: export
+            .identity
+            .canonical
+            .as_ref()
+            .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity)),
     }
 }
 
@@ -1604,6 +1928,44 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
         source_name: bound.source_name.clone(),
         module_path: bound.module_path.clone(),
         type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
+        implementation_type_params: bound
+            .implementation_type_params
+            .iter()
+            .map(implementation_type_param_from_info)
+            .collect(),
+    }
+}
+
+/// Convert one checked implementation parameter into the shared manifest model.
+fn implementation_type_param_from_info(type_param: &ImplementationTypeParamInfo) -> ImplementationTypeParamExport {
+    ImplementationTypeParamExport {
+        name: type_param.name.clone(),
+        bounds: type_param
+            .bounds
+            .iter()
+            .map(implementation_trait_bound_from_info)
+            .collect(),
+    }
+}
+
+/// Convert one checked implementation requirement into the shared manifest model.
+fn implementation_trait_bound_from_info(bound: &ImplementationTraitBoundInfo) -> ImplementationTraitBoundExport {
+    ImplementationTraitBoundExport {
+        trait_path: bound.trait_path.clone(),
+        type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
+        associated_types: bound
+            .associated_types
+            .iter()
+            .map(|(name, ty)| ImplementationAssociatedTypeExport {
+                name: name.clone(),
+                ty: type_ref_from_resolved(ty),
+            })
+            .collect(),
+        origin: match bound.origin {
+            ImplementationTraitBoundOriginInfo::Standard => ImplementationTraitBoundOriginExport::Standard,
+            ImplementationTraitBoundOriginInfo::RustCapability => ImplementationTraitBoundOriginExport::RustCapability,
+            ImplementationTraitBoundOriginInfo::SourceCallable => ImplementationTraitBoundOriginExport::SourceCallable,
+        },
     }
 }
 
@@ -1654,9 +2016,13 @@ fn receiver_from_checked(receiver: Option<crate::frontend::ast::Receiver>) -> Op
 }
 
 /// Convert checked method metadata into manifest method metadata.
-fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod) -> MethodExport {
+fn method_from_checked(package_name: &str, method: &crate::frontend::library_exports::CheckedMethod) -> MethodExport {
     MethodExport {
         name: method.name.clone(),
+        canonical: method
+            .canonical
+            .as_ref()
+            .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity)),
         alias_of: method.alias_of.clone(),
         type_params: method.type_params.iter().map(type_param_from_checked).collect(),
         receiver: receiver_from_checked(method.receiver),
@@ -1668,10 +2034,14 @@ fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod)
 }
 
 /// Convert checked field metadata into artifact metadata, including a materializable default when available.
-fn field_from_checked(field: &crate::frontend::library_exports::CheckedField) -> FieldExport {
+fn field_from_checked(package_name: &str, field: &crate::frontend::library_exports::CheckedField) -> FieldExport {
     let default = field.default.as_ref().and_then(param_default_from_checked);
     FieldExport {
         name: field.name.clone(),
+        canonical: field
+            .canonical
+            .as_ref()
+            .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity)),
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {
@@ -1686,9 +2056,13 @@ fn field_from_checked(field: &crate::frontend::library_exports::CheckedField) ->
 }
 
 /// Convert checked computed-property metadata into artifact metadata.
-fn property_from_checked(property: &CheckedProperty) -> PropertyExport {
+fn property_from_checked(package_name: &str, property: &CheckedProperty) -> PropertyExport {
     PropertyExport {
         name: property.name.clone(),
+        canonical: property
+            .canonical
+            .as_ref()
+            .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity)),
         return_type: type_ref_from_resolved(&property.return_type),
     }
 }
@@ -1714,21 +2088,33 @@ fn type_alias_export_from_checked(export: &CheckedTypeAliasExport) -> TypeAliasE
 }
 
 /// Convert a checked model export into the serialized manifest model shape.
-fn model_export_from_checked(export: &CheckedModelExport) -> ModelExport {
+fn model_export_from_checked(package_name: &str, export: &CheckedModelExport) -> ModelExport {
     ModelExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         derives: export.derives.clone(),
-        fields: export.fields.iter().map(field_from_checked).collect(),
-        properties: export.properties.iter().map(property_from_checked).collect(),
-        methods: export.methods.iter().map(method_from_checked).collect(),
+        fields: export
+            .fields
+            .iter()
+            .map(|field| field_from_checked(package_name, field))
+            .collect(),
+        properties: export
+            .properties
+            .iter()
+            .map(|property| property_from_checked(package_name, property))
+            .collect(),
+        methods: export
+            .methods
+            .iter()
+            .map(|method| method_from_checked(package_name, method))
+            .collect(),
     }
 }
 
 /// Convert a checked class export into the serialized manifest class shape.
-fn class_export_from_checked(export: &CheckedClassExport) -> ClassExport {
+fn class_export_from_checked(package_name: &str, export: &CheckedClassExport) -> ClassExport {
     ClassExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
@@ -1736,14 +2122,26 @@ fn class_export_from_checked(export: &CheckedClassExport) -> ClassExport {
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         derives: export.derives.clone(),
-        fields: export.fields.iter().map(field_from_checked).collect(),
-        properties: export.properties.iter().map(property_from_checked).collect(),
-        methods: export.methods.iter().map(method_from_checked).collect(),
+        fields: export
+            .fields
+            .iter()
+            .map(|field| field_from_checked(package_name, field))
+            .collect(),
+        properties: export
+            .properties
+            .iter()
+            .map(|property| property_from_checked(package_name, property))
+            .collect(),
+        methods: export
+            .methods
+            .iter()
+            .map(|method| method_from_checked(package_name, method))
+            .collect(),
     }
 }
 
 /// Convert a checked trait export into the serialized manifest trait shape.
-fn trait_export_from_checked(export: &CheckedTraitExport) -> TraitExport {
+fn trait_export_from_checked(package_name: &str, export: &CheckedTraitExport) -> TraitExport {
     TraitExport {
         name: export.name.clone(),
         source_name: (export.source_name != export.name).then(|| export.source_name.clone()),
@@ -1757,12 +2155,16 @@ fn trait_export_from_checked(export: &CheckedTraitExport) -> TraitExport {
                 ty: type_ref_from_resolved(ty),
             })
             .collect(),
-        methods: export.methods.iter().map(method_from_checked).collect(),
+        methods: export
+            .methods
+            .iter()
+            .map(|method| method_from_checked(package_name, method))
+            .collect(),
     }
 }
 
 /// Convert a checked enum export into the manifest enum contract.
-fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
+fn enum_export_from_checked(package_name: &str, export: &CheckedEnumExport) -> EnumExport {
     EnumExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
@@ -1775,6 +2177,10 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
             .iter()
             .map(|variant| EnumVariantExport {
                 name: variant.name.clone(),
+                canonical: variant
+                    .canonical
+                    .as_ref()
+                    .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity)),
                 fields: variant.fields.iter().map(type_ref_from_resolved).collect(),
                 value: variant.value.as_ref().map(value_enum_value_from_checked),
             })
@@ -1787,7 +2193,11 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
                 target: alias.target.clone(),
             })
             .collect(),
-        methods: export.methods.iter().map(method_from_checked).collect(),
+        methods: export
+            .methods
+            .iter()
+            .map(|method| method_from_checked(package_name, method))
+            .collect(),
         derives: export.derives.clone(),
     }
 }
@@ -1809,7 +2219,7 @@ fn value_enum_value_from_checked(value: &ValueEnumValue) -> EnumValueExport {
 }
 
 /// Convert a checked newtype export into the serialized manifest shape.
-fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
+fn newtype_export_from_checked(package_name: &str, export: &CheckedNewtypeExport) -> NewtypeExport {
     NewtypeExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
@@ -1825,7 +2235,11 @@ fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
             .map(NewtypeConstraintExport::from_checked)
             .collect(),
         implicit_coercion_enabled: export.implicit_coercion_enabled,
-        methods: export.methods.iter().map(method_from_checked).collect(),
+        methods: export
+            .methods
+            .iter()
+            .map(|method| method_from_checked(package_name, method))
+            .collect(),
     }
 }
 

@@ -29,8 +29,9 @@ jobs:
             target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.0
           targets: wasm32-wasip1,${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
@@ -78,8 +79,9 @@ jobs:
           pattern: incan-toolchain-*
           path: dist/toolchain
           merge-multiple: true
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.0
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
@@ -99,7 +101,8 @@ jobs:
           INCAN_TOOLCHAIN_DIST_DIR: ${{ github.workspace }}/dist/toolchain
         run: |
           set -euo pipefail
-          export INCAN_TOOLCHAIN_GENERATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          INCAN_TOOLCHAIN_GENERATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          export INCAN_TOOLCHAIN_GENERATED_AT
           dist/toolchain-bootstrap/bin/incan run workspaces/release/toolchain/prepare_assets.incn
       - name: Package npm installer
         run: node workspaces/release/npm/prepare_package.js dist/toolchain

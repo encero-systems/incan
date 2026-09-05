@@ -290,6 +290,9 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             .iter()
             .find_map(|arg| call_site_type_in_expr(arg, offset))
             .or_else(|| call_site_types_in_stmts(&block.body, offset)),
+        // Descriptor-gated embedded fragments (RFC 081, `#1023`) are opaque to call-site type-argument LSP lookups
+        // here: this belongs to `#1022`'s LSP-ownership territory, not this issue's parser-to-lowering scope.
+        Expr::Embedded(_) => None,
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }
 }

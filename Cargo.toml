@@ -23,10 +23,10 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.6.0-dev.1.4"
+version = "0.6.0-dev.2"
 description = "The Incan programming language compiler"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.98"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/encero-systems/incan"
@@ -111,12 +111,14 @@ globset = "0.4.18"
 rustix = { version = "1.1.4", features = ["fs"] }
 rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging
-# 36.0.13 is the patched RUSTSEC-2026-0222 line compatible with Incan's Rust 1.93 MSRV. Wasmtime 45 remains
-# vulnerable, while the patched 46.0.2 release requires Rust 1.94.
+# 36.0.14 is the patched RUSTSEC-2026-0222/RUSTSEC-2026-0269 line compatible with Incan's Rust 1.93 MSRV.
+# Wasmtime 45 remains vulnerable, while the patched 46.0.2 release requires Rust 1.94.
 wasmtime = { version = "36.0.14", default-features = false, features = ["cranelift", "runtime", "std"] }
 wasmtime-wasi = { version = "36.0.14", default-features = false, features = ["preview1"] }
 
 [dev-dependencies]
+# Artifact-level `incan-v1` conformance decodes the pinned toolchain's v0 symbols independently of compiler state.
+rustc-demangle = "0.1.27"
 # Unix process-group cleanup for bounded subprocess regression tests.
 libc = "0.2"
 # Runtime crate used by std.io generated-project offline smoke tests.

@@ -1,5 +1,5 @@
 # Installs the nightly toolchain with rustup, retrying on transient static.rust-lang.org failures.
-# Use after `dtolnay/rust-toolchain@stable` so `rustup` is available.
+# Use after installing the repository's pinned supported Rust release so `rustup` is available.
 name: Install nightly toolchain (with retries)
 description: >
   Runs `rustup toolchain install nightly` with exponential backoff. CI occasionally sees

@@ -140,6 +140,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // enclosing place directly after this point, and restoring the full binding map below prevents generator
         // clause/capture names from leaking into the following enclosing statement.
         let enclosing_bindings = self.bindings.clone();
+        let enclosing_identity_bindings = self.identity_bindings.clone();
         // Only the first source is evaluated at construction. The rest is deferred until polling, so range-layout
         // facts it creates belong to the generator frame rather than the enclosing straight-line body.
         let saved_materialized_range_locals = self.materialized_range_locals.clone();
@@ -148,8 +149,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut capture_locals = Vec::with_capacity(free_names.len());
         for name in &free_names {
             let Some(&outer_local) = self.bindings.get(name) else {
-                // Module/external names remain explicit `External` references when the deferred body is lowered;
-                // there is no local value available to capture and rebind here.
+                // Names without an enclosing frame local are not captures. The deferred body resolves them again
+                // from compiler-recorded identity: module storage becomes a canonical global place, while a proven
+                // identity Body IR cannot represent becomes an explicit unsupported operand.
                 continue;
             };
             let outer_ty = self.locals[outer_local.index()].ty.clone();
@@ -161,6 +163,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let capture_local =
                 self.declare_new_local_with_reads(name.clone(), outer_ty, generator_scope, hir_span_value, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
+            if let Some(identity) = self.locals[outer_local.index()].identity.clone() {
+                self.locals[capture_local.index()].identity = Some(identity.clone());
+                self.identity_bindings.insert(identity, capture_local);
+            }
             capture_locals.push(capture_local);
         }
 
@@ -267,6 +273,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span: hir_span_value,
         });
         self.bindings = enclosing_bindings;
+        self.identity_bindings = enclosing_identity_bindings;
         self.materialized_range_locals = saved_materialized_range_locals;
 
         // `Generator::new` owns a boxed iterator in the legacy runtime, even when every captured source value is
@@ -363,7 +370,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 // terminal, and the two helpers must agree on that or a binding's last-use lands in the wrong place.
                 let reads =
                     move |name: &str| terminal.count_reads(name) + count_reads_in_comprehension_clauses(name, tail);
-                let item_local = self.declare_for_item_local(pattern, &item_ty, loop_scope, span, &reads);
+                let item_local =
+                    self.declare_for_item_local(pattern, &item_ty, loop_scope, hir_span(pattern.span), &reads);
                 let bind_ty = item_ty.clone();
                 self.lower_general_iteration(
                     iter,

@@ -22,7 +22,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::backend::ProjectGenerator;
 use crate::oven::rustc::{
     OvenStoredDirectRustcRunRequest, bake_stored_direct_rustc_run, select_direct_rustc_plan_for_execution,
 };
@@ -33,8 +35,8 @@ use crate::oven::{
 };
 
 use super::{
-    LegacyExecutionAuthority, LegacyRouteResult, ShadowComparisonProfile, ShadowUnavailable, emit_legacy_rust,
-    observe_legacy_process,
+    LegacyExecutionAuthority, LegacyProcessEvidence, LegacyRouteResult, PreparedShadowProfile, ShadowComparisonProfile,
+    ShadowLegacyMaterialization, ShadowUnavailable, emit_legacy_rust_with_materialization, observe_legacy_process,
 };
 
 /// Receipt evidence key under which the comparison's emitted Rust is authorized.
@@ -49,6 +51,12 @@ const LEGACY_PROJECT_NAME: &str = "incan-shadow-comparison";
 /// Rust crate name for the produced legacy program.
 const LEGACY_CRATE_NAME: &str = "incan_shadow_comparison";
 
+/// Per-process suffix for caller-owned staged result-report directories.
+///
+/// The directory lease is host lifecycle only; the produced report remains entirely source-authored Incan. Atomic
+/// creation below means a stale or concurrently created directory can never be reused as result evidence.
+static NEXT_RESULT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
 /// Everything needed to run one legacy route under Oven authority.
 ///
 /// The intent and build-unit inputs are adopted from an already-baked project so a stored direct-`rustc` plan can
@@ -59,6 +67,7 @@ pub struct LegacyOvenCapability {
     store_root: PathBuf,
     rustc: PathBuf,
     baked_receipt: OvenReceipt,
+    staged_receipt_paths: Option<Vec<PathBuf>>,
 }
 
 impl LegacyOvenCapability {
@@ -95,6 +104,7 @@ impl LegacyOvenCapability {
             store_root: store_root.into(),
             rustc: rustc.into(),
             baked_receipt,
+            staged_receipt_paths: None,
         })
     }
 
@@ -111,6 +121,37 @@ impl LegacyOvenCapability {
     #[must_use]
     pub fn adopted_receipt(&self) -> &OvenReceipt {
         &self.baked_receipt
+    }
+
+    /// Require the caller's source-session provider closure to match this adopted immutable native authority.
+    pub(crate) fn require_materialization_compatibility(
+        &self,
+        materialization: &ShadowLegacyMaterialization,
+    ) -> Result<(), ShadowUnavailable> {
+        materialization.require_compatible_oven_build_unit_inputs(&self.baked_receipt.sources.build_unit_inputs)
+    }
+
+    /// Select this capability's exact staged authority for one source-session provider closure.
+    ///
+    /// Explicit capabilities retain their one verified receipt. Environment-backed capabilities preserve their
+    /// ordered staged receipt list so a comparison can adopt the exact matching closure instead of treating the
+    /// historically first receipt as authority for every source profile.
+    pub(crate) fn select_for_materialization(
+        &self,
+        materialization: &ShadowLegacyMaterialization,
+    ) -> Result<Self, ShadowUnavailable> {
+        match &self.staged_receipt_paths {
+            Some(receipt_paths) => Self::select_baked_project_for_materialization(
+                &self.store_root,
+                &self.rustc,
+                receipt_paths,
+                materialization,
+            ),
+            None => {
+                self.require_materialization_compatibility(materialization)?;
+                Ok(self.clone())
+            }
+        }
     }
 
     /// Derive the comparison's own Oven receipt over one emitted Rust file.
@@ -165,16 +206,42 @@ impl LegacyOvenCapability {
 /// build failure must never be promoted into a claim about program meaning.
 pub(crate) fn observe_legacy_route(
     profile: &ShadowComparisonProfile,
+    prepared: &PreparedShadowProfile,
+    materialization: &ShadowLegacyMaterialization,
     capability: &LegacyOvenCapability,
     workspace: &Path,
 ) -> Result<LegacyRouteResult, ShadowUnavailable> {
-    let program = profile.legacy_program_source()?;
-    let rust_source = emit_legacy_rust(&program)?;
+    materialization.require_profile_source(profile)?;
+    capability.require_materialization_compatibility(materialization)?;
+    observe_legacy_route_with_result_report_setup(profile, prepared, materialization, capability, workspace, |_| Ok(()))
+}
+
+/// Run the legacy route after the host has leased, but before generated source uses, its private report paths.
+///
+/// Production supplies an empty setup. Keeping this lifecycle seam private lets module tests deterministically make
+/// the source-authored `write` or `rename` fail without introducing a Rust result transport or a public option.
+fn observe_legacy_route_with_result_report_setup<F>(
+    profile: &ShadowComparisonProfile,
+    prepared: &PreparedShadowProfile,
+    materialization: &ShadowLegacyMaterialization,
+    capability: &LegacyOvenCapability,
+    workspace: &Path,
+    setup_result_report: F,
+) -> Result<LegacyRouteResult, ShadowUnavailable>
+where
+    F: FnOnce(&ResultReportLease) -> Result<(), ShadowUnavailable>,
+{
+    // The host only leases a unique caller-owned directory. The transport itself remains source-authored: the
+    // generated Incan entrypoint writes `result.next` and atomically replaces `result` after calling the observed
+    // function. The directory is removed after the report bytes have been copied into process evidence.
+    let result_directory = ResultReportLease::new(workspace)?;
+    setup_result_report(&result_directory)?;
+    let result_path = result_directory.result_path();
+    let program = profile.legacy_program_source(prepared.result_kind, result_path, &prepared.wrapper_identifiers)?;
 
     let project_root = workspace.join("oven-project");
-    let source_path = project_root.join("src").join("main.rs");
+    let source_path = materialize_legacy_program(&program, materialization, &project_root)?;
     let output_path = project_root.join(LEGACY_CRATE_NAME);
-    write_generated_source(&source_path, &rust_source)?;
 
     let receipt = capability.receipt_for_generated_source(&project_root, &source_path)?;
     let store = capability.open_store();
@@ -232,38 +299,168 @@ pub(crate) fn observe_legacy_route(
             bake.output.display()
         ))
     })?;
-    let stderr = String::from_utf8_lossy(&run.stderr).trim().to_string();
-    let observation = observe_legacy_process(
-        profile.profile_kind(),
-        &profile.profile_identity(),
-        &authority,
-        run.status.code(),
-        &run.stdout,
-        &stderr,
-    )?;
-    Ok(LegacyRouteResult { observation, authority })
+    let mut process = LegacyProcessEvidence {
+        exit_code: run.status.code(),
+        stdout: run.stdout,
+        stderr: run.stderr,
+        result_report: None,
+    };
+    let observed = if process.exit_code == Some(0) {
+        match std::fs::read(result_path) {
+            Ok(report) => {
+                process.result_report = Some(report);
+                observe_legacy_process(
+                    profile.profile_kind(),
+                    &profile.profile_identity(),
+                    &authority,
+                    &process,
+                    prepared.result_kind,
+                )
+            }
+            Err(error) => Err(ShadowUnavailable::new(format!(
+                "the legacy process exited successfully but its source-authored result report {} was unavailable: \
+                 {error}",
+                result_path.display()
+            ))),
+        }
+    } else {
+        observe_legacy_process(
+            profile.profile_kind(),
+            &profile.profile_identity(),
+            &authority,
+            &process,
+            prepared.result_kind,
+        )
+    };
+    let (observation, unavailable_reason) = match observed {
+        Ok(observation) => (Some(observation), None),
+        Err(unavailable) => (None, Some(unavailable.reason)),
+    };
+    Ok(LegacyRouteResult {
+        observation,
+        authority,
+        process,
+        unavailable_reason,
+    })
 }
 
-/// Write the emitted Rust into the comparison's caller-owned project tree.
-fn write_generated_source(source_path: &Path, rust_source: &str) -> Result<(), ShadowUnavailable> {
-    let parent = source_path.parent().ok_or_else(|| {
-        ShadowUnavailable::new(format!(
-            "the legacy route's generated source path {} has no parent directory",
-            source_path.display()
-        ))
-    })?;
-    std::fs::create_dir_all(parent).map_err(|error| {
-        ShadowUnavailable::new(format!(
-            "the legacy route could not create {}: {error}",
-            parent.display()
-        ))
-    })?;
-    std::fs::write(source_path, rust_source).map_err(|error| {
-        ShadowUnavailable::new(format!(
-            "the legacy route could not write {}: {error}",
-            source_path.display()
-        ))
+#[cfg(all(test, feature = "cli"))]
+#[derive(Debug, Clone, Copy)]
+/// The source-authored publication step a deterministic test prevents from completing.
+pub(super) enum ForcedResultTransportFailure {
+    Write,
+    Rename,
+}
+
+#[cfg(all(test, feature = "cli"))]
+/// Execute the real authored transport after making exactly one leased publication path unusable.
+pub(super) fn observe_legacy_route_with_forced_transport_failure(
+    profile: &ShadowComparisonProfile,
+    prepared: &PreparedShadowProfile,
+    materialization: &ShadowLegacyMaterialization,
+    capability: &LegacyOvenCapability,
+    workspace: &Path,
+    failure: ForcedResultTransportFailure,
+) -> Result<LegacyRouteResult, ShadowUnavailable> {
+    materialization.require_profile_source(profile)?;
+    capability.require_materialization_compatibility(materialization)?;
+    observe_legacy_route_with_result_report_setup(profile, prepared, materialization, capability, workspace, |lease| {
+        lease.force_transport_failure(failure)
     })
+}
+
+/// Lease one unique caller-owned directory for an atomic source-authored result report.
+///
+/// `create_dir` is the uniqueness authority: no existing directory is reused, and cleanup removes only the exact
+/// directory this lease created after the report bytes have been retained in [`LegacyProcessEvidence`].
+struct ResultReportLease {
+    directory: PathBuf,
+    result_path: PathBuf,
+}
+
+impl ResultReportLease {
+    /// Reserve a fresh directory below the caller workspace, never adopting a pre-existing candidate.
+    fn new(workspace: &Path) -> Result<Self, ShadowUnavailable> {
+        let parent = workspace.join("incan-shadow-result-reports-v1");
+        std::fs::create_dir_all(&parent).map_err(|error| {
+            ShadowUnavailable::new(format!(
+                "the legacy route could not create its caller-owned result-report parent {}: {error}",
+                parent.display()
+            ))
+        })?;
+        for _ in 0..1024 {
+            let sequence = NEXT_RESULT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let directory = parent.join(format!("{}-{sequence}", std::process::id()));
+            match std::fs::create_dir(&directory) {
+                Ok(()) => {
+                    let result_path = directory.join("result");
+                    return Ok(Self { directory, result_path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(ShadowUnavailable::new(format!(
+                        "the legacy route could not reserve its result-report directory {}: {error}",
+                        directory.display()
+                    )));
+                }
+            }
+        }
+        Err(ShadowUnavailable::new(format!(
+            "the legacy route could not reserve a unique result-report directory under {} after 1024 attempts",
+            parent.display()
+        )))
+    }
+
+    /// Return the final path the source-authored wrapper publishes after its write succeeds.
+    fn result_path(&self) -> &Path {
+        &self.result_path
+    }
+
+    #[cfg(all(test, feature = "cli"))]
+    /// Create a directory where the selected source operation requires a file, without touching other leases.
+    fn force_transport_failure(&self, failure: ForcedResultTransportFailure) -> Result<(), ShadowUnavailable> {
+        let path = match failure {
+            ForcedResultTransportFailure::Write => self.result_path.with_extension("next"),
+            ForcedResultTransportFailure::Rename => self.result_path.clone(),
+        };
+        std::fs::create_dir(&path).map_err(|error| {
+            ShadowUnavailable::new(format!(
+                "the shadow test could not force the source-authored result transport failure at {}: {error}",
+                path.display()
+            ))
+        })
+    }
+}
+
+impl Drop for ResultReportLease {
+    /// Remove only this lease's generated directory after its process evidence has been copied.
+    fn drop(&mut self) {
+        // This path was atomically created by `new`; ignore cleanup failure because the process evidence was already
+        // copied and must not be replaced by a post-execution filesystem error.
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+/// Materialize one legacy root with the caller-owned provider projection used by codegen.
+///
+/// The generator owns the narrow compatibility facade that maps compiler-generated `crate::__incan_std` paths to
+/// linked compiled provider artifacts. The comparison route does not recreate that facade as a Rust string or reopen
+/// any provider source. It only receipts the resulting `src/main.rs` and sends those exact bytes to Oven.
+pub(crate) fn materialize_legacy_program(
+    program: &str,
+    materialization: &ShadowLegacyMaterialization,
+    project_root: &Path,
+) -> Result<PathBuf, ShadowUnavailable> {
+    let rust_source = emit_legacy_rust_with_materialization(program, materialization)?;
+    let mut generator = ProjectGenerator::new(project_root, LEGACY_PROJECT_NAME, true);
+    generator.set_provider_plan(materialization.provider_plan());
+    generator.generate(&rust_source).map_err(|error| {
+        ShadowUnavailable::new(format!(
+            "the legacy route could not materialize its caller-owned generated project at {}: {error}",
+            project_root.display()
+        ))
+    })?;
+    Ok(generator.crate_root_path())
 }
 
 /// Remove inherited Cargo process variables before running the Oven-produced program.
@@ -291,7 +488,7 @@ pub const CAPABILITY_ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         RECEIPT_ENV,
-        "path to a verified Oven receipt from a project already baked with `incan oven bake`",
+        "path list of verified Oven receipts from projects already baked with `incan oven bake`",
     ),
     (RUSTC_ENV, "explicit Rust compiler executable Oven must use"),
 ];
@@ -305,33 +502,171 @@ const RECEIPT_ENV: &str = "INCAN_SHADOW_OVEN_RECEIPT";
 /// Explicit compiler Oven must use for the comparison build.
 const RUSTC_ENV: &str = "INCAN_SHADOW_RUSTC";
 
+/// Read one required filesystem path from the staged comparison environment.
+fn environment_path(name: &str) -> Result<PathBuf, ShadowUnavailable> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            ShadowUnavailable::new(format!(
+                "the legacy comparison route is not staged: {name} is unset; it must name the {}",
+                CAPABILITY_ENVIRONMENT
+                    .iter()
+                    .find(|(variable, _)| *variable == name)
+                    .map_or("required input", |(_, description)| *description)
+            ))
+        })
+}
+
+/// Read the ordered receipt candidates staged for source-session compatibility selection.
+fn environment_receipt_paths() -> Result<Vec<PathBuf>, ShadowUnavailable> {
+    let value = std::env::var_os(RECEIPT_ENV)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ShadowUnavailable::new(format!(
+                "the legacy comparison route is not staged: {RECEIPT_ENV} is unset; it must name the {}",
+                CAPABILITY_ENVIRONMENT
+                    .iter()
+                    .find(|(variable, _)| *variable == RECEIPT_ENV)
+                    .map_or("required input", |(_, description)| *description)
+            ))
+        })?;
+    let paths = std::env::split_paths(&value).collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Err(ShadowUnavailable::new(format!(
+            "the legacy comparison route is not staged: {RECEIPT_ENV} contains no receipt paths"
+        )));
+    }
+    Ok(paths)
+}
+
 impl LegacyOvenCapability {
     /// Resolve a capability from the environment variables listed in [`CAPABILITY_ENVIRONMENT`].
+    ///
+    /// When the receipt variable contains a platform path list, this constructor retains that ordered list for the
+    /// bounded comparison to select the exact source-session-compatible authority before either route executes.
     ///
     /// Returns [`ShadowUnavailable`] naming the first missing variable, so an unstaged environment produces an
     /// actionable non-green reason instead of a silent skip.
     pub fn from_environment() -> Result<Self, ShadowUnavailable> {
-        let read = |name: &str| {
-            std::env::var_os(name)
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .ok_or_else(|| {
-                    ShadowUnavailable::new(format!(
-                        "the legacy comparison route is not staged: {name} is unset; it must name the {}",
-                        CAPABILITY_ENVIRONMENT
-                            .iter()
-                            .find(|(variable, _)| *variable == name)
-                            .map_or("required input", |(_, description)| *description)
-                    ))
-                })
-        };
-        let incan_home = read(INCAN_HOME_ENV)?;
-        let receipt_path = read(RECEIPT_ENV)?;
-        let rustc = read(RUSTC_ENV)?;
-        Self::adopt_baked_project(
+        let incan_home = environment_path(INCAN_HOME_ENV)?;
+        let receipt_paths = environment_receipt_paths()?;
+        let receipt_path = receipt_paths
+            .first()
+            .ok_or_else(|| ShadowUnavailable::new("the legacy comparison route has no staged Oven receipt"))?;
+        let rustc = environment_path(RUSTC_ENV)?;
+        let mut capability = Self::adopt_baked_project(
             crate::oven::store::store_root_for_home(&incan_home),
             rustc,
-            &receipt_path,
-        )
+            receipt_path,
+        )?;
+        capability.staged_receipt_paths = Some(receipt_paths);
+        Ok(capability)
+    }
+
+    /// Select the staged verified receipt whose immutable inputs exactly match one source-session materialization.
+    ///
+    /// A corpus may contain source profiles with different feature/provider closures. The environment therefore
+    /// admits an ordered platform path list while retaining one Oven store and Rust compiler. Every candidate is
+    /// identity-verified, and only an exact build-unit-input match is returned; a broader receipt is never treated
+    /// as authority for a narrower source session (or vice versa).
+    #[cfg(test)]
+    pub(crate) fn from_environment_for_materialization(
+        materialization: &ShadowLegacyMaterialization,
+    ) -> Result<Self, ShadowUnavailable> {
+        let incan_home = environment_path(INCAN_HOME_ENV)?;
+        let rustc = environment_path(RUSTC_ENV)?;
+        let store_root = crate::oven::store::store_root_for_home(&incan_home);
+        let receipt_paths = environment_receipt_paths()?;
+        Self::select_baked_project_for_materialization(&store_root, &rustc, &receipt_paths, materialization)
+    }
+
+    /// Adopt the first verified receipt whose immutable inputs exactly match the source session.
+    fn select_baked_project_for_materialization(
+        store_root: &Path,
+        rustc: &Path,
+        receipt_paths: &[PathBuf],
+        materialization: &ShadowLegacyMaterialization,
+    ) -> Result<Self, ShadowUnavailable> {
+        let mut rejected = Vec::new();
+        for receipt_path in receipt_paths {
+            let capability = match Self::adopt_baked_project(store_root, rustc, receipt_path) {
+                Ok(capability) => capability,
+                Err(error) => {
+                    rejected.push(format!("{}: {}", receipt_path.display(), error.reason));
+                    continue;
+                }
+            };
+            match capability.require_materialization_compatibility(materialization) {
+                Ok(()) => return Ok(capability),
+                Err(error) => rejected.push(format!("{}: {}", receipt_path.display(), error.reason)),
+            }
+        }
+        Err(ShadowUnavailable::new(format!(
+            "the legacy comparison route has no staged receipt matching this source-session provider closure; \
+             checked {} candidate(s): {}",
+            receipt_paths.len(),
+            rejected.join("; ")
+        )))
+    }
+}
+
+#[cfg(test)]
+mod receipt_selection_tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use super::*;
+
+    /// Persist one identity-valid receipt carrying the selected provider closure.
+    fn write_receipt(
+        workspace: &Path,
+        name: &str,
+        provider_plan_identity: &str,
+    ) -> Result<(PathBuf, OvenReceipt), Box<dyn std::error::Error>> {
+        let project_root = workspace.join(name);
+        std::fs::create_dir_all(&project_root)?;
+        let generated_source = project_root.join("main.rs");
+        std::fs::write(&generated_source, "fn main() {}\n")?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                &project_root,
+                name,
+                "0.1.0",
+                "fixture-target",
+                "fixture-toolchain",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source(SOURCE_EVIDENCE_KEY, &generated_source)
+            .with_build_unit_input("provider-plan", provider_plan_identity),
+        )?;
+        let receipt_path = project_root.join("receipt.json");
+        std::fs::write(&receipt_path, serde_json::to_vec(&receipt)?)?;
+        Ok((receipt_path, receipt))
+    }
+
+    /// Receipt-list selection skips valid unrelated authority and adopts the later exact source closure.
+    #[test]
+    fn source_materialization_selects_the_later_exact_receipt() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let (unrelated_path, unrelated) = write_receipt(workspace.path(), "unrelated", "sha256:unrelated")?;
+        let (matching_path, matching) = write_receipt(workspace.path(), "matching", "sha256:matching")?;
+        let materialization = ShadowLegacyMaterialization::from_provider_plan(
+            Arc::new(crate::provider::ProviderPlan::default()),
+            BTreeMap::from([("provider-plan".to_string(), "sha256:matching".to_string())]),
+            "sha256:source".to_string(),
+        );
+
+        let selected = LegacyOvenCapability::select_baked_project_for_materialization(
+            &workspace.path().join("store"),
+            &workspace.path().join("rustc"),
+            &[unrelated_path, matching_path],
+            &materialization,
+        )?;
+
+        assert_ne!(unrelated.identity, matching.identity);
+        assert_eq!(selected.adopted_receipt().identity, matching.identity);
+        Ok(())
     }
 }

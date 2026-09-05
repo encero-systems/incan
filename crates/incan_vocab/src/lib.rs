@@ -57,8 +57,9 @@ pub use desugar::{
 };
 pub use keywords::{
     ClauseBodyKind, ClauseCardinality, ClausePlacement, ClauseSurface, DeclarationBodyKind, DeclarationHeadKind,
-    DeclarationSurface, DesugarTarget, DslSurface, ExpressionItemModifierKind, ExpressionItemModifierSurface,
-    KeywordActivation, KeywordPlacement, KeywordRegistration, KeywordSpec, KeywordSurfaceKind, ScopedSurfaceChainMode,
+    DeclarationSurface, DesugarTarget, DslSurface, EmbeddedFragmentDescriptor, EmbeddedFragmentFormatHint,
+    EmbeddedFragmentSubmode, ExpressionItemModifierKind, ExpressionItemModifierSurface, KeywordActivation,
+    KeywordPlacement, KeywordRegistration, KeywordSpec, KeywordSurfaceKind, ScopedSurfaceChainMode,
     ScopedSurfaceDescriptor, ScopedSurfaceDiagnosticKind, ScopedSurfaceDiagnosticTemplate, ScopedSurfaceEligibility,
     ScopedSurfaceFamily, ScopedSurfaceFormatHint, ScopedSurfaceMisuseScope, ScopedSurfacePosition,
     ScopedSurfaceReceiver, ScopedSurfaceSyntax, ScopedSymbolDescriptor, ScopedSymbolDiagnosticKind,

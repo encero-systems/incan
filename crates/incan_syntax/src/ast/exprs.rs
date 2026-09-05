@@ -85,6 +85,13 @@ pub enum Expr {
     Surface(Box<SurfaceExpr>),
     /// Raw library vocab declaration used as an expression before vocab desugaring.
     VocabBlock(Box<VocabBlockStmt>),
+    /// Descriptor-gated embedded-fragment artifact (RFC 081): a language-shaped lexical submode claimed by a DSL
+    /// descriptor, with real expression holes that flow through ordinary typecheck/lowering.
+    ///
+    /// Unlike [`Expr::Surface`], this variant is not eliminated by the pre-typecheck vocab desugar pass — its
+    /// [`EmbeddedNode::Hole`] sub-expressions are genuine Incan expressions that must be typechecked and lowered
+    /// like any other expression, so the container must survive into `check_expr`/`lower/expr` as itself.
+    Embedded(Box<EmbeddedFragmentExpr>),
 }
 
 /// One entry in a list literal.
@@ -158,7 +165,8 @@ pub enum SurfaceExprPayload {
 /// Expression-position `race for value:` surface syntax.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaceForExpr {
-    pub binding: Ident,
+    /// The one source-authored winner binding shared by every arm, including its exact header token span.
+    pub binding: Spanned<Ident>,
     pub arms: Vec<RaceForArm>,
 }
 
@@ -182,6 +190,143 @@ pub struct ScopedSurfaceOwner {
     pub declaration: String,
     pub clause: Option<String>,
     pub call: Option<String>,
+}
+
+// ============================================================================
+// RFC 081 — descriptor-gated embedded-fragment artifact
+// ============================================================================
+
+/// Typed artifact produced when a descriptor claims a lexical submode for an eligible position (RFC 081, `#1023`).
+///
+/// This is the parser's committed answer to "what does this embedded source mean": `submode` names the fixed
+/// grammar family the descriptor claimed (see `incan_vocab::EmbeddedFragmentSubmode`), `nodes` is the structural
+/// tree produced by that grammar, and `source_text` preserves the original fragment text verbatim so a formatter
+/// that does not understand this descriptor's grammar (or one it declares layout-sensitive) can still render it
+/// faithfully. `key` mirrors `SurfaceExpr::key`'s identity shape so tooling can correlate an embedded fragment back
+/// to the descriptor and dependency that produced it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedFragmentExpr {
+    /// Descriptor identity that claimed this fragment, for diagnostics and tooling correlation.
+    pub key: SurfaceFeatureKey,
+    /// Fixed lexical submode kind this fragment was parsed under.
+    pub submode: incan_vocab::EmbeddedFragmentSubmode,
+    /// Structural node tree produced by the submode's grammar, in source order.
+    pub nodes: Vec<Spanned<EmbeddedNode>>,
+    /// Verbatim original source text of the whole fragment, for the formatter's layout-preserving fallback and for
+    /// tooling that needs the untouched source rather than the structural tree.
+    pub source_text: String,
+}
+
+/// One structural node inside a descriptor-gated embedded fragment.
+///
+/// Node kinds are shared across submodes where the shape is genuinely the same construct (raw text runs and
+/// expression holes appear in every submode); submode-specific shapes (markup elements, style rules, regex
+/// literals, type shapes) are only ever produced by their owning submode's grammar. Every variant carries enough
+/// structure to typecheck the expression holes inside it and to report a diagnostic anchored at the exact
+/// sub-region rather than the whole fragment.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EmbeddedNode {
+    /// Raw literal text run, preserved verbatim within this submode's own grammar (whitespace, text-node content,
+    /// comment bodies, raw-text/comment submode content).
+    Text(String),
+    /// Expression hole re-entering ordinary Incan parsing (`{expr}` or `${expr}`).
+    ///
+    /// This sub-expression is genuine Incan syntax: it is typechecked with `check_expr` and lowered with
+    /// `lower_expr` exactly as if it appeared in ordinary expression position, never erased pre-typecheck.
+    Hole(Box<Spanned<Expr>>),
+    /// Markup element: `<name attr=...>children</name>` or a self-closing `<name .../>`.
+    Element(EmbeddedElement),
+    /// Markup entity reference, for example `&amp;`.
+    EntityRef(String),
+    /// Comment content, stored verbatim without its delimiters (`<!-- ... -->` or `/* ... */`).
+    Comment(String),
+    /// Style rule: a selector list followed by a declaration block.
+    StyleRule(EmbeddedStyleRule),
+    /// One `property: value;` declaration, used both inside a style rule and as a bare declaration-value fragment.
+    Declaration(EmbeddedDeclaration),
+    /// A single declaration-value shape (dimension, color, custom-property reference, literal, or selector token).
+    Value(EmbeddedValue),
+    /// A regex literal: `/pattern/flags`.
+    Regex { pattern: String, flags: String },
+    /// A minimal representative type-shaped grammar node.
+    TypeShape(EmbeddedTypeShape),
+}
+
+/// Markup element node: a tag, its attributes, and its children.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedElement {
+    /// Tag name, for example `section`.
+    pub name: String,
+    /// Attributes in source order.
+    pub attrs: Vec<EmbeddedAttr>,
+    /// Child nodes in source order (text, elements, entity references, comments, holes).
+    pub children: Vec<Spanned<EmbeddedNode>>,
+    /// Whether the element was written in self-closing form (`<name .../>`), so it has no children/close tag.
+    pub self_closing: bool,
+}
+
+/// One markup attribute: a name and an optional value (`Text` for a quoted literal, `Hole` for `{expr}`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedAttr {
+    /// Attribute name, exactly as written (for example `class`, `src`).
+    pub name: String,
+    /// Attribute value, or `None` for a bare boolean-style attribute (`name` with no `=value`).
+    pub value: Option<Spanned<EmbeddedNode>>,
+}
+
+/// Style rule: a selector list and its declaration block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedStyleRule {
+    /// Selector list entries, in source order.
+    pub selectors: Vec<Spanned<EmbeddedNode>>,
+    /// Declarations inside the rule's `{ ... }` block, in source order.
+    pub declarations: Vec<Spanned<EmbeddedNode>>,
+}
+
+/// One declaration-value production: `property: value1 value2 ...;`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedDeclaration {
+    /// Declared property name, including a leading `--` for custom properties.
+    pub property: String,
+    /// Declaration value, as a sequence of value/hole nodes (most declarations have exactly one).
+    pub value: Vec<Spanned<EmbeddedNode>>,
+}
+
+/// A single declaration-value or selector-position literal shape.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EmbeddedValue {
+    /// A numeric dimension, for example `16px` or `2rem` (unit may be empty for a bare number).
+    Dimension { number: String, unit: String },
+    /// A color literal, for example `#1166ff` (stored including the leading `#`).
+    Color(String),
+    /// A custom-property reference, for example `var(--accent-color)`.
+    CustomPropertyRef(String),
+    /// A bare identifier value.
+    Ident(String),
+    /// A quoted string literal value.
+    StringLit(String),
+    /// A bare numeric literal (no unit).
+    Number(String),
+    /// A selector-list entry, for example `.card:hover` or `> #title` (stored as one flat token run).
+    Selector(String),
+}
+
+/// A minimal, representative type-shaped grammar node (RFC 081's `type-position` submode).
+///
+/// This intentionally covers only the constructs #1023's acceptance criteria names — namespace-qualified names,
+/// generics, nullable, array, and union — not a full external type-system grammar.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EmbeddedTypeShape {
+    /// Namespace-qualified name, for example `a.b.C` (segments in source order).
+    Name(Vec<String>),
+    /// Generic application, for example `Foo<Bar, Baz>`.
+    Generic(Box<EmbeddedTypeShape>, Vec<EmbeddedTypeShape>),
+    /// Nullable type, for example `T?`.
+    Nullable(Box<EmbeddedTypeShape>),
+    /// Array type, for example `T[]`.
+    Array(Box<EmbeddedTypeShape>),
+    /// Union type, for example `A | B`.
+    Union(Vec<EmbeddedTypeShape>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -356,7 +501,7 @@ pub enum CallArg {
     /// Positional argument
     Positional(Spanned<Expr>),
     /// Named argument: `name=value`
-    Named(Ident, Spanned<Expr>),
+    Named(Spanned<Ident>, Spanned<Expr>),
     /// Positional unpack argument: `*expr`.
     PositionalUnpack(Spanned<Expr>),
     /// Keyword unpack argument: `**expr`.
@@ -368,7 +513,7 @@ pub enum PatternArg {
     /// Positional pattern: `Type(x)`
     Positional(Spanned<Pattern>),
     /// Named pattern: `Type(name=pat)`
-    Named(Ident, Spanned<Pattern>),
+    Named(Spanned<Ident>, Spanned<Pattern>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -395,7 +540,7 @@ pub enum Pattern {
     /// Literal: `42`, `"hello"`, `true`
     Literal(Literal),
     /// Constructor: `Some(x)`, `Ok(value)`, `Type(name=pat)`
-    Constructor(Ident, Vec<PatternArg>),
+    Constructor(Spanned<Ident>, Vec<PatternArg>),
     /// Tuple: `(a, b)`
     Tuple(Vec<Spanned<Pattern>>),
     /// Parenthesized pattern used for grouping: `(A | B)`

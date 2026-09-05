@@ -12,10 +12,11 @@
 //!
 //! This module centralizes that logic so the behavior stays in sync.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, ImportPath, Program};
-use crate::frontend::symbols::{SymbolKind, SymbolTable};
+use crate::frontend::symbols::SymbolTable;
+use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::decorators;
 use incan_core::lang::stdlib;
 
@@ -35,12 +36,7 @@ impl DecoratorPrefixLookup for HashMap<String, Vec<String>> {
 
 impl DecoratorPrefixLookup for SymbolTable {
     fn prefix_segments(&self, leading_segment: &str) -> Option<&[String]> {
-        let id = self.lookup(leading_segment)?;
-        let sym = self.get(id)?;
-        match &sym.kind {
-            SymbolKind::Module(info) => Some(info.path.as_slice()),
-            _ => None,
-        }
+        self.import_binding_path(leading_segment)
     }
 }
 
@@ -65,11 +61,20 @@ pub fn path_segments_with_prefix(path: &ImportPath) -> Vec<String> {
 /// - `from foo.bar import qux as q` → `q` maps to `["foo", "bar", "qux"]`
 pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>> {
     let mut aliases = HashMap::new();
+    let mut occupied = std::iter::once(builtins::as_str(BuiltinFnId::Print).to_string())
+        .chain(
+            builtins::aliases(BuiltinFnId::Print)
+                .iter()
+                .map(|name| (*name).to_string()),
+        )
+        .collect::<HashSet<_>>();
     for decl in &program.declarations {
-        if let Declaration::Import(import) = &decl.node {
-            match &import.kind {
+        match &decl.node {
+            Declaration::Import(import) => match &import.kind {
                 ImportKind::Module(path) => {
-                    if let Some(name) = import.alias.as_ref().cloned().or_else(|| path.segments.last().cloned()) {
+                    if let Some(name) = import.alias.as_ref().cloned().or_else(|| path.segments.last().cloned())
+                        && occupied.insert(name.clone())
+                    {
                         aliases.insert(name, path.segments.clone());
                     }
                 }
@@ -78,7 +83,9 @@ pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>>
                         let name = item.alias.as_ref().cloned().unwrap_or_else(|| item.name.clone());
                         let mut resolved = module.segments.clone();
                         resolved.push(item.name.clone());
-                        aliases.insert(name, resolved);
+                        if occupied.insert(name.clone()) {
+                            aliases.insert(name, resolved);
+                        }
                     }
                 }
                 ImportKind::PubLibrary { library, path } => {
@@ -89,7 +96,9 @@ pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>>
                         .unwrap_or_else(|| library.clone());
                     let mut resolved = vec!["pub".to_string(), library.clone()];
                     resolved.extend(path.iter().cloned());
-                    aliases.insert(name, resolved);
+                    if occupied.insert(name.clone()) {
+                        aliases.insert(name, resolved);
+                    }
                 }
                 ImportKind::PubFrom { library, path, items } => {
                     for item in items {
@@ -97,11 +106,73 @@ pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>>
                         let mut resolved = vec!["pub".to_string(), library.clone()];
                         resolved.extend(path.iter().cloned());
                         resolved.push(item.name.clone());
-                        aliases.insert(name, resolved);
+                        if occupied.insert(name.clone()) {
+                            aliases.insert(name, resolved);
+                        }
                     }
                 }
-                _ => {}
+                ImportKind::RustCrate { crate_name, path, .. } => {
+                    let name = import
+                        .alias
+                        .as_ref()
+                        .cloned()
+                        .or_else(|| path.last().cloned())
+                        .unwrap_or_else(|| crate_name.clone());
+                    occupied.insert(name);
+                }
+                ImportKind::RustFrom { items, .. } => {
+                    occupied.extend(
+                        items
+                            .iter()
+                            .map(|item| item.alias.as_ref().cloned().unwrap_or_else(|| item.name.clone())),
+                    );
+                }
+                ImportKind::Python(_) => {
+                    if let Some(name) = &import.alias {
+                        occupied.insert(name.clone());
+                    }
+                }
+            },
+            Declaration::Const(item) if item.name != "__derives__" => {
+                occupied.insert(item.name.clone());
             }
+            Declaration::Static(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Model(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Class(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Trait(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Alias(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Partial(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::TypeAlias(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Newtype(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Enum(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Function(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Capability(item) => {
+                occupied.insert(item.name.clone());
+            }
+            Declaration::Const(_)
+            | Declaration::Docstring(_)
+            | Declaration::TestModule(_)
+            | Declaration::VocabBlock(_) => {}
         }
     }
     aliases

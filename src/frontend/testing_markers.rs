@@ -236,7 +236,7 @@ fn apply_testing_marker_annotation(
 /// Resolve a decorator to its testing marker kind, if any.
 pub fn resolve_testing_marker_kind(
     dec: &ast::Decorator,
-    aliases: &HashMap<String, Vec<String>>,
+    aliases: &impl decorator_resolution::DecoratorPrefixLookup,
     semantics: &TestingMarkerSemantics,
 ) -> Option<TestingMarkerKind> {
     let resolved = decorator_resolution::resolve_decorator_path(dec, aliases);
@@ -252,7 +252,7 @@ pub fn resolve_testing_marker_kind(
 /// unsupported per-fixture timeout spelling, but it does not evaluate fixture bodies or runner lifecycle behavior.
 pub fn resolve_testing_fixture_marker_args(
     decorators: &[ast::Spanned<ast::Decorator>],
-    aliases: &HashMap<String, Vec<String>>,
+    aliases: &impl decorator_resolution::DecoratorPrefixLookup,
     semantics: &TestingMarkerSemantics,
 ) -> Option<TestingFixtureMarkerArgs> {
     for dec in decorators {

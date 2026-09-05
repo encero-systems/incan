@@ -9,7 +9,7 @@
     - RFC 023 (compilable stdlib and rust.module binding)
     - RFC 024 (extensible derive protocol)
 - **Issue:** https://github.com/encero-systems/incan/issues/150
-- **RFC PR:** —
+- **RFC PR:** [#452](https://github.com/encero-systems/incan/pull/452)
 - **Written against:** v0.1
 - **Shipped in:** v0.3
 

@@ -34,9 +34,42 @@
 /// assert_eq!(py_floor_div_i64(7, -3), -3); // Rust would give -2
 /// assert_eq!(py_floor_div_i64(-7, -3), 2);
 /// ```
-use crate::errors::{raise_value_error, raise_zero_division};
+use crate::errors::{raise, raise_value_error, raise_zero_division};
 use core::fmt;
-use incan_core::{python_floor_div_i64, python_mod_i64};
+use incan_core::{
+    errors::IncanError,
+    numeric_values::{format_decimal_value, parse_decimal_literal_body},
+    python_floor_div_i64, python_mod_i64,
+};
+
+/// Admit a value into Incan's exact `f32` carrier only when it is finite.
+///
+/// Generated Rust calls this whenever exact `f32` is created or observed, including arithmetic results and
+/// Incan-owned assignment, argument, field, collection, return, comparison, and output boundaries. Ordinary IEEE
+/// `float` operations may still produce NaN or infinity; exact carriers reject non-finite values.
+#[inline]
+pub fn require_finite_f32(value: f32) -> f32 {
+    if value.is_finite() {
+        value
+    } else {
+        raise(IncanError::non_finite_exact_float("f32"))
+    }
+}
+
+/// Admit a value into Incan's exact `f64` carrier only when it is finite.
+///
+/// Generated Rust validates exact `f64` arithmetic results at production and validates every later Incan-owned
+/// boundary. `f32` implements `Into<f64>`, so this also preserves the typechecker's existing lossless exact-float
+/// widening while accepting an ordinary finite `float` at an exact-`f64` destination.
+#[inline]
+pub fn require_finite_f64(value: impl Into<f64>) -> f64 {
+    let value = value.into();
+    if value.is_finite() {
+        value
+    } else {
+        raise(IncanError::non_finite_exact_float("f64"))
+    }
+}
 
 #[inline]
 fn py_mod_f64_impl(a: f64, b: f64) -> f64 {
@@ -209,6 +242,15 @@ where
         raise_zero_division();
     }
     l / r
+}
+
+/// Python-like division over exact `f32`, retaining its checked carrier width.
+#[inline]
+pub fn py_div_f32(lhs: f32, rhs: f32) -> f32 {
+    if rhs == 0.0 {
+        raise_zero_division();
+    }
+    lhs / rhs
 }
 
 /// Python-like modulo (remainder has the sign of the divisor).
@@ -408,6 +450,15 @@ pub fn py_floor_div_f64(a: f64, b: f64) -> f64 {
     (a / b).floor()
 }
 
+/// Python-style floor division over exact `f32`, retaining its checked carrier width.
+#[inline]
+pub fn py_floor_div_f32(a: f32, b: f32) -> f32 {
+    if b == 0.0 {
+        raise_zero_division();
+    }
+    (a / b).floor()
+}
+
 /// Python-style modulo for integers.
 ///
 /// The result has the same sign as the divisor (unlike Rust's `%`).
@@ -449,6 +500,20 @@ pub fn py_mod_f64(a: f64, b: f64) -> f64 {
         raise_zero_division();
     }
     py_mod_f64_impl(a, b)
+}
+
+/// Python-style modulo over exact `f32`, retaining its checked carrier width.
+#[inline]
+pub fn py_mod_f32(a: f32, b: f32) -> f32 {
+    if b == 0.0 {
+        raise_zero_division();
+    }
+    let remainder = a % b;
+    if (remainder > 0.0 && b < 0.0) || (remainder < 0.0 && b > 0.0) {
+        remainder + b
+    } else {
+        remainder
+    }
 }
 
 /// Greatest common divisor for signed 64-bit integers.
@@ -513,55 +578,18 @@ impl Decimal128 {
     /// Parse a compiler-validated decimal literal spelling into the runtime representation.
     pub fn from_literal(literal: &str) -> Self {
         let body = literal.strip_suffix('d').unwrap_or(literal);
-        let Some((coefficient, scale)) = parse_decimal_literal_body(body) else {
+        let Some(parsed) = parse_decimal_literal_body(body) else {
             raise_value_error(&format!("invalid decimal literal `{literal}`"));
         };
-        Self::new(coefficient, scale)
+        Self::new(parsed.coefficient, parsed.literal_scale)
     }
 }
 
 impl fmt::Display for Decimal128 {
     /// Format the decimal using its stored scale.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.scale == 0 {
-            return write!(f, "{}", self.coefficient);
-        }
-        let negative = self.coefficient < 0;
-        let digits = self.coefficient.unsigned_abs().to_string();
-        let scale = usize::from(self.scale);
-        if digits.len() <= scale {
-            if negative {
-                write!(f, "-")?;
-            }
-            write!(f, "0.")?;
-            for _ in 0..(scale - digits.len()) {
-                write!(f, "0")?;
-            }
-            write!(f, "{digits}")
-        } else {
-            let split = digits.len() - scale;
-            if negative {
-                write!(f, "-")?;
-            }
-            write!(f, "{}.{}", &digits[..split], &digits[split..])
-        }
+        f.write_str(&format_decimal_value(self.coefficient, self.scale))
     }
-}
-
-/// Parse the decimal literal body after the optional `d` suffix has been removed.
-fn parse_decimal_literal_body(body: &str) -> Option<(i128, u8)> {
-    if body.is_empty() || body.contains('e') || body.contains('E') {
-        return None;
-    }
-    let (integer, fractional) = body.split_once('.').unwrap_or((body, ""));
-    if integer.is_empty() && fractional.is_empty() {
-        return None;
-    }
-    let scale = u8::try_from(fractional.len()).ok()?;
-    let mut coefficient = String::with_capacity(integer.len() + fractional.len());
-    coefficient.push_str(if integer.is_empty() { "0" } else { integer });
-    coefficient.push_str(fractional);
-    coefficient.parse::<i128>().ok().map(|value| (value, scale))
 }
 
 pub trait IncanTryResize<T> {
@@ -837,6 +865,43 @@ mod tests {
         assert_eq!(saturating_resize::<_, i8>(240_i16), i8::MAX);
         assert_eq!(saturating_resize::<_, u8>(-1_i16), 0_u8);
         assert_eq!(saturating_resize::<_, i8>(255_u16), i8::MAX);
+    }
+
+    #[test]
+    fn exact_float_guards_preserve_finite_values_and_lossless_widening() {
+        assert_eq!(require_finite_f32(1.25_f32), 1.25_f32);
+        assert_eq!(require_finite_f64(1.25_f32), 1.25_f64);
+        assert_eq!(require_finite_f64(2.5_f64), 2.5_f64);
+    }
+
+    #[test]
+    fn exact_f32_guard_refuses_arithmetic_overflow() -> Result<(), String> {
+        let maximum = f32::MAX;
+        let panic = std::panic::catch_unwind(|| require_finite_f32(maximum * maximum))
+            .err()
+            .ok_or_else(|| "overflowed f32 unexpectedly crossed the exact boundary".to_string())?;
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&'static str>().copied())
+            .ok_or_else(|| "exact-f32 refusal used a non-string panic payload".to_string())?;
+        assert_eq!(message, "ValueError: non-finite float cannot initialize exact f32");
+        Ok(())
+    }
+
+    #[test]
+    fn exact_f64_guard_refuses_arithmetic_overflow() -> Result<(), String> {
+        let maximum = f64::MAX;
+        let panic = std::panic::catch_unwind(|| require_finite_f64(maximum * maximum))
+            .err()
+            .ok_or_else(|| "overflowed f64 unexpectedly crossed the exact boundary".to_string())?;
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&'static str>().copied())
+            .ok_or_else(|| "exact-f64 refusal used a non-string panic payload".to_string())?;
+        assert_eq!(message, "ValueError: non-finite float cannot initialize exact f64");
+        Ok(())
     }
 
     #[test]

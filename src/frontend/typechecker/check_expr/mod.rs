@@ -12,6 +12,7 @@ use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
 use crate::frontend::typechecker::helpers::{is_frozen_bytes, is_frozen_str};
 use incan_core::lang::keywords;
+use incan_core::numeric_values::{IntegerBounds, integer_bounds};
 use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
 
@@ -166,7 +167,16 @@ impl TypeChecker {
             return matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
                 .then_some((kind, source_module_path));
         }
-        None
+        let import_path = ImportPath::simple(module_path.to_vec());
+        let kind = self.dependency_member_symbol_for_path(&import_path, member)?;
+        if !matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_)) {
+            return None;
+        }
+        let identity = self.dependency_member_identity(&import_path, member)?;
+        let incan_semantics_core::SymbolOrigin::Module(source_module_path) = identity.origin else {
+            return None;
+        };
+        Some((kind, source_module_path))
     }
 
     /// Resolve a constant reached through an imported standard-library or checked public-package module.
@@ -174,23 +184,43 @@ impl TypeChecker {
         &mut self,
         module_path: &[String],
         member: &str,
-    ) -> Option<VariableInfo> {
+    ) -> Option<(VariableInfo, Option<incan_semantics_core::CanonicalSymbolId>)> {
         if let Some(info) = self.stdlib_cache.lookup_constant(module_path, member) {
-            return Some(info);
+            let identity = self.stdlib_cache.lookup_identity(module_path, member);
+            return Some((info, identity));
         }
         if module_path.len() >= 2 && module_path.first().is_some_and(|seg| seg == "pub") {
-            let (kind, _) = self.lookup_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)?;
-            return match kind {
-                SymbolKind::Variable(info) => Some(info),
-                SymbolKind::Static(info) => Some(VariableInfo {
-                    ty: info.ty,
-                    is_mutable: false,
-                    is_used: info.is_used,
-                }),
+            let resolved = self
+                .resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)
+                .ok()
+                .flatten()?;
+            return match resolved.kind {
+                SymbolKind::Variable(info) => Some((info, resolved.canonical)),
+                SymbolKind::Static(info) => Some((
+                    VariableInfo {
+                        ty: info.ty,
+                        is_mutable: false,
+                        is_used: info.is_used,
+                    },
+                    resolved.canonical,
+                )),
                 _ => None,
             };
         }
-        None
+        let kind = self.dependency_member_symbol_for_path(&ImportPath::simple(module_path.to_vec()), member)?;
+        let identity = self.dependency_member_identity(&ImportPath::simple(module_path.to_vec()), member);
+        match kind {
+            SymbolKind::Variable(info) => Some((info, identity)),
+            SymbolKind::Static(info) => Some((
+                VariableInfo {
+                    ty: info.ty,
+                    is_mutable: false,
+                    is_used: info.is_used,
+                },
+                identity,
+            )),
+            _ => None,
+        }
     }
 
     /// Convert function symbol information into a resolved function type.
@@ -292,6 +322,7 @@ impl TypeChecker {
                 ));
                 ResolvedType::Unknown
             }
+            Expr::Embedded(fragment) => self.check_embedded_fragment_expr(fragment),
         };
 
         // Record for downstream stages (lowering/codegen).
@@ -354,8 +385,8 @@ impl TypeChecker {
             }
             (Expr::Literal(Literal::Float(_)), Some(expected_ty))
                 if matches!(
-                    super::numeric_type_id_for_compat(expected_ty),
-                    Some(
+                    expected_ty,
+                    ResolvedType::Numeric(
                         incan_core::lang::types::numerics::NumericTypeId::F32
                             | incan_core::lang::types::numerics::NumericTypeId::F64
                     )
@@ -373,6 +404,18 @@ impl TypeChecker {
             }
             (Expr::Binary(left, op, right), Some(expected_ty)) => {
                 self.check_binary_with_expected(left, *op, right, expr.span, Some(expected_ty))
+            }
+            (Expr::Unary(UnaryOp::Neg, operand), Some(expected_ty))
+                if matches!(
+                    expected_ty,
+                    ResolvedType::Numeric(
+                        incan_core::lang::types::numerics::NumericTypeId::F32
+                            | incan_core::lang::types::numerics::NumericTypeId::F64
+                    )
+                ) && matches!(operand.node, Expr::Literal(Literal::Float(_))) =>
+            {
+                self.check_expr_with_expected(operand, Some(expected_ty));
+                expected_ty.clone()
             }
             (Expr::Unary(op, operand), Some(expected_ty)) => {
                 self.check_unary_with_expected(*op, operand, expr.span, Some(expected_ty))
@@ -416,16 +459,50 @@ impl TypeChecker {
             ));
             return expected_ty.clone();
         }
+        if matches!(
+            target,
+            incan_core::lang::types::numerics::NumericTypeId::F32
+                | incan_core::lang::types::numerics::NumericTypeId::F64
+        ) {
+            let finite = match signed_int_literal_value(expr) {
+                Some(value) => match target {
+                    incan_core::lang::types::numerics::NumericTypeId::F32 => (value as f32).is_finite(),
+                    incan_core::lang::types::numerics::NumericTypeId::F64 => (value as f64).is_finite(),
+                    _ => false,
+                },
+                None => unsigned_int_literal_magnitude(expr).is_some_and(|value| match target {
+                    incan_core::lang::types::numerics::NumericTypeId::F32 => (value as f32).is_finite(),
+                    incan_core::lang::types::numerics::NumericTypeId::F64 => (value as f64).is_finite(),
+                    _ => false,
+                }),
+            };
+            if !finite {
+                self.errors.push(CompileError::type_error(
+                    format!("Integer literal does not fit in {expected_ty}"),
+                    expr.span,
+                ));
+            }
+            return expected_ty.clone();
+        }
         let Some(value) = signed_int_literal_value(expr) else {
             return self.check_expr(expr);
         };
-        if let Some((min, max)) = integer_literal_bounds(target)
-            && (value < min || value > max)
-        {
-            self.errors.push(CompileError::type_error(
-                format!("Integer literal {value} does not fit in {expected_ty}; valid range is {min}..={max}"),
-                expr.span,
-            ));
+        match integer_bounds(target) {
+            Some(IntegerBounds::Signed { minimum, maximum }) if value < minimum || value > maximum => {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Integer literal {value} does not fit in {expected_ty}; valid range is {minimum}..={maximum}"
+                    ),
+                    expr.span,
+                ));
+            }
+            Some(IntegerBounds::Unsigned { maximum }) if value < 0 || (value as u128) > maximum => {
+                self.errors.push(CompileError::type_error(
+                    format!("Integer literal {value} does not fit in {expected_ty}; valid range is 0..={maximum}"),
+                    expr.span,
+                ));
+            }
+            _ => {}
         }
         expected_ty.clone()
     }
@@ -435,18 +512,69 @@ impl TypeChecker {
         let Expr::Literal(Literal::Float(value)) = &expr.node else {
             return self.check_expr(expr);
         };
-        if matches!(
-            super::numeric_type_id_for_compat(expected_ty),
-            Some(incan_core::lang::types::numerics::NumericTypeId::F32)
-        ) && value.value.is_finite()
-            && value.value.abs() > f64::from(f32::MAX)
-        {
+        let fits = match expected_ty {
+            ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F32) => {
+                value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
+            }
+            ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F64) => value.value.is_finite(),
+            _ => true,
+        };
+        if !fits {
             self.errors.push(CompileError::type_error(
                 format!("Float literal {} does not fit in {expected_ty}", value.repr),
                 expr.span,
             ));
         }
         expected_ty.clone()
+    }
+
+    /// Reject an out-of-domain float literal nested beneath an exact-float arithmetic destination.
+    ///
+    /// Binary operands are otherwise checked independently, so the enclosing destination does not reach a literal
+    /// such as `1e9999` in `1e9999 + 0.0`. This validation deliberately records no inferred type and does not make
+    /// ordinary `float` finite-only; it only preserves the exact destination's literal-domain check and literal span.
+    pub(in crate::frontend::typechecker::check_expr) fn validate_exact_float_literals_in_arithmetic(
+        &mut self,
+        expr: &Spanned<Expr>,
+        expected_ty: &ResolvedType,
+    ) {
+        match &expr.node {
+            Expr::Literal(Literal::Float(value)) => {
+                let fits = match expected_ty {
+                    ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F32) => {
+                        value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
+                    }
+                    ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F64) => {
+                        value.value.is_finite()
+                    }
+                    _ => return,
+                };
+                if !fits {
+                    self.errors.push(CompileError::type_error(
+                        format!("Float literal {} does not fit in {expected_ty}", value.repr),
+                        expr.span,
+                    ));
+                }
+            }
+            Expr::Unary(UnaryOp::Neg, inner) | Expr::Paren(inner) => {
+                self.validate_exact_float_literals_in_arithmetic(inner, expected_ty);
+            }
+            Expr::Binary(
+                left,
+                BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::FloorDiv
+                | BinaryOp::Mod
+                | BinaryOp::Pow,
+                right,
+            ) => {
+                self.validate_exact_float_literals_in_arithmetic(left, expected_ty);
+                self.validate_exact_float_literals_in_arithmetic(right, expected_ty);
+            }
+            _ => {}
+        }
     }
 
     /// Validate a decimal literal against a known decimal precision and scale.
@@ -521,6 +649,67 @@ impl TypeChecker {
             _ => ResolvedType::Unknown,
         }
     }
+
+    /// Typecheck a descriptor-gated embedded-fragment expression (RFC 081, `#1023`).
+    ///
+    /// Unlike [`TypeChecker::check_surface_expr`], this node is never eliminated by the pre-typecheck vocab
+    /// desugar pass (`src/frontend/vocab_desugar_pass/rewrite.rs`) — it must reach `check_expr` as itself, because
+    /// its [`EmbeddedNode::Hole`] sub-expressions are genuine Incan expressions that need real types, exactly as
+    /// if they appeared in ordinary expression position. The surrounding structural content (tags, selectors,
+    /// declarations, regex/type shapes, ...) is DSL-owned syntax with no ordinary Incan type of its own — its
+    /// runtime meaning is supplied by the owning DSL's desugarer or lowering hook (RFC 081 §Semantics), which is
+    /// downstream of `#1023`. The fragment as a whole therefore resolves to `ResolvedType::Unknown`, deliberately
+    /// reusing the existing "no further ordinary-Incan meaning to check here" sentinel rather than introducing a
+    /// new `ResolvedType` variant that every exhaustive match over `ResolvedType` across the compiler would need
+    /// to handle for a type with no ordinary-Incan operations anyway.
+    fn check_embedded_fragment_expr(&mut self, fragment: &EmbeddedFragmentExpr) -> ResolvedType {
+        for node in &fragment.nodes {
+            self.check_embedded_fragment_node_holes(node);
+        }
+        ResolvedType::Unknown
+    }
+
+    /// Recursively typecheck every expression hole nested inside one embedded-fragment node.
+    ///
+    /// Structural node kinds with no possible nested hole (`Text`, `EntityRef`, `Comment`, `Value`, `Regex`,
+    /// `TypeShape`) are no-ops here; `Hole` is the one leaf that reaches ordinary `check_expr`, and container
+    /// kinds (`Element`, `StyleRule`, `Declaration`) recurse into their children/attrs/selectors/declarations.
+    fn check_embedded_fragment_node_holes(&mut self, node: &Spanned<EmbeddedNode>) {
+        match &node.node {
+            EmbeddedNode::Text(_)
+            | EmbeddedNode::EntityRef(_)
+            | EmbeddedNode::Comment(_)
+            | EmbeddedNode::Value(_)
+            | EmbeddedNode::Regex { .. }
+            | EmbeddedNode::TypeShape(_) => {}
+            EmbeddedNode::Hole(expr) => {
+                self.check_expr(expr);
+            }
+            EmbeddedNode::Element(element) => {
+                for attr in &element.attrs {
+                    if let Some(value) = &attr.value {
+                        self.check_embedded_fragment_node_holes(value);
+                    }
+                }
+                for child in &element.children {
+                    self.check_embedded_fragment_node_holes(child);
+                }
+            }
+            EmbeddedNode::StyleRule(rule) => {
+                for selector in &rule.selectors {
+                    self.check_embedded_fragment_node_holes(selector);
+                }
+                for declaration in &rule.declarations {
+                    self.check_embedded_fragment_node_holes(declaration);
+                }
+            }
+            EmbeddedNode::Declaration(declaration) => {
+                for value in &declaration.value {
+                    self.check_embedded_fragment_node_holes(value);
+                }
+            }
+        }
+    }
 }
 
 /// Return whether a resolved type is one of the parameterized decimal families.
@@ -572,6 +761,7 @@ fn signed_int_literal_value(expr: &Spanned<Expr>) -> Option<i128> {
     match &expr.node {
         Expr::Literal(Literal::Int(value)) => i128::try_from(value.magnitude).ok(),
         Expr::Unary(UnaryOp::Neg, inner) => match &inner.node {
+            Expr::Literal(Literal::Int(value)) if value.magnitude == (1_u128 << 127) => Some(i128::MIN),
             Expr::Literal(Literal::Int(value)) => i128::try_from(value.magnitude).ok().map(|value| -value),
             _ => None,
         },
@@ -584,26 +774,5 @@ fn unsigned_int_literal_magnitude(expr: &Spanned<Expr>) -> Option<u128> {
     match &expr.node {
         Expr::Literal(Literal::Int(value)) => Some(value.magnitude),
         _ => None,
-    }
-}
-
-/// Return inclusive literal bounds for exact-width integer numeric targets.
-fn integer_literal_bounds(id: incan_core::lang::types::numerics::NumericTypeId) -> Option<(i128, i128)> {
-    use incan_core::lang::types::numerics::NumericTypeId;
-
-    match id {
-        NumericTypeId::I8 => Some((i128::from(i8::MIN), i128::from(i8::MAX))),
-        NumericTypeId::I16 => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
-        NumericTypeId::I32 => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
-        NumericTypeId::I64 => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
-        NumericTypeId::I128 => Some((i128::MIN, i128::MAX)),
-        NumericTypeId::U8 => Some((0, i128::from(u8::MAX))),
-        NumericTypeId::U16 => Some((0, i128::from(u16::MAX))),
-        NumericTypeId::U32 => Some((0, i128::from(u32::MAX))),
-        NumericTypeId::U64 => Some((0, i128::from(u64::MAX))),
-        NumericTypeId::U128 => Some((0, i128::MAX)),
-        NumericTypeId::ISize => Some((isize::MIN as i128, isize::MAX as i128)),
-        NumericTypeId::USize => Some((0, usize::MAX as i128)),
-        NumericTypeId::F32 | NumericTypeId::F64 | NumericTypeId::Bool => None,
     }
 }

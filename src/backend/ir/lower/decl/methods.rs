@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::super::super::decl::{
-    FunctionParam, FunctionParamDefault, IrAssociatedType, IrDecl, IrDeclKind, IrFunction, IrImpl, Visibility,
+    FunctionParam, FunctionParamDefault, IrAssociatedType, IrDecl, IrDeclKind, IrFunction, IrImpl, IrMethodProjection,
+    IrSourceMethodProjection, Visibility,
 };
 use super::super::super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::super::super::stmt::{IrStmt, IrStmtKind};
@@ -29,6 +30,236 @@ struct TraitImplSignature<'a> {
 }
 
 impl AstLowering {
+    /// Retain the established source-spelled native Rust surface without duplicating authored method bodies.
+    ///
+    /// The canonical method remains the sole implementation. A unique source spelling receives a forwarding
+    /// projection; overloaded type/instance spellings do not because Rust inherent impls cannot overload names by
+    /// receiver shape. Magic methods already retain their Rust ABI slots and use [`IrMethodProjection`] in the other
+    /// direction, so they are not part of this compatibility surface.
+    fn source_method_projections(
+        &mut self,
+        owner: &str,
+        methods: &[Spanned<ast::MethodDecl>],
+        properties: &[Spanned<ast::PropertyDecl>],
+    ) -> Result<Vec<IrSourceMethodProjection>, LoweringError> {
+        let mut spelling_counts = HashMap::<String, usize>::new();
+        for method in methods
+            .iter()
+            .filter(|method| magic_methods::from_str(&method.node.name).is_none())
+        {
+            *spelling_counts.entry(method.node.name.clone()).or_default() += 1;
+        }
+        for property in properties {
+            *spelling_counts.entry(property.node.name.clone()).or_default() += 1;
+        }
+
+        let mut projections = Vec::new();
+        for method in methods.iter().filter(|method| {
+            magic_methods::from_str(&method.node.name).is_none() && spelling_counts.get(&method.node.name) == Some(&1)
+        }) {
+            if let Some(identity) = self.emitted_method_identity(owner, method)? {
+                projections.push(IrSourceMethodProjection {
+                    source_name: method.node.name.clone(),
+                    identity,
+                });
+            }
+        }
+        for property in properties
+            .iter()
+            .filter(|property| spelling_counts.get(&property.node.name) == Some(&1))
+        {
+            let identity = self.required_member_identity(owner, &property.node.name, property.span)?;
+            projections.push(IrSourceMethodProjection {
+                source_name: property.node.name.clone(),
+                identity,
+            });
+        }
+        Ok(projections)
+    }
+
+    /// Return whether this method is the compiler-generated forwarding helper for a source method-partial binding.
+    fn is_generated_method_partial_wrapper(&self, owner: &str, method: &Spanned<ast::MethodDecl>) -> bool {
+        self.generated_method_partial_wrappers.contains(&(
+            owner.to_string(),
+            method.span.start,
+            method.span.end,
+            method.node.name.clone(),
+        )) || self.local_generated_method_partial_wrappers.contains(&(
+            method.span.start,
+            method.span.end,
+            method.node.name.clone(),
+        ))
+    }
+
+    /// Return the exact source-owned method identity for an emitted declaration.
+    ///
+    /// Method-partial wrappers are explicitly classified compiler helpers and therefore return `None`. Absence for a
+    /// source-written declaration is terminal: lowering never reconstructs member provenance from spellings.
+    fn emitted_method_identity(
+        &mut self,
+        owner: &str,
+        method: &Spanned<ast::MethodDecl>,
+    ) -> Result<Option<incan_semantics_core::CanonicalSymbolId>, LoweringError> {
+        if self.is_generated_method_partial_wrapper(owner, method) {
+            return Ok(None);
+        }
+        let identity = self.required_member_identity(owner, &method.node.name, method.span)?;
+        let projection = (owner.to_string(), method.node.name.clone(), identity.clone());
+        if !self.emitted_member_projections.contains(&projection) {
+            self.emitted_member_projections.push(projection);
+        }
+        Ok(Some(identity))
+    }
+
+    /// Require the compiler-owned identity for one linker-visible source member declaration.
+    fn required_member_identity(
+        &self,
+        owner: &str,
+        name: &str,
+        span: ast::Span,
+    ) -> Result<incan_semantics_core::CanonicalSymbolId, LoweringError> {
+        self.type_info
+            .as_ref()
+            .and_then(|info| {
+                info
+                    .declarations
+                    .member_declaration_identities
+                    .get(&(span.start, span.end))
+                    .filter(|identity| {
+                        matches!(
+                            identity.kind,
+                            incan_semantics_core::SemanticSourceTargetKind::Method
+                                | incan_semantics_core::SemanticSourceTargetKind::Property
+                        ) && matches!(
+                            identity.origin,
+                            incan_semantics_core::SymbolOrigin::Module(_)
+                                | incan_semantics_core::SymbolOrigin::Package { .. }
+                        )
+                    })
+                    .cloned()
+            })
+            .ok_or_else(|| LoweringError {
+                message: format!(
+                    "linker-visible Incan member `{owner}.{name}` reached lowering without its compiler-owned canonical identity"
+                ),
+                span: span.into(),
+            })
+    }
+
+    /// Return the checked identity for a trait default whose declaration may belong to an imported source file.
+    fn emitted_trait_default_method_identity(
+        &self,
+        trait_name: &str,
+        method: &Spanned<ast::MethodDecl>,
+    ) -> Result<Option<incan_semantics_core::CanonicalSymbolId>, LoweringError> {
+        if self.is_generated_method_partial_wrapper(trait_name, method) {
+            return Ok(None);
+        }
+        let visible_key = (trait_name.to_string(), method.node.name.clone());
+        let (canonical_module_path, canonical_source_name) = self.canonical_trait_identity(trait_name);
+        let canonical_key = match (canonical_module_path, canonical_source_name) {
+            (Some(module_path), Some(source_name)) => Some((
+                format!("{}.{}", module_path.join("."), source_name),
+                method.node.name.clone(),
+            )),
+            _ => None,
+        };
+        if let Some(identity) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| {
+                info.traits.method_identities.get(&visible_key).or_else(|| {
+                    canonical_key
+                        .as_ref()
+                        .and_then(|key| info.traits.method_identities.get(key))
+                })
+            })
+            .filter(|identity| {
+                identity.kind == incan_semantics_core::SemanticSourceTargetKind::Method
+                    && matches!(
+                        identity.origin,
+                        incan_semantics_core::SymbolOrigin::Module(_)
+                            | incan_semantics_core::SymbolOrigin::Package { .. }
+                    )
+            })
+            .cloned()
+        {
+            return Ok(Some(identity));
+        }
+        self.required_member_identity(trait_name, &method.node.name, method.span)
+            .map(Some)
+    }
+
+    /// Pair Rust trait slots with exact method identities without reconstructing either from a spelling.
+    #[allow(clippy::too_many_arguments)] // Keeps each checked trait and owner axis explicit.
+    fn trait_method_projections(
+        &mut self,
+        methods: &[IrFunction],
+        concrete_methods: &[Spanned<ast::MethodDecl>],
+        default_methods: &[Spanned<ast::MethodDecl>],
+        trait_name: &str,
+        trait_type_params: &[ast::TypeParam],
+        trait_type_args: &[IrType],
+        owner_type_param_names: &std::collections::HashSet<&str>,
+    ) -> Result<Vec<IrMethodProjection>, LoweringError> {
+        let concrete_owner = self.current_impl_type.clone().unwrap_or_else(|| trait_name.to_string());
+        let mut projections = Vec::new();
+        for method in methods {
+            let trait_source = default_methods.iter().find(|source| source.node.name == method.name);
+            let mut concrete_sources = Vec::new();
+            for source in concrete_methods.iter().filter(|source| source.node.name == method.name) {
+                if !self.method_trait_target_matches_impl(
+                    &source.node,
+                    trait_name,
+                    trait_type_args,
+                    owner_type_param_names,
+                ) {
+                    continue;
+                }
+                if trait_source.is_some_and(|trait_source| {
+                    !self.trait_impl_override_matches(
+                        &trait_source.node,
+                        &source.node,
+                        trait_type_params,
+                        trait_type_args,
+                        owner_type_param_names,
+                    )
+                }) {
+                    continue;
+                }
+                concrete_sources.push(source);
+            }
+            let identity = if concrete_sources.is_empty() {
+                let Some(source) = trait_source else {
+                    // Backend-generated ABI helpers have no source declaration and therefore no Incan projection.
+                    continue;
+                };
+                self.emitted_trait_default_method_identity(trait_name, source)?
+            } else {
+                let mut candidate = None;
+                for source in concrete_sources {
+                    let Some(identity) = self.emitted_method_identity(&concrete_owner, source)? else {
+                        // A source method partial is a binding; its forwarding method is a generated helper.
+                        continue;
+                    };
+                    if !self.emitted_inherent_method_identities.contains(&identity) {
+                        candidate = Some(identity);
+                        break;
+                    }
+                }
+                candidate
+            };
+            let Some(identity) = identity else {
+                continue;
+            };
+            projections.push(IrMethodProjection {
+                abi_method_name: method.name.clone(),
+                identity,
+            });
+        }
+        Ok(projections)
+    }
+
     /// Return whether a method carries a resolved builtin decorator.
     fn method_has_decorator(method: &ast::MethodDecl, id: DecoratorId) -> bool {
         method
@@ -53,66 +284,6 @@ impl AstLowering {
     }
 
     /// Build the bottom-up decorator application expression for an instance method.
-    fn decorator_method_application_expr(
-        &self,
-        owner: &str,
-        method: &ast::MethodDecl,
-    ) -> Result<Spanned<ast::Expr>, LoweringError> {
-        let original = Spanned::new(
-            ast::Expr::Ident(Self::decorator_original_method_name(&method.name)),
-            ast::Span::default(),
-        );
-        let associated_original = Spanned::new(
-            ast::Expr::Field(
-                Box::new(Spanned::new(ast::Expr::Ident(owner.to_string()), ast::Span::default())),
-                Self::decorator_original_method_adapter_name(&method.name),
-            ),
-            ast::Span::default(),
-        );
-        let mut current = original;
-        for decorator in method.decorators.iter().rev() {
-            if !self.is_user_defined_decorator_candidate(&decorator.node) {
-                continue;
-            }
-            let callable = if decorator.node.is_call {
-                let args = Self::decorator_call_args(decorator)?;
-                let path = &decorator.node.path.segments;
-                if path.len() >= 2 {
-                    let base_path = ast::ImportPath {
-                        parent_levels: decorator.node.path.parent_levels,
-                        is_absolute: decorator.node.path.is_absolute,
-                        segments: path[..path.len() - 1].to_vec(),
-                    };
-                    let base =
-                        Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
-                    let method_name = path.last().cloned().unwrap_or_default();
-                    Spanned::new(
-                        ast::Expr::MethodCall(Box::new(base), method_name, decorator.node.type_args.clone(), args),
-                        decorator.span,
-                    )
-                } else {
-                    let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
-                    Spanned::new(
-                        ast::Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
-                        decorator.span,
-                    )
-                }
-            } else {
-                Self::decorator_path_expr(&decorator.node, decorator.span)
-            };
-            let arg = if matches!(current.node, ast::Expr::Ident(_)) {
-                associated_original.clone()
-            } else {
-                current
-            };
-            current = Spanned::new(
-                ast::Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(arg)]),
-                Self::decorator_synthetic_callee_span(),
-            );
-        }
-        Ok(current)
-    }
-
     /// Trait type-parameter names from either local AST declarations or typechecker metadata.
     fn trait_type_param_names(&self, trait_name: &str) -> Option<Vec<String>> {
         if let Some(decl) = self.trait_decls.get(trait_name) {
@@ -319,25 +490,46 @@ impl AstLowering {
         // collecting errors.
         let lowered = (|| {
             let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
+            let source_method_projections = self.source_method_projections(type_name, &inherent_methods, properties)?;
+            let method_projections: Vec<IrMethodProjection> = inherent_methods
+                .iter()
+                .filter(|method| magic_methods::from_str(&method.node.name).is_some())
+                .map(|method| {
+                    self.emitted_method_identity(type_name, method).map(|identity| {
+                        identity.map(|identity| IrMethodProjection {
+                            abi_method_name: method.node.name.clone(),
+                            identity,
+                        })
+                    })
+                })
+                .collect::<Result<Vec<_>, LoweringError>>()?
+                .into_iter()
+                .flatten()
+                .collect();
+            self.emitted_inherent_method_identities.extend(
+                method_projections
+                    .iter()
+                    .map(|projection: &IrMethodProjection| projection.identity.clone()),
+            );
             let mut lowered_methods = Vec::new();
             for method in inherent_methods {
                 lowered_methods.extend(self.lower_decorated_or_plain_methods(
                     type_name,
-                    &method.node,
+                    &method,
                     Some(&type_param_names),
                 )?);
             }
             for property in properties {
                 lowered_methods.push(self.lower_property_with_type_params(
-                    &property.node,
+                    property,
                     Some(&type_param_names),
                     PropertyLoweringMode::Inherent,
                 )?);
             }
-            Ok(lowered_methods)
+            Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
-        let lowered_methods = lowered?;
+        let (lowered_methods, method_projections, source_method_projections) = lowered?;
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
@@ -348,6 +540,8 @@ impl AstLowering {
             trait_type_args: Vec::new(),
             associated_types: Vec::new(),
             methods: lowered_methods,
+            method_projections,
+            source_method_projections,
         })
     }
 
@@ -437,6 +631,7 @@ impl AstLowering {
             }) else {
                 continue;
             };
+            let original_ty = self.lower_resolved_type(&binding.original_unbound_ty);
             let original_params = match binding.original_unbound_ty {
                 crate::frontend::symbols::ResolvedType::Function(params, _) => params,
                 _ => Vec::new(),
@@ -451,12 +646,19 @@ impl AstLowering {
                 params: decorated_signature.params.into_iter().map(|param| param.ty).collect(),
                 ret: Box::new(decorated_signature.return_type),
             };
-            let application = self.decorator_method_application_expr(type_name, &method.node)?;
-            let mut value = self.lower_expr_spanned(&application)?;
-            value.ty = decorated_ty.clone();
+            let original_ref = TypedExpr::new(
+                IrExprKind::AssociatedFunction {
+                    type_name: type_name.to_string(),
+                    function_name: Self::decorator_original_method_adapter_name(&method.node.name),
+                },
+                original_ty,
+            );
+            let value =
+                self.lower_decorator_application_value(&method.node.decorators, original_ref, decorated_ty.clone())?;
             out.push(IrDecl::new(IrDeclKind::Static {
                 visibility: Visibility::Private,
                 name: static_name,
+                provenance: super::super::super::decl::IrStaticProvenance::CompilerGenerated,
                 ty: decorated_ty,
                 value,
             }));
@@ -468,25 +670,38 @@ impl AstLowering {
     fn lower_decorated_or_plain_methods(
         &mut self,
         owner: &str,
-        method: &ast::MethodDecl,
+        method: &Spanned<ast::MethodDecl>,
         type_param_names: Option<&HashSet<&str>>,
     ) -> Result<Vec<IrFunction>, LoweringError> {
         if self.type_info.as_ref().is_some_and(|info| {
             info.declarations
                 .decorated_method_bindings
-                .contains_key(&(owner.to_string(), method.name.clone()))
+                .contains_key(&(owner.to_string(), method.node.name.clone()))
         }) {
             let original = self.lower_method_named_with_type_params(
-                method,
-                Self::decorator_original_method_name(&method.name),
+                &method.node,
+                Self::decorator_original_method_name(&method.node.name),
                 Visibility::Private,
                 type_param_names,
             )?;
-            let adapter = self.decorated_method_original_adapter(owner, method)?;
-            let wrapper = self.lower_decorated_method_wrapper(owner, method, type_param_names)?;
+            let adapter = self.decorated_method_original_adapter(owner, &method.node)?;
+            let mut wrapper = self.lower_decorated_method_wrapper(owner, &method.node, type_param_names)?;
+            if magic_methods::from_str(&method.node.name).is_none()
+                && let Some(identity) = self.emitted_method_identity(owner, method)?
+            {
+                wrapper.name = incan_semantics_core::encode_incan_symbol_identity(&identity);
+                self.emitted_inherent_method_identities.insert(identity);
+            }
             Ok(vec![original, adapter, wrapper])
         } else {
-            Ok(vec![self.lower_method_with_type_params(method, type_param_names)?])
+            let mut lowered = self.lower_method_with_type_params(&method.node, type_param_names)?;
+            if magic_methods::from_str(&method.node.name).is_none()
+                && let Some(identity) = self.emitted_method_identity(owner, method)?
+            {
+                lowered.name = incan_semantics_core::encode_incan_symbol_identity(&identity);
+                self.emitted_inherent_method_identities.insert(identity);
+            }
+            Ok(vec![lowered])
         }
     }
 
@@ -544,7 +759,10 @@ impl AstLowering {
         let callable_signature =
             self.decorated_method_callable_signature(&params, &ret, method, Some(&original_callable_params))?;
         let static_func = TypedExpr::new(
-            IrExprKind::StaticRead { name: static_name },
+            IrExprKind::StaticRead {
+                name: static_name,
+                reference_kind: super::super::super::expr::IrStaticReferenceKind::CompilerGenerated,
+            },
             IrType::Function {
                 params: callable_signature.params.iter().map(|param| param.ty.clone()).collect(),
                 ret: Box::new(return_type.clone()),
@@ -585,6 +803,7 @@ impl AstLowering {
             visibility: Visibility::Public,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })
@@ -705,6 +924,7 @@ impl AstLowering {
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })
@@ -1125,11 +1345,20 @@ impl AstLowering {
                 }
                 for property in impl_properties {
                     methods.push(self.lower_property_with_type_params(
-                        &property.node,
+                        property,
                         Some(&type_param_names),
                         PropertyLoweringMode::TraitImpl,
                     )?);
                 }
+                let method_projections = self.trait_method_projections(
+                    &methods,
+                    impl_methods,
+                    &[],
+                    trait_name,
+                    &[],
+                    &trait_type_args,
+                    &type_param_names,
+                )?;
                 return Ok(IrImpl {
                     target_type: type_name.to_string(),
                     type_params: self.lower_type_params(type_params),
@@ -1139,6 +1368,8 @@ impl AstLowering {
                     trait_type_args,
                     associated_types,
                     methods,
+                    method_projections,
+                    source_method_projections: Vec::new(),
                 });
             };
             let trait_type_params = trait_decl.type_params;
@@ -1156,7 +1387,7 @@ impl AstLowering {
             for trait_property in &trait_properties {
                 let property_name = trait_property.node.name.as_str();
 
-                let mut found_override: Option<&ast::PropertyDecl> = None;
+                let mut found_override: Option<&Spanned<ast::PropertyDecl>> = None;
                 for property in impl_properties {
                     if property.node.name == property_name
                         && self.trait_impl_property_override_matches(
@@ -1167,7 +1398,7 @@ impl AstLowering {
                             &type_param_names,
                         )
                     {
-                        found_override = Some(&property.node);
+                        found_override = Some(property);
                         break;
                     }
                 }
@@ -1275,6 +1506,15 @@ impl AstLowering {
                 });
             }
 
+            let method_projections = self.trait_method_projections(
+                &methods,
+                impl_methods,
+                &trait_methods,
+                trait_name,
+                &trait_type_params,
+                &trait_type_args,
+                &type_param_names,
+            )?;
             Ok(IrImpl {
                 target_type: type_name.to_string(),
                 type_params: self.lower_type_params(type_params),
@@ -1284,6 +1524,8 @@ impl AstLowering {
                 trait_type_args,
                 associated_types,
                 methods,
+                method_projections,
+                source_method_projections: Vec::new(),
             })
         })();
         self.current_impl_type = prev;
@@ -1427,11 +1669,18 @@ impl AstLowering {
         let return_type = self.lower_callable_return_type(&m.return_type.node, Some(&combined_type_param_names));
         self.push_callable_param_scope(&params);
         self.push_callable_return_type(&return_type);
+        self.active_callable_type_params.push(
+            combined_type_param_names
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        );
         let body_result = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)
         } else {
             Ok(vec![])
         };
+        self.active_callable_type_params.pop();
         self.pop_callable_param_scope();
         self.pop_callable_return_type();
         let body = match body_result {
@@ -1462,6 +1711,7 @@ impl AstLowering {
             visibility: Visibility::Private,
             type_params: std::mem::take(&mut all_type_params),
             is_extern,
+            rust_extern_name: is_extern.then(|| m.name.clone()),
             rust_attributes,
             lint_allows,
         })
@@ -1482,25 +1732,46 @@ impl AstLowering {
         // collecting errors.
         let lowered = (|| {
             let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
+            let source_method_projections = self.source_method_projections(type_name, &inherent_methods, properties)?;
+            let method_projections: Vec<IrMethodProjection> = inherent_methods
+                .iter()
+                .filter(|method| magic_methods::from_str(&method.node.name).is_some())
+                .map(|method| {
+                    self.emitted_method_identity(type_name, method).map(|identity| {
+                        identity.map(|identity| IrMethodProjection {
+                            abi_method_name: method.node.name.clone(),
+                            identity,
+                        })
+                    })
+                })
+                .collect::<Result<Vec<_>, LoweringError>>()?
+                .into_iter()
+                .flatten()
+                .collect();
+            self.emitted_inherent_method_identities.extend(
+                method_projections
+                    .iter()
+                    .map(|projection: &IrMethodProjection| projection.identity.clone()),
+            );
             let mut lowered_methods = Vec::new();
             for method in inherent_methods {
                 lowered_methods.extend(self.lower_decorated_or_plain_methods(
                     type_name,
-                    &method.node,
+                    &method,
                     Some(&type_param_names),
                 )?);
             }
             for property in properties {
                 lowered_methods.push(self.lower_property_with_type_params(
-                    &property.node,
+                    property,
                     Some(&type_param_names),
                     PropertyLoweringMode::Inherent,
                 )?);
             }
-            Ok(lowered_methods)
+            Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
-        let lowered_methods = lowered?;
+        let (lowered_methods, method_projections, source_method_projections) = lowered?;
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
@@ -1511,6 +1782,8 @@ impl AstLowering {
             trait_type_args: Vec::new(),
             associated_types: Vec::new(),
             methods: lowered_methods,
+            method_projections,
+            source_method_projections,
         })
     }
 
@@ -1528,9 +1801,30 @@ impl AstLowering {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
+        let source_method_projections = self.source_method_projections(type_name, &inherent_methods, &[])?;
+        let method_projections: Vec<IrMethodProjection> = inherent_methods
+            .iter()
+            .filter(|method| magic_methods::from_str(&method.node.name).is_some())
+            .map(|method| {
+                self.emitted_method_identity(type_name, method).map(|identity| {
+                    identity.map(|identity| IrMethodProjection {
+                        abi_method_name: method.node.name.clone(),
+                        identity,
+                    })
+                })
+            })
+            .collect::<Result<Vec<_>, LoweringError>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        self.emitted_inherent_method_identities.extend(
+            method_projections
+                .iter()
+                .map(|projection: &IrMethodProjection| projection.identity.clone()),
+        );
         let lowered = inherent_methods
             .iter()
-            .map(|m| self.lower_decorated_or_plain_methods(type_name, &m.node, Some(&type_param_names)))
+            .map(|m| self.lower_decorated_or_plain_methods(type_name, m, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();
         self.current_impl_type = prev;
         let lowered_methods = lowered?.into_iter().flatten().collect();
@@ -1544,6 +1838,8 @@ impl AstLowering {
             trait_type_args: Vec::new(),
             associated_types: Vec::new(),
             methods: lowered_methods,
+            method_projections,
+            source_method_projections,
         })
     }
 
@@ -1678,12 +1974,19 @@ impl AstLowering {
         }
         self.push_callable_param_scope(&params);
         self.push_callable_return_type(&return_type);
+        self.active_callable_type_params.push(
+            combined_type_param_names
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        );
         let body_result = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)
         } else {
             // Abstract method with no body
             Ok(vec![])
         };
+        self.active_callable_type_params.pop();
         self.current_classmethod_constructor = previous_classmethod_constructor;
         if body_result.is_ok() {
             for param in &mut params {
@@ -1723,6 +2026,7 @@ impl AstLowering {
             visibility,
             type_params: std::mem::take(&mut all_type_params),
             is_extern,
+            rust_extern_name: is_extern.then(|| m.name.clone()),
             rust_attributes,
             lint_allows,
         })
@@ -1731,10 +2035,11 @@ impl AstLowering {
     /// Lower a computed property declaration into the zero-argument function form used by IR emission.
     pub(in crate::backend::ir::lower) fn lower_property_with_type_params(
         &mut self,
-        property: &ast::PropertyDecl,
+        property: &Spanned<ast::PropertyDecl>,
         type_param_names: Option<&std::collections::HashSet<&str>>,
         mode: PropertyLoweringMode,
     ) -> Result<IrFunction, LoweringError> {
+        let declaration = &property.node;
         self.push_scope();
         let mut params = vec![FunctionParam {
             name: "self".to_string(),
@@ -1749,29 +2054,48 @@ impl AstLowering {
         }];
         self.define_local_binding("self".to_string(), IrType::Unknown, false);
 
-        let return_type = self.lower_callable_return_type(&property.return_type.node, type_param_names);
+        let return_type = self.lower_callable_return_type(&declaration.return_type.node, type_param_names);
         self.push_callable_return_type(&return_type);
+        self.active_callable_type_params.push(
+            type_param_names
+                .into_iter()
+                .flat_map(|params| params.iter().map(|name| (*name).to_string()))
+                .collect(),
+        );
         let body_result = match mode {
             PropertyLoweringMode::TraitDecl => Ok(Vec::new()),
             PropertyLoweringMode::Inherent | PropertyLoweringMode::TraitImpl => {
-                if let Some(body_stmts) = &property.body {
+                if let Some(body_stmts) = &declaration.body {
                     self.lower_statements(body_stmts)
                 } else {
                     Ok(Vec::new())
                 }
             }
         };
+        self.active_callable_type_params.pop();
         self.pop_callable_return_type();
         self.pop_scope();
         let body = body_result?;
 
         let visibility = match mode {
-            PropertyLoweringMode::Inherent => Self::map_visibility(property.visibility),
+            PropertyLoweringMode::Inherent => Self::map_visibility(declaration.visibility),
             PropertyLoweringMode::TraitDecl | PropertyLoweringMode::TraitImpl => Visibility::Private,
         };
 
+        let mut name = declaration.name.clone();
+        if matches!(mode, PropertyLoweringMode::Inherent) {
+            let owner = self.current_impl_type.as_deref().unwrap_or("<unknown-owner>");
+            let identity = self.required_member_identity(owner, &property.node.name, property.span)?;
+            let projection = (owner.to_string(), property.node.name.clone(), identity.clone());
+            if !self.emitted_member_projections.contains(&projection) {
+                self.emitted_member_projections.push(projection);
+            }
+            name = incan_semantics_core::encode_incan_symbol_identity(&identity);
+            self.emitted_inherent_method_identities.insert(identity);
+        }
+
         Ok(IrFunction {
-            name: property.name.clone(),
+            name,
             docstring: None,
             params: std::mem::take(&mut params),
             return_type,
@@ -1781,6 +2105,7 @@ impl AstLowering {
             visibility,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })

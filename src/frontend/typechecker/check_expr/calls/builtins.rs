@@ -52,7 +52,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        self.check_builtin_call_inner(name, args, call_span, false, None)
+        self.check_builtin_call_inner(name, args, call_span, None, false)
             .unwrap_or(ResolvedType::Unknown)
     }
 
@@ -104,15 +104,31 @@ impl TypeChecker {
 
     // ---- Rust boundary matching and coercion recording ----
 
-    /// Determine whether `arg_ty` can flow into `target_ty` via `rusttype` boundary rules.
+    /// Type-check an ordinary builtin call, optionally retaining an already-known result context.
     pub(in crate::frontend::typechecker::check_expr::calls) fn check_builtin_call(
         &mut self,
         name: &str,
         args: &[CallArg],
         call_span: Span,
-        expected: Option<&ResolvedType>,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
-        self.check_builtin_call_inner(name, args, call_span, true, expected)
+        self.check_builtin_call_inner(name, args, call_span, expected_return_ty, true)
+    }
+
+    /// Return exact type arguments from a context that matches one zero-argument collection constructor.
+    ///
+    /// This is deliberately stricter than ordinary compatibility: an empty `Set()` or `Dict()` can adopt a
+    /// destination's arguments only when the canonical collection identity and arity already agree. Other calls retain
+    /// their existing argument-derived inference so a contextual type never reclassifies the constructor.
+    fn matching_collection_constructor_args(
+        expected_return_ty: Option<&ResolvedType>,
+        collection: CollectionTypeId,
+        arity: usize,
+    ) -> Option<&[ResolvedType]> {
+        let Some(ResolvedType::Generic(name, type_args)) = expected_return_ty else {
+            return None;
+        };
+        (collection_type_id(name) == Some(collection) && type_args.len() == arity).then_some(type_args)
     }
 
     /// Typecheck a builtin call, optionally preserving ordinary root-name shadowing behavior.
@@ -121,8 +137,8 @@ impl TypeChecker {
         name: &str,
         args: &[CallArg],
         call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
         respect_shadowing: bool,
-        expected: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
         let has_call_root_binding = respect_shadowing && self.has_non_builtin_call_root_binding(name);
         let surface_function_binding = respect_shadowing
@@ -186,7 +202,7 @@ impl TypeChecker {
                     // `Some(x)` checked against a known `Option[T]` must check `x` against `T`. Without that
                     // expectation a Rust call inside it — `Some(Box.new(v))` against a field typed
                     // `Option<Box<T>>` — types as its bare `Self` owner and never reconciles with `Box<T>`.
-                    let expected_inner = expected.and_then(|expected| match expected {
+                    let expected_inner = expected_return_ty.and_then(|expected| match expected {
                         ResolvedType::Generic(name, inner)
                             if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option)
                                 && inner.len() == 1 =>
@@ -218,6 +234,7 @@ impl TypeChecker {
             if has_call_root_binding {
                 return None;
             }
+            self.type_info.record_resolved_builtin_call(call_span, bid);
             return match bid {
                 BuiltinFnId::IsInstance => {
                     if args.len() != 2 {
@@ -231,7 +248,11 @@ impl TypeChecker {
 
                     let target_expr = Self::call_arg_expr(&args[1]);
                     match &target_expr.node {
-                        Expr::Ident(_) | Expr::Paren(_) => {}
+                        Expr::Ident(_) | Expr::Paren(_) => {
+                            if let Some(target) = self.resolve_isinstance_target(target_expr) {
+                                self.type_info.record_isinstance_target(call_span, target);
+                            }
+                        }
                         _ => {
                             self.check_expr(target_expr);
                             self.errors
@@ -376,6 +397,9 @@ impl TypeChecker {
                     Some(list_ty(ResolvedType::Int))
                 }
                 BuiltinFnId::Enumerate => {
+                    if args.len() != 1 {
+                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
+                    }
                     // enumerate(xs) -> list[(int, T)]
                     let mut inner_ty = ResolvedType::Unknown;
                     if let Some(arg) = args.first() {
@@ -483,7 +507,12 @@ impl TypeChecker {
                     Some(result_ty(ResolvedType::Unit, ResolvedType::Str))
                 }
                 BuiltinFnId::JsonStringify => {
-                    self.check_call_args(args);
+                    if args.len() != 1 {
+                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
+                        self.check_call_args(args);
+                        return Some(ResolvedType::Str);
+                    }
+                    self.check_expr(Self::call_arg_expr(&args[0]));
                     Some(ResolvedType::Str)
                 }
             };
@@ -648,9 +677,16 @@ impl TypeChecker {
                             }
                             _ => (ResolvedType::Unknown, ResolvedType::Unknown),
                         }
+                    } else if let Some(type_args) =
+                        Self::matching_collection_constructor_args(expected_return_ty, cid, 2)
+                    {
+                        (type_args[0].clone(), type_args[1].clone())
                     } else {
                         (ResolvedType::Unknown, ResolvedType::Unknown)
                     };
+                    if args.is_empty() {
+                        self.type_info.record_resolved_collection_constructor(call_span, cid);
+                    }
                     Some(dict_ty(key_ty, val_ty))
                 }
                 CollectionTypeId::List => {
@@ -703,6 +739,10 @@ impl TypeChecker {
                             }
                             _ => ResolvedType::Unknown,
                         }
+                    } else if let Some(type_args) =
+                        Self::matching_collection_constructor_args(expected_return_ty, cid, 1)
+                    {
+                        type_args[0].clone()
                     } else {
                         ResolvedType::Unknown
                     };

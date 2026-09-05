@@ -43,7 +43,9 @@ use std::{cell::RefCell, rc::Rc};
 use incan_semantics_core::authority::AuthorityDecisionSource;
 use incan_semantics_core::body_ir::ProviderOperationPlan;
 use incan_semantics_core::receipts::{OperationReceipt, ReceiptAttribute, ReceiptStatus, ReplayClassification};
-use incan_semantics_core::{AuthorityDecision, CanonicalSymbolId, HirSourceSpan, IncanType, SymbolOrigin};
+use incan_semantics_core::{
+    AuthorityDecision, AuthorityMode, CanonicalSymbolId, HirSourceSpan, IncanType, SymbolOrigin,
+};
 
 use crate::backend::selection::{
     BackendKind, BackendSelection, FallbackPolicy, digest_output, finalize_receipt, resolve_execution, select_backend,
@@ -362,7 +364,7 @@ impl ProviderRuntime {
             return Err(self.record_denial(plan, decision, operation_kind));
         }
 
-        // ---- Invocation, then cleanup, then the receipt describing both ----
+        // ---- Invocation, then cleanup, then policy-selected reporting ----
         let invocation_id = self.next_invocation_id();
         self.record_lifecycle(invocation_id, "invoked", span);
         let outcome = self.host.invoke(&ProviderInvocation {
@@ -440,18 +442,22 @@ impl ProviderRuntime {
         outcome: ProviderOperationOutcome,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         let span = plan.call_span;
+        if matches!(decision.mode, AuthorityMode::Permissive) {
+            return Self::return_unreported_outcome(plan, outcome);
+        }
+
         let (status, attributes, replay, failure) = match outcome {
             ProviderOperationOutcome::Completed {
                 value,
                 attributes,
                 replay,
             } => {
-                // `Allowed` is a governed-only outcome: it claims authority was enforced and granted. A permissive
-                // or observed run never enforced anything, so its truthful success status is `Observed` -- the
-                // receipt contract rejects the stronger claim rather than letting a run overstate what happened.
+                // `Allowed` is a governed-only outcome: it claims authority was enforced and granted. An observed
+                // run never enforced anything, so its truthful success status is `Observed` -- the receipt contract
+                // rejects the stronger claim rather than letting a run overstate what happened.
                 let status = if attributes.iter().any(ReceiptAttribute::is_redacted) {
                     ReceiptStatus::Redacted
-                } else if matches!(decision.mode, incan_semantics_core::AuthorityMode::Governed) {
+                } else if matches!(decision.mode, AuthorityMode::Governed) {
                     ReceiptStatus::Allowed
                 } else {
                     ReceiptStatus::Observed
@@ -494,11 +500,35 @@ impl ProviderRuntime {
             Err(detail) => Err(ReplacementExecutionError::ProviderOperationFailed {
                 operation: plan.operation.declaration_name.clone(),
                 detail,
-                receipt_sequence_id: sequence_id,
+                receipt_sequence_id: Some(sequence_id),
                 span,
                 span_start: span.start,
                 span_end: span.end,
             }),
+        }
+    }
+
+    /// Return a permissive invocation result without retaining authority or backend execution evidence.
+    ///
+    /// RFC 104 defines permissive as the explicit reporting-disabled escape hatch. The operation still executes and
+    /// still releases its host resources, but it must not construct an `Observed` operation receipt or a backend
+    /// execution record that would claim to reference one.
+    fn return_unreported_outcome(
+        plan: &ProviderOperationPlan,
+        outcome: ProviderOperationOutcome,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        match outcome {
+            ProviderOperationOutcome::Completed { value, .. } => Ok(value),
+            ProviderOperationOutcome::Failed { detail, .. } => {
+                Err(ReplacementExecutionError::ProviderOperationFailed {
+                    operation: plan.operation.declaration_name.clone(),
+                    detail,
+                    receipt_sequence_id: None,
+                    span: plan.call_span,
+                    span_start: plan.call_span.start,
+                    span_end: plan.call_span.end,
+                })
+            }
         }
     }
 

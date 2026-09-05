@@ -4,6 +4,8 @@ from std.fs import Path
 from std.json import JsonValue
 
 const RUST_POLICY: str = "The toolchain installer provisions this exact Rust release into an Incan-owned rustup home, leaving your own default toolchain untouched, and ensures the wasm32-wasip1 target for packages that ship vocab companions."
+const PINNED_RUST_RELEASE: str = "1.98.0"
+const PINNED_MIN_RUST: str = "1.98"
 
 
 model HostAsset:
@@ -129,7 +131,9 @@ def resolve_rust_channel(dist_dir: str) -> Result[str, str]:
         if len(channel) == 0:
             return Err(f"{channel_path} records an empty Rust channel")
         if not is_plain_release_version(channel):
-            return Err(f"{channel_path} records {channel}, which is not a concrete Rust release; package releases with a stable toolchain")
+            return Err(f"{channel_path} records {channel}, which is not a concrete Rust release; package releases with Rust {PINNED_RUST_RELEASE}")
+        if channel != PINNED_RUST_RELEASE:
+            return Err(f"{channel_path} records unsupported Rust {channel}; Incan releases require {PINNED_RUST_RELEASE}")
         if len(resolved) == 0:
             resolved = channel
             resolved_path = f"{channel_path}"
@@ -170,7 +174,7 @@ def manifest_json(
         ), "channel": JsonValue.str("stable"), "generated_at": JsonValue.str(generated_at), "manifest_url": JsonValue.str(
             f"https://github.com/encero-systems/incan/releases/download/{release}/manifest.json",
         ), "rust_toolchain": JsonValue.object(
-            {"channel": JsonValue.str(rust_channel), "min_rust": JsonValue.str("1.92"), "targets": JsonValue.array(
+            {"channel": JsonValue.str(rust_channel), "min_rust": JsonValue.str(PINNED_MIN_RUST), "targets": JsonValue.array(
                 [JsonValue.str("wasm32-wasip1")],
             ), "policy": JsonValue.str(RUST_POLICY)},
         ), "commands": JsonValue.array([JsonValue.str("incan"), JsonValue.str("incan-lsp")]), "hosts": hosts_json(assets)},

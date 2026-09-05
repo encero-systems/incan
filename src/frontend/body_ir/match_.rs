@@ -243,6 +243,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     #[allow(clippy::too_many_arguments)] // Carries one recursive pattern-lowering context; see the arm helper above.
+    /// Lower one checked source pattern while retaining canonical binding and ownership facts.
     pub(super) fn lower_match_pattern(
         &mut self,
         pattern: &ast::Spanned<ast::Pattern>,
@@ -289,7 +290,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .enumerate()
                     .map(|(index, (item, element_ty))| {
                         let mut field_place = place.clone();
-                        field_place.projection.push(bir::PlaceElem::Field(index.to_string()));
+                        field_place
+                            .projection
+                            .push(bir::PlaceElem::synthetic_field(index.to_string()));
                         self.lower_match_pattern(item, element_ty, &field_place, arm_scope, reads, seen, saved_bindings)
                     })
                     .collect();
@@ -300,18 +303,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 // declaration from the printed constructor spelling. The direct profile accepts only canonical
                 // named fields of a plain model; every other structurally lowered constructor remains the
                 // name-only fallback below and is visibly refused by replacement execution.
-                if let Some(declaration) = self.local_nominal_declarations.get(name)
-                    && matches!(expected_ty, IncanType::Named(type_name) if type_name == name)
+                if let Some(declaration) = self.local_nominal_declarations.get(&name.node)
+                    && matches!(expected_ty, IncanType::Named(type_name) if type_name == &name.node)
                     && args.iter().all(|arg| matches!(arg, ast::PatternArg::Named(_, _)))
+                    && self.type_info.resolved_identity(name.span) == Some(&declaration.canonical)
                 {
                     let fields = args
                         .iter()
                         .filter_map(|arg| match arg {
                             ast::PatternArg::Named(field, pat) => {
                                 let mut field_place = place.clone();
-                                field_place.projection.push(bir::PlaceElem::Field(field.clone()));
+                                field_place.projection.push(bir::PlaceElem::field(
+                                    field.node.clone(),
+                                    self.type_info.resolved_identity(field.span).cloned(),
+                                ));
                                 Some((
-                                    field.clone(),
+                                    field.node.clone(),
                                     self.lower_match_pattern(
                                         pat,
                                         &IncanType::Unknown,
@@ -329,27 +336,32 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     return bir::Pattern::Nominal {
                         target: bir::NominalPatternTarget {
                             direct_declaration_id: declaration.direct_declaration_id.clone(),
+                            canonical: declaration.canonical.clone(),
                             name: declaration.name.clone(),
                         },
                         fields,
                     };
                 }
 
-                if let Some((enum_name, variant_name)) = name.rsplit_once("::").or_else(|| name.rsplit_once('.'))
+                if let Some((enum_name, variant_name)) =
+                    name.node.rsplit_once("::").or_else(|| name.node.rsplit_once('.'))
                     && args.is_empty()
                     && matches!(expected_ty, IncanType::Named(type_name) if type_name == enum_name)
                     && let Some(declaration) = self.local_fieldless_enum_declarations.get(enum_name)
                     && let Some(variant) = declaration.variants.iter().find(|variant| variant.name == variant_name)
+                    && self.type_info.resolved_identity(name.span) == Some(&variant.canonical)
                 {
                     return bir::Pattern::FieldlessEnumVariant(bir::FieldlessEnumVariantTarget {
                         enum_declaration_id: declaration.direct_declaration_id.clone(),
+                        enum_canonical: declaration.canonical.clone(),
                         variant_declaration_id: variant.direct_declaration_id.clone(),
+                        variant_canonical: variant.canonical.clone(),
                         enum_name: declaration.name.clone(),
                         variant_name: variant.name.clone(),
                     });
                 }
 
-                if let Some(variant) = result_variant_kind(name)
+                if let Some(variant) = result_variant_kind(&name.node)
                     && let Some((ok_type, error_type)) = result_type_parts(expected_ty)
                     && args.len() == 1
                     && let [ast::PatternArg::Positional(payload)] = args.as_slice()
@@ -379,7 +391,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         ast::PatternArg::Named(field, pat) => {
                             has_named = true;
                             let mut field_place = place.clone();
-                            field_place.projection.push(bir::PlaceElem::Field(field.clone()));
+                            field_place.projection.push(bir::PlaceElem::field(
+                                field.node.clone(),
+                                self.type_info.resolved_identity(field.span).cloned(),
+                            ));
                             let lowered = self.lower_match_pattern(
                                 pat,
                                 &IncanType::Unknown,
@@ -389,13 +404,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                                 seen,
                                 saved_bindings,
                             );
-                            named_fields.push((field.clone(), lowered));
+                            named_fields.push((field.node.clone(), lowered));
                         }
                         ast::PatternArg::Positional(pat) => {
                             let mut field_place = place.clone();
                             field_place
                                 .projection
-                                .push(bir::PlaceElem::Field(positional_index.to_string()));
+                                .push(bir::PlaceElem::synthetic_field(positional_index.to_string()));
                             positional_index += 1;
                             let lowered = self.lower_match_pattern(
                                 pat,
@@ -412,13 +427,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
                 if has_named {
                     bir::Pattern::Struct {
-                        name: name.clone(),
+                        canonical: self.type_info.resolved_identity(name.span).cloned(),
+                        name: name.node.clone(),
                         fields: named_fields,
                     }
                 } else {
                     bir::Pattern::Enum {
+                        canonical: self.type_info.resolved_identity(name.span).cloned(),
                         name: String::new(),
-                        variant: name.clone(),
+                        variant: name.node.clone(),
                         fields: positional_fields,
                     }
                 }

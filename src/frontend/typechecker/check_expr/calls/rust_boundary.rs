@@ -763,7 +763,6 @@ impl TypeChecker {
         span: Span,
         params: &[incan_core::interop::RustParam],
         owner_path: &str,
-        force_exact: bool,
     ) {
         let params: Vec<CallableParam> = params
             .iter()
@@ -781,12 +780,10 @@ impl TypeChecker {
                 }
             })
             .collect();
-        // Plain Rust type variables carry by-value shape, but they are not ordinary borrow-boundary snapshots.
-        if force_exact || params.iter().any(|param| matches!(param.ty, ResolvedType::TypeVar(_))) {
-            self.type_info.record_call_site_callable_params_exact(span, &params);
-        } else {
-            self.type_info.record_call_site_callable_params(span, &params);
-        }
+        // An inspected Rust signature is the boundary authority, including by-value shapes such as `String` that the
+        // emitter cannot safely infer from the argument alone. Preserve the whole selected parameter list rather than
+        // retaining only explicit borrows and later falling back to a name/type heuristic.
+        self.type_info.record_call_site_callable_params_exact(span, &params);
     }
 
     /// Bind Incan call arguments to a Rust function signature.
@@ -859,25 +856,28 @@ impl TypeChecker {
                     positional_index += 1;
                 }
                 CallArg::Named(name, _) => {
-                    if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
+                    if let Some(first_span) = named_seen.insert(name.node.as_str(), name.span) {
                         self.errors.push(errors::duplicate_call_argument(
                             callable_display,
-                            name,
+                            &name.node,
                             first_span,
-                            arg_span,
+                            name.span,
                         ));
                     }
-                    let Some(param_index) = params_by_name.get(name.as_str()).copied() else {
-                        self.errors
-                            .push(errors::unknown_keyword_argument(callable_display, name, arg_span));
+                    let Some(param_index) = params_by_name.get(name.node.as_str()).copied() else {
+                        self.errors.push(errors::unknown_keyword_argument(
+                            callable_display,
+                            &name.node,
+                            name.span,
+                        ));
                         continue;
                     };
                     if let Some(first_span) = bound_spans[param_index] {
                         self.errors.push(errors::duplicate_call_argument(
                             callable_display,
-                            name,
+                            &name.node,
                             first_span,
-                            arg_span,
+                            name.span,
                         ));
                         continue;
                     }
@@ -1001,10 +1001,7 @@ impl TypeChecker {
         } else {
             &sig.params
         };
-        let has_keyword_args = args
-            .iter()
-            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
-        self.record_rust_call_site_params(span, params, owner_path, has_keyword_args);
+        self.record_rust_call_site_params(span, params, owner_path);
 
         let binding_errors_before = self.errors.len();
         let bindings = self.bind_rust_call_args(callable_display, params, args, arg_types, span);
@@ -1073,10 +1070,7 @@ impl TypeChecker {
         }
         let expected_params = self.rust_params_as_callable_params(&sig.params, path);
         let arg_types = self.check_call_arg_types_for_params(args, &expected_params);
-        let has_keyword_args = args
-            .iter()
-            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
-        self.record_rust_call_site_params(span, &sig.params, path, has_keyword_args);
+        self.record_rust_call_site_params(span, &sig.params, path);
         let binding_errors_before = self.errors.len();
         let bindings = self.bind_rust_call_args(path, &sig.params, args, &arg_types, span);
         if self.errors.len() != binding_errors_before {
@@ -1676,11 +1670,11 @@ mod validate_rust_function_call_tests {
         let count_span = Span::new(30, 31);
         let args = [
             CallArg::Named(
-                "text".to_string(),
+                Spanned::new("text".to_string(), text_span),
                 Spanned::new(Expr::Literal(Literal::String("demo".to_string())), text_span),
             ),
             CallArg::Named(
-                "count".to_string(),
+                Spanned::new("count".to_string(), count_span),
                 Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(3))), count_span),
             ),
         ];
@@ -2293,6 +2287,42 @@ mod validate_rust_function_call_tests {
                 .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("T".to_string())),
             "expected Rust by-value generic method param shape to be recorded, got {:?}",
             checker.type_info.calls.call_site_callable_params
+        );
+    }
+
+    #[test]
+    fn validate_rust_method_call_records_owned_string_param_shape() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(30, 40);
+        let arg_expr = Spanned::new(Expr::Ident("value".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::Str];
+        let sig = RustFunctionSig {
+            type_params: Vec::new(),
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "String".to_string(),
+            }],
+            return_type: "demo::Value".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_method_call("rust::demo::Value.string", &sig, &args, &arg_types, false, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "unexpected Rust boundary errors: {:?}",
+            checker.errors
+        );
+        assert!(
+            checker
+                .type_info
+                .calls
+                .call_site_callable_params
+                .get(&(span.start, span.end))
+                .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::Str),
+            "an inspected by-value String parameter must reach lowering exactly"
         );
     }
 

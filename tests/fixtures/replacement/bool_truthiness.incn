@@ -1,0 +1,26 @@
+"""Exercise builtin truthiness for scalar and collection values."""
+
+
+def bool_truthiness() -> bool:
+    """Return whether every selected truthy and falsey value follows the builtin contract."""
+    populated_list = [1]
+    empty_list: list[int] = []
+    values = {1}
+    empty_values: set[int] = Set()
+    mapping = {"key": 1}
+    empty_mapping: dict[str, int] = Dict()
+    println("bool truthiness")
+    return (
+        bool(true)
+        and not bool(false)
+        and bool(7)
+        and not bool(0)
+        and bool("value")
+        and not bool("")
+        and bool(populated_list)
+        and not bool(empty_list)
+        and bool(values)
+        and not bool(empty_values)
+        and bool(mapping)
+        and not bool(empty_mapping)
+    )

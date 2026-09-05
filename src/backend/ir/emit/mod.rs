@@ -39,8 +39,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::decl::{
-    FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrImportOrigin, IrImportQualifier, IrStruct, IrStructKind,
-    VariantFields, Visibility,
+    FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrImportOrigin, IrImportQualifier, IrStaticProvenance,
+    IrStruct, IrStructKind, VariantFields, Visibility,
 };
 use super::expr::{
     IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr, VarAccess,
@@ -56,11 +56,13 @@ use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManif
 use crate::frontend::module::logical_source_path_candidates;
 use crate::frontend::symbols::ResolvedType;
 use crate::library_manifest::{
-    FieldExport, FieldVisibilityExport, LibraryManifest, MethodExport, NewtypeExport, ParamDefaultCallSignatureExport,
-    ParamDefaultExport, ParamExport, ParamKindExport, TypeRef, resolved_type_from_manifest_type_ref,
+    ExportIdentityKind, FieldExport, FieldVisibilityExport, LibraryManifest, MethodExport, NewtypeExport,
+    ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport, TypeRef,
+    resolved_type_from_manifest_type_ref,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::{rust_keywords, stdlib};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 /// Value-enum metadata loaded from a `.incnlib` dependency for consumer-side trait bridges.
 #[derive(Debug, Clone)]
@@ -467,8 +469,17 @@ pub struct IrEmitter<'a> {
     needs_serde: RefCell<bool>,
     /// Function registry for module-local call-site default argument filling and type-aware argument conversion.
     function_registry: &'a FunctionRegistry,
+    /// Exact Rust projections for source static bindings in the module currently being emitted.
+    ///
+    /// Keys are compiler-retained local bindings, not recovered artifact names. Generated and host statics are absent
+    /// and continue through the ordinary Rust global-style identifier path.
+    static_projections: RefCell<HashMap<String, String>>,
     /// Cross-module registry used only for IR calls that carry an explicit canonical callee path.
     canonical_function_registry: Option<FunctionRegistry>,
+    /// Exact compiled-provider function identities keyed by their public `std.<module>.<name>` path.
+    compiled_sdk_function_identities: HashMap<Vec<String>, CanonicalSymbolId>,
+    /// Public provider paths with more than one distinct function identity.
+    ambiguous_compiled_sdk_function_paths: HashSet<Vec<String>>,
     /// Track struct derives for generating serde methods in impl blocks
     struct_derives: std::collections::HashMap<String, Vec<String>>,
     /// Current function's return type (for applying conversions in return statements)
@@ -526,6 +537,10 @@ pub struct IrEmitter<'a> {
     newtype_backing_type_names: HashMap<String, HashSet<String>>,
     /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
     method_signatures: HashMap<(String, String), FunctionSignature>,
+    /// Exact emitted projections for source members keyed by nominal owner and source declaration name.
+    member_projections: HashMap<(String, String), CanonicalSymbolId>,
+    /// Member keys that resolve to more than one distinct declaration identity.
+    ambiguous_member_projections: HashSet<(String, String)>,
     /// Impl-level generic parameter order for method signatures.
     method_signature_type_params: HashMap<(String, String), Vec<String>>,
     /// Whether we're currently emitting a return expression (allows moves instead of clones)
@@ -568,6 +583,12 @@ pub struct IrEmitter<'a> {
     source_module_paths: HashSet<Vec<String>>,
     /// Canonical path of the source module currently being emitted.
     current_source_module_path: Option<Vec<String>>,
+    /// Canonical package identity of the compilation unit currently being emitted.
+    ///
+    /// Package-owned symbols retain their `pub::<package>::...` identity even inside the package that declares them.
+    /// Emission uses this context only to render those self-package references through `crate::...`; consumers still
+    /// render the same identities through the linked dependency crate.
+    current_package_identity: Option<String>,
     /// RFC 023: The `rust.module("path::to::module")` Rust backing path, if declared.
     ///
     /// When set, `@rust.extern` functions emit delegation calls to `<rust_module_path>::<fn_name>()` instead of
@@ -655,7 +676,10 @@ impl<'a> IrEmitter<'a> {
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
+            static_projections: RefCell::new(HashMap::new()),
             canonical_function_registry: None,
+            compiled_sdk_function_identities: HashMap::new(),
+            ambiguous_compiled_sdk_function_paths: HashSet::new(),
             struct_derives: std::collections::HashMap::new(),
             current_function_return_type: RefCell::new(None),
             current_method_owner_type_params: RefCell::new(None),
@@ -679,6 +703,8 @@ impl<'a> IrEmitter<'a> {
             rusttype_alias_names: HashSet::new(),
             newtype_backing_type_names: HashMap::new(),
             method_signatures: HashMap::new(),
+            member_projections: HashMap::new(),
+            ambiguous_member_projections: HashSet::new(),
             method_signature_type_params: HashMap::new(),
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
@@ -694,6 +720,7 @@ impl<'a> IrEmitter<'a> {
             internal_module_roots: HashSet::new(),
             source_module_paths: HashSet::new(),
             current_source_module_path: None,
+            current_package_identity: None,
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
             newtype_construction: HashMap::new(),
@@ -787,6 +814,74 @@ impl<'a> IrEmitter<'a> {
         self.canonical_function_registry
             .as_ref()
             .unwrap_or(self.function_registry)
+    }
+
+    /// Resolve a stdlib function path to one compiler-retained identity without reconstructing it from source names.
+    pub(super) fn canonical_stdlib_function_identity(&self, path: &[String]) -> Option<&CanonicalSymbolId> {
+        let normalized_path;
+        let path = match path.first().map(String::as_str) {
+            Some(stdlib::STDLIB_ROOT) => path,
+            Some(stdlib::INCAN_STD_NAMESPACE) => {
+                normalized_path = std::iter::once(stdlib::STDLIB_ROOT.to_string())
+                    .chain(path.iter().skip(1).cloned())
+                    .collect::<Vec<_>>();
+                &normalized_path
+            }
+            _ => return None,
+        };
+        let (declaration_name, module_path) = path.get(1..)?.split_last()?;
+        if let Some(library) = self.current_package_identity.as_deref()
+            && let Some(identity) = self.canonical_function_registry().canonical_package_function_identity(
+                library,
+                module_path,
+                declaration_name,
+            )
+        {
+            return Some(identity);
+        }
+        if let Some(identity) = (!self.ambiguous_compiled_sdk_function_paths.contains(path))
+            .then(|| self.compiled_sdk_function_identities.get(path))
+            .flatten()
+        {
+            return Some(identity);
+        }
+        let emitted_path = std::iter::once(stdlib::INCAN_STD_NAMESPACE.to_string())
+            .chain(path.iter().skip(1).cloned())
+            .collect::<Vec<_>>();
+        if let Some(identity) = self
+            .canonical_function_registry()
+            .canonical_identity_for_path(&emitted_path)
+        {
+            return Some(identity);
+        }
+        self.canonical_function_registry().canonical_identity_for_path(path)
+    }
+
+    /// Return one exact member projection, failing closed when the owner/name pair is ambiguous.
+    pub(super) fn member_projection(&self, owner: &str, source_name: &str) -> Option<String> {
+        let key = (owner.to_string(), source_name.to_string());
+        if self.ambiguous_member_projections.contains(&key) {
+            return None;
+        }
+        self.member_projections.get(&key).map(encode_incan_symbol_identity)
+    }
+
+    /// Seed one member projection while preserving ambiguity rather than selecting by insertion order.
+    fn register_member_projection(&mut self, owner: &str, source_name: &str, identity: CanonicalSymbolId) {
+        let key = (owner.to_string(), source_name.to_string());
+        if self.ambiguous_member_projections.contains(&key) {
+            return;
+        }
+        match self.member_projections.get(&key) {
+            Some(existing) if existing != &identity => {
+                self.member_projections.remove(&key);
+                self.ambiguous_member_projections.insert(key);
+            }
+            Some(_) => {}
+            None => {
+                self.member_projections.insert(key, identity);
+            }
+        }
     }
 
     /// Configure the concrete callable-name helper modules available to this emitter.
@@ -1162,6 +1257,16 @@ impl<'a> IrEmitter<'a> {
         self.imported_static_init_bindings.borrow().contains(name)
     }
 
+    /// Return whether this exact static reference needs its imported provider's init shim.
+    pub(super) fn static_reference_needs_imported_init_call(
+        &self,
+        name: &str,
+        reference_kind: super::expr::IrStaticReferenceKind,
+    ) -> bool {
+        matches!(reference_kind, super::expr::IrStaticReferenceKind::Source)
+            && self.static_needs_imported_init_call(name)
+    }
+
     /// Return whether a static binding needs any imported static init support.
     pub(super) fn static_needs_imported_init_import(&self, name: &str) -> bool {
         self.static_needs_imported_init_call(name)
@@ -1172,9 +1277,13 @@ impl<'a> IrEmitter<'a> {
                 .any(|binding| binding == name)
     }
 
-    /// Emit the generated init call required before touching a static binding.
-    pub(super) fn emit_static_init_call_for_static(&self, name: &str) -> TokenStream {
-        if self.static_needs_imported_init_call(name) {
+    /// Emit initialization for one exact source or generated static reference.
+    pub(super) fn emit_static_init_call_for_reference(
+        &self,
+        name: &str,
+        reference_kind: super::expr::IrStaticReferenceKind,
+    ) -> TokenStream {
+        if self.static_reference_needs_imported_init_call(name, reference_kind) {
             let init_fn = Self::imported_static_init_ident(name);
             quote! { #init_fn(); }
         } else {
@@ -1235,6 +1344,11 @@ impl<'a> IrEmitter<'a> {
     /// Set the canonical source path of the module currently being emitted.
     pub fn set_current_source_module_path(&mut self, path: Option<Vec<String>>) {
         self.current_source_module_path = path;
+    }
+
+    /// Set the package identity of the compilation unit currently being emitted.
+    pub fn set_current_package_identity(&mut self, identity: Option<String>) {
+        self.current_package_identity = identity;
     }
 
     /// Configure whether anonymous union wrappers are addressed through the crate root.
@@ -1298,11 +1412,122 @@ impl<'a> IrEmitter<'a> {
         proc_macro2::Ident::new(name, span)
     }
 
-    /// Create a Rust identifier for compiler-emitted `static` items.
+    /// Create the emitted identifier for a linker-visible top-level Incan function.
     ///
-    /// Incan static names follow source-language naming, but generated Rust `static` items should use
-    /// `SCREAMING_SNAKE_CASE` to avoid `non_upper_case_globals` warnings.
-    fn rust_static_ident(name: &str) -> proc_macro2::Ident {
+    /// Lowering registered the source name and canonical identity together. Emission only projects that retained
+    /// identity; it never decodes an emitted name or infers identity from source spelling.
+    fn rust_function_ident(&self, name: &str) -> proc_macro2::Ident {
+        if let Some(projection) = self.function_registry.emitted_projection(name) {
+            return Self::rust_ident(&projection);
+        }
+        if let Some(physical_name) = self.function_registry.generated_physical_name(name) {
+            return Self::rust_ident(physical_name);
+        }
+        Self::rust_ident(name)
+    }
+
+    /// Bind every source static spelling used by this IR module to its one compiler-owned projection.
+    fn set_static_projections(&self, program: &IrProgram) -> Result<(), EmitError> {
+        let mut projections = HashMap::new();
+        for decl in &program.declarations {
+            match &decl.kind {
+                IrDeclKind::Static {
+                    name,
+                    provenance: IrStaticProvenance::Source(identity),
+                    ..
+                } => {
+                    if !matches!(identity.kind, SemanticSourceTargetKind::Static)
+                        || !matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                    {
+                        return Err(EmitError::InternalInvariant(format!(
+                            "source static `{name}` carries a non-static or non-Incan canonical identity"
+                        )));
+                    }
+                    let projection = encode_incan_symbol_identity(identity);
+                    Self::insert_static_projection(&mut projections, name, &projection)?;
+                    Self::insert_static_projection(&mut projections, &projection, &projection)?;
+                }
+                IrDeclKind::Static {
+                    provenance: IrStaticProvenance::CompilerGenerated,
+                    ..
+                } => {}
+                IrDeclKind::SymbolAlias {
+                    name,
+                    target_canonical: Some(identity),
+                    ..
+                } if matches!(identity.kind, SemanticSourceTargetKind::Static) => {
+                    if !matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }) {
+                        return Err(EmitError::InternalInvariant(format!(
+                            "source static alias `{name}` carries a non-Incan canonical identity"
+                        )));
+                    }
+                    let projection = encode_incan_symbol_identity(identity);
+                    Self::insert_static_projection(&mut projections, name, &projection)?;
+                    Self::insert_static_projection(&mut projections, &projection, &projection)?;
+                }
+                IrDeclKind::Import { items, .. } => {
+                    for item in items.iter().filter(|item| item.is_static) {
+                        let Some(identity) = item.canonical.as_ref() else {
+                            return Err(EmitError::InternalInvariant(format!(
+                                "source static import `{}` has no compiler-owned canonical identity",
+                                item.source_binding_name()
+                            )));
+                        };
+                        if !matches!(identity.kind, SemanticSourceTargetKind::Static)
+                            || !matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                        {
+                            return Err(EmitError::InternalInvariant(format!(
+                                "source static import `{}` carries a non-static or non-Incan canonical identity",
+                                item.source_binding_name()
+                            )));
+                        }
+                        let projection = encode_incan_symbol_identity(identity);
+                        Self::insert_static_projection(&mut projections, item.source_binding_name(), &projection)?;
+                        Self::insert_static_projection(&mut projections, &projection, &projection)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        *self.static_projections.borrow_mut() = projections;
+        Ok(())
+    }
+
+    /// Insert one static binding without allowing two canonical declarations to collapse onto the same local name.
+    fn insert_static_projection(
+        projections: &mut HashMap<String, String>,
+        binding: &str,
+        projection: &str,
+    ) -> Result<(), EmitError> {
+        if let Some(existing) = projections.get(binding) {
+            if existing != projection {
+                return Err(EmitError::InternalInvariant(format!(
+                    "source static binding `{binding}` resolves to two canonical projections"
+                )));
+            }
+            return Ok(());
+        }
+        projections.insert(binding.to_string(), projection.to_string());
+        Ok(())
+    }
+
+    /// Create the exact Rust identifier for a source static reference.
+    ///
+    /// Absence is an IR invariant failure rather than permission to guess from the source spelling.
+    fn rust_source_static_ident(&self, name: &str) -> Result<proc_macro2::Ident, EmitError> {
+        let projection = self.static_projections.borrow().get(name).cloned().ok_or_else(|| {
+            EmitError::InternalInvariant(format!(
+                "source static reference `{name}` has no compiler-owned canonical projection"
+            ))
+        })?;
+        Ok(Self::rust_ident(&projection))
+    }
+
+    /// Create the Rust identifier for a compiler-generated static helper.
+    ///
+    /// Generated helpers deliberately bypass source projections. This remains true if a synthetic spelling collides
+    /// with a source static name.
+    fn rust_generated_static_ident(name: &str) -> proc_macro2::Ident {
         let mut rendered = String::with_capacity(name.len().max(1));
         for ch in name.chars() {
             if ch.is_ascii_alphanumeric() {
@@ -1315,6 +1540,30 @@ impl<'a> IrEmitter<'a> {
             rendered.push('_');
         }
         proc_macro2::Ident::new(&rendered, proc_macro2::Span::call_site())
+    }
+
+    /// Create a Rust identifier from the provenance retained on a static reference.
+    fn rust_static_reference_ident(
+        &self,
+        name: &str,
+        reference_kind: super::expr::IrStaticReferenceKind,
+    ) -> Result<proc_macro2::Ident, EmitError> {
+        match reference_kind {
+            super::expr::IrStaticReferenceKind::Source => self.rust_source_static_ident(name),
+            super::expr::IrStaticReferenceKind::CompilerGenerated => Ok(Self::rust_generated_static_ident(name)),
+        }
+    }
+
+    /// Create a Rust identifier from the provenance retained on a static declaration.
+    fn rust_static_declaration_ident(
+        &self,
+        name: &str,
+        provenance: &IrStaticProvenance,
+    ) -> Result<proc_macro2::Ident, EmitError> {
+        match provenance {
+            IrStaticProvenance::Source(_) => self.rust_source_static_ident(name),
+            IrStaticProvenance::CompilerGenerated => Ok(Self::rust_generated_static_ident(name)),
+        }
     }
 
     /// RFC 023: Set the `rust.module()` Rust backing path for this program.
@@ -2037,6 +2286,35 @@ impl<'a> IrEmitter<'a> {
     /// enum variant rather than a Rust field access.
     pub(crate) fn seed_sdk_provider_manifest_metadata(&mut self, manifest: &LibraryManifest) {
         let provider_crate = manifest.name.replace('-', "_");
+        for entry in &manifest.contract_metadata.identity_graph.exports {
+            if entry.kind != ExportIdentityKind::Function || entry.public_path.first() != Some(&manifest.name) {
+                continue;
+            }
+            let Some(identity) = entry.canonical.as_ref().and_then(|canonical| canonical.hydrate()) else {
+                continue;
+            };
+            let public_std_path = std::iter::once(stdlib::STDLIB_ROOT.to_string())
+                .chain(entry.public_path.iter().skip(1).cloned())
+                .collect::<Vec<_>>();
+            let source_std_path = std::iter::once(stdlib::STDLIB_ROOT.to_string())
+                .chain(entry.source_path.iter().cloned())
+                .collect::<Vec<_>>();
+            for path in [public_std_path, source_std_path] {
+                if self.ambiguous_compiled_sdk_function_paths.contains(&path) {
+                    continue;
+                }
+                match self.compiled_sdk_function_identities.get(&path) {
+                    Some(existing) if existing != &identity => {
+                        self.compiled_sdk_function_identities.remove(&path);
+                        self.ambiguous_compiled_sdk_function_paths.insert(path);
+                    }
+                    Some(_) => {}
+                    None => {
+                        self.compiled_sdk_function_identities.insert(path, identity.clone());
+                    }
+                }
+            }
+        }
         self.seed_compiled_provider_export_metadata(
             &provider_crate,
             &manifest.exports.models,
@@ -2217,6 +2495,9 @@ impl<'a> IrEmitter<'a> {
         type_params: &[crate::library_manifest::TypeParamExport],
     ) {
         for method in methods {
+            if let Some(identity) = method.canonical.as_ref().and_then(|canonical| canonical.hydrate()) {
+                self.register_member_projection(owner, &method.name, identity);
+            }
             let key = (owner.to_string(), method.name.clone());
             self.method_signatures.insert(
                 key.clone(),
@@ -2249,6 +2530,11 @@ impl<'a> IrEmitter<'a> {
 
     /// Seed nominal metadata, optionally skipping ambiguous dependency names.
     fn seed_nominal_metadata_from_program_inner(&mut self, program: &IrProgram, skip_ambiguous: bool) {
+        for (owner, source_name, identity) in &program.member_projections {
+            if !skip_ambiguous || !self.ambiguous_type_names.contains(owner) {
+                self.register_member_projection(owner, source_name, identity.clone());
+            }
+        }
         let source_dependency_module_path = if skip_ambiguous {
             program
                 .source_module_name
@@ -3102,11 +3388,65 @@ mod tests {
         ConstructorProviderIdentity, FunctionSignature, IrEmitter, StructConstructorMetadata, StructConstructorSurface,
     };
     use crate::backend::ir::decl::{
-        IrDecl, IrDeclKind, IrImportItem, IrImportOrigin, IrImportQualifier, IrStruct, IrStructKind, StructField,
-        Visibility,
+        IrDecl, IrDeclKind, IrImportItem, IrImportOrigin, IrImportQualifier, IrStaticProvenance, IrStruct,
+        IrStructKind, StructField, Visibility,
     };
-    use crate::backend::ir::expr::{IrExprKind, TypedExpr};
+    use crate::backend::ir::expr::{IrExprKind, IrStaticReferenceKind, TypedExpr};
+    use crate::backend::ir::stmt::{IrStmt, IrStmtKind};
     use crate::backend::ir::{FunctionRegistry, IrProgram, IrType};
+    use crate::library_manifest::{
+        CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, LibraryManifest,
+    };
+    use incan_semantics_core::{
+        CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+    };
+
+    #[test]
+    fn compiled_sdk_manifest_seeds_exact_stdlib_function_identity() {
+        let registry = FunctionRegistry::new();
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "incan_stdlib_core".to_string(),
+                module_path: vec!["result".to_string()],
+            },
+            declaration_name: "map".to_string(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(10, 20),
+        };
+        let mut manifest = LibraryManifest::new("incan_stdlib_core", "0.6.0");
+        manifest.contract_metadata.identity_graph.exports.push(ExportIdentity {
+            public_name: "map".to_string(),
+            public_path: vec!["incan_stdlib_core".to_string(), "result_map".to_string()],
+            source_path: vec!["result".to_string(), "map".to_string()],
+            kind: ExportIdentityKind::Function,
+            projection: ExportIdentityProjection::Direct,
+            canonical: CanonicalIdentityExport::from_canonical("incan_stdlib_core", &identity),
+        });
+
+        let std_path = ["std".to_string(), "result".to_string(), "map".to_string()];
+        let source_identity = CanonicalSymbolId::module_declaration(
+            vec!["std".to_string(), "result".to_string()],
+            "map",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(30, 40),
+        );
+        let mut canonical_registry = FunctionRegistry::new();
+        canonical_registry.register_canonical_path_projection(
+            &std_path,
+            "map".to_string(),
+            source_identity,
+            Vec::new(),
+            IrType::Unit,
+        );
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_canonical_function_registry(canonical_registry);
+
+        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+
+        assert_eq!(emitter.canonical_stdlib_function_identity(&std_path), Some(&identity));
+    }
 
     #[test]
     fn callback_reference_matches_imported_source_parameter_surface() {
@@ -3317,6 +3657,7 @@ mod tests {
             items: vec![IrImportItem {
                 name: item_name.to_string(),
                 alias: alias.map(str::to_string),
+                canonical: None,
                 is_static: false,
                 force_reexport: false,
                 rust_trait_import: None,
@@ -3332,10 +3673,110 @@ mod tests {
     }
 
     #[test]
-    fn rust_static_ident_uses_uppercase_global_style() {
-        let ident = IrEmitter::rust_static_ident("_active_sessions");
+    fn rust_generated_static_ident_uses_uppercase_global_style() {
+        let registry = crate::backend::ir::FunctionRegistry::new();
+        let _emitter = IrEmitter::new(&registry);
+        let ident = IrEmitter::rust_generated_static_ident("_active_sessions");
         let rendered = quote::quote! { #ident }.to_string();
         assert_eq!(rendered, "_ACTIVE_SESSIONS");
+    }
+
+    fn static_identity(module: &str, declaration_name: &str) -> CanonicalSymbolId {
+        CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Module(vec![module.to_string()]),
+            declaration_name: declaration_name.to_string(),
+            kind: SemanticSourceTargetKind::Static,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, declaration_name.len()),
+        }
+    }
+
+    #[test]
+    fn source_static_with_non_static_identity_fails_closed() -> Result<(), String> {
+        let mut identity = static_identity("fixture", "counter");
+        identity.kind = SemanticSourceTargetKind::Function;
+        let mut program = IrProgram::new();
+        program.declarations.push(IrDecl::new(IrDeclKind::Static {
+            visibility: Visibility::Public,
+            name: "counter".to_string(),
+            provenance: IrStaticProvenance::Source(identity),
+            ty: IrType::Int,
+            value: TypedExpr::new(IrExprKind::Int(0), IrType::Int),
+        }));
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let error = match emitter.emit_program_tokens(&program) {
+            Ok(_) => return Err("static with a function identity unexpectedly emitted".to_string()),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("source static `counter` carries a non-static or non-Incan canonical identity"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_static_reference_without_projection_fails_closed() -> Result<(), String> {
+        let mut program = IrProgram::new();
+        program.module_init.push(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+            IrExprKind::StaticRead {
+                name: "missing".to_string(),
+                reference_kind: IrStaticReferenceKind::Source,
+            },
+            IrType::Int,
+        ))));
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let error = match emitter.emit_program_tokens(&program) {
+            Ok(_) => return Err("source static reference without a projection unexpectedly emitted".to_string()),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("source static reference `missing` has no compiler-owned canonical projection"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn colliding_static_import_aliases_fail_closed() -> Result<(), String> {
+        let mut program = IrProgram::new();
+        for module in ["left", "right"] {
+            program.declarations.push(IrDecl::new(IrDeclKind::Import {
+                visibility: Visibility::Private,
+                origin: IrImportOrigin::Standard,
+                qualifier: IrImportQualifier::Auto,
+                path: vec![module.to_string()],
+                alias: None,
+                items: vec![IrImportItem {
+                    name: "counter".to_string(),
+                    alias: Some("shared".to_string()),
+                    canonical: Some(static_identity(module, "counter")),
+                    is_static: true,
+                    force_reexport: false,
+                    rust_trait_import: None,
+                }],
+            }));
+        }
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let error = match emitter.emit_program_tokens(&program) {
+            Ok(_) => return Err("two static identities unexpectedly shared one emitted binding".to_string()),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("source static binding `shared` resolves to two canonical projections"),
+            "{error}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -3427,6 +3868,7 @@ mod tests {
         let fields = vec![
             FieldExport {
                 name: "secret".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "bool".to_string(),
                 },
@@ -3439,6 +3881,7 @@ mod tests {
             },
             FieldExport {
                 name: "label".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },

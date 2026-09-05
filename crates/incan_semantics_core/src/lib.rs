@@ -27,11 +27,16 @@ use incan_core::lang::keywords::KeywordId;
 
 pub mod authority;
 pub mod body_ir;
+pub mod emitted_symbol;
 mod facts;
 mod hir;
 pub mod receipts;
 mod types;
 
+pub use emitted_symbol::{
+    EmittedSymbolDecodeError, INCAN_SYMBOL_PROJECTION_VERSION, INCAN_SYMBOL_RUST_PREFIX,
+    decode_incan_identity_from_demangled_symbol, decode_incan_symbol_identity, encode_incan_symbol_identity,
+};
 pub use facts::{
     AuthorityDecision, AuthorityDenialReason, AuthorityGrantContext, AuthorityMode, AuthorityOutcome,
     AuthorityProvenance, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, ScopeDiscriminant, SemanticFact,

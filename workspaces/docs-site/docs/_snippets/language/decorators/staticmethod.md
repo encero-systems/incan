@@ -13,6 +13,8 @@ def main() -> None:
     println(t.celsius)
 ```
 
+Type-owned methods and instance-owned fields are separate receiver surfaces. A static factory may therefore share a field's spelling without ambiguity: `TimeDelta.days(7)` selects the factory, while `delta.days` reads the stored field. Static methods are not callable through an instance; use the declaring type at the call site.
+
 **Applies to**: methods on `class`, `model`, `enum`, and `newtype` declarations.
 
 Rules:

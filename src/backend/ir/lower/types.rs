@@ -9,7 +9,7 @@
 //! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
 
 use super::super::expr::BinOp;
-use super::super::types::{IR_UNION_TYPE_NAME, IrType};
+use super::super::types::{IR_UNION_TYPE_NAME, IrType, same_exact_binary_float_type};
 use super::errors::LoweringError;
 use super::{AstLowering, FunctionSignature};
 use crate::frontend::api_metadata::ApiDeclaration;
@@ -498,6 +498,7 @@ impl AstLowering {
     /// placeholders that the typechecker may have normalized to nominal names.
     pub(super) fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
         match (existing, inferred) {
+            (existing, IrType::Unknown) => existing.clone(),
             (IrType::Generic(existing_name), IrType::Struct(inferred_name)) if existing_name == &inferred_name => {
                 existing.clone()
             }
@@ -765,6 +766,10 @@ impl AstLowering {
                     incan_core::lang::types::numerics::NumericTypeId::F32,
                 )))
             }
+            ResolvedType::Named(name) if self.active_trait_type_substitution(name).is_some() => self
+                .active_trait_type_substitution(name)
+                .unwrap_or_else(|| IrType::Generic(name.clone())),
+            ResolvedType::Named(name) if self.is_active_callable_type_param(name) => IrType::Generic(name.clone()),
             ResolvedType::Named(name) => IrType::Struct(name.clone()),
             ResolvedType::Ref(inner) => IrType::Ref(Box::new(
                 self.lower_resolved_type_with_rust_path_mode(inner, rust_path_mode),
@@ -1228,6 +1233,9 @@ impl AstLowering {
             | ast::BinaryOp::FloorDiv
             | ast::BinaryOp::Mod
             | ast::BinaryOp::Pow => {
+                if let Some(exact_float) = same_exact_binary_float_type(left, right) {
+                    return exact_float;
+                }
                 if matches!(op, ast::BinaryOp::FloorDiv | ast::BinaryOp::Mod) {
                     if let IrType::Numeric(id) = left
                         && numerics::info_for(*id).family == NumericFamily::UnsignedInteger
@@ -1293,6 +1301,30 @@ mod tests {
     use crate::frontend::ast;
     use crate::frontend::symbols::ResolvedType;
     use crate::frontend::typechecker::canonical_public_library_type_name;
+    use incan_core::lang::types::numerics::NumericTypeId;
+
+    #[test]
+    fn exact_binary_float_arithmetic_keeps_its_native_ir_width() {
+        let lowering = AstLowering::new();
+        for kind in [NumericTypeId::F32, NumericTypeId::F64] {
+            let exact = IrType::Numeric(kind);
+            for op in [
+                ast::BinaryOp::Add,
+                ast::BinaryOp::Sub,
+                ast::BinaryOp::Mul,
+                ast::BinaryOp::Div,
+                ast::BinaryOp::FloorDiv,
+                ast::BinaryOp::Mod,
+                ast::BinaryOp::Pow,
+            ] {
+                assert_eq!(
+                    lowering.binary_result_type(&exact, &exact, &op, None),
+                    exact,
+                    "{kind:?} arithmetic lost its exact width for {op:?}"
+                );
+            }
+        }
+    }
 
     /// Imported trait defaults are expanded in the adopter's module, but their annotations still name types from the
     /// trait's defining module. Preserve that type identity without applying the same name rule to value expressions.
@@ -1431,6 +1463,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lower_resolved_named_type_param_preserves_active_generic_identity() {
+        let mut lowering = AstLowering::new();
+        lowering
+            .active_callable_type_params
+            .push(std::collections::HashSet::from(["K".to_string()]));
+
+        assert_eq!(
+            lowering.lower_resolved_type(&ResolvedType::Named("K".to_string())),
+            IrType::Generic("K".to_string())
+        );
+        assert_eq!(
+            lowering.lower_resolved_type(&ResolvedType::Named("Value".to_string())),
+            IrType::Struct("Value".to_string())
+        );
+    }
+
     /// RFC 008: deeply immutable containers use the same const-safe string representation in declaration and
     /// typechecker-owned lowering paths.
     #[test]
@@ -1484,6 +1533,28 @@ mod tests {
                     vec![IrType::Generic("T".to_string())]
                 )]
             )
+        );
+    }
+
+    #[test]
+    fn merge_inferred_ir_type_does_not_erase_a_concrete_closure_return() {
+        let merged = AstLowering::merge_inferred_ir_type(
+            &IrType::Function {
+                params: vec![IrType::Int],
+                ret: Box::new(IrType::String),
+            },
+            IrType::Function {
+                params: vec![IrType::Int],
+                ret: Box::new(IrType::Unknown),
+            },
+        );
+
+        assert_eq!(
+            merged,
+            IrType::Function {
+                params: vec![IrType::Int],
+                ret: Box::new(IrType::String),
+            }
         );
     }
 

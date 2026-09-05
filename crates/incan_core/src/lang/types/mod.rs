@@ -15,6 +15,12 @@ pub mod collections;
 pub mod numerics;
 pub mod stringlike;
 
+/// Canonical semantic constructor name for anonymous union types.
+///
+/// Frontend, IR, and replacement consumers share this identity instead of independently spelling `Union` at their
+/// phase boundaries.
+pub const UNION_TYPE_NAME: &str = "Union";
+
 pub use collections::{COLLECTION_TYPES, CollectionTypeId, CollectionTypeInfo};
 pub use numerics::{
     DECIMAL_TYPE_CONSTRUCTORS, DecimalTypeConstructorId, DecimalTypeConstructorInfo, NUMERIC_TYPES, NumericFamily,

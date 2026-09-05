@@ -9,6 +9,7 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::freeze_const_type;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::{
     FunctionBindingInfo, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, TypeChecker,
@@ -161,13 +162,15 @@ impl TypeChecker {
             Declaration::TypeAlias(a) => {
                 self.validate_root_namespace(&a.name, decl.span);
                 // Register the alias name as a known type so other declarations can reference it.
-                self.symbols.define(Symbol {
+                let symbol_id = self.symbols.define(Symbol {
                     name: a.name.clone(),
                     kind: SymbolKind::Type(TypeInfo::TypeAlias),
                     span: decl.span,
                     scope: 0,
                 });
-                self.register_type_alias_target(a);
+                if self.symbols.is_active_lookup_binding(symbol_id) {
+                    self.register_type_alias_target(a);
+                }
             }
             Declaration::Newtype(nt) => {
                 self.validate_root_namespace(&nt.name, decl.span);
@@ -192,6 +195,8 @@ impl TypeChecker {
     /// Register a module-level alias after concrete symbols have been collected.
     fn collect_alias(&mut self, alias: &AliasDecl, span: Span) {
         let target_name = alias.target.segments.join(".");
+        let target_identity = self.alias_target_identity(&alias.target.segments);
+        let target_binding_path = self.alias_target_binding_path(&alias.target.segments);
         let Some(kind) = self.alias_target_symbol_kind(&alias.target.segments) else {
             self.errors.push(CompileError::type_error(
                 format!("Alias '{}' targets unknown symbol '{}'", alias.name, target_name),
@@ -202,10 +207,8 @@ impl TypeChecker {
 
         let kind = match kind {
             SymbolKind::Function(info) => SymbolKind::Function(info),
-            SymbolKind::FunctionOverloads(overloads) => {
-                self.record_function_overload_binding(&alias.name, &overloads, false);
-                SymbolKind::FunctionOverloads(overloads)
-            }
+            SymbolKind::FunctionOverloads(overloads) => SymbolKind::FunctionOverloads(overloads),
+            SymbolKind::Static(info) => SymbolKind::Static(info),
             SymbolKind::Type(info) => SymbolKind::Type(info),
             SymbolKind::Trait(info) => SymbolKind::Trait(info),
             other => {
@@ -218,12 +221,79 @@ impl TypeChecker {
             }
         };
 
-        self.symbols.define(Symbol {
+        // RFC 083/RFC 120: an alias is a binding to the existing declaration, so it carries the target's
+        // identity — never a second identity minted for the alias spelling.
+        let symbol = Symbol {
             name: alias.name.clone(),
-            kind,
+            kind: kind.clone(),
             span,
             scope: 0,
-        });
+        };
+        let symbol_id = if let Some(binding_path) = target_binding_path {
+            self.symbols
+                .define_alias_binding_at_path(symbol, target_identity, binding_path)
+        } else {
+            self.symbols.define_alias_binding(symbol, target_identity)
+        };
+        if self.symbols.is_active_lookup_binding(symbol_id) {
+            match &kind {
+                SymbolKind::Function(_) => self.record_imported_function_binding(&alias.name, &kind),
+                SymbolKind::FunctionOverloads(overloads) => {
+                    self.record_function_overload_binding(&alias.name, overloads, false);
+                }
+                SymbolKind::Static(info) => {
+                    self.type_info.declarations.static_bindings.insert(
+                        alias.name.clone(),
+                        crate::frontend::typechecker::StaticBindingInfo {
+                            is_imported: info.is_imported,
+                        },
+                    );
+                }
+                SymbolKind::Type(_) | SymbolKind::Trait(_) => {}
+                _ => {}
+            }
+        }
+    }
+
+    /// Resolve the RFC 120 identity an alias binding must carry, when resolution proves one.
+    ///
+    /// Single-segment targets take the identity of the module-scope symbol they name. Qualified targets resolve
+    /// through the same dependency-member path import resolution uses, so the alias lands on the declaring module
+    /// even through re-exports. An overload-set or otherwise unproven target yields `None` — the alias binding then
+    /// records no identity rather than an arbitrary or minted one.
+    fn alias_target_identity(&mut self, segments: &[String]) -> Option<CanonicalSymbolId> {
+        match segments {
+            [name] => {
+                let id = self.symbols.lookup(name)?;
+                self.symbols.identity_of(id).cloned()
+            }
+            [module_name, rest @ ..] => {
+                let member = rest.last()?;
+                let module_path = {
+                    let symbol = self.lookup_symbol(module_name)?;
+                    let SymbolKind::Module(info) = &symbol.kind else {
+                        return None;
+                    };
+                    if info.is_python {
+                        return None;
+                    }
+                    let mut module_path = info.path.clone();
+                    module_path.extend_from_slice(&rest[..rest.len().saturating_sub(1)]);
+                    module_path
+                };
+                self.dependency_member_identity(&ImportPath::simple(module_path.clone()), member)
+                    .or_else(|| self.stdlib_cache.lookup_identity(&module_path, member))
+            }
+            [] => None,
+        }
+    }
+
+    /// Resolve the checked source import path projected by an alias target.
+    fn alias_target_binding_path(&self, segments: &[String]) -> Option<Vec<String>> {
+        let (leading, rest) = segments.split_first()?;
+        let mut path = self.import_binding_path(leading)?.to_vec();
+        path.extend_from_slice(rest);
+        Some(path)
     }
 
     /// Record the common metadata for any source binding that resolves to an overload set.
@@ -263,11 +333,18 @@ impl TypeChecker {
     ) {
         match kind {
             SymbolKind::Function(info) => {
+                let identity = self
+                    .type_info
+                    .declarations
+                    .resolved_import_identities
+                    .get(local_name)
+                    .cloned();
                 self.type_info.declarations.function_bindings.insert(
                     local_name.to_string(),
                     FunctionBindingInfo {
                         params: info.params.clone(),
                         return_type: info.return_type.clone(),
+                        identity,
                     },
                 );
             }
@@ -283,7 +360,7 @@ impl TypeChecker {
     /// Single-segment targets use ordinary module-scope lookup. Qualified targets must begin with an imported module
     /// binding and are resolved through stdlib or `pub::` library metadata so `lib.name` cannot accidentally fall back
     /// to an unrelated local `name`.
-    fn alias_target_symbol_kind(&mut self, segments: &[String]) -> Option<SymbolKind> {
+    pub(super) fn alias_target_symbol_kind(&mut self, segments: &[String]) -> Option<SymbolKind> {
         match segments {
             [name] => self.lookup_symbol(name).map(|symbol| symbol.kind.clone()),
             [module_name, rest @ ..] => {
@@ -363,20 +440,26 @@ impl TypeChecker {
             return;
         };
 
-        self.symbols.define(Symbol {
-            name: partial.name.clone(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: params.clone(),
-                return_type: return_type.clone(),
-                is_async,
-                type_params,
-                type_param_bounds,
-                type_param_bound_details,
-                emitted_name: None,
-            }),
-            span,
-            scope: 0,
-        });
+        let symbol_id = self.symbols.define_with_target_kind(
+            Symbol {
+                name: partial.name.clone(),
+                kind: SymbolKind::Function(FunctionInfo {
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                    is_async,
+                    type_params,
+                    type_param_bounds,
+                    type_param_bound_details,
+                    emitted_name: None,
+                }),
+                span,
+                scope: 0,
+            },
+            SemanticSourceTargetKind::Partial,
+        );
+        if !self.symbols.is_active_lookup_binding(symbol_id) {
+            return;
+        }
         self.type_info.record_partial_projection(PartialProjectionInfo {
             name: partial.name.clone(),
             target_path: partial.target.segments.clone(),
@@ -392,10 +475,18 @@ impl TypeChecker {
                 .collect(),
             external_library: None,
         });
-        self.type_info
-            .declarations
-            .function_bindings
-            .insert(partial.name.clone(), FunctionBindingInfo { params, return_type });
+        self.type_info.declarations.function_bindings.insert(
+            partial.name.clone(),
+            FunctionBindingInfo {
+                identity: Some(self.symbols.module_declaration_identity(
+                    &partial.name,
+                    SemanticSourceTargetKind::Partial,
+                    span,
+                )),
+                params,
+                return_type,
+            },
+        );
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
@@ -566,9 +657,6 @@ impl TypeChecker {
     ///
     /// Note: the initializer is validated in the second pass.
     fn collect_const(&mut self, konst: &ConstDecl, span: Span) {
-        // Remember for const-eval (cycle detection / evaluation).
-        self.const_decls.insert(konst.name.clone(), (konst.clone(), span));
-
         // Best-effort type from annotation; refined during const-eval in second pass.
         let ty = konst
             .ty
@@ -580,32 +668,31 @@ impl TypeChecker {
             })
             .unwrap_or(ResolvedType::Unknown);
 
-        // Define as an immutable variable-like symbol for name resolution.
-        self.symbols.define(Symbol {
-            name: konst.name.clone(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty,
-                is_mutable: false,
-                is_used: false,
-            }),
-            span,
-            scope: 0,
-        });
+        // Define as an immutable variable-like symbol for name resolution. The identity category is stated
+        // explicitly: a `const` is not a body-local binding even though the table represents both as variables.
+        let symbol_id = self.symbols.define_with_target_kind(
+            Symbol {
+                name: konst.name.clone(),
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty,
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span,
+                scope: 0,
+            },
+            SemanticSourceTargetKind::Const,
+        );
+        if self.symbols.is_active_lookup_binding(symbol_id) {
+            // Remember only the active declaration for const-eval (cycle detection / evaluation).
+            self.const_decls.insert(konst.name.clone(), (konst.clone(), span));
+        }
     }
 
     /// Register a module-level static binding (first pass).
     fn collect_static(&mut self, static_decl: &StaticDecl, span: Span) {
-        let decl_index = self.static_decls.len();
-        self.static_decl_positions.insert(static_decl.name.clone(), decl_index);
-        self.static_decls.push((static_decl.clone(), span));
-
         let ty = self.resolve_type_checked(&static_decl.ty);
-        self.type_info.declarations.static_bindings.insert(
-            static_decl.name.clone(),
-            crate::frontend::typechecker::StaticBindingInfo { is_imported: false },
-        );
-
-        self.symbols.define(Symbol {
+        let symbol_id = self.symbols.define(Symbol {
             name: static_decl.name.clone(),
             kind: SymbolKind::Static(StaticInfo {
                 ty,
@@ -616,6 +703,16 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        if !self.symbols.is_active_lookup_binding(symbol_id) {
+            return;
+        }
+        let decl_index = self.static_decls.len();
+        self.static_decl_positions.insert(static_decl.name.clone(), decl_index);
+        self.static_decls.push((static_decl.clone(), span));
+        self.type_info.declarations.static_bindings.insert(
+            static_decl.name.clone(),
+            crate::frontend::typechecker::StaticBindingInfo { is_imported: false },
+        );
     }
 
     /// Register a model declaration with its fields, methods, and derived traits.
@@ -632,9 +729,13 @@ impl TypeChecker {
             collect_method_overloads(&model.methods, self, Some(&model.name), &model.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
 
-        self.record_local_rust_derive_paths(&model.name, &model.decorators);
         let derives = self.extract_derive_names(&model.decorators);
-        let field_order: Vec<Ident> = model.fields.iter().map(|f| f.node.name.clone()).collect();
+        let field_order: Vec<Ident> = model
+            .fields
+            .iter()
+            .filter(|field| self.member_binding_is_active(field.span))
+            .map(|field| field.node.name.clone())
+            .collect();
         inject_validate_methods(
             &mut methods,
             &mut method_overloads,
@@ -643,13 +744,13 @@ impl TypeChecker {
             &field_order,
             &derives,
         );
-        let method_aliases = collect_method_aliases(&model.method_aliases, &mut methods, &mut method_overloads);
+        let method_aliases = collect_method_aliases(&model.method_aliases, self, &mut methods, &mut method_overloads);
         self.collect_method_partials(&model.name, &model.method_partials, &mut methods, &mut method_overloads);
         let mut trait_adoptions =
             self.collect_trait_adoption_infos(&model.traits, Some(&model.name), &model.type_params);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
-        self.symbols.define(Symbol {
+        let symbol_id = self.symbols.define(Symbol {
             name: model.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Model(ModelInfo {
                 type_params: model.type_params.iter().map(|tp| tp.name.clone()).collect(),
@@ -666,6 +767,9 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        if self.symbols.is_active_lookup_binding(symbol_id) {
+            self.record_local_rust_derive_paths(&model.name, &model.decorators);
+        }
     }
 
     /// Register a class declaration, inheriting from parent if present.
@@ -689,7 +793,11 @@ impl TypeChecker {
             &class.type_params,
             true,
         ));
-        for field in &class.fields {
+        for field in class
+            .fields
+            .iter()
+            .filter(|field| self.member_binding_is_active(field.span))
+        {
             if !field_order.iter().any(|name| name == &field.node.name) {
                 field_order.push(field.node.name.clone());
             }
@@ -715,15 +823,14 @@ impl TypeChecker {
         methods.extend(collect_methods_from_overloads(&own_method_overloads));
         method_overloads.extend(own_method_overloads);
 
-        self.record_local_rust_derive_paths(&class.name, &class.decorators);
         let derives = self.extract_derive_names(&class.decorators);
-        let method_aliases = collect_method_aliases(&class.method_aliases, &mut methods, &mut method_overloads);
+        let method_aliases = collect_method_aliases(&class.method_aliases, self, &mut methods, &mut method_overloads);
         self.collect_method_partials(&class.name, &class.method_partials, &mut methods, &mut method_overloads);
         let mut trait_adoptions =
             self.collect_trait_adoption_infos(&class.traits, Some(&class.name), &class.type_params);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
-        self.symbols.define(Symbol {
+        let symbol_id = self.symbols.define(Symbol {
             name: class.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Class(ClassInfo {
                 type_params: class.type_params.iter().map(|tp| tp.name.clone()).collect(),
@@ -744,6 +851,9 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        if self.symbols.is_active_lookup_binding(symbol_id) {
+            self.record_local_rust_derive_paths(&class.name, &class.decorators);
+        }
     }
 
     /// Inherit fields and methods from a parent class if present.
@@ -809,6 +919,7 @@ impl TypeChecker {
                         })
                         .collect(),
                     module_path,
+                    implementation_type_params: Vec::new(),
                 }
             })
             .collect()
@@ -816,7 +927,7 @@ impl TypeChecker {
 
     /// Return the source module that owns a trait bound, including direct imports and module-qualified spellings.
     pub(crate) fn trait_bound_module_path(&self, name: &str) -> Option<Vec<String>> {
-        if let Some(path) = self.import_aliases.get(name) {
+        if let Some(path) = self.import_binding_path(name) {
             return path
                 .len()
                 .checked_sub(1)
@@ -838,7 +949,7 @@ impl TypeChecker {
 
     /// Return the defining source trait name for imported or module-qualified trait bounds.
     pub(crate) fn trait_bound_source_name(&self, name: &str) -> Option<String> {
-        if let Some(path) = self.import_aliases.get(name) {
+        if let Some(path) = self.import_binding_path(name) {
             return path.last().cloned();
         }
         let (_module_name, trait_name) = name.rsplit_once('.')?;
@@ -878,15 +989,15 @@ impl TypeChecker {
                             source_name: Some(trait_name.clone()),
                             type_args: Vec::new(),
                             module_path: Some(module_path.clone()),
+                            implementation_type_params: Vec::new(),
                         });
                     }
                 }
                 continue;
             }
             let resolved = self
-                .import_aliases
-                .get(derive_name)
-                .cloned()
+                .import_binding_path(derive_name)
+                .map(<[String]>::to_vec)
                 .unwrap_or_else(|| vec![derive_name.to_string()]);
             if resolved.len() >= 2 {
                 let module_segments = &resolved[..resolved.len() - 1];
@@ -901,6 +1012,7 @@ impl TypeChecker {
                             source_name: Some(trait_name.clone()),
                             type_args: Vec::new(),
                             module_path: Some(module_segments.to_vec()),
+                            implementation_type_params: Vec::new(),
                         });
                     }
                 } else if self.lookup_trait_info(derive_name).is_some() {
@@ -909,6 +1021,7 @@ impl TypeChecker {
                         source_name: None,
                         type_args: Vec::new(),
                         module_path: None,
+                        implementation_type_params: Vec::new(),
                     });
                 }
             }
@@ -978,7 +1091,7 @@ impl TypeChecker {
         {
             return Some(info.path.clone());
         }
-        self.import_aliases.get(name).cloned()
+        self.import_binding_path(name).map(<[String]>::to_vec)
     }
 
     /// Define a compiler-internal trait symbol used for qualified imported trait references.
@@ -986,12 +1099,17 @@ impl TypeChecker {
         if self.symbols.lookup(name).is_some() {
             return;
         }
-        self.symbols.define(Symbol {
-            name: name.to_string(),
-            kind: SymbolKind::Trait(info),
-            span,
-            scope: 0,
-        });
+        // RFC 120: this binding names a dependency's trait declaration; its identity is unproven here rather than
+        // minted from the referencing module.
+        self.symbols.define_import_binding(
+            Symbol {
+                name: name.to_string(),
+                kind: SymbolKind::Trait(info),
+                span,
+                scope: 0,
+            },
+            None,
+        );
     }
 
     /// Register a trait declaration with its method signatures, supertraits, and requirements.
@@ -999,15 +1117,10 @@ impl TypeChecker {
         let mut method_overloads = collect_method_overloads(&tr.methods, self, None, &tr.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
         let properties = collect_properties(&tr.properties, self, None, &tr.type_params);
-        let method_aliases = collect_method_aliases(&tr.method_aliases, &mut methods, &mut method_overloads);
+        let method_aliases = collect_method_aliases(&tr.method_aliases, self, &mut methods, &mut method_overloads);
         self.collect_method_partials(&tr.name, &tr.method_partials, &mut methods, &mut method_overloads);
         let requires = self.extract_requires(&tr.decorators);
-        if !tr.traits.is_empty() {
-            self.pending_trait_supertraits
-                .push((tr.name.clone(), tr.traits.clone()));
-        }
-
-        self.symbols.define(Symbol {
+        let symbol_id = self.symbols.define(Symbol {
             name: tr.name.clone(),
             kind: SymbolKind::Trait(TraitInfo {
                 type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
@@ -1020,6 +1133,9 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        if self.symbols.is_active_lookup_binding(symbol_id) && !tr.traits.is_empty() {
+            self.pending_trait_supertraits.push((symbol_id, tr.traits.clone()));
+        }
     }
 
     /// Register a `capability` declaration with its description, typed scope dimensions, and requirements (RFC 104).
@@ -1087,8 +1203,7 @@ impl TypeChecker {
     fn resolve_imported_trait_bound_symbol(&mut self, name: &str, span: Span) -> Option<(String, TraitInfo)> {
         let module_path = self.trait_bound_module_path(name)?;
         let trait_name = self
-            .import_aliases
-            .get(name)
+            .import_binding_path(name)
             .and_then(|path| path.last())
             .cloned()
             .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name).to_string());
@@ -1122,17 +1237,14 @@ impl TypeChecker {
     /// Resolve queued trait `with` bounds now that all types and traits exist in the symbol table (RFC 042).
     pub(crate) fn resolve_pending_trait_supertraits(&mut self) {
         let pending = std::mem::take(&mut self.pending_trait_supertraits);
-        for (trait_name, bounds) in pending {
+        for (symbol_id, bounds) in pending {
             let mut supertraits: Vec<(String, Vec<ResolvedType>)> = Vec::new();
             for bound in &bounds {
                 if let Some(entry) = self.resolve_trait_supertrait_bound(bound) {
                     supertraits.push(entry);
                 }
             }
-            let Some(sym_id) = self.symbols.lookup(&trait_name) else {
-                continue;
-            };
-            let Some(sym) = self.symbols.get_mut(sym_id) else {
+            let Some(sym) = self.symbols.get_mut(symbol_id) else {
                 continue;
             };
             let SymbolKind::Trait(info) = &mut sym.kind else {
@@ -1303,13 +1415,12 @@ impl TypeChecker {
                     .map(|target| (rebinding.node.name.clone(), target))
             })
             .collect();
-        self.record_local_rust_derive_paths(&nt.name, &nt.decorators);
         let derives = self.extract_derive_names(&nt.decorators);
         let mut trait_adoptions = self.collect_trait_adoption_infos(&nt.traits, Some(&nt.name), &nt.type_params);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
         // Define a placeholder symbol FIRST so methods can reference the newtype name
-        self.symbols.define(Symbol {
+        let symbol_id = self.symbols.define(Symbol {
             name: nt.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
                 type_params: nt.type_params.iter().map(|tp| tp.name.clone()).collect(),
@@ -1329,16 +1440,19 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        if !self.symbols.is_active_lookup_binding(symbol_id) {
+            return;
+        }
+        self.record_local_rust_derive_paths(&nt.name, &nt.decorators);
 
         // Now collect methods - they can reference the newtype name
         let mut method_overloads = collect_method_overloads(&nt.methods, self, Some(&nt.name), &nt.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
-        let method_aliases = collect_method_aliases(&nt.method_aliases, &mut methods, &mut method_overloads);
+        let method_aliases = collect_method_aliases(&nt.method_aliases, self, &mut methods, &mut method_overloads);
         self.collect_method_partials(&nt.name, &nt.method_partials, &mut methods, &mut method_overloads);
 
         // Update the symbol with the collected methods
-        if let Some(sym_id) = self.symbols.lookup(&nt.name)
-            && let Some(sym) = self.symbols.get_mut(sym_id)
+        if let Some(sym) = self.symbols.get_mut(symbol_id)
             && let SymbolKind::Type(TypeInfo::Newtype(info)) = &mut sym.kind
         {
             info.methods = methods;
@@ -1356,6 +1470,9 @@ impl TypeChecker {
         overloads: &mut HashMap<String, Vec<MethodInfo>>,
     ) {
         for partial in partials {
+            if !self.member_binding_is_active(partial.span) {
+                continue;
+            }
             let target = partial.node.target.as_str();
             let Some(target_info) = methods.get(target).cloned() else {
                 self.errors.push(CompileError::type_error(
@@ -1400,9 +1517,21 @@ impl TypeChecker {
 
     /// Register an enum declaration and define symbols for each variant.
     fn collect_enum(&mut self, en: &EnumDecl, span: Span) {
-        let variants: Vec<_> = en.variants.iter().map(|v| v.node.name.clone()).collect();
-        let variant_fields: HashMap<_, _> = en
+        let active_variants = en
             .variants
+            .iter()
+            .filter(|variant| self.member_binding_is_active(variant.span))
+            .collect::<Vec<_>>();
+        let active_variant_aliases = en
+            .variant_aliases
+            .iter()
+            .filter(|alias| self.member_binding_is_active(alias.span))
+            .collect::<Vec<_>>();
+        let variants = active_variants
+            .iter()
+            .map(|variant| variant.node.name.clone())
+            .collect::<Vec<_>>();
+        let variant_fields: HashMap<_, _> = active_variants
             .iter()
             .map(|variant| {
                 let fields = variant
@@ -1414,17 +1543,32 @@ impl TypeChecker {
                 (variant.node.name.clone(), fields)
             })
             .collect();
-        let variant_aliases: HashMap<_, _> = en
-            .variant_aliases
+        let variant_aliases: HashMap<_, _> = active_variant_aliases
             .iter()
             .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
             .collect();
-        self.record_local_rust_derive_paths(&en.name, &en.decorators);
+        let mut variant_identities = active_variants
+            .iter()
+            .map(|variant| {
+                (
+                    variant.node.name.clone(),
+                    self.symbols.member_declaration_identity(
+                        &variant.node.name,
+                        SemanticSourceTargetKind::Variant,
+                        variant.span,
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        for (alias, target) in &variant_aliases {
+            if let Some(identity) = variant_identities.get(target).cloned() {
+                variant_identities.insert(alias.clone(), identity);
+            }
+        }
         let derives = self.extract_derive_names(&en.decorators);
         let value_enum = en.value_type.as_ref().map(|value_type| ValueEnumInfo {
             value_type: value_enum_backing(value_type.node),
-            values: en
-                .variants
+            values: active_variants
                 .iter()
                 .filter_map(|variant| {
                     variant
@@ -1438,13 +1582,14 @@ impl TypeChecker {
 
         let mut trait_adoptions = self.collect_trait_adoption_infos(&en.traits, Some(&en.name), &en.type_params);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
-        self.symbols.define(Symbol {
+        let symbol_id = self.symbols.define(Symbol {
             name: en.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                 type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                 trait_adoptions,
                 variants: variants.clone(),
+                variant_identities: variant_identities.clone(),
                 variant_fields: variant_fields.clone(),
                 variant_aliases: variant_aliases.clone(),
                 value_enum,
@@ -1455,11 +1600,14 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        if !self.symbols.is_active_lookup_binding(symbol_id) {
+            return;
+        }
+        self.record_local_rust_derive_paths(&en.name, &en.decorators);
 
         let method_overloads = collect_method_overloads(&en.methods, self, Some(&en.name), &en.type_params);
         let methods = collect_methods_from_overloads(&method_overloads);
-        if let Some(sym_id) = self.symbols.lookup(&en.name)
-            && let Some(sym) = self.symbols.get_mut(sym_id)
+        if let Some(sym) = self.symbols.get_mut(symbol_id)
             && let SymbolKind::Type(TypeInfo::Enum(info)) = &mut sym.kind
         {
             info.methods = methods;
@@ -1467,23 +1615,32 @@ impl TypeChecker {
         }
 
         // Also define each variant as a symbol
-        for variant in &en.variants {
+        for variant in active_variants {
             let fields = variant_fields.get(&variant.node.name).cloned().unwrap_or_default();
-            self.symbols.define_preserving_existing_binding(Symbol {
+            let variant_id = self.symbols.define_preserving_existing_binding(Symbol {
                 name: variant.node.name.clone(),
                 kind: SymbolKind::Variant(VariantInfo {
+                    identity: Some(self.symbols.member_declaration_identity(
+                        &variant.node.name,
+                        SemanticSourceTargetKind::Variant,
+                        variant.span,
+                    )),
                     enum_name: en.name.clone(),
                     fields,
                 }),
                 span: variant.span,
                 scope: 0,
             });
+            debug_assert_eq!(
+                self.symbols.identity_of(variant_id),
+                variant_identities.get(&variant.node.name)
+            );
         }
-        for alias in &en.variant_aliases {
+        for alias in active_variant_aliases {
             if let Some(target_variant) = en
                 .variants
                 .iter()
-                .find(|variant| variant.node.name == alias.node.target)
+                .find(|variant| self.member_binding_is_active(variant.span) && variant.node.name == alias.node.target)
             {
                 let fields: Vec<_> = target_variant
                     .node
@@ -1491,25 +1648,27 @@ impl TypeChecker {
                     .iter()
                     .map(|f| self.resolve_type_checked(f))
                     .collect();
-                self.symbols.define_preserving_existing_binding(Symbol {
-                    name: alias.node.name.clone(),
-                    kind: SymbolKind::Variant(VariantInfo {
-                        enum_name: en.name.clone(),
-                        fields,
-                    }),
-                    span: alias.span,
-                    scope: 0,
-                });
+                let target_identity = variant_identities.get(&alias.node.target).cloned();
+                self.symbols.define_alias_preserving_existing_binding(
+                    Symbol {
+                        name: alias.node.name.clone(),
+                        kind: SymbolKind::Variant(VariantInfo {
+                            identity: target_identity.clone(),
+                            enum_name: en.name.clone(),
+                            fields,
+                        }),
+                        span: alias.span,
+                        scope: 0,
+                    },
+                    target_identity,
+                );
             }
         }
     }
 
     /// Register a top-level function declaration.
     fn collect_function(&mut self, func: &FunctionDecl, span: Span) {
-        // Local declaration shadows any imported marker binding with the same name.
-        self.testing_marker_import_bindings.remove(&func.name);
         let existing_module_function_id = self.current_module_function_symbols.get(&func.name).copied();
-        self.local_function_decls.insert(func.name.clone(), func.clone());
         let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
         let type_param_bounds: HashMap<String, Vec<String>> = func
             .type_params
@@ -1541,6 +1700,7 @@ impl TypeChecker {
                                 .map(|type_arg| self.resolve_type_checked(type_arg))
                                 .collect(),
                             module_path: self.trait_bound_module_path(&bound.name),
+                            implementation_type_params: Vec::new(),
                         })
                         .collect(),
                 )
@@ -1563,16 +1723,12 @@ impl TypeChecker {
         let binding = FunctionBindingInfo {
             params: params.clone(),
             return_type: return_type.clone(),
+            identity: Some(self.symbols.module_declaration_identity(
+                &func.name,
+                SemanticSourceTargetKind::Function,
+                span,
+            )),
         };
-        self.type_info
-            .declarations
-            .function_bindings
-            .insert(func.name.clone(), binding.clone());
-        self.type_info
-            .declarations
-            .function_bindings_by_span
-            .insert((span.start, span.end), binding);
-
         let mut info = FunctionInfo {
             params,
             return_type,
@@ -1583,9 +1739,21 @@ impl TypeChecker {
             emitted_name: None,
         };
 
+        let existing_identity = existing_module_function_id
+            .and_then(|existing_id| self.symbols.identity_of(existing_id))
+            .cloned();
         if let Some(existing_id) = existing_module_function_id
             && let Some(existing_symbol) = self.symbols.get_mut(existing_id)
         {
+            self.local_function_decls.insert(func.name.clone(), func.clone());
+            self.type_info
+                .declarations
+                .function_bindings
+                .insert(func.name.clone(), binding.clone());
+            self.type_info
+                .declarations
+                .function_bindings_by_span
+                .insert((span.start, span.end), binding.clone());
             let emitted_name = overloaded_function_emitted_name(&func.name, &info);
             info.emitted_name = Some(emitted_name.clone());
             self.type_info.record_function_emitted_name(span, emitted_name);
@@ -1599,16 +1767,28 @@ impl TypeChecker {
                         FunctionOverloadInfo {
                             info: existing_info.clone(),
                             span: existing_symbol.span,
+                            identity: existing_identity,
                         },
-                        FunctionOverloadInfo { info, span },
+                        FunctionOverloadInfo {
+                            info,
+                            span,
+                            identity: binding.identity.clone(),
+                        },
                     ];
                     self.type_info
                         .record_function_overloads(func.name.clone(), overloads.clone());
                     existing_symbol.kind = SymbolKind::FunctionOverloads(overloads);
+                    // The symbol no longer names one declaration, so its minted identity must go: each overload
+                    // keeps its own span-keyed identity on `function_bindings_by_span`.
+                    self.symbols.clear_identity(existing_id);
                     return;
                 }
                 SymbolKind::FunctionOverloads(overloads) => {
-                    overloads.push(FunctionOverloadInfo { info, span });
+                    overloads.push(FunctionOverloadInfo {
+                        info,
+                        span,
+                        identity: binding.identity.clone(),
+                    });
                     self.type_info
                         .record_function_overloads(func.name.clone(), overloads.clone());
                     return;
@@ -1623,6 +1803,20 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        if !self.symbols.is_active_lookup_binding(symbol_id) {
+            return;
+        }
+        // Local declarations replace marker semantics only when registration accepted them.
+        self.testing_marker_import_bindings.remove(&func.name);
+        self.local_function_decls.insert(func.name.clone(), func.clone());
+        self.type_info
+            .declarations
+            .function_bindings
+            .insert(func.name.clone(), binding.clone());
+        self.type_info
+            .declarations
+            .function_bindings_by_span
+            .insert((span.start, span.end), binding);
         self.current_module_function_symbols
             .insert(func.name.clone(), symbol_id);
     }

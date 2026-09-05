@@ -14,6 +14,7 @@ use crate::frontend::partial_projection::{PartialPresetRef, merge_named_partial_
 use crate::frontend::symbols::{ResolvedType, SymbolKind, TypeInfo};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use incan_core::lang::types::numerics::NumericTypeId;
+use incan_core::numeric_values::{IntegerBounds, integer_bounds};
 use incan_core::strings::{self, StringAccessError};
 use incan_core::{NumericTy, result_numeric_type};
 
@@ -69,41 +70,12 @@ fn const_float(value: &ConstValue) -> Option<f64> {
     }
 }
 
-/// Return the inclusive integer range accepted by an exact-width numeric const annotation.
-fn const_integer_value_bounds(id: NumericTypeId) -> Option<(i128, i128)> {
-    match id {
-        NumericTypeId::I8 => Some((i128::from(i8::MIN), i128::from(i8::MAX))),
-        NumericTypeId::I16 => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
-        NumericTypeId::I32 => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
-        NumericTypeId::I64 => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
-        NumericTypeId::I128 => Some((i128::MIN, i128::MAX)),
-        NumericTypeId::U8 => Some((0, i128::from(u8::MAX))),
-        NumericTypeId::U16 => Some((0, i128::from(u16::MAX))),
-        NumericTypeId::U32 => Some((0, i128::from(u32::MAX))),
-        NumericTypeId::U64 => Some((0, i128::from(u64::MAX))),
-        NumericTypeId::U128 => Some((0, i128::MAX)),
-        NumericTypeId::ISize => Some((isize::MIN as i128, isize::MAX as i128)),
-        NumericTypeId::USize => Some((0, usize::MAX as i128)),
-        NumericTypeId::F32 | NumericTypeId::F64 | NumericTypeId::Bool => None,
-    }
-}
-
-/// Return whether a non-negative integer literal can initialize an exact-width numeric type.
+/// Return whether a non-negative integer literal can initialize a sized numeric type.
 fn unsigned_int_literal_fits_numeric_target(lit: &IntLiteral, id: NumericTypeId) -> bool {
-    match id {
-        NumericTypeId::I8 => lit.magnitude <= i8::MAX as u128,
-        NumericTypeId::I16 => lit.magnitude <= i16::MAX as u128,
-        NumericTypeId::I32 => lit.magnitude <= i32::MAX as u128,
-        NumericTypeId::I64 => lit.magnitude <= i64::MAX as u128,
-        NumericTypeId::I128 => lit.magnitude <= i128::MAX as u128,
-        NumericTypeId::U8 => lit.magnitude <= u8::MAX as u128,
-        NumericTypeId::U16 => lit.magnitude <= u16::MAX as u128,
-        NumericTypeId::U32 => lit.magnitude <= u32::MAX as u128,
-        NumericTypeId::U64 => lit.magnitude <= u64::MAX as u128,
-        NumericTypeId::U128 => true,
-        NumericTypeId::ISize => lit.magnitude <= isize::MAX as u128,
-        NumericTypeId::USize => lit.magnitude <= usize::MAX as u128,
-        NumericTypeId::F32 | NumericTypeId::F64 | NumericTypeId::Bool => false,
+    match integer_bounds(id) {
+        Some(IntegerBounds::Signed { maximum, .. }) => lit.magnitude <= maximum as u128,
+        Some(IntegerBounds::Unsigned { maximum }) => lit.magnitude <= maximum,
+        None => false,
     }
 }
 
@@ -144,19 +116,16 @@ impl TypeChecker {
         if let Some(ann) = &konst.ty {
             let resolved = self.resolve_type_checked(ann);
             let expected = self.freeze_const_annotation(resolved);
-            if self.types_compatible(&result.ty, &expected) {
-                result.ty = expected;
-            } else {
-                match self.const_numeric_value_checked_against_numeric_expected(&result, &expected, konst.value.span) {
-                    Some(true) => result.ty = expected,
-                    Some(false) => {}
-                    None => {
-                        self.errors.push(errors::type_mismatch(
-                            &expected.to_string(),
-                            &result.ty.to_string(),
-                            konst.value.span,
-                        ));
-                    }
+            match self.const_numeric_value_checked_against_numeric_expected(&result, &expected, konst.value.span) {
+                Some(true) => result.ty = expected,
+                Some(false) => {}
+                None if self.types_compatible(&result.ty, &expected) => result.ty = expected,
+                None => {
+                    self.errors.push(errors::type_mismatch(
+                        &expected.to_string(),
+                        &result.ty.to_string(),
+                        konst.value.span,
+                    ));
                 }
             }
         } else if matches!(result.ty, ResolvedType::Unknown) {
@@ -186,32 +155,43 @@ impl TypeChecker {
             if matches!(target, NumericTypeId::F32 | NumericTypeId::F64) {
                 return Some(true);
             }
-            let (min, max) = const_integer_value_bounds(target)?;
-            if i128::from(value) < min || i128::from(value) > max {
-                self.errors.push(CompileError::type_error(
-                    format!("Integer literal {value} does not fit in {expected}; valid range is {min}..={max}"),
-                    span,
-                ));
-                return Some(false);
+            match integer_bounds(target)? {
+                IntegerBounds::Signed { minimum, maximum }
+                    if i128::from(value) < minimum || i128::from(value) > maximum =>
+                {
+                    self.errors.push(CompileError::type_error(
+                        format!(
+                            "Integer literal {value} does not fit in {expected}; valid range is {minimum}..={maximum}"
+                        ),
+                        span,
+                    ));
+                    return Some(false);
+                }
+                IntegerBounds::Unsigned { maximum } if value < 0 || value as u128 > maximum => {
+                    self.errors.push(CompileError::type_error(
+                        format!("Integer literal {value} does not fit in {expected}; valid range is 0..={maximum}"),
+                        span,
+                    ));
+                    return Some(false);
+                }
+                _ => {}
             }
             return Some(true);
         }
 
         let value = result.value.as_ref().and_then(const_float)?;
-        match target {
-            NumericTypeId::F32 => {
-                if value.is_finite() && value.abs() > f64::from(f32::MAX) {
-                    self.errors.push(CompileError::type_error(
-                        format!("Float literal {value} does not fit in {expected}"),
-                        span,
-                    ));
-                    return Some(false);
-                }
-                Some(true)
-            }
-            NumericTypeId::F64 => Some(true),
-            _ => None,
+        let fits = match expected {
+            ResolvedType::Numeric(NumericTypeId::F32) => value.is_finite() && value.abs() <= f64::from(f32::MAX),
+            ResolvedType::Numeric(NumericTypeId::F64) => value.is_finite(),
+            _ => return None,
+        };
+        if !fits {
+            self.errors.push(CompileError::type_error(
+                format!("Constant value {value} does not fit in {expected}"),
+                span,
+            ));
         }
+        Some(fits)
     }
 
     fn eval_const_by_name(&mut self, name: &str, stack: &mut Vec<String>) -> Option<ConstEvalResult> {
@@ -901,6 +881,7 @@ impl TypeChecker {
             | Expr::Field(_, _)
             | Expr::Surface(_)
             | Expr::VocabBlock(_)
+            | Expr::Embedded(_)
             | Expr::Try(_)
             | Expr::Paren(_)
             | Expr::Constructor(_, _)
@@ -988,10 +969,11 @@ impl TypeChecker {
                 continue;
             };
 
-            let Some((canonical_name, field_info)) = Self::resolve_const_model_field(&model.fields, field_name) else {
+            let Some((canonical_name, field_info)) = Self::resolve_const_model_field(&model.fields, &field_name.node)
+            else {
                 self.eval_const_expr(value, None, stack, decl_span);
                 self.errors
-                    .push(errors::missing_field(type_name, field_name, value.span));
+                    .push(errors::missing_field(type_name, &field_name.node, field_name.span));
                 had_error = true;
                 continue;
             };
@@ -1024,10 +1006,10 @@ impl TypeChecker {
                     Some(false) => had_error = true,
                     None => {
                         self.errors.push(errors::field_type_mismatch(
-                            field_name,
+                            &field_name.node,
                             &field_info.ty.to_string(),
                             &field_result.ty.to_string(),
-                            value.span,
+                            field_name.span,
                         ));
                         had_error = true;
                     }

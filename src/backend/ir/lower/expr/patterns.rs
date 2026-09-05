@@ -4,12 +4,13 @@ use super::super::super::TypedExpr;
 use super::super::super::expr::{
     IrCallArg, IrCallArgKind, IrExprKind, MatchArm, MatchArmBinding, Pattern, VarAccess, VarRefKind,
 };
-use super::super::super::types::IrType;
+use super::super::super::types::{IrType, union_member_type_matches};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use super::super::types::union_ir_type;
 use crate::frontend::ast::{self, Spanned};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 struct UnionPatternVariant {
@@ -97,7 +98,7 @@ impl AstLowering {
             for (target_index, target_member) in target_members.iter().enumerate() {
                 let source_index = source_members
                     .iter()
-                    .position(|member| Self::match_union_member_matches(member, target_member))?;
+                    .position(|member| union_member_type_matches(member, target_member))?;
                 variants.push(UnionPatternVariant {
                     source_index,
                     target_index,
@@ -109,7 +110,7 @@ impl AstLowering {
 
         let source_index = source_members
             .iter()
-            .position(|member| Self::match_union_member_matches(member, &target_ty))?;
+            .position(|member| union_member_type_matches(member, &target_ty))?;
         Some(UnionPatternTarget {
             target_ty: source_members[source_index].clone(),
             variants: vec![UnionPatternVariant {
@@ -118,15 +119,6 @@ impl AstLowering {
                 source_ty: source_members[source_index].clone(),
             }],
         })
-    }
-
-    /// Return whether a union member can satisfy a target pattern type.
-    fn match_union_member_matches(member: &IrType, target_ty: &IrType) -> bool {
-        member == target_ty
-            || matches!(
-                (member, target_ty),
-                (IrType::String, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
-            )
     }
 
     /// Return payload types for a constructor pattern when the scrutinee type is known.
@@ -165,7 +157,7 @@ impl AstLowering {
                 }
             }
             ast::Pattern::Constructor(name, args) => {
-                let field_tys = self.constructor_field_types_for_pattern(name, expected_ty, args.len());
+                let field_tys = self.constructor_field_types_for_pattern(&name.node, expected_ty, args.len());
                 for (idx, arg) in args.iter().enumerate() {
                     let field_ty = field_tys.get(idx).cloned().unwrap_or(IrType::Unknown);
                     match arg {
@@ -201,13 +193,13 @@ impl AstLowering {
     /// Remove union members covered by a pattern from the remaining-arm accumulator.
     fn remove_covered_union_members(&self, remaining: &mut Vec<IrType>, pattern: &ast::Pattern, subject_ty: &IrType) {
         match pattern {
-            ast::Pattern::Constructor(name, _) if !name.contains("::") => {
-                if let Some(target) = self.union_pattern_target(subject_ty, name) {
+            ast::Pattern::Constructor(name, _) if !name.node.contains("::") => {
+                if let Some(target) = self.union_pattern_target(subject_ty, &name.node) {
                     remaining.retain(|member| {
                         !target
                             .variants
                             .iter()
-                            .any(|variant| Self::match_union_member_matches(member, &variant.source_ty))
+                            .any(|variant| union_member_type_matches(member, &variant.source_ty))
                     });
                 }
             }
@@ -447,7 +439,46 @@ impl AstLowering {
         let mut lowered_arms = Vec::new();
         let mut remaining_union_members = scrutinee_ty.union_members().map(|members| members.to_vec());
 
-        for a in arms {
+        // The surrounding statement-block counter contains the sum of every textual arm, but only one unguarded arm
+        // executes. Give each arm a counter containing its own reads plus reads after the match. This permits the final
+        // read in every mutually exclusive arm to move the same value without inventing a `Clone` requirement. Guarded
+        // arms stay on the established conservative counter: a guard can read a value, fail, and allow a later arm to
+        // execute. Once all unguarded arms are lowered, restore the counter with the complete syntactic arm total
+        // consumed so following source retains the established straight-line last-use behavior.
+        let arms_are_mutually_exclusive = arms.iter().all(|arm| arm.node.guard.is_none());
+        let arm_read_counts = arms
+            .iter()
+            .map(|arm| self.count_match_arm_ident_reads(&arm.node))
+            .collect::<Vec<_>>();
+        let mut all_arm_reads = HashMap::<String, usize>::new();
+        for counts in &arm_read_counts {
+            for (name, count) in counts {
+                *all_arm_reads.entry(name.clone()).or_default() += count;
+            }
+        }
+        let original_remaining_reads = self.remaining_ident_reads.clone();
+        let mut remaining_reads_after_match = original_remaining_reads.clone();
+        if arms_are_mutually_exclusive {
+            for reads in &mut remaining_reads_after_match {
+                for (name, count) in &all_arm_reads {
+                    if let Some(remaining) = reads.get_mut(name) {
+                        *remaining = remaining.saturating_sub(*count);
+                    }
+                }
+            }
+        }
+
+        for (a, current_arm_reads) in arms.iter().zip(&arm_read_counts) {
+            if arms_are_mutually_exclusive {
+                self.remaining_ident_reads = remaining_reads_after_match.clone();
+                for reads in &mut self.remaining_ident_reads {
+                    for (name, count) in current_arm_reads {
+                        if let Some(remaining) = reads.get_mut(name) {
+                            *remaining += count;
+                        }
+                    }
+                }
+            }
             let narrowed_subject_ty = remaining_union_members
                 .as_ref()
                 .and_then(|remaining| self.match_arm_remainder_type(&a.node.pattern.node, remaining));
@@ -470,8 +501,8 @@ impl AstLowering {
 
             if !capture_bindings.is_empty() {
                 let target = match &a.node.pattern.node {
-                    ast::Pattern::Constructor(name, _) if !name.contains("::") => self
-                        .union_pattern_target(scrutinee_ty, name)
+                    ast::Pattern::Constructor(name, _) if !name.node.contains("::") => self
+                        .union_pattern_target(scrutinee_ty, &name.node)
                         .filter(|target| target.target_ty.is_union()),
                     ast::Pattern::Binding(_) => narrowed_subject_ty
                         .clone()
@@ -482,8 +513,8 @@ impl AstLowering {
                         .filter(IrType::is_union)
                         .and_then(|target_ty| self.union_subset_target(scrutinee_ty, target_ty)),
                     ast::Pattern::Group(inner) => match &inner.node {
-                        ast::Pattern::Constructor(name, _) if !name.contains("::") => self
-                            .union_pattern_target(scrutinee_ty, name)
+                        ast::Pattern::Constructor(name, _) if !name.node.contains("::") => self
+                            .union_pattern_target(scrutinee_ty, &name.node)
                             .filter(|target| target.target_ty.is_union()),
                         ast::Pattern::Binding(_) => narrowed_subject_ty
                             .clone()
@@ -499,7 +530,14 @@ impl AstLowering {
                 };
 
                 if let Some(target) = target {
-                    let arms = self.lower_narrowed_union_capture_arms(a, scrutinee_ty, target, &capture_bindings)?;
+                    let arms = match self.lower_narrowed_union_capture_arms(a, scrutinee_ty, target, &capture_bindings)
+                    {
+                        Ok(arms) => arms,
+                        Err(error) => {
+                            self.remaining_ident_reads = original_remaining_reads;
+                            return Err(error);
+                        }
+                    };
                     if !arms.is_empty() {
                         lowered_arms.extend(arms);
                         if a.node.guard.is_none()
@@ -538,7 +576,13 @@ impl AstLowering {
                 })
             })();
             self.pop_scope();
-            lowered_arms.push(arm_result?);
+            match arm_result {
+                Ok(arm) => lowered_arms.push(arm),
+                Err(error) => {
+                    self.remaining_ident_reads = original_remaining_reads;
+                    return Err(error);
+                }
+            }
 
             if a.node.guard.is_none()
                 && let Some(remaining) = remaining_union_members.as_mut()
@@ -547,6 +591,9 @@ impl AstLowering {
             }
         }
 
+        if arms_are_mutually_exclusive {
+            self.remaining_ident_reads = remaining_reads_after_match;
+        }
         Ok(lowered_arms)
     }
 
@@ -558,9 +605,9 @@ impl AstLowering {
     /// Lower a pattern with enough scrutinee type context to rewrite union type patterns.
     fn lower_pattern_for_expected_type(&mut self, p: &ast::Pattern, expected_ty: &IrType) -> Pattern {
         if let ast::Pattern::Constructor(name, args) = p
-            && !name.contains("::")
+            && !name.node.contains("::")
         {
-            let target_ty = self.lower_type_pattern_name(name);
+            let target_ty = self.lower_type_pattern_name(&name.node);
             let option_wrapped_union = match expected_ty {
                 IrType::Option(inner) if inner.is_union() => Some(inner.as_ref()),
                 _ => None,
@@ -645,7 +692,7 @@ impl AstLowering {
                         ast::PatternArg::Named(field, pat) => {
                             has_named = true;
                             // RFC 021: resolve field alias to canonical name for struct patterns
-                            let canonical = self.resolve_field_alias(name, field);
+                            let canonical = self.resolve_field_alias(&name.node, &field.node);
                             named_fields.push((canonical, self.lower_pattern(&pat.node)));
                         }
                         ast::PatternArg::Positional(pat) => {
@@ -656,7 +703,7 @@ impl AstLowering {
 
                 if has_named {
                     Pattern::Struct {
-                        name: name.clone(),
+                        name: name.node.clone(),
                         fields: named_fields,
                     }
                 } else {
@@ -666,7 +713,7 @@ impl AstLowering {
                     }
                     Pattern::Enum {
                         name: String::new(),
-                        variant: name.clone(),
+                        variant: name.node.clone(),
                         fields,
                     }
                 }

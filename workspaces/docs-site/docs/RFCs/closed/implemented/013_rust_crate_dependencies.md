@@ -9,7 +9,7 @@
     - RFC 015 (project lifecycle + `incan.toml`)
     - RFC 020 (Cargo offline/locked policy)
 - **Issue:** [#72](https://github.com/encero-systems/incan/issues/72)
-- **RFC PR:** —
+- **RFC PR:** [#132](https://github.com/encero-systems/incan/pull/132)
 - **Written against:** v0.1
 - **Shipped in:** v0.2
 

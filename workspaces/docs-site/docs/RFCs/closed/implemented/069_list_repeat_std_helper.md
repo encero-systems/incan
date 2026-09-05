@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 030 (std collections baseline)
 - **Issue:** https://github.com/encero-systems/incan/issues/385
-- **RFC PR:** —
+- **RFC PR:** [#521](https://github.com/encero-systems/incan/pull/521)
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.38
 

@@ -7,12 +7,14 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use incan_core::lang::types::numerics::NumericTypeId;
 use incan_core::lang::{
     callables, conventions,
     traits::{self as core_traits, TraitId},
 };
 
-use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow};
+use super::super::super::conversions::exact_float_value_validation;
+use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow, Visibility};
 use super::super::super::expr::{
     IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern,
 };
@@ -22,6 +24,51 @@ use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
 
 impl<'a> IrEmitter<'a> {
+    /// Return the exact floating parameters that form a public Rust ingress boundary.
+    fn exact_float_ingress_param_names(
+        func: &super::super::super::decl::IrFunction,
+        boundary_is_public: bool,
+    ) -> HashSet<String> {
+        if !boundary_is_public {
+            return HashSet::new();
+        }
+        func.params
+            .iter()
+            .filter(|param| {
+                !param.is_self && matches!(param.ty, IrType::Numeric(NumericTypeId::F32 | NumericTypeId::F64))
+            })
+            .map(|param| param.name.clone())
+            .collect()
+    }
+
+    /// Validate exact floating arguments as soon as control crosses a public generated Rust boundary.
+    fn emit_exact_float_ingress_validations(
+        &self,
+        func: &super::super::super::decl::IrFunction,
+        exact_params: &HashSet<String>,
+        mutated_params: &HashSet<String>,
+        mutable_params_are_borrowed: bool,
+    ) -> Vec<TokenStream> {
+        func.params
+            .iter()
+            .filter(|param| exact_params.contains(&param.name))
+            .map(|param| {
+                let name = Self::rust_ident(&param.name);
+                let is_borrowed = mutable_params_are_borrowed
+                    && !matches!(param.mutability, super::super::super::types::Mutability::OwnedMutable)
+                    && (mutated_params.contains(&param.name)
+                        || matches!(param.mutability, super::super::super::types::Mutability::Mutable));
+                let value = if is_borrowed {
+                    quote! { *#name }
+                } else {
+                    quote! { #name }
+                };
+                let validated = exact_float_value_validation(&param.ty).apply(value);
+                quote! { let _ = #validated; }
+            })
+            .collect()
+    }
+
     /// Emit the native-function bridge owned by a canonical `std.traits.callable.CallableN` declaration.
     ///
     /// The source trait remains the public generic contract. This local blanket implementation makes Rust function
@@ -68,7 +115,7 @@ impl<'a> IrEmitter<'a> {
     /// conservatively capture the receiver borrow even when the hidden adapter owns `self.clone()`, which makes
     /// ordinary chains such as `stream.map(...).filter(...)` borrow a temporary. The capture list names all generic
     /// parameters in scope while deliberately excluding the receiver lifetime.
-    fn emit_method_return_type(
+    pub(in crate::backend::ir::emit) fn emit_method_return_type(
         &self,
         return_type: &IrType,
         method_type_params: &[super::super::super::decl::IrTypeParam],
@@ -171,7 +218,7 @@ impl<'a> IrEmitter<'a> {
                 Self::rewrite_borrowed_param_types_in_expr(object, borrowed);
                 Self::rewrite_borrowed_param_types_in_expr(index, borrowed);
             }
-            AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static(_) => {}
+            AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
         }
     }
 
@@ -374,6 +421,11 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
             }
+            IrExprKind::EmbeddedFragment { holes, .. } => {
+                for hole in holes {
+                    Self::rewrite_borrowed_param_types_in_expr(hole, borrowed);
+                }
+            }
             IrExprKind::Unit
             | IrExprKind::None
             | IrExprKind::Bool(_)
@@ -435,9 +487,10 @@ impl<'a> IrEmitter<'a> {
     pub(in crate::backend::ir::emit) fn emit_borrowed_function_adapter(
         &self,
         func: &super::super::super::decl::IrFunction,
+        adapter_target_name: &str,
         indices: &[usize],
     ) -> Result<Option<TokenStream>, EmitError> {
-        if !self.needs_borrowed_function_adapter(&func.name, indices) {
+        if !self.needs_borrowed_function_adapter(adapter_target_name, indices) {
             return Ok(None);
         }
         if indices.iter().all(|index| {
@@ -448,7 +501,7 @@ impl<'a> IrEmitter<'a> {
         }) {
             return Ok(None);
         }
-        let helper_name = Self::borrowed_function_adapter_name(&func.name, indices);
+        let helper_name = Self::borrowed_function_adapter_name(adapter_target_name, indices);
         let Some(helper) = Self::borrowed_function_clone(func, helper_name, indices) else {
             return Ok(None);
         };
@@ -524,6 +577,32 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Preserve the Rust-facing name that existed before canonical Incan symbol projection.
+    ///
+    /// The alias is emitted only at a Rust boundary: public/crate-visible functions and private functions called by
+    /// compiler-generated harness code. It introduces no second linker symbol, while ordinary Incan-to-Incan calls
+    /// continue to use the compiler-owned canonical projection.
+    fn rust_facing_function_alias(
+        &self,
+        func: &super::super::super::decl::IrFunction,
+        projected_name: &proc_macro2::Ident,
+    ) -> Option<TokenStream> {
+        if func.name == conventions::ENTRYPOINT_NAME
+            || self.function_registry.canonical_identity(&func.name).is_none()
+            || (matches!(func.visibility, Visibility::Private) && !self.externally_reachable_items.contains(&func.name))
+        {
+            return None;
+        }
+        let alias = Self::rust_ident(&func.name);
+        if alias == *projected_name {
+            return None;
+        }
+        let visibility = self.emit_visibility(&func.visibility);
+        Some(quote! {
+            #visibility use #projected_name as #alias;
+        })
+    }
+
     /// Emit a top-level generated Rust function, including entrypoint handling and scoped lint metadata.
     pub(in crate::backend::ir::emit) fn emit_function(
         &self,
@@ -534,10 +613,17 @@ impl<'a> IrEmitter<'a> {
             return self.emit_extern_function(func);
         }
 
-        let name = Self::rust_ident(&func.name);
         let is_main = func.name == conventions::ENTRYPOINT_NAME;
+        let has_recoverable_projection = self.function_registry.canonical_identity(&func.name).is_some();
+        let name = self.rust_function_ident(&func.name);
+        let rust_facing_alias = self.rust_facing_function_alias(func, &name);
         let mutated_params = self.collect_mutated_params(func);
-        let used_names = Self::collect_function_used_names(func);
+        let exact_ingress_params =
+            Self::exact_float_ingress_param_names(func, !is_main && matches!(func.visibility, Visibility::Public));
+        let mut used_names = Self::collect_function_used_names(func);
+        used_names.extend(exact_ingress_params.iter().cloned());
+        let exact_ingress_stmts =
+            self.emit_exact_float_ingress_validations(func, &exact_ingress_params, &mutated_params, true);
 
         let vis = if is_main {
             quote! {}
@@ -626,6 +712,15 @@ impl<'a> IrEmitter<'a> {
         let generics = self.emit_type_params(&func.type_params);
 
         if is_main && func.is_async {
+            let process_entry = has_recoverable_projection.then(|| {
+                quote! {
+                    // Rust requires the process boundary to have this fixed name. It is a host shim, not an Incan-origin
+                    // declaration; the source body remains in the recoverable `incan-v1` function above.
+                    fn main() {
+                        #name();
+                    }
+                }
+            });
             return Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
@@ -634,6 +729,7 @@ impl<'a> IrEmitter<'a> {
                     #static_init_stmt
                     #panic_hook_stmt
                     #zen_stmt
+                    #(#exact_ingress_stmts)*
                     if let Err(error) = incan_stdlib::r#async::runtime::block_on(async move {
                         #(#body_stmts)*
                     }) {
@@ -641,6 +737,9 @@ impl<'a> IrEmitter<'a> {
                         std::process::exit(1);
                     }
                 }
+
+                #process_entry
+                #rust_facing_alias
             });
         }
 
@@ -652,10 +751,12 @@ impl<'a> IrEmitter<'a> {
                 #(#rust_attrs)*
                 #vis fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
+                    #(#exact_ingress_stmts)*
                     incan_stdlib::iter::Generator::spawn(move |__incan_yield| {
                         #(#body_stmts)*
                     })
                 }
+                #rust_facing_alias
             });
         }
 
@@ -665,6 +766,14 @@ impl<'a> IrEmitter<'a> {
         // non-Result entrypoint annotations continue to use the unit process entrypoint convention.
         let main_returns_result = is_main && matches!(func.return_type, IrType::Result(_, _));
         if ret_ty_is_unit || (is_main && !main_returns_result) {
+            let process_entry = (is_main && has_recoverable_projection).then(|| {
+                quote! {
+                    // Fixed-name host shim; source provenance belongs to the recoverable function above.
+                    fn main() {
+                        #name();
+                    }
+                }
+            });
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
@@ -673,19 +782,35 @@ impl<'a> IrEmitter<'a> {
                     #static_init_stmt
                     #panic_hook_stmt
                     #zen_stmt
+                    #(#exact_ingress_stmts)*
                     #(#body_stmts)*
                 }
+                #process_entry
+                #rust_facing_alias
             })
         } else {
             let ret_ty = self.emit_type(&func.return_type);
+            let process_entry = (is_main && has_recoverable_projection).then(|| {
+                quote! {
+                    // Fixed-name host shim; source provenance belongs to the recoverable function above.
+                    fn main() -> #ret_ty {
+                        #name()
+                    }
+                }
+            });
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
+                    #panic_hook_stmt
+                    #zen_stmt
+                    #(#exact_ingress_stmts)*
                     #(#body_stmts)*
                 }
+                #process_entry
+                #rust_facing_alias
             })
         }
     }
@@ -707,8 +832,21 @@ impl<'a> IrEmitter<'a> {
             )));
         };
 
-        let name = Self::rust_ident(&func.name);
+        let name = self.rust_function_ident(&func.name);
+        let rust_facing_alias = self.rust_facing_function_alias(func, &name);
+        // The wrapper is Incan-origin and therefore projected. Its delegated symbol remains host-owned Rust and must
+        // use the compiler-carried source spelling rather than inheriting or decoding the Incan projection.
+        let backing_name = Self::rust_ident(
+            func.rust_extern_name
+                .as_deref()
+                .or_else(|| self.function_registry.source_name(&func.name))
+                .unwrap_or(&func.name),
+        );
         let vis = self.emit_visibility(&func.visibility);
+        let exact_ingress_params =
+            Self::exact_float_ingress_param_names(func, matches!(func.visibility, Visibility::Public));
+        let exact_ingress_stmts =
+            self.emit_exact_float_ingress_validations(func, &exact_ingress_params, &HashSet::new(), false);
 
         // Build parameter list (same as normal functions, but simpler: no mutation tracking needed).
         let params: Vec<TokenStream> = func
@@ -741,7 +879,7 @@ impl<'a> IrEmitter<'a> {
                 quote! { #ident }
             })
             .collect();
-        call_path_tokens.push(quote! { #name });
+        call_path_tokens.push(quote! { #backing_name });
         let call_path = join_path_tokens(&call_path_tokens);
 
         // Build argument list (forward all params by name).
@@ -780,6 +918,7 @@ impl<'a> IrEmitter<'a> {
                     #vis #async_kw fn #name #generics (#(#unused_params),*) {
                         incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                     }
+                    #rust_facing_alias
                 });
             }
 
@@ -790,6 +929,7 @@ impl<'a> IrEmitter<'a> {
                 #vis #async_kw fn #name #generics (#(#unused_params),*) -> #ret_ty {
                     incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                 }
+                #rust_facing_alias
             });
         }
 
@@ -816,6 +956,7 @@ impl<'a> IrEmitter<'a> {
                 .collect();
             quote! { :: < #(#tp_idents),* > }
         };
+        let delegated_call = quote! { #call_path #turbofish (#(#args),*) #await_kw };
 
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
@@ -824,18 +965,23 @@ impl<'a> IrEmitter<'a> {
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
-                    #call_path #turbofish (#(#args),*) #await_kw
+                    #(#exact_ingress_stmts)*
+                    #delegated_call
                 }
+                #rust_facing_alias
             })
         } else {
             let ret_ty = self.emit_type(&func.return_type);
+            let validated_return = exact_float_value_validation(&func.return_type).apply(delegated_call);
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
-                    #call_path #turbofish (#(#args),*) #await_kw
+                    #(#exact_ingress_stmts)*
+                    #validated_return
                 }
+                #rust_facing_alias
             })
         }
     }
@@ -853,7 +999,12 @@ impl<'a> IrEmitter<'a> {
         let name = Self::rust_ident(&func.name);
         let vis = self.emit_visibility(&func.visibility);
         let mutated_params = self.collect_mutated_params(func);
-        let used_names = Self::collect_function_used_names(func);
+        let exact_ingress_params =
+            Self::exact_float_ingress_param_names(func, matches!(func.visibility, Visibility::Public));
+        let mut used_names = Self::collect_function_used_names(func);
+        used_names.extend(exact_ingress_params.iter().cloned());
+        let exact_ingress_stmts =
+            self.emit_exact_float_ingress_validations(func, &exact_ingress_params, &mutated_params, true);
 
         let params: Vec<TokenStream> = func
             .params
@@ -928,6 +1079,7 @@ impl<'a> IrEmitter<'a> {
             #(#rust_attrs)*
             #vis #async_kw fn #name #generics (#(#params),*) #ret {
                 #static_init_stmt
+                #(#exact_ingress_stmts)*
                 #(#body_stmts)*
             }
         })
@@ -946,8 +1098,13 @@ impl<'a> IrEmitter<'a> {
         };
 
         let name = Self::rust_ident(&func.name);
+        let backing_name = Self::rust_ident(func.rust_extern_name.as_deref().unwrap_or(&func.name));
         let vis = self.emit_visibility(&func.visibility);
         let mutated_params = self.collect_mutated_params(func);
+        let exact_ingress_params =
+            Self::exact_float_ingress_param_names(func, matches!(func.visibility, Visibility::Public));
+        let exact_ingress_stmts =
+            self.emit_exact_float_ingress_validations(func, &exact_ingress_params, &mutated_params, true);
 
         let params: Vec<TokenStream> = func
             .params
@@ -989,7 +1146,7 @@ impl<'a> IrEmitter<'a> {
                 quote! { #ident }
             })
             .collect();
-        call_path_tokens.push(quote! { #name });
+        call_path_tokens.push(quote! { #backing_name });
         let call_path = join_path_tokens(&call_path_tokens);
 
         // Forward all params, including `self`.
@@ -1035,6 +1192,7 @@ impl<'a> IrEmitter<'a> {
                 .collect();
             quote! { :: < #(#tp_idents),* > }
         };
+        let delegated_call = quote! { #call_path #turbofish (#(#args),*) #await_kw };
 
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
@@ -1043,17 +1201,20 @@ impl<'a> IrEmitter<'a> {
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
-                    #call_path #turbofish (#(#args),*) #await_kw
+                    #(#exact_ingress_stmts)*
+                    #delegated_call
                 }
             })
         } else {
             let ret_ty = self.emit_type(&func.return_type);
+            let validated_return = exact_float_value_validation(&func.return_type).apply(delegated_call);
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
-                    #call_path #turbofish (#(#args),*) #await_kw
+                    #(#exact_ingress_stmts)*
+                    #validated_return
                 }
             })
         }
@@ -1139,7 +1300,11 @@ impl<'a> IrEmitter<'a> {
         extra_where_bound: Option<TokenStream>,
     ) -> Result<TokenStream, EmitError> {
         let name = Self::rust_ident(&func.name);
-        let used_names = Self::collect_function_used_names(func);
+        let exact_ingress_params = Self::exact_float_ingress_param_names(func, !func.body.is_empty());
+        let mut used_names = Self::collect_function_used_names(func);
+        used_names.extend(exact_ingress_params.iter().cloned());
+        let exact_ingress_stmts =
+            self.emit_exact_float_ingress_validations(func, &exact_ingress_params, &HashSet::new(), false);
 
         let params: Vec<TokenStream> = func
             .params
@@ -1208,6 +1373,7 @@ impl<'a> IrEmitter<'a> {
                 #(#doc_attrs)*
                 #(#lint_allows)*
                 fn #name #generics (#(#params),*) #ret #where_clause {
+                    #(#exact_ingress_stmts)*
                     #(#body_stmts)*
                 }
             })
@@ -1420,7 +1586,7 @@ impl<'a> IrEmitter<'a> {
             AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
-            AssignTarget::Static(_) => {}
+            AssignTarget::Static { .. } => {}
             AssignTarget::Field { object, .. } => {
                 Self::collect_expr_used_names(object, param_names, shadowed_names, used_names);
             }
@@ -1495,7 +1661,9 @@ impl<'a> IrEmitter<'a> {
         used_names: &mut HashSet<String>,
     ) {
         match &expr.kind {
-            IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+            IrExprKind::Var { name, .. }
+            | IrExprKind::StaticRead { name, .. }
+            | IrExprKind::StaticBinding { name, .. } => {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
             IrExprKind::AssociatedFunction { .. } | IrExprKind::FunctionItem { .. } => {}
@@ -1697,6 +1865,11 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
             }
+            IrExprKind::EmbeddedFragment { holes, .. } => {
+                for hole in holes {
+                    Self::collect_expr_used_names(hole, param_names, shadowed_names, used_names);
+                }
+            }
             IrExprKind::Unit
             | IrExprKind::None
             | IrExprKind::Bool(_)
@@ -1816,6 +1989,7 @@ mod tests {
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         };

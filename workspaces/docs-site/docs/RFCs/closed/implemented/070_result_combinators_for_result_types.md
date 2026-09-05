@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 000 (core error handling and `Result` model)
 - **Issue:** https://github.com/encero-systems/incan/issues/386
-- **RFC PR:** —
+- **RFC PR:** [#519](https://github.com/encero-systems/incan/pull/519)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

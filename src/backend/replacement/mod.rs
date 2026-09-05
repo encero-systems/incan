@@ -7,13 +7,13 @@
 //! recursive tuple/list values, fully supplied source-local plain-model values, and exact source-local RFC 032
 //! value-enum members followed by their generated scalar `.value()` extraction. It admits one numeric tuple or
 //! canonical plain-model field projection and one integer list projection or assignment;
-//! builtin iteration remains limited to `list[tuple[scalar, scalar]]`. The selected entrypoint must produce a scalar
-//! observable, although an admitted sibling may return a structural intermediate to its direct caller. The executor
-//! also consumes the retained callable vocabulary directly: captured local closures, partial presets,
-//! source-evaluable defaults, identity-selected local or same-module named calls, generator expressions and
-//! generator functions, and their bounded lazy `map`/`filter` adapters. Packages, Rust interop, unsupported
-//! callable/default forms, general destructuring, and other projections remain visible refusals. Its enclosing
-//! declaration snapshot retains a deferred generator's shape, but the frame executes and adds execution-frame
+//! builtin iteration admits structural lists, canonical global list enumeration, and list-pair Zip. The selected
+//! entrypoint must produce a scalar observable, although an admitted sibling may return a structural intermediate to
+//! its direct caller. The executor also consumes the retained callable vocabulary directly: captured local closures,
+//! partial presets, source-evaluable defaults, identity-selected local or same-module named calls, generator
+//! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Packages, Rust interop,
+//! unsupported callable/default forms, general destructuring, and other projections remain visible refusals. Its
+//! enclosing declaration snapshot retains a deferred generator's shape, but the frame executes and adds execution-frame
 //! evidence only when collection polls it; no path falls back to generated Rust.
 //!
 //! One checked provider-service operation also executes directly, from the already-lowered
@@ -22,7 +22,14 @@
 //! this module supplies it with evaluated operands and refuses an unresolved, inactive, or unauthorized operation
 //! at the original source span.
 
+mod execution_preflight;
+pub mod hashed;
+mod list_iteration;
+pub mod program_io;
 pub mod provider;
+pub mod source_profile;
+
+pub use program_io::{ProgramIo, ProgramIoError, ProgramOutput};
 
 use std::{
     cell::RefCell,
@@ -32,26 +39,32 @@ use std::{
 
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::{
+    errors::IncanError,
     lang::surface::constructors::{ConstructorId, as_str as constructor_name},
+    lang::surface::iterator_methods::{self, IteratorMethodId},
     lang::types::collections::{self, CollectionTypeId},
+    lang::types::numerics::{self, NumericTypeId},
+    numeric_strings::{parse_float_string, parse_int_string},
+    numeric_values::{IntegerBounds, decimal_value_fits, format_decimal_value, integer_bounds},
     python_floor_div_i64, python_mod_i64,
 };
 use incan_semantics_core::body_ir::{
     AggregateKind, ArgumentBinding, ArgumentElement, AssertionKind, BinOp, Body, BodyIrModule, CallableParam,
     CallableParamDefault, CallableTarget, Callee, ClosureBody, Constant, ConstructorTarget, DefaultComputation,
-    FieldlessEnumDeclaration, FieldlessEnumVariantDeclaration, FieldlessEnumVariantTarget, FormatPart, FormatStyle,
-    GeneratorBody, HelperOp, IterProtocol, LocalCallableTarget, LocalId, LocalOrigin, MatchArm, NamedCallableTarget,
+    DictEntry, FieldlessEnumDeclaration, FieldlessEnumVariantDeclaration, FieldlessEnumVariantTarget, FormatPart,
+    FormatStyle, GeneratorBody, HelperOp, IterProtocol, LocalCallableTarget, LocalId, MatchArm, NamedCallableTarget,
     NominalDeclaration, NominalPatternTarget, Operand, OwnershipFact, Pattern, PatternBinding, Place, PlaceElem,
-    ProviderActivationState, ProviderOperationPlan, ResultVariant, ResultVariantKind, Rvalue, ScopeId, Statement,
-    StatementKind, TryErrorRouting, UnOp, ValueEnumBacking, ValueEnumDeclaration, ValueEnumVariantDeclaration,
+    ProviderActivationState, ProviderOperationPlan, ResultVariant, ResultVariantKind, Rvalue, Statement, StatementKind,
+    TryErrorRouting, TypedNumericConstant, UnOp, ValueEnumBacking, ValueEnumDeclaration, ValueEnumVariantDeclaration,
     ValueEnumVariantTarget,
 };
 use incan_semantics_core::{
-    AbiV0RuntimeRequirement, CompilerNodeId, CompilerNodeKind, HirSourceSpan, IncanPrimitiveType, IncanType,
-    SemanticSourceTargetKind,
+    AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, HirSourceSpan, IncanPrimitiveType,
+    IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, module_identity_for_path,
 };
 
 use crate::backend::selection::digest_output;
+use hashed::{ReplacementDict, ReplacementSet};
 use provider::{ProviderExecutionRecord, ProviderInputValue, ProviderRuntime, canonical_provider_execution_summary};
 
 /// Bounded instruction count for one replacement execution.
@@ -70,8 +83,10 @@ pub enum ReplacementValue {
     Bool(bool),
     /// An owned Incan `str` value.
     Str(String),
-    /// An Incan floating-point literal, retained so unsupported float operations refuse honestly.
-    Float(String),
+    /// An ordinary Incan binary float, normalized to the `f64` carrier the Rust-emission path uses.
+    Float(f64),
+    /// A compiler-typed exact numeric or decimal value whose source type is part of its runtime identity.
+    Numeric(ReplacementNumericValue),
     /// An Incan `None`/unit value.
     Unit,
     /// A normalized runtime range iterator for the selected `range` source-spelling control-flow case.
@@ -81,8 +96,14 @@ pub enum ReplacementValue {
         elements: Vec<ReplacementValue>,
         next: usize,
     },
+    /// A canonical global Zip over two checked structural lists, with private left-to-right polling state.
+    Zip(Box<ReplacementZip>),
     /// A source-local structural tuple whose elements remain direct replacement values.
     Tuple(Vec<ReplacementValue>),
+    /// An immutable hashed set; operand reads share its table rather than copying it before every probe.
+    Set(Rc<ReplacementSet>),
+    /// An immutable hashed dict; values are retained, while membership consults only scalar keys.
+    Dict(Rc<ReplacementDict>),
     /// A source-local plain-model instance whose declaration identity and canonical field layout were verified.
     ///
     /// This is neither a generic object nor a name-based map. Construction resolves `direct_declaration_id` against
@@ -145,13 +166,342 @@ pub enum ReplacementValue {
     Adapter(Box<ReplacementAdapter>),
     /// Values materialized by an admitted lazy generator consumer such as `.collect()`.
     ///
-    /// This is deliberately distinct from [`Self::List`]: the latter remains the existing scalar-pair collection
-    /// profile, while this variant makes the narrow generator consumer explicit and lets its scalar results be
-    /// indexed without admitting general list execution.
+    /// This is deliberately distinct from [`Self::List`]: the latter carries checked structural elements, while
+    /// this variant preserves the generator consumer's separate admission and indexing contract.
     CollectedGenerator {
         elements: Vec<ReplacementValue>,
         next: usize,
     },
+}
+
+/// Exact numeric payloads admitted by replacement execution.
+///
+/// The signed/unsigned forms carry a canonical registry id so source aliases normalize once in the compiler. Direct
+/// API callers may construct this enum, so entrypoint validation rechecks the id family and range before execution.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReplacementNumericValue {
+    /// A signed integer with its canonical signed registry identity and a value inside that identity's range.
+    Signed {
+        /// Canonical signed integer kind; unsigned, float, and bool ids are malformed here.
+        kind: NumericTypeId,
+        /// Exact signed payload, constrained to `kind`'s inclusive bounds.
+        value: i128,
+    },
+    /// An unsigned integer with its canonical unsigned registry identity and a value inside that identity's range.
+    Unsigned {
+        /// Canonical unsigned integer kind; signed, float, and bool ids are malformed here.
+        kind: NumericTypeId,
+        /// Exact unsigned payload, constrained to zero through `kind`'s inclusive maximum.
+        value: u128,
+    },
+    /// A finite IEEE-754 binary32 value; non-finite direct carriers are malformed.
+    F32(f32),
+    /// A finite IEEE-754 binary64 value; non-finite direct carriers are malformed.
+    F64(f64),
+    /// A checked fixed-scale decimal retaining both its declared type and written fractional width.
+    Decimal {
+        /// Declared decimal precision in the supported range `1..=38`.
+        precision: u8,
+        /// Declared maximum fractional scale, no greater than `precision`.
+        scale: u8,
+        /// Signed literal digits with the decimal point removed.
+        coefficient: i128,
+        /// Fractional digits written in the source value, no greater than `scale`.
+        literal_scale: u8,
+    },
+}
+
+impl ReplacementNumericValue {
+    /// Canonical checked type spelling retained for diagnostics and typed result transport.
+    #[must_use]
+    pub fn type_name(&self) -> String {
+        match self {
+            Self::Signed { kind, .. } | Self::Unsigned { kind, .. } => numerics::as_str(*kind).to_string(),
+            Self::F32(_) => "f32".to_string(),
+            Self::F64(_) => "f64".to_string(),
+            Self::Decimal { precision, scale, .. } => format!("decimal[{precision}, {scale}]"),
+        }
+    }
+
+    /// Native Display spelling for source output and scalar `str` conversion.
+    #[must_use]
+    pub fn observable_text(&self) -> String {
+        match self {
+            Self::Signed { value, .. } => value.to_string(),
+            Self::Unsigned { value, .. } => value.to_string(),
+            Self::F32(value) => value.to_string(),
+            Self::F64(value) => value.to_string(),
+            Self::Decimal {
+                coefficient,
+                literal_scale,
+                ..
+            } => format_decimal_value(*coefficient, *literal_scale),
+        }
+    }
+
+    /// Typed payload used in receipt identity independently from source-observable Display.
+    pub(crate) fn receipt_identity_text(&self) -> String {
+        match self {
+            Self::Signed { kind, value } => format!("{}:signed:{value}", numerics::as_str(*kind)),
+            Self::Unsigned { kind, value } => format!("{}:unsigned:{value}", numerics::as_str(*kind)),
+            Self::F32(value) => format!("f32:bits:{:08x}", value.to_bits()),
+            Self::F64(value) => format!("f64:bits:{:016x}", value.to_bits()),
+            Self::Decimal {
+                precision,
+                scale,
+                coefficient,
+                literal_scale,
+            } => format!(
+                "decimal[{precision},{scale}]:coefficient={}:literal_scale={}",
+                coefficient, literal_scale
+            ),
+        }
+    }
+
+    /// Recheck the public carrier against its compiler-owned family and declared range.
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::Signed { kind, value } => {
+                matches!(
+                    integer_bounds(*kind),
+                    Some(IntegerBounds::Signed { minimum, maximum }) if *value >= minimum && *value <= maximum
+                )
+            }
+            Self::Unsigned { kind, value } => {
+                matches!(integer_bounds(*kind), Some(IntegerBounds::Unsigned { maximum }) if *value <= maximum)
+            }
+            Self::F32(value) => value.is_finite(),
+            Self::F64(value) => value.is_finite(),
+            Self::Decimal {
+                precision,
+                scale,
+                coefficient,
+                literal_scale,
+            } => decimal_value_fits(*precision, *scale, *coefficient, *literal_scale),
+        }
+    }
+}
+
+/// Validate a direct or lowered typed-numeric carrier against its canonical family and target range.
+fn validate_numeric_value(
+    value: &ReplacementNumericValue,
+    span: HirSourceSpan,
+) -> Result<(), ReplacementExecutionError> {
+    if value.is_valid() {
+        Ok(())
+    } else {
+        Err(unsupported(
+            format!("malformed typed numeric carrier for `{}`", value.type_name()),
+            span,
+        ))
+    }
+}
+
+/// Return whether one typed carrier exactly satisfies a checked semantic type.
+fn numeric_value_matches_type(value: &ReplacementNumericValue, ty: &IncanType) -> bool {
+    match (value, ty) {
+        (
+            ReplacementNumericValue::Signed { kind: actual, .. }
+            | ReplacementNumericValue::Unsigned { kind: actual, .. },
+            IncanType::Primitive(IncanPrimitiveType::Numeric(expected)),
+        ) => actual == expected,
+        (ReplacementNumericValue::F32(_), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32)))
+        | (ReplacementNumericValue::F64(_), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F64))) => {
+            true
+        }
+        (
+            ReplacementNumericValue::Decimal {
+                precision: actual_precision,
+                scale: actual_scale,
+                ..
+            },
+            IncanType::Decimal {
+                precision: expected_precision,
+                scale: expected_scale,
+            },
+        ) => actual_precision == expected_precision && actual_scale == expected_scale,
+        _ => false,
+    }
+}
+
+/// Apply the typechecker's lossless numeric-widening contract at a Body-IR value boundary.
+///
+/// The target type decides the resulting carrier. In particular, widening `f32` to explicit `f64` produces an
+/// `F64` carrier, while widening it to ordinary `float` produces the ordinary `Float` carrier. Keeping the source
+/// tag after a checked widening would make later output and receipt evidence describe the wrong program type.
+fn coerce_value_to_checked_type(
+    value: ReplacementValue,
+    target: &IncanType,
+    span: HirSourceSpan,
+) -> Result<ReplacementValue, ReplacementExecutionError> {
+    let source_is_numeric = replacement_numeric_type_id(&value).is_some()
+        || matches!(
+            &value,
+            ReplacementValue::Numeric(ReplacementNumericValue::Decimal { .. })
+        );
+    let target_is_numeric = checked_numeric_type_id(target).is_some() || matches!(target, IncanType::Decimal { .. });
+    // Some normalized Body-IR temporaries intentionally carry task/generator frames in a slot whose source-level
+    // type names the value eventually produced by that frame. Numeric coercion applies only at an actual
+    // numeric-to-numeric boundary; nonnumeric internal carriers keep their established runtime representation.
+    if !source_is_numeric || !target_is_numeric {
+        return Ok(value);
+    }
+
+    if let (ReplacementValue::Numeric(decimal @ ReplacementNumericValue::Decimal { .. }), IncanType::Decimal { .. }) =
+        (&value, target)
+        && numeric_value_matches_type(decimal, target)
+    {
+        return Ok(value);
+    }
+
+    let Some(source) = replacement_numeric_type_id(&value) else {
+        return Err(numeric_type_mismatch(&value, target, span));
+    };
+    let Some(target_id) = checked_numeric_type_id(target) else {
+        return Err(numeric_type_mismatch(&value, target, span));
+    };
+    if !incan_core::numeric_values::numeric_type_losslessly_widens_to(source, target_id) {
+        return Err(numeric_type_mismatch(&value, target, span));
+    }
+
+    let widened = widen_numeric_carrier(value, target_id).ok_or_else(|| {
+        unsupported(
+            format!(
+                "typed numeric carrier could not realize checked lossless widening from `{}` to `{}`",
+                numerics::as_str(source),
+                target
+            ),
+            span,
+        )
+    })?;
+    if matches!(target, IncanType::Primitive(IncanPrimitiveType::Numeric(_))) {
+        match &widened {
+            ReplacementNumericValue::F32(value) if !value.is_finite() => {
+                return Err(runtime_failure(
+                    IncanError::non_finite_exact_float("f32").to_string(),
+                    span,
+                ));
+            }
+            ReplacementNumericValue::F64(value) if !value.is_finite() => {
+                return Err(runtime_failure(
+                    IncanError::non_finite_exact_float("f64").to_string(),
+                    span,
+                ));
+            }
+            _ => validate_numeric_value(&widened, span)?,
+        }
+    }
+    match target {
+        IncanType::Primitive(IncanPrimitiveType::Int) => match widened {
+            ReplacementNumericValue::Signed { value, .. } => i64::try_from(value)
+                .map(ReplacementValue::Int)
+                .map_err(|_| unsupported("lossless widening produced an out-of-range ordinary int", span)),
+            _ => Err(unsupported(
+                "lossless widening produced a non-integer ordinary int",
+                span,
+            )),
+        },
+        IncanType::Primitive(IncanPrimitiveType::Float) => match widened {
+            ReplacementNumericValue::F64(value) => Ok(ReplacementValue::Float(value)),
+            _ => Err(unsupported("lossless widening produced a non-f64 ordinary float", span)),
+        },
+        IncanType::Primitive(IncanPrimitiveType::Numeric(_)) => Ok(ReplacementValue::Numeric(widened)),
+        _ => Err(numeric_type_mismatch(&ReplacementValue::Numeric(widened), target, span)),
+    }
+}
+
+/// Build the canonical source-span refusal for a runtime carrier that contradicts its checked numeric destination.
+fn numeric_type_mismatch(
+    value: &ReplacementValue,
+    target: &IncanType,
+    span: HirSourceSpan,
+) -> ReplacementExecutionError {
+    unsupported(
+        format!(
+            "{} carrier contradicts checked numeric destination type `{target}`",
+            value_kind(value)
+        ),
+        span,
+    )
+}
+
+/// Project a runtime binary-numeric carrier to its canonical compiler-owned numeric identity.
+fn replacement_numeric_type_id(value: &ReplacementValue) -> Option<NumericTypeId> {
+    match value {
+        ReplacementValue::Int(_) => Some(NumericTypeId::I64),
+        ReplacementValue::Float(_) => Some(NumericTypeId::F64),
+        ReplacementValue::Numeric(ReplacementNumericValue::Signed { kind, .. })
+        | ReplacementValue::Numeric(ReplacementNumericValue::Unsigned { kind, .. }) => Some(*kind),
+        ReplacementValue::Numeric(ReplacementNumericValue::F32(_)) => Some(NumericTypeId::F32),
+        ReplacementValue::Numeric(ReplacementNumericValue::F64(_)) => Some(NumericTypeId::F64),
+        _ => None,
+    }
+}
+
+/// Project a checked ordinary or exact binary-numeric type to its canonical numeric identity.
+fn checked_numeric_type_id(ty: &IncanType) -> Option<NumericTypeId> {
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Int) => Some(NumericTypeId::I64),
+        IncanType::Primitive(IncanPrimitiveType::Float) => Some(NumericTypeId::F64),
+        IncanType::Primitive(IncanPrimitiveType::Numeric(kind)) if *kind != NumericTypeId::Bool => Some(*kind),
+        _ => None,
+    }
+}
+
+/// Materialize the target carrier after the typechecker has approved one lossless numeric widening.
+fn widen_numeric_carrier(value: ReplacementValue, target: NumericTypeId) -> Option<ReplacementNumericValue> {
+    match target {
+        NumericTypeId::I8
+        | NumericTypeId::I16
+        | NumericTypeId::I32
+        | NumericTypeId::I64
+        | NumericTypeId::I128
+        | NumericTypeId::ISize => {
+            let value = match value {
+                ReplacementValue::Int(value) => i128::from(value),
+                ReplacementValue::Numeric(ReplacementNumericValue::Signed { value, .. }) => value,
+                ReplacementValue::Numeric(ReplacementNumericValue::Unsigned { value, .. }) => {
+                    i128::try_from(value).ok()?
+                }
+                _ => return None,
+            };
+            Some(ReplacementNumericValue::Signed { kind: target, value })
+        }
+        NumericTypeId::U8
+        | NumericTypeId::U16
+        | NumericTypeId::U32
+        | NumericTypeId::U64
+        | NumericTypeId::U128
+        | NumericTypeId::USize => match value {
+            ReplacementValue::Numeric(ReplacementNumericValue::Unsigned { value, .. }) => {
+                Some(ReplacementNumericValue::Unsigned { kind: target, value })
+            }
+            _ => None,
+        },
+        NumericTypeId::F32 => match value {
+            ReplacementValue::Numeric(ReplacementNumericValue::F32(value)) => Some(ReplacementNumericValue::F32(value)),
+            _ => None,
+        },
+        NumericTypeId::F64 => match value {
+            ReplacementValue::Float(value) => Some(ReplacementNumericValue::F64(value)),
+            ReplacementValue::Numeric(ReplacementNumericValue::F32(value)) => {
+                Some(ReplacementNumericValue::F64(f64::from(value)))
+            }
+            ReplacementValue::Numeric(ReplacementNumericValue::F64(value)) => Some(ReplacementNumericValue::F64(value)),
+            _ => None,
+        },
+        NumericTypeId::Bool => None,
+    }
+}
+
+/// Private list cursors for one compiler-selected Zip invocation.
+///
+/// Construction evaluates both source operands once in written order. Polling then advances the left list before
+/// the right and returns no pair as soon as either is exhausted; this carrier grants no general iterator admission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplacementZip {
+    left: ReplacementValue,
+    right: ReplacementValue,
 }
 
 /// A stored closure or partial-callable environment.
@@ -328,6 +678,143 @@ fn is_module_span_declaration_id(module: &BodyIrModule, id: &CompilerNodeId) -> 
 /// this body-local canonicality check before it enters the child frame.
 fn has_canonical_direct_call_id(module: &BodyIrModule, body: &Body) -> bool {
     body.direct_call_id == CompilerNodeId::declaration_span(module.module_id.path(), body.span.start, body.span.end)
+        && body.canonical.as_ref().is_some_and(|canonical| {
+            canonical.declaration_name == body.name
+                && direct_declaration_id_for_canonical(
+                    module,
+                    canonical,
+                    SymbolNamespace::OrdinaryLexical,
+                    SemanticSourceTargetKind::Function,
+                ) == Some(body.direct_call_id.clone())
+        })
+}
+
+/// Project one retained source-module identity onto the physical declaration id used by this Body-IR module.
+///
+/// This never mints or completes a semantic identity. It only checks that the already-retained identity belongs to
+/// this module, then derives the local span key needed to address the module's physical declaration records.
+fn direct_declaration_id_for_canonical(
+    module: &BodyIrModule,
+    identity: &CanonicalSymbolId,
+    expected_namespace: SymbolNamespace,
+    expected_kind: SemanticSourceTargetKind,
+) -> Option<CompilerNodeId> {
+    let SymbolOrigin::Module(module_path) = &identity.origin else {
+        return None;
+    };
+    (identity.namespace == expected_namespace
+        && identity.kind == expected_kind
+        && identity.scope_discriminant.is_none()
+        && module_identity_for_path(module_path) == module.module_id.path())
+    .then(|| {
+        CompilerNodeId::declaration_span(
+            module.module_id.path(),
+            identity.declaration_span.start,
+            identity.declaration_span.end,
+        )
+    })
+}
+
+/// Validate that a retained plain-model layout is internally consistent with its checked canonical identities.
+fn valid_local_nominal_declaration(module: &BodyIrModule, declaration: &NominalDeclaration) -> bool {
+    direct_declaration_id_for_canonical(
+        module,
+        &declaration.canonical,
+        SymbolNamespace::OrdinaryLexical,
+        SemanticSourceTargetKind::Model,
+    ) == Some(declaration.direct_declaration_id.clone())
+        && declaration.canonical.declaration_name == declaration.name
+        && declaration.fields.len() == declaration.field_identities.len()
+        && declaration.fields.iter().collect::<BTreeSet<_>>().len() == declaration.fields.len()
+        && declaration.field_identities.iter().collect::<BTreeSet<_>>().len() == declaration.field_identities.len()
+        && declaration
+            .fields
+            .iter()
+            .zip(&declaration.field_identities)
+            .all(|(name, identity)| {
+                identity.namespace == SymbolNamespace::Member
+                    && identity.kind == SemanticSourceTargetKind::Field
+                    && identity.scope_discriminant.is_none()
+                    && identity.origin == declaration.canonical.origin
+                    && identity.declaration_name == *name
+            })
+}
+
+/// Validate one retained enum owner/member registry without recovering any identity from its source spelling.
+fn valid_local_enum_declaration<T>(
+    module: &BodyIrModule,
+    direct_declaration_id: &CompilerNodeId,
+    canonical: &CanonicalSymbolId,
+    name: &str,
+    variants: &[T],
+    variant_facts: impl Fn(&T) -> (&CompilerNodeId, &CanonicalSymbolId, &str),
+) -> bool {
+    direct_declaration_id_for_canonical(
+        module,
+        canonical,
+        SymbolNamespace::OrdinaryLexical,
+        SemanticSourceTargetKind::Enum,
+    ) == Some(direct_declaration_id.clone())
+        && canonical.declaration_name == name
+        && variants
+            .iter()
+            .map(|variant| variant_facts(variant).0)
+            .collect::<BTreeSet<_>>()
+            .len()
+            == variants.len()
+        && variants
+            .iter()
+            .map(|variant| variant_facts(variant).2)
+            .collect::<BTreeSet<_>>()
+            .len()
+            == variants.len()
+        && variants.iter().all(|variant| {
+            let (direct_variant_id, variant_canonical, variant_name) = variant_facts(variant);
+            direct_declaration_id_for_canonical(
+                module,
+                variant_canonical,
+                SymbolNamespace::Member,
+                SemanticSourceTargetKind::Variant,
+            ) == Some(direct_variant_id.clone())
+                && variant_canonical.origin == canonical.origin
+                && variant_canonical.declaration_name == variant_name
+        })
+}
+
+/// Return whether a retained fieldless enum is internally bound to this Body-IR module.
+fn valid_local_fieldless_enum_declaration(module: &BodyIrModule, declaration: &FieldlessEnumDeclaration) -> bool {
+    valid_local_enum_declaration(
+        module,
+        &declaration.direct_declaration_id,
+        &declaration.canonical,
+        &declaration.name,
+        &declaration.variants,
+        |variant| {
+            (
+                &variant.direct_declaration_id,
+                &variant.canonical,
+                variant.name.as_str(),
+            )
+        },
+    )
+}
+
+/// Return whether a retained value enum is internally bound to this Body-IR module.
+fn valid_local_value_enum_declaration(module: &BodyIrModule, declaration: &ValueEnumDeclaration) -> bool {
+    valid_local_enum_declaration(
+        module,
+        &declaration.direct_declaration_id,
+        &declaration.canonical,
+        &declaration.name,
+        &declaration.variants,
+        |variant| {
+            (
+                &variant.direct_declaration_id,
+                &variant.canonical,
+                variant.name.as_str(),
+            )
+        },
+    )
 }
 
 impl ReplacementValue {
@@ -337,7 +824,8 @@ impl ReplacementValue {
             Self::Int(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),
             Self::Str(value) => value.clone(),
-            Self::Float(value) => value.clone(),
+            Self::Float(value) => value.to_string(),
+            Self::Numeric(value) => value.observable_text(),
             Self::Unit => constructor_name(ConstructorId::None).to_string(),
             Self::Range { next, end, step } => format!("range({next}, {end}, {step})"),
             Self::List { elements, .. } => format!(
@@ -356,6 +844,8 @@ impl ReplacementValue {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::Set(values) => values.observable_text(),
+            Self::Dict(values) => values.observable_text(),
             Self::Nominal {
                 direct_declaration_id,
                 fields,
@@ -380,6 +870,7 @@ impl ReplacementValue {
             Self::Generator(_) => "<generator>".to_string(),
             Self::Task(_) => "<task>".to_string(),
             Self::Adapter(_) => "<generator-adapter>".to_string(),
+            Self::Zip(_) => "<zip-iterator>".to_string(),
             Self::CollectedGenerator { elements, .. } => format!(
                 "[{}]",
                 elements
@@ -388,6 +879,28 @@ impl ReplacementValue {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+        }
+    }
+
+    /// Return the exact checked scalar type carried across a direct entrypoint/report boundary.
+    #[must_use]
+    pub fn scalar_type_name(&self) -> Option<String> {
+        match self {
+            Self::Int(_) => Some("int".to_string()),
+            Self::Bool(_) => Some("bool".to_string()),
+            Self::Str(_) => Some("str".to_string()),
+            Self::Float(_) => Some("float".to_string()),
+            Self::Numeric(value) => Some(value.type_name()),
+            Self::Unit => Some(constructor_name(ConstructorId::None).to_string()),
+            _ => None,
+        }
+    }
+
+    /// Stable typed value projection used by receipt identity.
+    pub(crate) fn receipt_identity_text(&self) -> String {
+        match self {
+            Self::Numeric(value) => value.receipt_identity_text(),
+            _ => self.observable_text(),
         }
     }
 }
@@ -464,8 +977,8 @@ pub struct ReplacementExecution {
     pub runtime_requirements: Vec<AbiV0RuntimeRequirement>,
     /// Every direct task-frame transition observed during this successful execution, in source execution order.
     task_lifecycle: Vec<TaskLifecycleEvent>,
-    /// Lines the program emitted through `print`/`println`, in emission order.
-    emitted_output: Vec<String>,
+    /// Accepted program-stream bytes and completed print calls, independent of receipt publication.
+    pub output: ProgramOutput,
     /// Every provider operation this execution ran, each referencing its own RFC 104 operation receipt.
     ///
     /// Empty for a run that executed no provider operation. A run that was *refused* by a governed denial or a
@@ -482,8 +995,119 @@ pub struct ReplacementExecution {
 /// The capability retains the exact typed Body IR, source-level function name, and concrete arguments that were
 /// validated. It lets selection/receipt code decide whether direct execution may proceed without rerunning profile
 /// validation or allowing an unvalidated Body IR body to reach the executor.
+/// The set of Body-IR modules one replacement execution may resolve a call into.
+///
+/// The executor previously held a single `&BodyIrModule`, which is exactly right for the bounded #988 profile where
+/// every reachable call is same-module: an imported callable deliberately carries no same-module `direct_call_id`,
+/// so there was nothing to resolve elsewhere. #1260 widens that to a call graph crossing one source-local module
+/// edge or one direct public path-package edge, which needs somewhere to look the callee's owning module up.
+///
+/// Resolution is by compiler-owned module identity. A module is never selected from a source spelling, an import
+/// spelling, a source path, a generated Rust name, or declaration order, which is the property that lets the same
+/// graph serve a local module edge and a package edge without the executor knowing which it crossed.
+///
+/// The single-module case remains a one-node graph, so the existing #988 behaviour is unchanged and its tests keep
+/// proving the same thing.
+#[derive(Debug, Clone)]
+pub struct ReplacementExecutionGraph<'module> {
+    primary: &'module BodyIrModule,
+    reachable: Vec<&'module BodyIrModule>,
+}
+
+impl<'module> ReplacementExecutionGraph<'module> {
+    /// Build the one-node graph that represents today's single-module execution.
+    #[must_use]
+    pub fn single_module(primary: &'module BodyIrModule) -> Self {
+        Self {
+            primary,
+            reachable: Vec::new(),
+        }
+    }
+
+    /// Build a graph whose entrypoint is `primary` and whose reachable callees may live in `reachable`.
+    ///
+    /// Duplicate module identities are rejected rather than silently de-duplicated: two modules claiming one identity
+    /// means the caller assembled the graph from disagreeing analyses, and picking either one would make dispatch
+    /// depend on assembly order.
+    pub fn new(
+        primary: &'module BodyIrModule,
+        reachable: impl IntoIterator<Item = &'module BodyIrModule>,
+    ) -> Result<Self, ReplacementExecutionError> {
+        let mut modules: Vec<&'module BodyIrModule> = Vec::new();
+        for module in reachable {
+            if module.module_id == primary.module_id || modules.iter().any(|seen| seen.module_id == module.module_id) {
+                // Anchor the refusal at the entrypoint module's first body, which is the only span this graph owns.
+                // A graph-assembly fault has no single source construct to point at, and inventing a synthetic span
+                // would put a location in a diagnostic that no source position backs.
+                let span = primary
+                    .bodies
+                    .first()
+                    .map(|body| body.span)
+                    .unwrap_or(incan_semantics_core::HirSourceSpan { start: 0, end: 0 });
+                return Err(unsupported(
+                    "duplicate module identity in the replacement execution graph",
+                    span,
+                ));
+            }
+            modules.push(module);
+        }
+        Ok(Self {
+            primary,
+            reachable: modules,
+        })
+    }
+
+    /// Return the module owning the entrypoint this execution was prepared for.
+    #[must_use]
+    pub fn primary(&self) -> &'module BodyIrModule {
+        self.primary
+    }
+
+    /// Return every module this execution may resolve into, entrypoint first.
+    pub fn modules(&self) -> impl Iterator<Item = &'module BodyIrModule> + '_ {
+        std::iter::once(self.primary).chain(self.reachable.iter().copied())
+    }
+
+    /// Resolve the declaration a canonical target selects, together with the module that owns it.
+    ///
+    /// This is the cross-module counterpart to [`BodyIrModule::body_for_canonical_target`], which answers only for
+    /// the module it is asked. Each module in the graph is asked in turn, and that method already refuses a target
+    /// whose module path is not its own, so a match means the owning module was found rather than a same-named
+    /// declaration in the wrong place.
+    ///
+    /// Two modules answering for one canonical identity is a contradiction rather than an ambiguity to break by
+    /// order: an identity names exactly one declaration site. `None` is returned instead, because dispatching to
+    /// either would make the choice depend on graph assembly order.
+    #[must_use]
+    pub fn body_for_canonical_target(
+        &self,
+        target: &incan_semantics_core::CanonicalSymbolId,
+    ) -> Option<(&'module BodyIrModule, &'module Body)> {
+        let mut found = self
+            .modules()
+            .filter_map(|module| module.body_for_canonical_target(target).map(|body| (module, body)));
+        let first = found.next()?;
+        found.next().is_none().then_some(first)
+    }
+
+    /// Resolve the module owning `module_id`, or `None` when the graph does not contain it.
+    ///
+    /// A `None` here is a refusal, not a fallback: an unresolvable callee must fail before program effects rather
+    /// than resolve against the caller's own module, which is the invariant
+    /// `a_cross_module_call_is_refused_by_the_single_module_executor` pins.
+    #[must_use]
+    pub fn module_for(&self, module_id: &CompilerNodeId) -> Option<&'module BodyIrModule> {
+        self.modules().find(|module| module.module_id == *module_id)
+    }
+}
+
 pub struct ValidatedFreeFunctionExecution<'module, 'args> {
-    module: &'module BodyIrModule,
+    /// Every module this execution may resolve a call into, entrypoint first.
+    ///
+    /// Held as a graph rather than a single module so #1260 can widen dispatch without changing this type again. The
+    /// single-module profile is a one-node graph, so today's resolution is unchanged: `graph.primary()` is the same
+    /// module the executor used before.
+    graph: ReplacementExecutionGraph<'module>,
     name: String,
     args: &'args [ReplacementValue],
     /// The provider runtime this execution's admitted provider operations were validated against.
@@ -508,11 +1132,11 @@ impl ReplacementExecution {
 
     /// The lines this execution emitted through `print`/`println`, in emission order.
     ///
-    /// Empty for a program that printed nothing. A caller running the program is expected to write these; a caller
-    /// comparing two backends is expected to compare them, because a program's output is part of what it did.
+    /// These lines have already been delivered to the supplied program writer; callers must not replay them.
+    /// They remain a compatibility projection for reports. Compare exact bytes in [`Self::output`] for stream parity.
     #[must_use]
     pub fn emitted_output(&self) -> &[String] {
-        &self.emitted_output
+        &self.output.printed_lines
     }
 
     /// Return the stable direct-task lifecycle evidence bound into this execution's output identity and CLI report.
@@ -566,6 +1190,12 @@ pub enum ReplacementExecutionError {
         span_start: usize,
         /// End byte offset duplicated for typed error formatting.
         span_end: usize,
+        /// Module identity the span was measured in, when it is not the executed entrypoint's.
+        ///
+        /// A span is a byte range and means nothing without the file it was measured in. While only the entrypoint
+        /// could raise a refusal this was implicit; once a call can leave that module, a refusal raised in another
+        /// one has to say so or the diagnostic points at the wrong file.
+        module_id: Option<String>,
     },
     /// A selected operation reached a source-observable runtime failure.
     #[error("replacement backend runtime failure at original Incan source span {span_start}..{span_end}: {detail}")]
@@ -577,6 +1207,19 @@ pub enum ReplacementExecutionError {
         /// Start byte offset duplicated for typed error formatting.
         span_start: usize,
         /// End byte offset duplicated for typed error formatting.
+        span_end: usize,
+    },
+    /// A program-stream write or flush failed after any earlier accepted bytes were already delivered.
+    #[error("replacement backend {error} at original Incan source span {span_start}..{span_end}")]
+    ProgramIo {
+        /// Typed host failure; partial output stays in the caller-owned [`ProgramIo`].
+        #[source]
+        error: ProgramIoError,
+        /// Original print or stream-operation span carried by Body IR.
+        span: HirSourceSpan,
+        /// Start byte offset duplicated for typed diagnostic formatting.
+        span_start: usize,
+        /// End byte offset duplicated for typed diagnostic formatting.
         span_end: usize,
     },
     /// An RFC 104 authority decision refused an admitted provider operation, so it never ran.
@@ -605,7 +1248,8 @@ pub enum ReplacementExecutionError {
     /// Authority was granted and the provider operation itself failed.
     ///
     /// Separate from a denial because the two have nothing in common but their visibility: here the operation ran,
-    /// its receipt records `failed` over an *allowing* decision, and any resource it acquired was released.
+    /// any resource it acquired was released, and governed or observed runs retain a failed receipt. Permissive
+    /// execution deliberately reports no receipt.
     #[error(
         "replacement backend provider operation `{operation}` failed at original Incan source span \
          {span_start}..{span_end}: {detail}"
@@ -615,8 +1259,8 @@ pub enum ReplacementExecutionError {
         operation: String,
         /// Source-observable description of the provider's own failure.
         detail: String,
-        /// Sequence id of the failed RFC 104 operation receipt this invocation produced.
-        receipt_sequence_id: u64,
+        /// Sequence id of the failed RFC 104 operation receipt, when reporting was enabled.
+        receipt_sequence_id: Option<u64>,
         /// Original Incan source span carried by the operation's plan.
         span: HirSourceSpan,
         /// Start byte offset duplicated for typed error formatting.
@@ -627,6 +1271,38 @@ pub enum ReplacementExecutionError {
 }
 
 impl ReplacementExecutionError {
+    /// Record the module a refusal's span was measured in, when it is not the executed entrypoint's.
+    ///
+    /// Applied where a walk crosses into another module, so every refusal raised beyond that point carries its own
+    /// source rather than inheriting the entrypoint's. An error that already names a module keeps it: the innermost
+    /// module that refused is the one that owns the span.
+    pub(crate) fn measured_in_module(self, module: &str) -> Self {
+        match self {
+            Self::Unsupported {
+                description,
+                span,
+                span_start,
+                span_end,
+                module_id,
+            } => Self::Unsupported {
+                description,
+                span,
+                span_start,
+                span_end,
+                module_id: module_id.or_else(|| Some(module.to_string())),
+            },
+            other => other,
+        }
+    }
+
+    /// Return the module identity a refusal's span was measured in, when it is not the entrypoint's.
+    pub(crate) fn measured_module(&self) -> Option<&str> {
+        match self {
+            Self::Unsupported { module_id, .. } => module_id.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Construct a typed, source-span-preserving refusal for an unsupported source-profile boundary.
     #[must_use]
     pub fn unsupported_profile(description: impl Into<String>, span: HirSourceSpan) -> Self {
@@ -638,7 +1314,7 @@ impl ReplacementExecutionError {
         match self {
             Self::MissingFunction { .. } | Self::ArgumentCount { .. } => "INCAN-R988-ENTRYPOINT",
             Self::Unsupported { .. } => "INCAN-R988-UNSUPPORTED",
-            Self::RuntimeFailure { .. } => "INCAN-R988-RUNTIME",
+            Self::RuntimeFailure { .. } | Self::ProgramIo { .. } => "INCAN-R988-RUNTIME",
             Self::ProviderAuthorityDenied { .. } => "INCAN-R1156-DENIED",
             Self::ProviderOperationFailed { .. } => "INCAN-R1156-PROVIDER",
         }
@@ -649,6 +1325,7 @@ impl ReplacementExecutionError {
         match self {
             Self::Unsupported { span, .. }
             | Self::RuntimeFailure { span, .. }
+            | Self::ProgramIo { span, .. }
             | Self::ProviderAuthorityDenied { span, .. }
             | Self::ProviderOperationFailed { span, .. } => Some(*span),
             Self::MissingFunction { .. } | Self::ArgumentCount { .. } => None,
@@ -657,23 +1334,29 @@ impl ReplacementExecutionError {
 
     /// Return the RFC 104 operation receipt this outcome emitted, when it emitted one.
     ///
-    /// Only the two provider outcomes do. A refusal that happened before the operation was invoked — an unsupported
-    /// construct, an inactive provider, an unresolved operation — deliberately has no receipt to name, which is the
-    /// structural form of "nothing ran, so nothing was recorded".
+    /// Governed denials always do; provider failures do when reporting was enabled. A refusal that happened before
+    /// the operation was invoked — an unsupported construct, an inactive provider, an unresolved operation — and a
+    /// reporting-disabled permissive invocation deliberately have no receipt to name.
     pub const fn operation_receipt(&self) -> Option<super::replacement::provider::ProviderReceiptLink> {
         match self {
             Self::ProviderAuthorityDenied {
                 receipt_sequence_id, ..
-            }
-            | Self::ProviderOperationFailed {
-                receipt_sequence_id, ..
             } => Some(super::replacement::provider::ProviderReceiptLink {
                 sequence_id: *receipt_sequence_id,
             }),
+            Self::ProviderOperationFailed {
+                receipt_sequence_id, ..
+            } => match receipt_sequence_id {
+                Some(sequence_id) => Some(super::replacement::provider::ProviderReceiptLink {
+                    sequence_id: *sequence_id,
+                }),
+                None => None,
+            },
             Self::MissingFunction { .. }
             | Self::ArgumentCount { .. }
             | Self::Unsupported { .. }
-            | Self::RuntimeFailure { .. } => None,
+            | Self::RuntimeFailure { .. }
+            | Self::ProgramIo { .. } => None,
         }
     }
 }
@@ -702,6 +1385,25 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
     args: &'args [ReplacementValue],
     providers: Option<&Rc<ProviderRuntime>>,
 ) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
+    prepare_free_function_execution_in_graph(ReplacementExecutionGraph::single_module(module), name, args, providers)
+}
+
+/// Validate and prepare one Body-IR free function whose reachable calls may leave its own module.
+///
+/// The graph names every module a call may resolve into, entrypoint first. Validation still runs against the
+/// entrypoint's module, because that is where the selected body and its arguments live; what the graph adds is the
+/// ability for a frame to execute against the module its callee was resolved to rather than the module the call was
+/// written in.
+///
+/// A one-node graph is exactly the previous behaviour, which is why
+/// [`prepare_free_function_execution_with_providers`] delegates here rather than duplicating the validation order.
+pub fn prepare_free_function_execution_in_graph<'module, 'args>(
+    graph: ReplacementExecutionGraph<'module>,
+    name: &str,
+    args: &'args [ReplacementValue],
+    providers: Option<&Rc<ProviderRuntime>>,
+) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
+    let module = graph.primary();
     let body = named_free_function(module, name)?;
     if body.is_generator() {
         return Err(unsupported("generator body", body.span));
@@ -714,25 +1416,29 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
         });
     }
     validate_scalar_arguments(args, body.span)?;
-    validate_direct_body_profile(body, providers.map(Rc::as_ref))?;
+    validate_selected_parameter_arguments(&body.params, args)?;
+    validate_reachable_typed_numeric_profile(&graph, module, body)?;
+    let preflight_reachable: Vec<BodyIrModule> = graph
+        .modules()
+        .filter(|candidate| candidate.module_id != module.module_id)
+        .cloned()
+        .collect();
+    execution_preflight::validate(module, &preflight_reachable, body, providers.map(Rc::as_ref))?;
     Ok(ValidatedFreeFunctionExecution {
-        module,
+        graph,
         name: name.to_string(),
         args,
         providers: providers.cloned(),
     })
 }
 
-/// Validate every direct-execution invariant of one body before it is executed or stored as a lazy frame.
+/// Validate the structural direct-execution invariants of one body before it is executed or stored as a lazy frame.
 ///
 /// The selected entrypoint and every same-module named callee use this one gate. Applying it only at the entrypoint
 /// would let an otherwise admitted call dispatch an unvalidated sibling body and publish a receipt for a profile the
-/// runtime promises to refuse.
-fn validate_direct_body_profile(
-    body: &Body,
-    providers: Option<&ProviderRuntime>,
-) -> Result<(), ReplacementExecutionError> {
-    validate_provider_operation_hosts(&body.block.stmts, providers)?;
+/// runtime promises to refuse. Provider-host availability is checked separately across the reachable computation
+/// once during preparation; runtime invocation still rechecks the host and authority.
+fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
     // An `async def` produces an awaitable even when its body has no explicit `await`. Executing its statements as
     // an ordinary scalar body would erase task construction, suspension, wake, cancellation, and receipt semantics
     // that belong to #1155. The stored declaration fact is therefore a direct profile boundary, not something this
@@ -740,9 +1446,9 @@ fn validate_direct_body_profile(
     if body.is_async {
         return validate_direct_async_body_profile(body);
     }
-    validate_binding_identity(body)?;
     let range_iterator_locals = range_iterator_locals(&body.block);
-    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals)?;
+    let zip_iterator_locals = list_iteration::validate_body(body)?;
+    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals, &zip_iterator_locals)?;
     validate_nested_structural_aggregate_types(body)?;
     let tuple_iteration_locals = builtin_iteration_destinations(&body.block);
     let scalar_tuple_collection_locals = scalar_tuple_collection_elements(&body.block);
@@ -758,62 +1464,99 @@ fn validate_direct_body_profile(
     }
 }
 
-/// Refuse every admitted provider operation this body invokes that no host in this run executes.
+/// Resolve one named call by its retained same-module identity for both preflight and runtime dispatch.
 ///
-/// This is a separate pass rather than another clause of the structural profile validator because it asks a
-/// different question. The structural gate asks whether the *plan* is executable at all — an active provider, a
-/// capability-kinded authority, one input per argument — and needs nothing but the plan to answer. This asks
-/// whether *this run* has a host for the operation, which only the supplied runtime knows. Splitting them keeps the
-/// structural refusal identical whether or not a runtime was supplied, and keeps both refusals before execution, so
-/// an unresolved operation never leaves a partially executed body or an execution receipt behind.
-fn validate_provider_operation_hosts(
-    statements: &[Statement],
-    providers: Option<&ProviderRuntime>,
-) -> Result<(), ReplacementExecutionError> {
-    for statement in statements {
-        match &statement.kind {
-            StatementKind::Call {
-                callee: Callee::ProviderOperation(plan),
-                ..
-            } => {
-                let resolved = providers.is_some_and(|runtime| runtime.resolves(&plan.operation));
-                if !resolved {
-                    return Err(unsupported(
-                        format!(
-                            "provider operation `{}` that no provider host in this run executes",
-                            plan.operation.declaration_name
-                        ),
-                        plan.call_span,
-                    ));
-                }
-            }
-            StatementKind::If {
-                then_block, else_block, ..
-            } => {
-                validate_provider_operation_hosts(&then_block.stmts, providers)?;
-                if let Some(else_block) = else_block {
-                    validate_provider_operation_hosts(&else_block.stmts, providers)?;
-                }
-            }
-            StatementKind::Loop { body } => validate_provider_operation_hosts(&body.stmts, providers)?,
-            StatementKind::Race { arms, .. } => {
-                for arm in arms {
-                    validate_provider_operation_hosts(&arm.body.stmts, providers)?;
-                }
-            }
-            StatementKind::Assign {
-                rvalue: Rvalue::Match { arms, .. },
-                ..
-            } => {
-                for arm in arms {
-                    validate_provider_operation_hosts(&arm.guard_stmts, providers)?;
-                    validate_provider_operation_hosts(&arm.body_stmts, providers)?;
-                }
-            }
-            _ => {}
-        }
+/// The source name is diagnostic spelling only after unique, module-scoped identity selection. Neither caller may
+/// validate or dispatch by that spelling, fall back to a name lookup, or admit an imported or malformed body
+/// identity.
+fn named_callable_body<'module>(
+    module: &'module BodyIrModule,
+    target: &NamedCallableTarget,
+    span: HirSourceSpan,
+) -> Result<&'module Body, ReplacementExecutionError> {
+    let direct_call_id = target.direct_call_id.as_ref().ok_or_else(|| {
+        unsupported(
+            format!(
+                "named callable `{}` without a same-module declaration identity",
+                target.name
+            ),
+            span,
+        )
+    })?;
+    if !is_module_span_declaration_id(module, direct_call_id) {
+        return Err(unsupported(
+            "named callable declaration identity is not scoped to this Body-IR module",
+            span,
+        ));
     }
-    Ok(())
+    let canonical = target.canonical.as_ref().ok_or_else(|| {
+        unsupported(
+            format!(
+                "named callable `{}` without a canonical declaration target",
+                target.name
+            ),
+            span,
+        )
+    })?;
+    let canonical_call_id = direct_declaration_id_for_canonical(
+        module,
+        canonical,
+        SymbolNamespace::OrdinaryLexical,
+        SemanticSourceTargetKind::Function,
+    )
+    .ok_or_else(|| {
+        unsupported(
+            "named callable canonical target is not owned by this Body-IR module",
+            span,
+        )
+    })?;
+    if canonical_call_id != *direct_call_id {
+        return Err(unsupported(
+            "named callable canonical target disagrees with its physical Body-IR declaration",
+            span,
+        ));
+    }
+    let mut matching_bodies = module
+        .bodies
+        .iter()
+        .filter(|body| body.direct_call_id == *direct_call_id);
+    let body = matching_bodies.next().ok_or_else(|| {
+        unsupported(
+            format!(
+                "named callable `{}` targets a declaration outside this Body-IR module",
+                target.name
+            ),
+            span,
+        )
+    })?;
+    if matching_bodies.next().is_some() {
+        return Err(unsupported(
+            format!(
+                "named callable `{}` declaration identity selects multiple Body-IR bodies",
+                target.name
+            ),
+            span,
+        ));
+    }
+    if !has_canonical_direct_call_id(module, body) {
+        return Err(unsupported(
+            format!(
+                "named callable `{}` body does not retain its canonical declaration identity",
+                target.name
+            ),
+            span,
+        ));
+    }
+    if body.canonical.as_ref() != Some(canonical) {
+        return Err(unsupported(
+            format!(
+                "named callable `{}` target disagrees with the selected body's canonical identity",
+                target.name
+            ),
+            span,
+        ));
+    }
+    Ok(body)
 }
 
 /// Validate the deliberately source-local async subset without treating a task frame as a synchronous body.
@@ -825,84 +1568,14 @@ fn validate_direct_async_body_profile(body: &Body) -> Result<(), ReplacementExec
     if body.is_generator() {
         return Err(unsupported("async generator body", body.span));
     }
-    validate_async_binding_identity(body)?;
     let range_iterator_locals = range_iterator_locals(&body.block);
-    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals)?;
+    let zip_iterator_locals = list_iteration::validate_body(body)?;
+    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals, &zip_iterator_locals)?;
     validate_nested_structural_aggregate_types(body)?;
     let tuple_iteration_locals = builtin_iteration_destinations(&body.block);
     let scalar_tuple_collection_locals = scalar_tuple_collection_elements(&body.block);
     validate_callable_params_profile(&body.params)?;
     validate_async_block_profile(&body.block, &tuple_iteration_locals, &scalar_tuple_collection_locals)
-}
-
-/// Keep ordinary same-name refusal outside a Race while honoring the retained lexical arm scopes.
-fn validate_async_binding_identity(body: &Body) -> Result<(), ReplacementExecutionError> {
-    let mut race_scopes = BTreeSet::new();
-    collect_race_arm_scopes(&body.block, &mut race_scopes);
-    let scope_parents = body
-        .scopes
-        .iter()
-        .map(|scope| (scope.id, scope.parent))
-        .collect::<BTreeMap<_, _>>();
-    let mut declared = BTreeMap::new();
-    for local in &body.locals {
-        if !matches!(local.origin, LocalOrigin::UserBinding)
-            || scope_descends_from_race_arm(local.scope, &race_scopes, &scope_parents)
-        {
-            continue;
-        }
-        let Some(name) = local.name.as_deref() else {
-            continue;
-        };
-        if declared.insert(name, local.span).is_some() {
-            return Err(unsupported(
-                format!("repeated user binding `{name}` without a direct binding-equivalence fact"),
-                local.span,
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Collect every lexical scope owned by a Race arm, including blocks nested inside that arm.
-fn collect_race_arm_scopes(block: &incan_semantics_core::body_ir::Block, scopes: &mut BTreeSet<ScopeId>) {
-    for statement in &block.stmts {
-        match &statement.kind {
-            StatementKind::If {
-                then_block, else_block, ..
-            } => {
-                collect_race_arm_scopes(then_block, scopes);
-                if let Some(else_block) = else_block {
-                    collect_race_arm_scopes(else_block, scopes);
-                }
-            }
-            StatementKind::Loop { body } => collect_race_arm_scopes(body, scopes),
-            StatementKind::Race { arms, .. } => {
-                for arm in arms {
-                    scopes.insert(arm.body.scope);
-                    collect_race_arm_scopes(&arm.body, scopes);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Return whether one Body-IR scope is nested below a collected Race-arm scope.
-fn scope_descends_from_race_arm(
-    mut scope: ScopeId,
-    race_scopes: &BTreeSet<ScopeId>,
-    parents: &BTreeMap<ScopeId, Option<ScopeId>>,
-) -> bool {
-    loop {
-        if race_scopes.contains(&scope) {
-            return true;
-        }
-        let Some(Some(parent)) = parents.get(&scope) else {
-            return false;
-        };
-        scope = *parent;
-    }
 }
 
 /// Execute one named, free-function Body IR body with concrete scalar arguments.
@@ -916,6 +1589,20 @@ pub fn execute_free_function(
 ) -> Result<ReplacementExecution, ReplacementExecutionError> {
     let execution = prepare_free_function_execution(module, name, args)?;
     execute_prevalidated_free_function(execution)
+}
+
+/// Execute checked Body IR using caller-supplied program writers and retain observations on failure as well as success.
+///
+/// Profile validation runs before any program write. The caller owns `io` after return, including accepted prefixes
+/// when a runtime error, broken pipe, or flush failure prevented a successful execution result.
+pub fn execute_free_function_with_io(
+    module: &BodyIrModule,
+    name: &str,
+    args: &[ReplacementValue],
+    io: &mut ProgramIo<'_>,
+) -> Result<ReplacementExecution, ReplacementExecutionError> {
+    let execution = prepare_free_function_execution(module, name, args)?;
+    execute_prevalidated_free_function_with_io(execution, io)
 }
 
 /// Execute one named free function that may invoke admitted provider operations against `providers`.
@@ -940,26 +1627,44 @@ pub fn execute_free_function_with_providers(
 pub fn execute_prevalidated_free_function(
     execution: ValidatedFreeFunctionExecution<'_, '_>,
 ) -> Result<ReplacementExecution, ReplacementExecutionError> {
-    let body = named_free_function(execution.module, &execution.name)?;
+    let mut stdout = std::io::stdout().lock();
+    let mut stderr = std::io::stderr().lock();
+    let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+    execute_prevalidated_free_function_with_io(execution, &mut io)
+}
 
-    let mut executor = BodyExecutor::new(execution.module, body, execution.args, execution.providers.clone())?;
-    let value = if body.is_async {
+/// Execute a validated capability with ordinary program delivery and independently caller-owned observation.
+///
+/// Nested frames reborrow the same writers. Printing writes and flushes during execution, never after a receipt
+/// succeeds; a failed execution still leaves accepted bytes available through `io.output()`.
+pub fn execute_prevalidated_free_function_with_io(
+    execution: ValidatedFreeFunctionExecution<'_, '_>,
+    io: &mut ProgramIo<'_>,
+) -> Result<ReplacementExecution, ReplacementExecutionError> {
+    let body = named_free_function(execution.graph.primary(), &execution.name)?;
+    let checkpoint = io.checkpoint();
+    let mut executor = BodyExecutor::new(&execution.graph, body, execution.args, execution.providers.clone(), io)?;
+    let (value, result_span) = if body.is_async {
         let task = executor.construct_task(body.clone(), executor.locals.clone(), body.span)?;
-        executor.drive_task(&task, body.span)?
+        (executor.drive_task(&task, body.span)?, body.span)
     } else {
         let flow = executor.execute_block(&body.block)?;
         match flow {
-            Flow::Return(value) => match value {
-                Some(value) => value,
-                None => ReplacementValue::Unit,
-            },
-            Flow::Next => ReplacementValue::Unit,
+            Flow::Return(value, span) => (
+                match value {
+                    Some(value) => value,
+                    None => ReplacementValue::Unit,
+                },
+                span,
+            ),
+            Flow::Next => (ReplacementValue::Unit, body.span),
             Flow::Break | Flow::Continue => {
                 return Err(unsupported("loop control outside a normalized loop", body.span));
             }
         }
     };
-    ensure_scalar_result(&value, body.span)?;
+    let value = coerce_value_to_checked_type(value, &body.return_type, result_span)?;
+    ensure_scalar_result(&value, &body.return_type, result_span)?;
     let body_snapshot = executor.body_snapshot();
     let ownership_summary = canonical_ownership_summary(&executor.ownership_reads);
     let requirements_summary = canonical_runtime_requirements_summary(&executor.runtime_requirements);
@@ -970,15 +1675,22 @@ pub fn execute_prevalidated_free_function(
         .map(|runtime| runtime.provider_executions())
         .unwrap_or_default();
     let provider_summary = canonical_provider_execution_summary(&provider_executions);
-    let emitted_output_summary = canonical_emitted_output_summary(&executor.emitted_output);
+    let output = executor.io.output_since(checkpoint);
+    let emitted_output_summary = canonical_emitted_output_summary(&output.printed_lines);
+    let stream_summary = format!(
+        "program-streams-v1;stdout={};stderr={}",
+        hex::encode(output.stdout()),
+        hex::encode(output.stderr())
+    );
     let output_identity = digest_output(&[
         body_snapshot.as_str(),
-        value.observable_text().as_str(),
+        value.receipt_identity_text().as_str(),
         ownership_summary.as_str(),
         requirements_summary.as_str(),
         task_summary.as_str(),
         provider_summary.as_str(),
         emitted_output_summary.as_str(),
+        stream_summary.as_str(),
     ]);
     Ok(ReplacementExecution {
         value,
@@ -986,7 +1698,7 @@ pub fn execute_prevalidated_free_function(
         ownership_reads: executor.ownership_reads,
         runtime_requirements: executor.runtime_requirements,
         task_lifecycle: executor.task_lifecycle,
-        emitted_output: executor.emitted_output,
+        output,
         provider_executions,
         output_identity,
     })
@@ -994,11 +1706,28 @@ pub fn execute_prevalidated_free_function(
 
 /// Locate the requested free-function body without inventing a fallback entrypoint.
 fn named_free_function<'a>(module: &'a BodyIrModule, name: &str) -> Result<&'a Body, ReplacementExecutionError> {
-    module
-        .bodies
-        .iter()
-        .find(|body| body.name == name)
-        .ok_or_else(|| ReplacementExecutionError::MissingFunction { name: name.to_string() })
+    let mut candidates = module.bodies.iter().filter(|body| {
+        body.canonical
+            .as_ref()
+            .is_some_and(|canonical| canonical.declaration_name == name)
+            && has_canonical_direct_call_id(module, body)
+    });
+    let Some(body) = candidates.next() else {
+        if let Some(named_body) = module.bodies.iter().find(|body| body.name == name) {
+            return Err(unsupported(
+                format!("entrypoint `{name}` without an exact canonical free-function identity"),
+                named_body.span,
+            ));
+        }
+        return Err(ReplacementExecutionError::MissingFunction { name: name.to_string() });
+    };
+    if candidates.next().is_some() {
+        return Err(unsupported(
+            format!("ambiguous overloaded free-function entrypoint `{name}`"),
+            body.span,
+        ));
+    }
+    Ok(body)
 }
 
 /// Reject non-scalar direct API arguments before they can widen the first replacement profile.
@@ -1006,41 +1735,556 @@ fn validate_scalar_arguments(args: &[ReplacementValue], span: HirSourceSpan) -> 
     for argument in args {
         if !matches!(
             argument,
-            ReplacementValue::Int(_) | ReplacementValue::Bool(_) | ReplacementValue::Str(_) | ReplacementValue::Unit
+            ReplacementValue::Int(_)
+                | ReplacementValue::Bool(_)
+                | ReplacementValue::Str(_)
+                | ReplacementValue::Float(_)
+                | ReplacementValue::Numeric(_)
+                | ReplacementValue::Unit
         ) {
             return Err(unsupported(
                 format!("{} argument in the scalar replacement profile", value_kind(argument)),
                 span,
             ));
         }
+        if let ReplacementValue::Numeric(value) = argument {
+            validate_numeric_value(value, span)?;
+        }
     }
     Ok(())
 }
 
-/// Refuse repeated user-binding spellings until Body IR carries an explicit binding-equivalence fact.
+/// Keep a direct API caller from supplying a carrier that contradicts a checked parameter type.
 ///
-/// A local id is sufficient to address an already-selected value, but it is not enough to prove that every later
-/// source read saw a reassignment rather than a fresh shadowing declaration. This runtime therefore keeps the
-/// existing fail-closed boundary and does not repair that source-representation gap here.
-fn validate_binding_identity(body: &Body) -> Result<(), ReplacementExecutionError> {
-    let mut declared = BTreeMap::new();
-    for local in &body.locals {
-        if !matches!(local.origin, LocalOrigin::UserBinding) {
-            continue;
-        }
-        let Some(name) = local.name.as_deref() else {
-            continue;
-        };
-        if declared.insert(name, local.span).is_some() {
+/// The selected replacement entrypoint accepts only direct profile carriers, not a source typechecker context. A
+/// supplied `Int` or `Str` therefore cannot stand in for a checked `float` parameter merely because the executor
+/// can materialize that carrier. This is deliberately an entrypoint-only boundary: source-resolved sibling calls
+/// keep their own checked call contract and must not be rejected by a whole-body parameter scan.
+fn validate_selected_parameter_arguments(
+    params: &[CallableParam],
+    args: &[ReplacementValue],
+) -> Result<(), ReplacementExecutionError> {
+    for (parameter, argument) in params.iter().zip(args) {
+        let matches = replacement_value_matches_checked_type(argument, &parameter.ty);
+        if !matches {
             return Err(unsupported(
                 format!(
-                    "repeated user binding `{name}` (lexical shadowing or reassignment); Body IR does not yet carry binding-equivalence facts for direct execution"
+                    "direct {} argument does not satisfy checked parameter `{}` of type `{}`",
+                    value_kind(argument),
+                    parameter.name,
+                    parameter.ty
                 ),
+                parameter.span,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Return whether one direct API carrier inhabits the checked parameter type selected by the frontend.
+fn replacement_value_matches_checked_type(value: &ReplacementValue, ty: &IncanType) -> bool {
+    match (ty, value) {
+        (IncanType::Primitive(IncanPrimitiveType::Int), ReplacementValue::Int(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Float), ReplacementValue::Float(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Bool), ReplacementValue::Bool(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Str), ReplacementValue::Str(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Unit), ReplacementValue::Unit) => true,
+        (ty, ReplacementValue::Numeric(value)) => numeric_value_matches_type(value, ty),
+        (IncanType::Generic { base, args }, value)
+            if base == incan_core::lang::types::UNION_TYPE_NAME && !args.is_empty() =>
+        {
+            args.iter()
+                .any(|member| replacement_value_matches_checked_type(value, member))
+        }
+        _ => false,
+    }
+}
+
+/// Validate the closed typed-numeric type vocabulary before execution.
+fn validate_typed_numeric_types(body: &Body) -> Result<(), ReplacementExecutionError> {
+    for local in &body.locals {
+        if matches!(
+            local.ty,
+            IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::Bool))
+        ) {
+            return Err(unsupported(
+                "bool reached Body IR through the exact numeric type channel",
+                local.span,
+            ));
+        }
+        if let IncanType::Decimal { precision, scale } = local.ty
+            && (precision == 0 || precision > 38 || scale > precision)
+        {
+            return Err(unsupported(
+                format!("invalid checked decimal type `{}`", local.ty),
                 local.span,
             ));
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TypedNumericProfileKind {
+    Binary(NumericTypeId),
+    Decimal,
+}
+
+impl TypedNumericProfileKind {
+    /// Render the source-facing numeric kind named by a profile refusal.
+    fn label(self) -> String {
+        match self {
+            Self::Binary(kind) => numerics::as_str(kind).to_string(),
+            Self::Decimal => "decimal".to_string(),
+        }
+    }
+
+    /// Return whether this profile kind is a fixed-scale decimal rather than a binary numeric.
+    const fn is_decimal(self) -> bool {
+        matches!(self, Self::Decimal)
+    }
+}
+
+/// Validate every typed-numeric operation reachable from the selected entrypoint before program output begins.
+///
+/// The carrier itself is admitted. Operations are a separate contract: this walk permits checked movement,
+/// lossless widening, direct calls, scalar conversions and Display output, while keeping arithmetic, Debug,
+/// aggregates, methods and other unproved behavior explicitly non-green under #988.
+fn validate_reachable_typed_numeric_profile(
+    graph: &ReplacementExecutionGraph<'_>,
+    module: &BodyIrModule,
+    root: &Body,
+) -> Result<(), ReplacementExecutionError> {
+    let mut visited = BTreeSet::new();
+    validate_typed_numeric_body_profile(graph, module, root, &mut visited)
+}
+
+/// Validate one reachable body once, following its source defaults and identity-selected sibling calls.
+fn validate_typed_numeric_body_profile(
+    graph: &ReplacementExecutionGraph<'_>,
+    module: &BodyIrModule,
+    body: &Body,
+    visited: &mut BTreeSet<CompilerNodeId>,
+) -> Result<(), ReplacementExecutionError> {
+    if !visited.insert(body.direct_call_id.clone()) {
+        return Ok(());
+    }
+    validate_typed_numeric_types(body).map_err(|error| error.measured_in_module(module.module_id.path()))?;
+    for parameter in &body.params {
+        if let CallableParamDefault::Source(computation) = &parameter.default {
+            validate_typed_numeric_statements(graph, module, body, &computation.stmts, visited)?;
+            let _ = typed_numeric_operand_kind(body, &computation.result, computation.span)?;
+        }
+    }
+    validate_typed_numeric_statements(graph, module, body, &body.block.stmts, visited)
+        .map_err(|error| error.measured_in_module(module.module_id.path()))
+}
+
+/// Validate a statement sequence for typed-numeric carrier movement and explicit operation refusals.
+fn validate_typed_numeric_statements(
+    graph: &ReplacementExecutionGraph<'_>,
+    module: &BodyIrModule,
+    body: &Body,
+    statements: &[Statement],
+    visited: &mut BTreeSet<CompilerNodeId>,
+) -> Result<(), ReplacementExecutionError> {
+    for statement in statements {
+        validate_typed_numeric_statement(graph, module, body, statement, visited)?;
+    }
+    Ok(())
+}
+
+/// Validate one normalized statement without executing its effects.
+fn validate_typed_numeric_statement(
+    graph: &ReplacementExecutionGraph<'_>,
+    module: &BodyIrModule,
+    body: &Body,
+    statement: &Statement,
+    visited: &mut BTreeSet<CompilerNodeId>,
+) -> Result<(), ReplacementExecutionError> {
+    match &statement.kind {
+        StatementKind::Assign { rvalue, .. } => {
+            validate_typed_numeric_rvalue(graph, module, body, rvalue, statement.span, visited)
+        }
+        StatementKind::Call { callee, args, .. } => {
+            validate_typed_numeric_call(graph, module, body, callee, args, statement.span, visited)
+        }
+        StatementKind::Drop { .. } | StatementKind::Continue | StatementKind::Unsupported { .. } => Ok(()),
+        StatementKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            refuse_typed_numeric_operand(body, cond, statement.span, "condition")?;
+            validate_typed_numeric_statements(graph, module, body, &then_block.stmts, visited)?;
+            if let Some(else_block) = else_block {
+                validate_typed_numeric_statements(graph, module, body, &else_block.stmts, visited)?;
+            }
+            Ok(())
+        }
+        StatementKind::Loop { body: loop_body } => {
+            validate_typed_numeric_statements(graph, module, body, &loop_body.stmts, visited)
+        }
+        StatementKind::Break { value } => {
+            if let Some(value) = value {
+                let _ = typed_numeric_operand_kind(body, value, statement.span)?;
+            }
+            Ok(())
+        }
+        StatementKind::Return { value } => {
+            if let Some(value) = value {
+                let _ = typed_numeric_operand_kind(body, value, statement.span)?;
+            }
+            Ok(())
+        }
+        StatementKind::Assert { kind, message, .. } => {
+            match kind {
+                AssertionKind::Condition { cond } => {
+                    refuse_typed_numeric_operand(body, cond, statement.span, "assertion condition")?;
+                }
+                AssertionKind::Pattern { scrutinee, pattern } => {
+                    refuse_typed_numeric_operand(body, scrutinee, statement.span, "pattern assertion")?;
+                    validate_typed_numeric_pattern(pattern, statement.span)?;
+                }
+                AssertionKind::Raises { call, .. } => {
+                    refuse_typed_numeric_operand(body, call, statement.span, "raises assertion")?;
+                }
+            }
+            if let Some(message) = message {
+                let _ = typed_numeric_operand_kind(body, message, statement.span)?;
+            }
+            Ok(())
+        }
+        StatementKind::Expr { value } => {
+            let _ = typed_numeric_operand_kind(body, value, statement.span)?;
+            Ok(())
+        }
+        StatementKind::IterNext { iterator, .. } => {
+            refuse_typed_numeric_operand(body, iterator, statement.span, "iteration")
+        }
+        StatementKind::Yield { value } => refuse_typed_numeric_operand(body, value, statement.span, "generator yield"),
+        StatementKind::TryPropagate { operand, .. } => {
+            refuse_typed_numeric_operand(body, operand, statement.span, "try propagation")
+        }
+        StatementKind::Await { awaited, .. } => refuse_typed_numeric_operand(body, awaited, statement.span, "await"),
+        StatementKind::Race { arms, .. } => {
+            for arm in arms {
+                refuse_typed_numeric_operand(body, &arm.awaitable, statement.span, "race awaitable")?;
+                validate_typed_numeric_statements(graph, module, body, &arm.body.stmts, visited)?;
+                let _ = typed_numeric_operand_kind(body, &arm.result, statement.span)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Validate one rvalue, admitting carrier movement and refusing unproved typed-numeric operations.
+fn validate_typed_numeric_rvalue(
+    graph: &ReplacementExecutionGraph<'_>,
+    module: &BodyIrModule,
+    body: &Body,
+    rvalue: &Rvalue,
+    span: HirSourceSpan,
+    visited: &mut BTreeSet<CompilerNodeId>,
+) -> Result<(), ReplacementExecutionError> {
+    match rvalue {
+        Rvalue::Use(operand) => {
+            let _ = typed_numeric_operand_kind(body, operand, span)?;
+            Ok(())
+        }
+        Rvalue::UnaryOp(operator, operand) => {
+            if let Some(kind) = typed_numeric_operand_kind(body, operand, span)? {
+                return Err(typed_numeric_operation_refusal(
+                    kind,
+                    unary_label(*operator).to_string(),
+                    span,
+                ));
+            }
+            Ok(())
+        }
+        Rvalue::BinaryOp(operator, left, right) => {
+            let left_kind = typed_numeric_operand_kind(body, left, span)?;
+            let right_kind = typed_numeric_operand_kind(body, right, span)?;
+            if let Some(kind) = left_kind.or(right_kind) {
+                return Err(typed_numeric_operation_refusal(
+                    kind,
+                    binary_label(*operator).to_string(),
+                    span,
+                ));
+            }
+            Ok(())
+        }
+        Rvalue::IsInstance { value, .. } => refuse_typed_numeric_operand(body, value, span, "isinstance type test"),
+        Rvalue::Format(parts) => {
+            for part in parts {
+                let FormatPart::Expr { operand, style } = part else {
+                    continue;
+                };
+                if let Some(kind) = typed_numeric_operand_kind(body, operand, span)?
+                    && matches!(style, FormatStyle::Debug)
+                {
+                    return Err(typed_numeric_operation_refusal(kind, "Debug formatting", span));
+                }
+            }
+            Ok(())
+        }
+        Rvalue::Aggregate(_, operands) => {
+            for operand in argument_operands(operands) {
+                refuse_typed_numeric_operand(body, operand, span, "aggregate construction")?;
+            }
+            Ok(())
+        }
+        Rvalue::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    DictEntry::Pair(key, value) => {
+                        refuse_typed_numeric_operand(body, key, span, "dict construction")?;
+                        refuse_typed_numeric_operand(body, value, span, "dict construction")?;
+                    }
+                    DictEntry::Spread(spread) => {
+                        refuse_typed_numeric_operand(body, &spread.source, span, "dict spread")?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        Rvalue::ResultVariant(variant) => {
+            refuse_typed_numeric_operand(body, &variant.payload, span, "Result construction")
+        }
+        Rvalue::Closure {
+            params,
+            captured_operands,
+            body: closure,
+        } => {
+            for operand in captured_operands {
+                let _ = typed_numeric_operand_kind(body, operand, span)?;
+            }
+            for parameter in params {
+                if let CallableParamDefault::Source(computation) = &parameter.default {
+                    validate_typed_numeric_statements(graph, module, body, &computation.stmts, visited)?;
+                    let _ = typed_numeric_operand_kind(body, &computation.result, computation.span)?;
+                }
+            }
+            validate_typed_numeric_statements(graph, module, body, &closure.stmts, visited)?;
+            let _ = typed_numeric_operand_kind(body, &closure.result, span)?;
+            Ok(())
+        }
+        Rvalue::Generator {
+            source,
+            captured_operands,
+            body: generator,
+        } => {
+            refuse_typed_numeric_operand(body, source, span, "generator source")?;
+            for operand in captured_operands {
+                let _ = typed_numeric_operand_kind(body, operand, span)?;
+            }
+            validate_typed_numeric_statements(graph, module, body, &generator.stmts, visited)
+        }
+        Rvalue::Match { scrutinee, arms } => {
+            refuse_typed_numeric_operand(body, scrutinee, span, "match")?;
+            for arm in arms {
+                validate_typed_numeric_pattern(&arm.pattern, span)?;
+                validate_typed_numeric_statements(graph, module, body, &arm.guard_stmts, visited)?;
+                if let Some(guard) = &arm.guard {
+                    refuse_typed_numeric_operand(body, guard, span, "match guard")?;
+                }
+                validate_typed_numeric_statements(graph, module, body, &arm.body_stmts, visited)?;
+                let _ = typed_numeric_operand_kind(body, &arm.result, span)?;
+            }
+            Ok(())
+        }
+        Rvalue::FieldlessEnumVariant(_) | Rvalue::ValueEnumVariant(_) => Ok(()),
+    }
+}
+
+/// Validate one call that receives a typed-numeric operand and follow any retained same-module target.
+fn validate_typed_numeric_call(
+    graph: &ReplacementExecutionGraph<'_>,
+    module: &BodyIrModule,
+    body: &Body,
+    callee: &Callee,
+    args: &[ArgumentElement],
+    span: HirSourceSpan,
+    visited: &mut BTreeSet<CompilerNodeId>,
+) -> Result<(), ReplacementExecutionError> {
+    let kinds = argument_operands(args)
+        .map(|operand| typed_numeric_operand_kind(body, operand, span))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    // Follow the callee into whichever module declares it. A same-module target is reached by its span identity; one
+    // that left the module carries a canonical identity instead, and the graph owns that resolution. Following both is
+    // what makes admitting a cross-module call below sound: the callee's own operations are validated under the same
+    // contract, in its own module, rather than being trusted because the call site could not see them.
+    if let Callee::Function(CallableTarget::Named(target)) = callee
+        && target.builtin.is_none()
+    {
+        if target.direct_call_id.is_some() {
+            let called = named_callable_body(module, target, span)?;
+            validate_typed_numeric_body_profile(graph, module, called, visited)?;
+        } else if let Some(canonical) = target.canonical.as_ref()
+            && let Some((owner, called)) = graph.body_for_canonical_target(canonical)
+        {
+            validate_typed_numeric_body_profile(graph, owner, called, visited)?;
+        }
+    }
+    let Some(kind) = kinds.first().copied() else {
+        return Ok(());
+    };
+
+    match callee {
+        Callee::Function(CallableTarget::Named(target)) => match explicit_builtin(target) {
+            Some(BuiltinFnId::Print | BuiltinFnId::Str) => Ok(()),
+            Some(BuiltinFnId::Int | BuiltinFnId::Float) if !kinds.iter().any(|kind| kind.is_decimal()) => Ok(()),
+            Some(BuiltinFnId::Int | BuiltinFnId::Float) => Err(typed_numeric_operation_refusal(
+                kind,
+                format!("`{}` conversion", target.name),
+                span,
+            )),
+            // A direct call is admitted whether the declaration is in this module or another one the graph resolved.
+            // `direct_call_id` alone made locality the criterion; the callee's operations are validated above either
+            // way, so the distinction the profile actually cares about is that the frontend resolved the call at all.
+            None if target.direct_call_id.is_some() || target.canonical.is_some() => Ok(()),
+            other => Err(typed_numeric_operation_refusal(
+                kind,
+                format!(
+                    "call to {}",
+                    other.map_or_else(|| target.name.clone(), |builtin| builtins::as_str(builtin).to_string())
+                ),
+                span,
+            )),
+        },
+        Callee::Function(CallableTarget::Local(_)) => Ok(()),
+        Callee::Method(target) => Err(typed_numeric_operation_refusal(
+            kind,
+            format!("method `{}`", target.name),
+            span,
+        )),
+        Callee::Helper(helper) => Err(typed_numeric_operation_refusal(
+            kind,
+            format!("helper `{}`", helper.as_str()),
+            span,
+        )),
+        Callee::ProviderOperation(plan) => Err(typed_numeric_operation_refusal(
+            kind,
+            format!("provider operation `{}`", plan.operation.declaration_name),
+            span,
+        )),
+    }
+}
+
+/// Iterate every operand represented by positional, named, or spread argument elements.
+fn argument_operands(elements: &[ArgumentElement]) -> impl Iterator<Item = &Operand> {
+    elements.iter().map(|element| match element {
+        ArgumentElement::One(operand) | ArgumentElement::Named { operand, .. } => operand,
+        ArgumentElement::Spread(spread) => &spread.source,
+    })
+}
+
+/// Resolve an operand's exact numeric profile kind from its constant or declared local type.
+fn typed_numeric_operand_kind(
+    body: &Body,
+    operand: &Operand,
+    span: HirSourceSpan,
+) -> Result<Option<TypedNumericProfileKind>, ReplacementExecutionError> {
+    match operand {
+        Operand::Constant(Constant::TypedNumeric(constant)) => {
+            let value = typed_numeric_constant_value(constant, span)?;
+            Ok(Some(match value {
+                ReplacementNumericValue::Signed { kind, .. } | ReplacementNumericValue::Unsigned { kind, .. } => {
+                    TypedNumericProfileKind::Binary(kind)
+                }
+                ReplacementNumericValue::F32(_) => TypedNumericProfileKind::Binary(NumericTypeId::F32),
+                ReplacementNumericValue::F64(_) => TypedNumericProfileKind::Binary(NumericTypeId::F64),
+                ReplacementNumericValue::Decimal { .. } => TypedNumericProfileKind::Decimal,
+            }))
+        }
+        Operand::Constant(_) => Ok(None),
+        Operand::Place(place) => Ok(typed_numeric_kind_from_type(declared_local_type(
+            body,
+            local_root(&place.place, span)?,
+            span,
+        )?)),
+    }
+}
+
+/// Classify a checked exact binary-numeric or decimal type for the bounded execution profile.
+fn typed_numeric_kind_from_type(ty: &IncanType) -> Option<TypedNumericProfileKind> {
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Numeric(kind)) if *kind != NumericTypeId::Bool => {
+            Some(TypedNumericProfileKind::Binary(*kind))
+        }
+        IncanType::Decimal { .. } => Some(TypedNumericProfileKind::Decimal),
+        _ => None,
+    }
+}
+
+/// Refuse an operand when it carries a typed numeric through an operation outside the admitted profile.
+fn refuse_typed_numeric_operand(
+    body: &Body,
+    operand: &Operand,
+    span: HirSourceSpan,
+    operation: &str,
+) -> Result<(), ReplacementExecutionError> {
+    if let Some(kind) = typed_numeric_operand_kind(body, operand, span)? {
+        Err(typed_numeric_operation_refusal(kind, operation, span))
+    } else {
+        Ok(())
+    }
+}
+
+/// Build the canonical #988-owned refusal for one unproved typed-numeric operation.
+fn typed_numeric_operation_refusal(
+    kind: TypedNumericProfileKind,
+    operation: impl std::fmt::Display,
+    span: HirSourceSpan,
+) -> ReplacementExecutionError {
+    unsupported(
+        format!(
+            "typed numeric `{}` {operation} is outside the admitted carrier profile (owned by #988)",
+            kind.label()
+        ),
+        span,
+    )
+}
+
+/// Walk a pattern and refuse any typed-numeric literal before match execution can produce effects.
+fn validate_typed_numeric_pattern(pattern: &Pattern, span: HirSourceSpan) -> Result<(), ReplacementExecutionError> {
+    match pattern {
+        Pattern::Literal(Constant::TypedNumeric(constant)) => {
+            let value = typed_numeric_constant_value(constant, span)?;
+            let kind = match value {
+                ReplacementNumericValue::Signed { kind, .. } | ReplacementNumericValue::Unsigned { kind, .. } => {
+                    TypedNumericProfileKind::Binary(kind)
+                }
+                ReplacementNumericValue::F32(_) => TypedNumericProfileKind::Binary(NumericTypeId::F32),
+                ReplacementNumericValue::F64(_) => TypedNumericProfileKind::Binary(NumericTypeId::F64),
+                ReplacementNumericValue::Decimal { .. } => TypedNumericProfileKind::Decimal,
+            };
+            Err(typed_numeric_operation_refusal(kind, "pattern matching", span))
+        }
+        Pattern::Tuple(items) | Pattern::Or(items) => {
+            for item in items {
+                validate_typed_numeric_pattern(item, span)?;
+            }
+            Ok(())
+        }
+        Pattern::Struct { fields, .. } | Pattern::Nominal { fields, .. } => {
+            for (_, field) in fields {
+                validate_typed_numeric_pattern(field, span)?;
+            }
+            Ok(())
+        }
+        Pattern::Result { fields, .. } | Pattern::Enum { fields, .. } => {
+            for field in fields {
+                validate_typed_numeric_pattern(field, span)?;
+            }
+            Ok(())
+        }
+        Pattern::Wildcard | Pattern::Var(_) | Pattern::Literal(_) | Pattern::FieldlessEnumVariant(_) => Ok(()),
+    }
 }
 
 /// Validate the stored call-time default contracts without consulting source or declaration structures.
@@ -1085,15 +2329,26 @@ fn validate_closure_profile(
 /// Validate structural aggregate destinations and retain the narrower builtin-iteration type boundary.
 ///
 /// Runtime operands alone cannot classify an empty aggregate. This pass therefore consumes the compiler-owned local
-/// declaration type before execution: tuple and list aggregates may be recursively structural values, while the
-/// existing builtin collection iteration profile remains restricted to scalar tuple pairs.
+/// declaration type before execution: tuple and list aggregates and their loop items may be recursively structural
+/// values. Range and canonical Zip iterators have their own checked item contracts.
 fn validate_collection_local_types(
     body: &Body,
     statements: &[Statement],
     range_iterator_locals: &BTreeSet<LocalId>,
+    zip_iterator_locals: &BTreeSet<LocalId>,
 ) -> Result<(), ReplacementExecutionError> {
     for statement in statements {
         match &statement.kind {
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Aggregate(AggregateKind::Set, _),
+            } => validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Set)?,
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Dict(_),
+            } => {
+                validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Dict)?;
+            }
             StatementKind::Assign {
                 place,
                 rvalue: Rvalue::Aggregate(AggregateKind::Tuple, _),
@@ -1115,7 +2370,7 @@ fn validate_collection_local_types(
                 let iterator_local = bare_local(&iterator.place, statement.span)?;
                 if range_iterator_locals.contains(&iterator_local) {
                     validate_range_iteration_local_types(body, destination, iterator_local, statement.span)?;
-                } else {
+                } else if !zip_iterator_locals.contains(&iterator_local) {
                     validate_structural_iteration_local_type(
                         body,
                         bare_local(destination, statement.span)?,
@@ -1133,21 +2388,31 @@ fn validate_collection_local_types(
             StatementKind::If {
                 then_block, else_block, ..
             } => {
-                validate_collection_local_types(body, &then_block.stmts, range_iterator_locals)?;
+                validate_collection_local_types(body, &then_block.stmts, range_iterator_locals, zip_iterator_locals)?;
                 if let Some(else_block) = else_block {
-                    validate_collection_local_types(body, &else_block.stmts, range_iterator_locals)?;
+                    validate_collection_local_types(
+                        body,
+                        &else_block.stmts,
+                        range_iterator_locals,
+                        zip_iterator_locals,
+                    )?;
                 }
             }
             StatementKind::Loop { body: loop_body } => {
-                validate_collection_local_types(body, &loop_body.stmts, range_iterator_locals)?;
+                validate_collection_local_types(body, &loop_body.stmts, range_iterator_locals, zip_iterator_locals)?;
             }
             StatementKind::Assign {
                 rvalue: Rvalue::Match { arms, .. },
                 ..
             } => {
                 for arm in arms {
-                    validate_collection_local_types(body, &arm.guard_stmts, range_iterator_locals)?;
-                    validate_collection_local_types(body, &arm.body_stmts, range_iterator_locals)?;
+                    validate_collection_local_types(
+                        body,
+                        &arm.guard_stmts,
+                        range_iterator_locals,
+                        zip_iterator_locals,
+                    )?;
+                    validate_collection_local_types(body, &arm.body_stmts, range_iterator_locals, zip_iterator_locals)?;
                 }
             }
             _ => {}
@@ -1238,13 +2503,23 @@ fn validate_nested_aggregate_types_in_rvalue(body: &Body, rvalue: &Rvalue) -> Re
 ///
 /// Generator frames use a deliberately different `IterNext` type contract from ordinary bodies. Deferred aggregate
 /// checks therefore share the same compiler-owned local type rule without accidentally applying the enclosing
-/// body's scalar-pair collection-iteration restriction to generator-local iterator values.
+/// body's structural-list iteration rule to generator-local iterator values.
 fn validate_structural_aggregate_types_in_statements(
     body: &Body,
     statements: &[Statement],
 ) -> Result<(), ReplacementExecutionError> {
     for statement in statements {
         match &statement.kind {
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Aggregate(AggregateKind::Set, _),
+            } => validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Set)?,
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Dict(_),
+            } => {
+                validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Dict)?;
+            }
             StatementKind::Assign {
                 place,
                 rvalue: Rvalue::Aggregate(AggregateKind::Tuple | AggregateKind::List, _),
@@ -1295,6 +2570,35 @@ fn validate_structural_aggregate_local_type(
     }
 }
 
+/// Validate the retained key type even when an empty hashed aggregate provides no runtime element to inspect.
+fn validate_hashed_aggregate_local_type(
+    body: &Body,
+    place: &Place,
+    span: HirSourceSpan,
+    collection: CollectionTypeId,
+) -> Result<(), ReplacementExecutionError> {
+    let ty = declared_local_type(body, bare_local(place, span)?, span)?;
+    let valid = match ty {
+        IncanType::Generic { base, args } if collections::from_str(base) == Some(collection) => {
+            match (collection, args.as_slice()) {
+                (CollectionTypeId::Set, [element]) | (CollectionTypeId::Dict, [element, _]) => {
+                    is_collection_scalar_type(element)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(unsupported(
+            format!("hashed aggregate has unsupported key type in `{ty}`"),
+            span,
+        ))
+    }
+}
+
 /// Collect builtin `range` iterator locals from explicit Body-IR builtin targets.
 ///
 /// A same-module declaration named `range` now carries a [`NamedCallableTarget::direct_call_id`] and dispatches to
@@ -1316,16 +2620,23 @@ fn collect_range_iterator_locals(statements: &[Statement], range_locals: &mut BT
                 callee: Callee::Function(CallableTarget::Named(target)),
                 ..
             } if is_explicit_range_builtin(target) && destination.projection.is_empty() => {
-                changed |= range_locals.insert(destination.local);
+                if let Some(local) = destination.local_id() {
+                    changed |= range_locals.insert(local);
+                }
             }
             StatementKind::Assign {
                 place,
                 rvalue: Rvalue::Use(Operand::Place(source)),
             } if place.projection.is_empty()
                 && source.place.projection.is_empty()
-                && range_locals.contains(&source.place.local) =>
+                && source
+                    .place
+                    .local_id()
+                    .is_some_and(|local| range_locals.contains(&local)) =>
             {
-                changed |= range_locals.insert(place.local);
+                if let Some(local) = place.local_id() {
+                    changed |= range_locals.insert(local);
+                }
             }
             StatementKind::If {
                 then_block, else_block, ..
@@ -1448,11 +2759,33 @@ fn format_interpolation(
         (ReplacementValue::Bool(value), _) => Ok(value.to_string()),
         (ReplacementValue::Str(text), FormatStyle::Display) => Ok(text.clone()),
         (ReplacementValue::Str(text), FormatStyle::Debug) => Ok(format!("{text:?}")),
+        (ReplacementValue::Float(value), FormatStyle::Display) => Ok(value.to_string()),
+        (ReplacementValue::Numeric(value), FormatStyle::Display) => Ok(value.observable_text()),
         (other, _) => Err(unsupported(
             format!("f-string interpolation of {}", value_kind(other)),
             span,
         )),
     }
+}
+
+/// Serialize one admitted scalar with the same `serde_json` implementation as generated native code.
+///
+/// The direct profile intentionally stops at `int`, `bool`, `str`, and `None`/unit. Structural values may be
+/// serializable on the native route, but admitting them here requires separate type, ordering, and failure-parity
+/// evidence; they remain an original-call-span refusal instead of acquiring a second serializer policy.
+fn stringify_json_scalar(
+    value: ReplacementValue,
+    span: HirSourceSpan,
+) -> Result<ReplacementValue, ReplacementExecutionError> {
+    let serialized = match value {
+        ReplacementValue::Int(value) => serde_json::to_string(&value),
+        ReplacementValue::Bool(value) => serde_json::to_string(&value),
+        ReplacementValue::Str(value) => serde_json::to_string(&value),
+        ReplacementValue::Unit => serde_json::to_string(&()),
+        other => return Err(unsupported(format!("`json_stringify` of {}", value_kind(&other)), span)),
+    }
+    .map_err(|error| runtime_failure(format!("`json_stringify` serialization failed: {error}"), span))?;
+    Ok(ReplacementValue::Str(serialized))
 }
 
 /// The integer elements of a list-shaped value, with booleans counted as 1/0.
@@ -1546,24 +2879,76 @@ fn is_explicit_range_builtin(target: &NamedCallableTarget) -> bool {
 /// The compiler-owned builtin this target names, if it names one and source did not take the spelling.
 ///
 /// A same-module declaration carries a [`NamedCallableTarget::direct_call_id`] and dispatches to itself, so a
-/// module defining its own `print` or `len` keeps meaning its own. One accessor rather than a predicate per
+/// module defining its own `range` or `len` keeps meaning its own. One accessor rather than a predicate per
 /// builtin, so admission and execution read the same answer instead of drifting apart as the set grows.
 fn explicit_builtin(target: &NamedCallableTarget) -> Option<BuiltinFnId> {
-    target.direct_call_id.is_none().then_some(target.builtin).flatten()
+    let builtin = target.direct_call_id.is_none().then_some(target.builtin).flatten()?;
+    let canonical = target.canonical.as_ref()?;
+    (canonical.namespace == SymbolNamespace::OrdinaryLexical
+        && canonical.origin == SymbolOrigin::Builtin
+        && canonical.kind == SemanticSourceTargetKind::Builtin
+        && canonical.scope_discriminant.is_none()
+        && canonical.declaration_span == HirSourceSpan::new(0, 0)
+        && canonical.declaration_name == builtins::as_str(builtin))
+    .then_some(builtin)
+}
+
+/// Closed set of source method operations admitted by this replacement profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplacementMethodOperation {
+    GeneratorCollect,
+    GeneratorMap,
+    GeneratorFilter,
+    ValueEnumValue,
+}
+
+/// Resolve an admitted method solely from the canonical target retained by typechecking.
+///
+/// `MethodTarget::name` is intentionally not consulted. It is a source/display spelling and may be an alias; only
+/// the canonical identity can authorize a runtime operation.
+fn replacement_method_operation(
+    target: &incan_semantics_core::body_ir::MethodTarget,
+) -> Option<ReplacementMethodOperation> {
+    let identity = target.canonical.as_ref()?;
+    if identity.namespace != SymbolNamespace::Member
+        || identity.kind != SemanticSourceTargetKind::Method
+        || identity.scope_discriminant.is_some()
+    {
+        return None;
+    }
+    if identity.origin == SymbolOrigin::Builtin && identity.declaration_span == HirSourceSpan::new(0, 0) {
+        let member = identity.declaration_name.strip_prefix("Generator.")?;
+        return match iterator_methods::from_str(member)? {
+            IteratorMethodId::Collect => Some(ReplacementMethodOperation::GeneratorCollect),
+            IteratorMethodId::Map => Some(ReplacementMethodOperation::GeneratorMap),
+            IteratorMethodId::Filter => Some(ReplacementMethodOperation::GeneratorFilter),
+            _ => None,
+        };
+    }
+    (matches!(identity.origin, SymbolOrigin::Module(_)) && identity.declaration_name == "value")
+        .then_some(ReplacementMethodOperation::ValueEnumValue)
 }
 
 /// The builtins this runtime executes, as opposed to those it merely recognizes.
 ///
 /// Deliberately a subset. A builtin belongs here only when this runtime's answer provably matches the one the
 /// Rust-emission backend generates for the same call; anything else refuses by name rather than producing a second
-/// opinion. `len` over a `str` is the instructive exclusion — see [`BodyExecutor::execute_builtin`].
+/// opinion. String `len` is admitted because both routes share the canonical Unicode-scalar helper.
 const EXECUTABLE_BUILTINS: &[BuiltinFnId] = &[
     BuiltinFnId::Print,
+    BuiltinFnId::Bool,
+    BuiltinFnId::Str,
+    BuiltinFnId::Int,
+    BuiltinFnId::Float,
     BuiltinFnId::Len,
     BuiltinFnId::Abs,
     BuiltinFnId::Sum,
     BuiltinFnId::Min,
     BuiltinFnId::Max,
+    BuiltinFnId::Sorted,
+    BuiltinFnId::Enumerate,
+    BuiltinFnId::Zip,
+    BuiltinFnId::JsonStringify,
 ];
 
 /// Collect the local identities written by builtin collection polling across one normalized body.
@@ -1603,7 +2988,9 @@ fn collect_builtin_iteration_destinations(statements: &[Statement], destinations
                 protocol: IterProtocol::Builtin,
                 ..
             } => {
-                destinations.insert(destination.local);
+                if let Some(local) = destination.local_id() {
+                    destinations.insert(local);
+                }
             }
             _ => {}
         }
@@ -1635,7 +3022,9 @@ fn collect_scalar_tuple_collection_locals(
                 place,
                 rvalue: Rvalue::Aggregate(AggregateKind::Tuple, _),
             } if place.projection.is_empty() => {
-                tuple_destinations.insert(place.local);
+                if let Some(local) = place.local_id() {
+                    tuple_destinations.insert(local);
+                }
             }
             StatementKind::Assign {
                 rvalue: Rvalue::Aggregate(AggregateKind::List, operands),
@@ -1646,8 +3035,9 @@ fn collect_scalar_tuple_collection_locals(
                 for operand in operands.iter().filter_map(ArgumentElement::as_one) {
                     if let Operand::Place(place_operand) = operand
                         && place_operand.place.projection.is_empty()
+                        && let Some(local) = place_operand.place.local_id()
                     {
-                        list_operands.insert(place_operand.place.local);
+                        list_operands.insert(local);
                     }
                 }
             }
@@ -1751,7 +3141,7 @@ fn validate_statement_profile(
                 statement.span,
                 tuple_iteration_locals,
                 scalar_tuple_collection_locals,
-                place.projection.is_empty().then_some(place.local),
+                place.projection.is_empty().then(|| place.local_id()).flatten(),
             )
         }
         StatementKind::Call {
@@ -1867,8 +3257,30 @@ fn validate_call_profile(
         ));
     };
     let supported = match callee {
+        Callee::Helper(HelperOp::StrUpper | HelperOp::StrLower | HelperOp::StrStrip | HelperOp::StrLen) => {
+            args.len() == 1
+        }
+        Callee::Helper(HelperOp::StrReplace) => args.len() == 3,
         Callee::Helper(
-            HelperOp::StrConcat | HelperOp::ListConcat | HelperOp::ListContains | HelperOp::ListNotContains,
+            HelperOp::StrJoin
+            | HelperOp::StrContains
+            | HelperOp::StrEq
+            | HelperOp::StrNe
+            | HelperOp::StrLt
+            | HelperOp::StrLe
+            | HelperOp::StrGt
+            | HelperOp::StrGe,
+        ) => args.len() == 2,
+        Callee::Helper(HelperOp::StrSplit) => matches!(args.len(), 1 | 2),
+        Callee::Helper(
+            HelperOp::StrConcat
+            | HelperOp::ListConcat
+            | HelperOp::ListContains
+            | HelperOp::ListNotContains
+            | HelperOp::SetContains
+            | HelperOp::SetNotContains
+            | HelperOp::DictContainsKey
+            | HelperOp::DictNotContainsKey,
         ) => true,
         // Named calls remain direct module dispatches. Their target/binding facts are Body-IR values, not a source
         // lookup reconstructed by this executor.
@@ -1879,7 +3291,12 @@ fn validate_call_profile(
             true
         }
         Callee::Function(CallableTarget::Named(target)) => {
-            target.direct_call_id.is_some()
+            // `direct_call_id` is a span identity that only exists for a same-module declaration, so requiring it made
+            // locality the admission criterion. #1260 executes calls that leave the entry module, where the frontend
+            // resolves the callee to a canonical identity instead. Resolution is the property this gate actually
+            // needs: an unresolved call carries neither. Whether the execution graph holds that identity's body is
+            // decided at dispatch, which reports its own error rather than being silently admitted here.
+            (target.direct_call_id.is_some() || target.canonical.is_some())
                 && target.builtin.is_none()
                 && validate_argument_binding_profile(&target.binding)
         }
@@ -1887,14 +3304,27 @@ fn validate_call_profile(
             validate_operand_profile(&Operand::Place(target.operand.clone()), span, tuple_iteration_locals)?;
             validate_argument_binding_profile(&target.binding)
         }
-        Callee::Method(target) if target.name == "collect" => args.len() == 1,
+        Callee::Method(target)
+            if replacement_method_operation(target) == Some(ReplacementMethodOperation::GeneratorCollect) =>
+        {
+            args.len() == 1
+        }
         // The generated RFC 032 `.value()` surface is admitted only when its receiver becomes an identity-validated
         // value-enum runtime carrier. Explicit type arguments and ordinary arguments have no retained source fact.
-        Callee::Method(target) if target.name == "value" => target.type_args.is_empty() && args.len() == 1,
+        Callee::Method(target)
+            if replacement_method_operation(target) == Some(ReplacementMethodOperation::ValueEnumValue) =>
+        {
+            target.type_args.is_empty() && args.len() == 1
+        }
         // The compiler currently records the iterator-adapter receiver and callback in source order but leaves
         // their stdlib method signature as `UnresolvedPositional`. That is sufficient for this deliberately
         // positional two-argument profile: neither adapter has named arguments or callable defaults to bind.
-        Callee::Method(target) if matches!(target.name.as_str(), "map" | "filter") => {
+        Callee::Method(target)
+            if matches!(
+                replacement_method_operation(target),
+                Some(ReplacementMethodOperation::GeneratorMap | ReplacementMethodOperation::GeneratorFilter)
+            ) =>
+        {
             args.len() == 2
                 && match &target.binding {
                     ArgumentBinding::UnresolvedPositional => true,
@@ -1903,7 +3333,7 @@ fn validate_call_profile(
         }
         // An admitted provider operation is executable when its plan is: an active provider, an authority that
         // really names a capability, and one described input per evaluated argument. Whether *this run* has a host
-        // for it is a different question, answered by `validate_provider_operation_hosts` before execution starts.
+        // for it is a different question, answered by `execution_preflight` before execution starts.
         Callee::ProviderOperation(plan) => {
             if let Some(description) = unexecutable_provider_plan(plan, args.len()) {
                 return Err(unsupported(description, span));
@@ -1995,7 +3425,25 @@ fn validate_rvalue_profile(
             validate_operand_profile(left, span, tuple_iteration_locals)?;
             validate_operand_profile(right, span, tuple_iteration_locals)
         }
-        Rvalue::Dict(_) => Err(unsupported("dict aggregate", span)),
+        Rvalue::IsInstance {
+            value,
+            value_ty,
+            target,
+        } => {
+            validate_operand_profile(value, span, tuple_iteration_locals)?;
+            validate_isinstance_target_profile(target, span)?;
+            validate_isinstance_value_type_profile(value_ty, span)
+        }
+        Rvalue::Dict(entries) => {
+            for entry in entries {
+                let DictEntry::Pair(key, value) = entry else {
+                    return Err(unsupported("dict aggregate with a spread entry", span));
+                };
+                validate_operand_profile(key, span, tuple_iteration_locals)?;
+                validate_operand_profile(value, span, tuple_iteration_locals)?;
+            }
+            Ok(())
+        }
         Rvalue::Aggregate(kind, operands) => validate_aggregate_profile(
             kind,
             operands,
@@ -2034,6 +3482,68 @@ fn validate_rvalue_profile(
             validate_operand_profile(scrutinee, span, tuple_iteration_locals)?;
             validate_match_arms_profile(arms, span, tuple_iteration_locals, scalar_tuple_collection_locals)
         }
+    }
+}
+
+/// Validate that a checked `isinstance` value can only carry the four scalar tags proven by this bounded profile.
+fn validate_isinstance_value_type_profile(
+    value_ty: &IncanType,
+    call_span: HirSourceSpan,
+) -> Result<(), ReplacementExecutionError> {
+    let admitted_scalar = |ty: &IncanType| {
+        matches!(
+            ty,
+            IncanType::Primitive(
+                IncanPrimitiveType::Int
+                    | IncanPrimitiveType::Bool
+                    | IncanPrimitiveType::Str
+                    | IncanPrimitiveType::Float
+            )
+        )
+    };
+    let admitted = admitted_scalar(value_ty)
+        || matches!(
+            value_ty,
+            IncanType::Generic { base, args }
+                if base == incan_core::lang::types::UNION_TYPE_NAME
+                    && !args.is_empty()
+                    && args.iter().all(admitted_scalar)
+        );
+    if admitted {
+        Ok(())
+    } else {
+        Err(unsupported(
+            format!("isinstance value type `{value_ty}` outside the primitive replacement profile"),
+            call_span,
+        ))
+    }
+}
+
+/// Validate the bounded primitive `isinstance` target set before any program effect can run.
+fn validate_isinstance_target_profile(
+    target: &incan_semantics_core::body_ir::IsInstanceTarget,
+    call_span: HirSourceSpan,
+) -> Result<(), ReplacementExecutionError> {
+    if target.span.start >= target.span.end || target.span.start < call_span.start || target.span.end > call_span.end {
+        return Err(unsupported(
+            "isinstance target with an invalid retained source span",
+            call_span,
+        ));
+    }
+    if target.canonical.is_some() {
+        return Err(unsupported(
+            "isinstance target with a declaration identity outside the primitive replacement profile",
+            target.span,
+        ));
+    }
+    match &target.ty {
+        IncanType::Primitive(
+            IncanPrimitiveType::Int | IncanPrimitiveType::Bool | IncanPrimitiveType::Str | IncanPrimitiveType::Float,
+        ) => Ok(()),
+        unsupported_target => Err(unsupported(
+            format!("isinstance target type `{unsupported_target}` outside the primitive replacement profile"),
+            target.span,
+        )),
     }
 }
 
@@ -2122,21 +3632,29 @@ fn validate_pattern_profile(pattern: &Pattern, span: HirSourceSpan) -> Result<()
             }
             validate_pattern_profile(&fields[0], span)
         }
-        Pattern::Struct { .. } | Pattern::Enum { .. } => Err(unsupported(
+        Pattern::Struct { canonical: None, .. } | Pattern::Enum { canonical: None, .. } => Err(unsupported(
             "match pattern without an exact direct target identity",
+            span,
+        )),
+        Pattern::Struct { canonical: Some(_), .. } | Pattern::Enum { canonical: Some(_), .. } => Err(unsupported(
+            "match pattern without an admitted direct target layout",
             span,
         )),
     }
 }
 
-/// Reject a nominal pattern whose canonical identity was absent before runtime registry validation.
+/// Reject a nominal pattern whose retained identity is not a canonical module-owned model target.
 fn validate_nominal_pattern_target(
     target: &NominalPatternTarget,
     span: HirSourceSpan,
 ) -> Result<(), ReplacementExecutionError> {
-    if target.name.is_empty() {
+    if target.canonical.namespace != SymbolNamespace::OrdinaryLexical
+        || target.canonical.kind != SemanticSourceTargetKind::Model
+        || !matches!(&target.canonical.origin, SymbolOrigin::Module(_))
+        || target.canonical.scope_discriminant.is_some()
+    {
         return Err(unsupported(
-            "nominal match pattern without a canonical source-local name",
+            "nominal match pattern without a canonical source-local model target",
             span,
         ));
     }
@@ -2151,9 +3669,21 @@ fn validate_fieldless_enum_variant_target(
     target: &FieldlessEnumVariantTarget,
     span: HirSourceSpan,
 ) -> Result<(), ReplacementExecutionError> {
-    if target.enum_name.is_empty() || target.variant_name.is_empty() {
+    if target.enum_name.is_empty()
+        || target.variant_name.is_empty()
+        || target.enum_canonical.namespace != SymbolNamespace::OrdinaryLexical
+        || target.enum_canonical.kind != SemanticSourceTargetKind::Enum
+        || target.enum_canonical.scope_discriminant.is_some()
+        || !matches!(target.enum_canonical.origin, SymbolOrigin::Module(_))
+        || target.enum_canonical.declaration_name != target.enum_name
+        || target.variant_canonical.namespace != SymbolNamespace::Member
+        || target.variant_canonical.kind != SemanticSourceTargetKind::Variant
+        || target.variant_canonical.scope_discriminant.is_some()
+        || target.variant_canonical.origin != target.enum_canonical.origin
+        || target.variant_canonical.declaration_name != target.variant_name
+    {
         return Err(unsupported(
-            "fieldless-enum member without a canonical source-local name",
+            "fieldless-enum member without exact canonical source-local owner/member identities",
             span,
         ));
     }
@@ -2169,9 +3699,21 @@ fn validate_value_enum_variant_target(
     target: &ValueEnumVariantTarget,
     span: HirSourceSpan,
 ) -> Result<(), ReplacementExecutionError> {
-    if target.enum_name.is_empty() || target.variant_name.is_empty() {
+    if target.enum_name.is_empty()
+        || target.variant_name.is_empty()
+        || target.enum_canonical.namespace != SymbolNamespace::OrdinaryLexical
+        || target.enum_canonical.kind != SemanticSourceTargetKind::Enum
+        || target.enum_canonical.scope_discriminant.is_some()
+        || !matches!(target.enum_canonical.origin, SymbolOrigin::Module(_))
+        || target.enum_canonical.declaration_name != target.enum_name
+        || target.variant_canonical.namespace != SymbolNamespace::Member
+        || target.variant_canonical.kind != SemanticSourceTargetKind::Variant
+        || target.variant_canonical.scope_discriminant.is_some()
+        || target.variant_canonical.origin != target.enum_canonical.origin
+        || target.variant_canonical.declaration_name != target.variant_name
+    {
         return Err(unsupported(
-            "value-enum member without a canonical source-local name",
+            "value-enum member without exact canonical source-local owner/member identities",
             span,
         ));
     }
@@ -2234,10 +3776,11 @@ fn validate_generator_statements_profile(
     Ok(())
 }
 
-/// Validate source-local tuple/list aggregates plus the constrained plain-model constructor vocabulary.
+/// Validate source-local tuple/list/set aggregates plus the constrained plain-model constructor vocabulary.
 ///
-/// Dict and set semantics remain unavailable. Constructor admission is limited further by retained declaration
-/// identity, complete checked bindings, and structural field values before the executor materializes a model value.
+/// Set elements must satisfy the hashed scalar-key profile during materialization. Constructor admission requires
+/// declaration identity, complete checked bindings, and structural field values before the executor materializes a
+/// model value.
 fn validate_aggregate_profile(
     kind: &AggregateKind,
     operands: &[ArgumentElement],
@@ -2256,7 +3799,7 @@ fn validate_aggregate_profile(
     };
     let operands = operands.as_slice();
     match kind {
-        AggregateKind::Tuple | AggregateKind::List => {
+        AggregateKind::Tuple | AggregateKind::List | AggregateKind::Set => {
             for operand in operands {
                 validate_operand_profile(operand, span, tuple_iteration_locals)?;
             }
@@ -2283,6 +3826,28 @@ fn validate_nominal_constructor_target(
                 "constructor `{}` without a source-local declaration identity",
                 target.name
             ),
+            span,
+        ));
+    }
+    if target.canonical_field_layout.is_none() {
+        return Err(unsupported(
+            format!("constructor `{}` without a checked canonical field layout", target.name),
+            span,
+        ));
+    }
+    let Some(canonical) = target.canonical.as_ref() else {
+        return Err(unsupported(
+            format!("constructor `{}` without a canonical declaration target", target.name),
+            span,
+        ));
+    };
+    if canonical.namespace != SymbolNamespace::OrdinaryLexical
+        || canonical.kind != SemanticSourceTargetKind::Model
+        || !matches!(&canonical.origin, SymbolOrigin::Module(_))
+        || canonical.scope_discriminant.is_some()
+    {
+        return Err(unsupported(
+            "constructor canonical target is not a source-local model",
             span,
         ));
     }
@@ -2332,15 +3897,24 @@ fn validate_bare_local(place: &Place, span: HirSourceSpan) -> Result<(), Replace
     bare_local(place, span).map(|_| ())
 }
 
+/// Refuse canonical module storage at profile validation before execution could mistake it for frame state.
+fn validate_local_place_root(place: &Place, span: HirSourceSpan) -> Result<(), ReplacementExecutionError> {
+    if place.global().is_some() {
+        return bare_local(place, span).map(|_| ());
+    }
+    Ok(())
+}
+
 /// Admit one-level tuple/model fields and one-level indexes over source-local structural values.
 fn validate_read_place(
     place: &Place,
     span: HirSourceSpan,
     tuple_iteration_locals: &BTreeSet<LocalId>,
 ) -> Result<(), ReplacementExecutionError> {
+    validate_local_place_root(place, span)?;
     match place.projection.as_slice() {
         [] => Ok(()),
-        [PlaceElem::Field(_)] => Ok(()),
+        [PlaceElem::Field { .. }] => Ok(()),
         [PlaceElem::Index(index)] => validate_operand_profile(index, span, tuple_iteration_locals),
         [PlaceElem::Slice { .. }] => Err(unsupported("slice projection", span)),
         _ => Err(unsupported("nested place projection", span)),
@@ -2353,19 +3927,28 @@ fn validate_write_place(
     span: HirSourceSpan,
     tuple_iteration_locals: &BTreeSet<LocalId>,
 ) -> Result<(), ReplacementExecutionError> {
+    validate_local_place_root(place, span)?;
     match place.projection.as_slice() {
         [] => Ok(()),
         [PlaceElem::Index(index)] => validate_operand_profile(index, span, tuple_iteration_locals),
-        [PlaceElem::Field(_)] => Err(unsupported("field assignment", span)),
+        [PlaceElem::Field { .. }] => Err(unsupported("field assignment", span)),
         [PlaceElem::Slice { .. }] => Err(unsupported("slice assignment", span)),
         _ => Err(unsupported("nested place assignment", span)),
     }
 }
 
 /// Mutable interpreter state for one Body-IR execution.
-struct BodyExecutor {
+struct BodyExecutor<'run, 'writer> {
     module: BodyIrModule,
+    /// Modules other than this frame's own that a resolved call may execute against.
+    ///
+    /// Shared rather than cloned per frame: a nested frame inherits the same set, and the graph is immutable for the
+    /// life of one execution. `module` stays owned because a frame executes against exactly one module and every
+    /// existing lookup reads it directly.
+    reachable: Rc<Vec<BodyIrModule>>,
     locals: BTreeMap<LocalId, ReplacementValue>,
+    /// Checked local types for the currently selected declaration or its nested source-local frame.
+    local_types: BTreeMap<LocalId, IncanType>,
     ownership_reads: Vec<OwnershipRead>,
     runtime_requirements: Vec<AbiV0RuntimeRequirement>,
     body_snapshots: Vec<String>,
@@ -2375,13 +3958,8 @@ struct BodyExecutor {
     next_task_id: usize,
     /// Direct task transitions observed in execution order and bound into the output identity.
     task_lifecycle: Vec<TaskLifecycleEvent>,
-    /// Lines the executed program emitted, in emission order.
-    ///
-    /// Recorded rather than written. Writing straight to the host's stdout would make the program's output an
-    /// effect nothing could observe, compare, or test — and the shadow comparison reads a *returned value*, so a
-    /// divergence in what two backends printed would not show up in any verdict. Holding the output as a value
-    /// keeps it comparable; whether it reaches a terminal is the caller's decision, not this executor's.
-    emitted_output: Vec<String>,
+    /// Caller-owned streams reborrowed by nested frames; delivery and observation outlive a failed frame.
+    io: &'run mut ProgramIo<'writer>,
     /// The task whose Body IR this executor is currently polling, if any.
     active_task: Option<usize>,
     /// The authority source, provider host, and receipt log admitted provider operations run against.
@@ -2396,24 +3974,35 @@ struct BodyExecutor {
     pending_flow: Option<Flow>,
 }
 
-impl BodyExecutor {
+impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// Bind the already-typechecked call arguments to their Body-IR parameter locals.
     fn new(
-        module: &BodyIrModule,
+        graph: &ReplacementExecutionGraph<'_>,
         body: &Body,
         args: &[ReplacementValue],
         providers: Option<Rc<ProviderRuntime>>,
+        io: &'run mut ProgramIo<'writer>,
     ) -> Result<Self, ReplacementExecutionError> {
+        let module = graph.primary();
+        let reachable = Rc::new(
+            graph
+                .modules()
+                .filter(|candidate| candidate.module_id != module.module_id)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         let mut executor = Self {
             module: module.clone(),
+            reachable,
             locals: BTreeMap::new(),
+            local_types: BTreeMap::new(),
             ownership_reads: Vec::new(),
             runtime_requirements: Vec::new(),
             body_snapshots: Vec::new(),
             steps: 0,
             next_task_id: 0,
             task_lifecycle: Vec::new(),
-            emitted_output: Vec::new(),
+            io,
             active_task: None,
             providers,
             pending_flow: None,
@@ -2424,38 +4013,36 @@ impl BodyExecutor {
     }
 
     /// Build an isolated executor for a nested callable, default computation, or suspended generator frame.
-    fn with_locals(module: &BodyIrModule, locals: BTreeMap<LocalId, ReplacementValue>, steps: usize) -> Self {
+    fn with_locals(
+        module: &BodyIrModule,
+        reachable: Rc<Vec<BodyIrModule>>,
+        locals: BTreeMap<LocalId, ReplacementValue>,
+        local_types: BTreeMap<LocalId, IncanType>,
+        steps: usize,
+        io: &'run mut ProgramIo<'writer>,
+    ) -> Self {
         Self {
             module: module.clone(),
+            reachable,
             locals,
+            local_types,
             ownership_reads: Vec::new(),
             runtime_requirements: Vec::new(),
             body_snapshots: Vec::new(),
             steps,
             next_task_id: 0,
             task_lifecycle: Vec::new(),
-            emitted_output: Vec::new(),
+            io,
             active_task: None,
             providers: None,
             pending_flow: None,
         }
     }
 
-    /// Build one isolated child frame while preserving execution-wide task identity allocation.
-    ///
-    /// The provider runtime is shared with the child rather than withheld, so a provider operation invoked inside a
-    /// nested callable is decided, receipted, and sequenced by the same run that would have decided it at the top
-    /// level. Withholding it would have turned a nested invocation into a silent refusal.
-    fn child_with_locals(&self, locals: BTreeMap<LocalId, ReplacementValue>, steps: usize) -> Self {
-        let mut child = Self::with_locals(&self.module, locals, steps);
-        child.next_task_id = self.next_task_id;
-        child.providers = self.providers.clone();
-        child
-    }
-
     /// Record a directly consumed declaration body as evidence and preserve its runtime requirements in first-seen
     /// order.
     fn record_body(&mut self, body: &Body) {
+        self.local_types = body.locals.iter().map(|local| (local.id, local.ty.clone())).collect();
         self.body_snapshots.push(body.render_snapshot());
         for requirement in &body.runtime_requirements {
             if !self.runtime_requirements.contains(requirement) {
@@ -2482,19 +4069,80 @@ impl BodyExecutor {
         self.body_snapshots.join("\n-- direct execution frame --\n")
     }
 
-    /// Merge an isolated nested frame's runtime evidence into its caller after that frame actually executed.
-    fn merge_child(&mut self, child: Self) {
-        self.ownership_reads.extend(child.ownership_reads);
-        for requirement in child.runtime_requirements {
+    /// Execute an isolated frame while reborrowing the caller's streams, then merge its execution evidence.
+    ///
+    /// The closure cannot outlive the reborrow. This keeps one mutable stream owner without shared interior
+    /// mutability, and preserves accepted output even if the child exits with an error before returning a value.
+    fn execute_child<T>(
+        &mut self,
+        locals: BTreeMap<LocalId, ReplacementValue>,
+        steps: usize,
+        execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
+    ) -> Result<T, ReplacementExecutionError> {
+        self.execute_child_with_local_types(locals, self.local_types.clone(), steps, execute)
+    }
+
+    /// Execute an isolated frame against the local-type table owned by that frame's declaration.
+    ///
+    /// The frame runs in this executor's own module, which is correct for every same-module call in the #988 profile.
+    /// A frame whose callee was resolved to another module goes through [`Self::execute_child_in_module`] instead.
+    fn execute_child_with_local_types<T>(
+        &mut self,
+        locals: BTreeMap<LocalId, ReplacementValue>,
+        local_types: BTreeMap<LocalId, IncanType>,
+        steps: usize,
+        execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
+    ) -> Result<T, ReplacementExecutionError> {
+        let module = self.module.clone();
+        self.execute_child_in_module(&module, locals, local_types, steps, execute)
+    }
+
+    /// Execute an isolated frame that is owned by `module` rather than by this executor's own module.
+    ///
+    /// Every nested frame -- callable, generator, task, default computation, and adapter -- reaches its executor
+    /// through here, so this is the one place a cross-module call changes what a child frame executes against. The
+    /// caller passes the module the callee was *resolved* to, never the module the call was written in: a frame that
+    /// kept the caller's module would resolve an imported body against the wrong declaration table, which is the
+    /// failure `a_cross_module_call_is_refused_by_the_single_module_executor` exists to prevent.
+    ///
+    /// Evidence merging is unchanged and deliberately module-agnostic. Ownership reads, runtime requirements, body
+    /// snapshots, step count, task identities, and lifecycle events belong to the one receipt-bound execution rather
+    /// than to whichever module a frame happened to run in, so they merge upward the same way across a module edge.
+    fn execute_child_in_module<T>(
+        &mut self,
+        module: &BodyIrModule,
+        locals: BTreeMap<LocalId, ReplacementValue>,
+        local_types: BTreeMap<LocalId, IncanType>,
+        steps: usize,
+        execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
+    ) -> Result<T, ReplacementExecutionError> {
+        let mut child =
+            BodyExecutor::with_locals(module, Rc::clone(&self.reachable), locals, local_types, steps, self.io);
+        child.next_task_id = self.next_task_id;
+        child.providers = self.providers.clone();
+        // A frame running in another module raises refusals measured in that module's source, so record it here
+        // rather than letting the failure inherit the entrypoint's file on its way out.
+        let result = execute(&mut child).map_err(|error| error.measured_in_module(module.module_id.path()));
+        let BodyExecutor {
+            ownership_reads,
+            runtime_requirements,
+            body_snapshots,
+            steps,
+            next_task_id,
+            task_lifecycle,
+            ..
+        } = child;
+        self.ownership_reads.extend(ownership_reads);
+        for requirement in runtime_requirements {
             if !self.runtime_requirements.contains(&requirement) {
                 self.runtime_requirements.push(requirement);
             }
         }
-        self.body_snapshots.extend(child.body_snapshots);
-        self.steps = child.steps;
-        self.next_task_id = self.next_task_id.max(child.next_task_id);
-        self.task_lifecycle.extend(child.task_lifecycle);
-        self.emitted_output.extend(child.emitted_output);
+        self.body_snapshots.extend(body_snapshots);
+        self.steps = steps;
+        self.next_task_id = self.next_task_id.max(next_task_id);
+        self.task_lifecycle.extend(task_lifecycle);
+        result
     }
 
     /// Construct one unpolled task directly from an identity-selected async Body-IR body.
@@ -2552,15 +4200,17 @@ impl BodyExecutor {
             (task.id, task.body.clone(), task.locals.clone())
         };
         self.record_task_event(id, "polled", span);
-        let mut child = self.child_with_locals(locals, self.steps);
-        child.active_task = Some(id);
-        child.record_body(&body);
-        let result = child.execute_block(&body.block).and_then(|flow| match flow {
-            Flow::Return(Some(value)) => Ok(value),
-            Flow::Return(None) | Flow::Next => Ok(ReplacementValue::Unit),
-            Flow::Break | Flow::Continue => Err(unsupported("loop control outside a direct task loop", body.span)),
+        let result = self.execute_child(locals, self.steps, |child| {
+            child.active_task = Some(id);
+            child.record_body(&body);
+            child.execute_block(&body.block).and_then(|flow| match flow {
+                Flow::Return(Some(value), return_span) => {
+                    coerce_value_to_checked_type(value, &body.return_type, return_span)
+                }
+                Flow::Return(None, _) | Flow::Next => Ok(ReplacementValue::Unit),
+                Flow::Break | Flow::Continue => Err(unsupported("loop control outside a direct task loop", body.span)),
+            })
         });
-        self.merge_child(child);
         let value = match result {
             Ok(value) => value,
             Err(error) => {
@@ -2638,7 +4288,8 @@ impl BodyExecutor {
     ) -> Result<BTreeMap<LocalId, ReplacementValue>, ReplacementExecutionError> {
         let mut supplied = args.iter().cloned().map(Some).collect::<Vec<_>>();
         supplied.resize_with(body.params.len(), || None);
-        self.bind_parameter_values(&body.params, supplied, &BTreeMap::new(), body.span)
+        let local_types = self.local_types.clone();
+        self.bind_parameter_values(&body.params, supplied, &BTreeMap::new(), &local_types, body.span)
     }
 
     /// Evaluate a resolved call site's operands in written source order and bind them to declared parameter slots.
@@ -2648,6 +4299,7 @@ impl BodyExecutor {
         args: &[&Operand],
         binding: &ArgumentBinding,
         captures: &BTreeMap<LocalId, ReplacementValue>,
+        local_types: &BTreeMap<LocalId, IncanType>,
         span: HirSourceSpan,
     ) -> Result<BTreeMap<LocalId, ReplacementValue>, ReplacementExecutionError> {
         let ArgumentBinding::Resolved {
@@ -2698,7 +4350,7 @@ impl BodyExecutor {
         {
             return Err(unsupported("invalid defaulted callable parameter binding", span));
         }
-        self.bind_parameter_values(params, supplied, captures, span)
+        self.bind_parameter_values(params, supplied, captures, local_types, span)
     }
 
     /// Materialize supplied values, source defaults, and construction-time partial presets into one isolated frame.
@@ -2707,6 +4359,7 @@ impl BodyExecutor {
         params: &[CallableParam],
         supplied: Vec<Option<ReplacementValue>>,
         captures: &BTreeMap<LocalId, ReplacementValue>,
+        local_types: &BTreeMap<LocalId, IncanType>,
         call_span: HirSourceSpan,
     ) -> Result<BTreeMap<LocalId, ReplacementValue>, ReplacementExecutionError> {
         if supplied.len() != params.len() {
@@ -2723,7 +4376,7 @@ impl BodyExecutor {
                             call_span,
                         ));
                     }
-                    CallableParamDefault::Source(computation) => self.evaluate_default(computation)?,
+                    CallableParamDefault::Source(computation) => self.evaluate_default(computation, local_types)?,
                     CallableParamDefault::PartialPreset { capture } => {
                         captures.get(capture).cloned().ok_or_else(|| {
                             unsupported(
@@ -2740,6 +4393,7 @@ impl BodyExecutor {
                     }
                 },
             };
+            let value = coerce_value_to_checked_type(value, &parameter.ty, call_span)?;
             if locals.contains_key(&parameter.local) {
                 return Err(unsupported(
                     "callable parameter aliases a captured local",
@@ -2755,21 +4409,27 @@ impl BodyExecutor {
     fn evaluate_default(
         &mut self,
         computation: &DefaultComputation,
+        local_types: &BTreeMap<LocalId, IncanType>,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
-        let mut default_executor = self.child_with_locals(BTreeMap::new(), self.steps);
-        for statement in &computation.stmts {
-            match default_executor.execute_statement(statement)? {
-                Flow::Next => {}
-                Flow::Return(_) | Flow::Break | Flow::Continue => {
-                    return Err(unsupported(
-                        "control flow in a callable default computation",
-                        statement.span,
-                    ));
+        let result = self.execute_child_with_local_types(
+            BTreeMap::new(),
+            local_types.clone(),
+            self.steps,
+            |default_executor| {
+                for statement in &computation.stmts {
+                    match default_executor.execute_statement(statement)? {
+                        Flow::Next => {}
+                        Flow::Return(..) | Flow::Break | Flow::Continue => {
+                            return Err(unsupported(
+                                "control flow in a callable default computation",
+                                statement.span,
+                            ));
+                        }
+                    }
                 }
-            }
-        }
-        let result = default_executor.evaluate_operand(&computation.result, computation.span)?;
-        self.merge_child(default_executor);
+                default_executor.evaluate_operand(&computation.result, computation.span)
+            },
+        )?;
         self.record_frame_evidence(format!(
             "executed source default frame span={}..{} statements={}",
             computation.span.start,
@@ -2837,6 +4497,7 @@ impl BodyExecutor {
                     .as_ref()
                     .map(|value| self.evaluate_operand(value, statement.span))
                     .transpose()?,
+                statement.span,
             )),
             StatementKind::Assert {
                 kind: AssertionKind::Condition { cond },
@@ -2915,6 +4576,22 @@ impl BodyExecutor {
         let destination = destination.ok_or_else(|| unsupported("discarded string-concatenation result", span))?;
         let local = bare_local(destination, span)?;
         let value = match callee {
+            Callee::Helper(
+                helper @ (HelperOp::StrUpper
+                | HelperOp::StrLower
+                | HelperOp::StrStrip
+                | HelperOp::StrLen
+                | HelperOp::StrReplace
+                | HelperOp::StrJoin
+                | HelperOp::StrSplit
+                | HelperOp::StrContains
+                | HelperOp::StrEq
+                | HelperOp::StrNe
+                | HelperOp::StrLt
+                | HelperOp::StrLe
+                | HelperOp::StrGt
+                | HelperOp::StrGe),
+            ) => self.execute_string_helper(*helper, args, span)?,
             Callee::Helper(HelperOp::StrConcat) => {
                 let [left, right] = args else {
                     return Err(unsupported("string-concatenation call arity", span));
@@ -2950,6 +4627,34 @@ impl BodyExecutor {
                 let found = elements.contains(&needle);
                 ReplacementValue::Bool(matches!(helper, HelperOp::ListContains) == found)
             }
+            Callee::Helper(helper @ (HelperOp::SetContains | HelperOp::SetNotContains)) => {
+                let [haystack, needle] = args else {
+                    return Err(unsupported("set-membership call arity", span));
+                };
+                let haystack = self.evaluate_operand(haystack, span)?;
+                let needle = self.evaluate_operand(needle, span)?;
+                let ReplacementValue::Set(values) = haystack else {
+                    return Err(unsupported("set membership using a non-set carrier", span));
+                };
+                let found = values.contains(needle).map_err(|error| {
+                    unsupported(format!("set membership with a non-scalar {} needle", error.kind), span)
+                })?;
+                ReplacementValue::Bool(matches!(helper, HelperOp::SetContains) == found)
+            }
+            Callee::Helper(helper @ (HelperOp::DictContainsKey | HelperOp::DictNotContainsKey)) => {
+                let [haystack, needle] = args else {
+                    return Err(unsupported("dict-membership call arity", span));
+                };
+                let haystack = self.evaluate_operand(haystack, span)?;
+                let needle = self.evaluate_operand(needle, span)?;
+                let ReplacementValue::Dict(values) = haystack else {
+                    return Err(unsupported("dict membership using a non-dict carrier", span));
+                };
+                let found = values.contains_key(needle).map_err(|error| {
+                    unsupported(format!("dict membership with a non-scalar {} needle", error.kind), span)
+                })?;
+                ReplacementValue::Bool(matches!(helper, HelperOp::DictContainsKey) == found)
+            }
             Callee::Function(CallableTarget::Named(target)) if is_explicit_range_builtin(target) => {
                 self.evaluate_range(args, span)?
             }
@@ -2963,21 +4668,32 @@ impl BodyExecutor {
             }
             Callee::Function(CallableTarget::Named(target)) => self.execute_named_callable(target, args, span)?,
             Callee::Function(CallableTarget::Local(target)) => self.execute_local_callable(target, args, span)?,
-            Callee::Method(target) if target.name == "collect" => {
+            Callee::Method(target)
+                if replacement_method_operation(target) == Some(ReplacementMethodOperation::GeneratorCollect) =>
+            {
                 let [receiver] = args else {
                     return Err(unsupported("generator collect call arity", span));
                 };
                 let iterator = self.take_generator_receiver(receiver, span)?;
                 self.collect_generator(iterator, span)?
             }
-            Callee::Method(target) if target.name == "value" => self.extract_value_enum_scalar(target, args, span)?,
-            Callee::Method(target) if matches!(target.name.as_str(), "map" | "filter") => {
-                self.construct_generator_adapter(target.name.as_str(), args, span)?
+            Callee::Method(target)
+                if replacement_method_operation(target) == Some(ReplacementMethodOperation::ValueEnumValue) =>
+            {
+                self.extract_value_enum_scalar(target, args, span)?
+            }
+            Callee::Method(target)
+                if matches!(
+                    replacement_method_operation(target),
+                    Some(ReplacementMethodOperation::GeneratorMap | ReplacementMethodOperation::GeneratorFilter)
+                ) =>
+            {
+                self.construct_generator_adapter(replacement_method_operation(target), args, span)?
             }
             Callee::ProviderOperation(plan) => self.execute_provider_operation(plan, args, span)?,
             _ => return Err(unsupported(format!("call to {}", callee_label(callee)), span)),
         };
-        self.assign_local(local, value);
+        self.assign_local(local, value, span)?;
         Ok(Flow::Next)
     }
 
@@ -3054,7 +4770,7 @@ impl BodyExecutor {
         if let Some(task_id) = self.active_task {
             self.record_task_event(task_id, "await_resumed", span);
         }
-        self.assign_local(destination, value);
+        self.assign_local(destination, value, span)?;
         Ok(Flow::Next)
     }
 
@@ -3117,7 +4833,7 @@ impl BodyExecutor {
 
         let arm = &arms[winner_index];
         let prior_locals = self.locals.clone();
-        self.assign_local(arm.binding, winner_value);
+        self.assign_local(arm.binding, winner_value, span)?;
         let arm_outcome = (|| -> Result<Result<ReplacementValue, Flow>, ReplacementExecutionError> {
             match self.execute_block(&arm.body)? {
                 Flow::Next => Ok(Ok(self.evaluate_operand(&arm.result, span)?)),
@@ -3127,7 +4843,7 @@ impl BodyExecutor {
         self.locals = prior_locals;
         match arm_outcome? {
             Ok(value) => {
-                self.assign_local(destination, value);
+                self.assign_local(destination, value, span)?;
                 Ok(Flow::Next)
             }
             Err(flow) => Ok(flow),
@@ -3146,7 +4862,9 @@ impl BodyExecutor {
         if captures.len() != callable.captures.len() {
             return Err(unsupported("duplicate callable capture local", span));
         }
-        let locals = self.bind_call_arguments(&callable.params, args, &target.binding, &captures, span)?;
+        let local_types = self.local_types.clone();
+        let locals =
+            self.bind_call_arguments(&callable.params, args, &target.binding, &captures, &local_types, span)?;
         self.execute_callable_frame(&callable, locals, span, "stored callable")
     }
 
@@ -3158,20 +4876,20 @@ impl BodyExecutor {
         span: HirSourceSpan,
         frame_kind: &str,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
-        let mut child = self.child_with_locals(locals, self.steps);
-        for statement in &callable.body.stmts {
-            match child.execute_statement(statement)? {
-                Flow::Next => {}
-                Flow::Return(_) | Flow::Break | Flow::Continue => {
-                    return Err(unsupported(
-                        "control flow in a callable expression body",
-                        statement.span,
-                    ));
+        let result = self.execute_child(locals, self.steps, |child| {
+            for statement in &callable.body.stmts {
+                match child.execute_statement(statement)? {
+                    Flow::Next => {}
+                    Flow::Return(..) | Flow::Break | Flow::Continue => {
+                        return Err(unsupported(
+                            "control flow in a callable expression body",
+                            statement.span,
+                        ));
+                    }
                 }
             }
-        }
-        let result = child.evaluate_operand(&callable.body.result, span)?;
-        self.merge_child(child);
+            child.evaluate_operand(&callable.body.result, span)
+        })?;
         self.record_frame_evidence(format!(
             "executed {frame_kind} frame call_span={}..{} params={} captures={} statements={}",
             span.start,
@@ -3190,68 +4908,20 @@ impl BodyExecutor {
         args: &[&Operand],
         span: HirSourceSpan,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
-        let direct_call_id = target.direct_call_id.as_ref().ok_or_else(|| {
-            unsupported(
-                format!(
-                    "named callable `{}` without a same-module declaration identity",
-                    target.name
-                ),
-                span,
-            )
-        })?;
-        if !is_module_span_declaration_id(&self.module, direct_call_id) {
-            return Err(unsupported(
-                "named callable declaration identity is not scoped to this Body-IR module",
-                span,
-            ));
-        }
-        let mut matching_bodies = self
-            .module
-            .bodies
-            .iter()
-            .filter(|body| body.direct_call_id == *direct_call_id);
-        let body = matching_bodies.next().ok_or_else(|| {
-            unsupported(
-                format!(
-                    "named callable `{}` targets a declaration outside this Body-IR module",
-                    target.name
-                ),
-                span,
-            )
-        })?;
-        if matching_bodies.next().is_some() {
-            return Err(unsupported(
-                format!(
-                    "named callable `{}` declaration identity selects multiple Body-IR bodies",
-                    target.name
-                ),
-                span,
-            ));
-        }
-        if !has_canonical_direct_call_id(&self.module, body) {
-            return Err(unsupported(
-                format!(
-                    "named callable `{}` body does not retain its canonical declaration identity",
-                    target.name
-                ),
-                span,
-            ));
-        }
-        let body = body.clone();
-        if body.name != target.name {
-            return Err(unsupported(
-                format!(
-                    "named callable `{}` disagrees with its same-module declaration identity",
-                    target.name
-                ),
-                span,
-            ));
-        }
-        validate_direct_body_profile(&body, self.providers.as_deref())?;
+        let (callee_module, body) = self.resolve_named_callable(target, span)?;
+        validate_direct_body_profile(&body)?;
         if body.is_async && !target.type_args.is_empty() {
             return Err(unsupported("generic async callable target", span));
         }
-        let locals = self.bind_call_arguments(&body.params, args, &target.binding, &BTreeMap::new(), span)?;
+        let local_types = body.locals.iter().map(|local| (local.id, local.ty.clone())).collect();
+        let locals = self.bind_call_arguments(
+            &body.params,
+            args,
+            &target.binding,
+            &BTreeMap::new(),
+            &local_types,
+            span,
+        )?;
         if body.is_async {
             return self.construct_task(body, locals, span).map(ReplacementValue::Task);
         }
@@ -3268,42 +4938,94 @@ impl BodyExecutor {
                 )),
             })));
         }
-        let mut child = self.child_with_locals(locals, self.steps);
-        child.record_body(&body);
-        let flow = child.execute_block(&body.block)?;
-        let value = match flow {
-            Flow::Return(Some(value)) => value,
-            Flow::Return(None) | Flow::Next => ReplacementValue::Unit,
-            Flow::Break | Flow::Continue => {
-                return Err(unsupported("loop control outside a nested callable loop", body.span));
+        let frame_module = callee_module.unwrap_or_else(|| self.module.clone());
+        let local_types_for_frame = self.local_types.clone();
+        self.execute_child_in_module(&frame_module, locals, local_types_for_frame, self.steps, |child| {
+            child.record_body(&body);
+            match child.execute_block(&body.block)? {
+                Flow::Return(Some(value), return_span) => {
+                    coerce_value_to_checked_type(value, &body.return_type, return_span)
+                }
+                Flow::Return(None, _) | Flow::Next => Ok(ReplacementValue::Unit),
+                Flow::Break | Flow::Continue => {
+                    Err(unsupported("loop control outside a nested callable loop", body.span))
+                }
             }
-        };
-        self.merge_child(child);
-        Ok(value)
+        })
+    }
+
+    /// Resolve a named call to its declaration, and to the module that owns it when that is not this frame's own.
+    ///
+    /// A same-module call keeps its existing path exactly: `direct_call_id` is a span identity that only exists for a
+    /// declaration physically present here, so its presence already proves the callee is local and
+    /// `named_callable_body` performs the same checks it always did. `None` for the owning module means "this
+    /// frame's module", so nothing about same-module execution changes.
+    ///
+    /// A call whose callee is imported has no such span identity, and this is the only case that consults the wider
+    /// graph. It resolves on the canonical identity the typechecker selected, never on the callee's spelling: an
+    /// import spelling, alias, or source path is not a dispatch key, and a same-named declaration in a reachable
+    /// module must not answer for a different one.
+    fn resolve_named_callable(
+        &self,
+        target: &NamedCallableTarget,
+        span: HirSourceSpan,
+    ) -> Result<(Option<BodyIrModule>, Body), ReplacementExecutionError> {
+        if target.direct_call_id.is_some() {
+            return Ok((None, named_callable_body(&self.module, target, span)?.clone()));
+        }
+        let canonical = target.canonical.as_ref().ok_or_else(|| {
+            unsupported(
+                format!(
+                    "named callable `{}` without a same-module declaration identity or a canonical target",
+                    target.name
+                ),
+                span,
+            )
+        })?;
+        let mut resolved = self
+            .reachable
+            .iter()
+            .filter_map(|module| module.body_for_canonical_target(canonical).map(|body| (module, body)));
+        let (module, body) = resolved.next().ok_or_else(|| {
+            unsupported(
+                format!(
+                    "named callable `{}` resolves to a declaration outside this execution graph",
+                    target.name
+                ),
+                span,
+            )
+        })?;
+        if resolved.next().is_some() {
+            return Err(unsupported(
+                format!(
+                    "named callable `{}` resolves to more than one module in this execution graph",
+                    target.name
+                ),
+                span,
+            ));
+        }
+        Ok((Some(module.clone()), body.clone()))
     }
 
     /// Capture one admitted map or filter adapter without polling its source or callback.
     fn construct_generator_adapter(
         &mut self,
-        name: &str,
+        operation: Option<ReplacementMethodOperation>,
         args: &[&Operand],
         span: HirSourceSpan,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         let [receiver, callback] = args else {
-            return Err(unsupported(format!("generator {name} adapter arity"), span));
+            return Err(unsupported("generator adapter arity", span));
         };
         let source = self.take_iterable_receiver(receiver, span)?;
         let callback = self.evaluate_operand(callback, span)?;
         let ReplacementValue::Callable(callback) = callback else {
-            return Err(unsupported(
-                format!("generator {name} adapter callback is not a stored callable"),
-                span,
-            ));
+            return Err(unsupported("generator adapter callback is not a stored callable", span));
         };
-        let kind = match name {
-            "map" => ReplacementAdapterKind::Map,
-            "filter" => ReplacementAdapterKind::Filter,
-            _ => return Err(unsupported(format!("generator {name} adapter"), span)),
+        let kind = match operation {
+            Some(ReplacementMethodOperation::GeneratorMap) => ReplacementAdapterKind::Map,
+            Some(ReplacementMethodOperation::GeneratorFilter) => ReplacementAdapterKind::Filter,
+            _ => return Err(unsupported("generator adapter without a canonical method target", span)),
         };
         Ok(ReplacementValue::Adapter(Box::new(ReplacementAdapter {
             source,
@@ -3339,7 +5061,7 @@ impl BodyExecutor {
         Ok(ReplacementValue::Range { next, end, step })
     }
 
-    /// Poll one admitted range or scalar-tuple-list iterator and express exhaustion as the Body-IR loop break it
+    /// Poll one admitted range, structural list or canonical Zip and express exhaustion as the Body-IR loop break it
     /// represents.
     fn execute_builtin_next(
         &mut self,
@@ -3365,17 +5087,27 @@ impl BodyExecutor {
         let Some(value) = next else {
             return Ok(Flow::Break);
         };
-        self.assign_local(bare_local(destination, span)?, value);
+        self.assign_local(bare_local(destination, span)?, value, span)?;
         Ok(Flow::Next)
     }
 
     /// Assign exactly the authoritative Body-IR `LocalId` selected by lowering.
     ///
-    /// The profile preflight rejects repeated user-binding names rather than reconstructing scope equivalence from
-    /// spelling. Reassignment is therefore refused until Body IR carries binding-equivalence facts; no name-based
-    /// aliasing is permitted here.
-    fn assign_local(&mut self, local: LocalId, value: ReplacementValue) {
+    /// Body IR has already resolved repeated source spellings to the canonical local selected by lexical scope. The
+    /// executor writes that exact `LocalId` and never reconstructs binding equivalence or aliases locals by name.
+    fn assign_local(
+        &mut self,
+        local: LocalId,
+        value: ReplacementValue,
+        span: HirSourceSpan,
+    ) -> Result<(), ReplacementExecutionError> {
+        let target = self
+            .local_types
+            .get(&local)
+            .ok_or_else(|| unsupported("Body-IR assignment destination without a declared type", span))?;
+        let value = coerce_value_to_checked_type(value, target, span)?;
         self.locals.insert(local, value);
+        Ok(())
     }
 
     /// Execute one normalized Body-IR loop and propagate only non-local control flow outward.
@@ -3388,7 +5120,7 @@ impl BodyExecutor {
             match self.execute_block(body)? {
                 Flow::Next | Flow::Continue => {}
                 Flow::Break => return Ok(Flow::Next),
-                Flow::Return(value) => return Ok(Flow::Return(value)),
+                Flow::Return(value, return_span) => return Ok(Flow::Return(value, return_span)),
             }
             if self.steps >= MAX_EXECUTION_STEPS {
                 return Err(runtime_failure(
@@ -3399,15 +5131,13 @@ impl BodyExecutor {
         }
     }
 
-    /// Execute one compiler-owned builtin whose answer provably matches the Rust-emission backend's.
+    /// Execute an admitted compiler-owned builtin from its retained target identity.
     ///
-    /// Each arm mirrors what `emit_builtin_call` generates rather than what the name suggests in Python, because a
-    /// second opinion is worse than a refusal: the two backends are meant to agree, and the shadow comparison would
-    /// have no way to notice if they quietly did not.
+    /// Each arm consumes the checked operand profile; the separate shadow route measures agreement with native
+    /// execution rather than deriving an answer from this evaluator.
     ///
-    /// `len` over a `str` is the exclusion worth naming. The Rust backend emits `.len()`, which on a `String` counts
-    /// **bytes**; Python's `len` counts characters. They agree only for ASCII, so this refuses rather than picking a
-    /// side — the underlying disagreement is a language-semantics question, not something an executor should settle.
+    /// String `len` follows the canonical Unicode-scalar helper shared with generated Rust. Collection length keeps
+    /// counting materialized elements, so the executor does not infer a string policy from a source name.
     fn execute_builtin(
         &mut self,
         builtin: BuiltinFnId,
@@ -3417,6 +5147,9 @@ impl BodyExecutor {
         if matches!(builtin, BuiltinFnId::Print) {
             return self.execute_print(args, span);
         }
+        if matches!(builtin, BuiltinFnId::Enumerate | BuiltinFnId::Zip) {
+            return self.execute_list_iteration_builtin(builtin, args, span);
+        }
 
         let [argument] = args else {
             return Err(unsupported(format!("`{}` call arity", builtins::as_str(builtin)), span));
@@ -3424,26 +5157,69 @@ impl BodyExecutor {
         let value = self.evaluate_operand(argument, span)?;
 
         match builtin {
-            // `.len() as i64` on a `Vec` counts elements, which both backends agree on. A `str` does not agree,
-            // and a value with no length at all is not a `len` this profile can answer.
+            // Canonical `bool` follows the native emitter only for values this replacement profile represents with
+            // the same checked carrier. Float, bytes, frozen collections, and higher-level wrappers remain visible
+            // refusals rather than acquiring truthiness from a lossy runtime guess.
+            BuiltinFnId::Bool => match value {
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Bool(value)),
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Bool(value != 0)),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Bool(!value.is_empty())),
+                ReplacementValue::List { elements, .. } => Ok(ReplacementValue::Bool(!elements.is_empty())),
+                ReplacementValue::Set(values) => Ok(ReplacementValue::Bool(!values.is_empty())),
+                ReplacementValue::Dict(values) => Ok(ReplacementValue::Bool(!values.is_empty())),
+                other => Err(unsupported(format!("`bool` of {}", value_kind(&other)), span)),
+            },
+            // Collection length counts elements. String length follows the canonical Unicode-scalar contract, and a
+            // value with no length at all remains outside the profile.
             BuiltinFnId::Len => match value {
                 ReplacementValue::List { elements, .. }
                 | ReplacementValue::CollectedGenerator { elements, .. }
                 | ReplacementValue::Tuple(elements) => Ok(ReplacementValue::Int(elements.len() as i64)),
-                ReplacementValue::Str(_) => Err(unsupported(
-                    "`len` of a string, whose byte-versus-character meaning the two backends do not agree on",
-                    span,
-                )),
+                ReplacementValue::Set(values) => Ok(ReplacementValue::Int(values.len() as i64)),
+                ReplacementValue::Dict(values) => Ok(ReplacementValue::Int(values.len() as i64)),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Int(incan_core::strings::str_len(&value))),
                 other => Err(unsupported(format!("`len` of {}", value_kind(&other)), span)),
             },
             BuiltinFnId::Abs => match value {
-                ReplacementValue::Int(value) => Ok(ReplacementValue::Int(value.abs())),
+                ReplacementValue::Int(value) => value
+                    .checked_abs()
+                    .map(ReplacementValue::Int)
+                    .ok_or_else(|| runtime_failure("integer overflow in builtin `abs`".to_string(), span)),
                 other => Err(unsupported(format!("`abs` of {}", value_kind(&other)), span)),
             },
-            // `iter().sum::<i64>()`, with bools counted as 1/0 exactly as the emitted Rust does.
+            // These pairs mirror the existing Rust emitter's scalar conversions. Typed source carriers retain
+            // their identity until this compiler-selected conversion explicitly produces an ordinary result.
+            BuiltinFnId::Str => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Str(value)),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Numeric(value) => Ok(ReplacementValue::Str(value.observable_text())),
+                other => Err(unsupported(format!("`str` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::Int => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Int(value)),
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Int(i64::from(value))),
+                ReplacementValue::Str(value) => parse_int_conversion(&value, span),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Int(value as i64)),
+                ReplacementValue::Numeric(value) => numeric_to_int(value, span).map(ReplacementValue::Int),
+                other => Err(unsupported(format!("`int` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::Float => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Float(value as f64)),
+                ReplacementValue::Str(value) => parse_float_conversion(&value, span),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Float(value)),
+                ReplacementValue::Numeric(value) => numeric_to_float(value, span).map(ReplacementValue::Float),
+                other => Err(unsupported(format!("`float` of {}", value_kind(&other)), span)),
+            },
+            // Checked integer accumulation, with bools counted as 1/0 exactly as the emitted Rust does.
             BuiltinFnId::Sum => {
                 let elements = integer_elements(&value, "sum", span)?;
-                Ok(ReplacementValue::Int(elements.iter().sum()))
+                let sum = elements
+                    .iter()
+                    .try_fold(0_i64, |total, value| total.checked_add(*value))
+                    .ok_or_else(|| runtime_failure("integer overflow in builtin `sum`".to_string(), span))?;
+                Ok(ReplacementValue::Int(sum))
             }
             BuiltinFnId::Min => {
                 let elements = integer_elements(&value, "min", span)?;
@@ -3463,19 +5239,92 @@ impl BodyExecutor {
                     .map(ReplacementValue::Int)
                     .ok_or_else(|| unsupported("`max` of an empty collection", span))
             }
+            // This first sorting profile has no checked element-type fact at runtime for an empty list, so it
+            // admits only a nonempty list whose represented elements prove the integer carrier. Sorting consumes
+            // the evaluated clone and returns a fresh cursor, leaving the source local unchanged.
+            BuiltinFnId::Sorted => match value {
+                ReplacementValue::List { elements, .. } if elements.is_empty() => Err(unsupported(
+                    "`sorted` of an empty list outside the integer-only profile",
+                    span,
+                )),
+                ReplacementValue::List { elements, .. } => {
+                    let mut values = elements
+                        .into_iter()
+                        .map(|element| match element {
+                            ReplacementValue::Int(value) => Ok(value),
+                            other => Err(unsupported(
+                                format!(
+                                    "`sorted` list element {} outside the integer-only profile",
+                                    value_kind(&other)
+                                ),
+                                span,
+                            )),
+                        })
+                        .collect::<Result<Vec<_>, ReplacementExecutionError>>()?;
+                    values.sort();
+                    Ok(ReplacementValue::List {
+                        elements: values.into_iter().map(ReplacementValue::Int).collect(),
+                        next: 0,
+                    })
+                }
+                other => Err(unsupported(format!("`sorted` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::JsonStringify => stringify_json_scalar(value, span),
             other => Err(unsupported(format!("builtin `{}`", builtins::as_str(other)), span)),
         }
     }
 
-    /// Execute a `print`/`println` call by recording its line rather than writing it.
+    /// Construct canonical global enumeration or Zip after the owning Body's checked-type preflight.
+    ///
+    /// Enumeration has a checked list result and therefore materializes its zero-based pairs. Zip retains two
+    /// list cursors for polling; evaluating its operands here preserves written argument order without inventing
+    /// general user-iterator dispatch. Both start fresh traversals rather than inheriting another local's cursor.
+    fn execute_list_iteration_builtin(
+        &mut self,
+        builtin: BuiltinFnId,
+        args: &[&Operand],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        match (builtin, args) {
+            (BuiltinFnId::Enumerate, [source]) => {
+                let values = self.evaluate_list_elements(source, span)?;
+                let elements = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        let index = i64::try_from(index)
+                            .map_err(|_| unsupported("enumerate index outside the Incan int range", span))?;
+                        Ok(ReplacementValue::Tuple(vec![ReplacementValue::Int(index), value]))
+                    })
+                    .collect::<Result<Vec<_>, ReplacementExecutionError>>()?;
+                Ok(ReplacementValue::List { elements, next: 0 })
+            }
+            (BuiltinFnId::Zip, [left, right]) => {
+                let left = self.evaluate_list_elements(left, span)?;
+                let right = self.evaluate_list_elements(right, span)?;
+                Ok(ReplacementValue::Zip(Box::new(ReplacementZip {
+                    left: ReplacementValue::List {
+                        elements: left,
+                        next: 0,
+                    },
+                    right: ReplacementValue::List {
+                        elements: right,
+                        next: 0,
+                    },
+                })))
+            }
+            _ => Err(unsupported("enumerate/Zip call arity", span)),
+        }
+    }
+
+    /// Deliver a `print`/`println` line through the caller's stdout writer and flush before continuing.
     ///
     /// Every argument renders, space-separated, matching Python's `print` and the Rust-emission backend's
     /// `emit_print_call`. That agreement is recent: both backends previously emitted only the first argument and
     /// discarded the rest, so `println("count", 3)` printed `count` with nothing reporting the loss.
     ///
-    /// The line is appended to [`BodyExecutor::emitted_output`] rather than printed. That keeps the effect a value
-    /// this runtime can hand back, compare, and test; a direct write would leave the program's output invisible to
-    /// every one of those.
+    /// Accepted bytes are observed independently of delivery. A later runtime or receipt failure cannot hide the
+    /// line, and a partial write or flush failure is reported at this original call span.
     fn execute_print(
         &mut self,
         args: &[&Operand],
@@ -3487,7 +5336,14 @@ impl BodyExecutor {
             parts.push(format_interpolation(&value, FormatStyle::Display, span)?);
         }
         let rendered = parts.join(" ");
-        self.emitted_output.push(rendered);
+        self.io
+            .print_line(rendered)
+            .map_err(|error| ReplacementExecutionError::ProgramIo {
+                error,
+                span,
+                span_start: span.start,
+                span_end: span.end,
+            })?;
         Ok(ReplacementValue::Unit)
     }
 
@@ -3496,8 +5352,8 @@ impl BodyExecutor {
     /// Body IR represents an f-string as its own structured node rather than a desugared concatenation, so this
     /// walks the parts directly. Only the scalar kinds whose rendering provably matches the Rust-emission backend
     /// are interpolated; anything else refuses by name rather than inventing a spelling the two backends would
-    /// disagree on. `float` is deliberately among the refusals: this runtime retains the source literal while the
-    /// other backend formats an `f64`, so `1.0` would render differently on each side.
+    /// disagree on. Ordinary Float Display uses the same normalized `f64` rendering as the Rust-emission backend;
+    /// Float Debug remains a refusal until that distinct formatting contract has direct parity evidence.
     fn evaluate_format(
         &mut self,
         parts: &[FormatPart],
@@ -3526,8 +5382,9 @@ impl BodyExecutor {
             Rvalue::Use(operand) => self.evaluate_operand(operand, span),
             Rvalue::UnaryOp(operator, operand) => self.evaluate_unary(*operator, operand, span),
             Rvalue::BinaryOp(operator, left, right) => self.evaluate_binary(*operator, left, right, span),
+            Rvalue::IsInstance { value, target, .. } => self.evaluate_isinstance(value, target, span),
             Rvalue::Format(parts) => self.evaluate_format(parts, span),
-            Rvalue::Dict(_) => Err(unsupported("dict aggregate", span)),
+            Rvalue::Dict(entries) => self.evaluate_dict(entries, span),
             Rvalue::Aggregate(kind, operands) => self.evaluate_aggregate(kind, operands, span),
             Rvalue::FieldlessEnumVariant(target) => self.evaluate_fieldless_enum_variant(target, span),
             Rvalue::ValueEnumVariant(target) => self.evaluate_value_enum_variant(target, span),
@@ -3544,6 +5401,50 @@ impl BodyExecutor {
             } => self.construct_generator(source, captured_operands, body, span),
             Rvalue::Match { scrutinee, arms } => self.evaluate_match(scrutinee, arms, span),
         }
+    }
+
+    /// Evaluate one prevalidated compiler-owned primitive type test.
+    fn evaluate_isinstance(
+        &mut self,
+        value: &Operand,
+        target: &incan_semantics_core::body_ir::IsInstanceTarget,
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let value = self.evaluate_operand(value, span)?;
+        let matches = matches!(
+            (&value, &target.ty),
+            (ReplacementValue::Int(_), IncanType::Primitive(IncanPrimitiveType::Int))
+                | (
+                    ReplacementValue::Bool(_),
+                    IncanType::Primitive(IncanPrimitiveType::Bool)
+                )
+                | (ReplacementValue::Str(_), IncanType::Primitive(IncanPrimitiveType::Str))
+                | (
+                    ReplacementValue::Float(_),
+                    IncanType::Primitive(IncanPrimitiveType::Float)
+                )
+        );
+        Ok(ReplacementValue::Bool(matches))
+    }
+
+    /// Materialize a dict in written key-then-value order, preserving the later-entry-wins construction rule.
+    fn evaluate_dict(
+        &mut self,
+        entries: &[DictEntry],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let mut values = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let DictEntry::Pair(key, value) = entry else {
+                return Err(unsupported("dict aggregate with a spread entry", span));
+            };
+            let key = self.evaluate_operand(key, span)?;
+            let value = self.evaluate_operand(value, span)?;
+            values.push((key, value));
+        }
+        let dict = ReplacementDict::from_entries(values)
+            .map_err(|error| unsupported(format!("dict aggregate with a non-scalar {} key", error.kind), span))?;
+        Ok(ReplacementValue::Dict(Rc::new(dict)))
     }
 
     /// Capture a closure or partial environment exactly once at its construction point.
@@ -3720,18 +5621,18 @@ impl BodyExecutor {
         let frame_evidence = generator.frame_evidence.take();
         let locals = std::mem::take(&mut generator.frame.locals);
         let resume_steps = generator.frame.resume_step_budget(self.steps);
-        let mut deferred = self.child_with_locals(locals, resume_steps);
-        if let Some(body) = &named_body {
-            deferred.record_body(body);
-        }
-        if let Some(evidence) = frame_evidence {
-            deferred.record_frame_evidence(evidence);
-        }
-        let value = deferred.resume_generator_frame(&mut generator.frame, span)?;
-        generator.frame.locals = std::mem::take(&mut deferred.locals);
-        generator.frame.steps = deferred.steps;
-        self.merge_child(deferred);
-        Ok(value)
+        self.execute_child(locals, resume_steps, |deferred| {
+            if let Some(body) = &named_body {
+                deferred.record_body(body);
+            }
+            if let Some(evidence) = frame_evidence {
+                deferred.record_frame_evidence(evidence);
+            }
+            let result = deferred.resume_generator_frame(&mut generator.frame, span);
+            generator.frame.locals = std::mem::take(&mut deferred.locals);
+            generator.frame.steps = deferred.steps;
+            result
+        })
     }
 
     /// Poll an iterator value once. This single surface is shared by normalized `for` lowering and lazy adapters.
@@ -3759,6 +5660,15 @@ impl BodyExecutor {
             ReplacementValue::List { .. } | ReplacementValue::CollectedGenerator { .. } => Ok(None),
             ReplacementValue::Generator(generator) => self.resume_generator(generator, span),
             ReplacementValue::Adapter(adapter) => self.poll_adapter(adapter, span),
+            ReplacementValue::Zip(zip) => {
+                let Some(left) = self.poll_iterator(&mut zip.left, span)? else {
+                    return Ok(None);
+                };
+                let Some(right) = self.poll_iterator(&mut zip.right, span)? else {
+                    return Ok(None);
+                };
+                Ok(Some(ReplacementValue::Tuple(vec![left, right])))
+            }
             value => Err(unsupported(format!("iteration over {}", value_kind(value)), span)),
         }
     }
@@ -3796,7 +5706,8 @@ impl BodyExecutor {
         if captures.len() != callable.captures.len() {
             return Err(unsupported("duplicate callable capture local", span));
         }
-        let locals = self.bind_parameter_values(&callable.params, supplied, &captures, span)?;
+        let local_types = self.local_types.clone();
+        let locals = self.bind_parameter_values(&callable.params, supplied, &captures, &local_types, span)?;
         self.execute_callable_frame(callable, locals, span, "generator-adapter callback")
     }
 
@@ -3859,7 +5770,7 @@ impl BodyExecutor {
                     Flow::Next => {}
                     Flow::Break => self.break_generator_loop(frame, statement.span)?,
                     Flow::Continue => self.continue_generator_loop(frame, statement.span)?,
-                    Flow::Return(_) => {
+                    Flow::Return(..) => {
                         return Err(unsupported("unsupported generator return flow", statement.span));
                     }
                 },
@@ -3936,6 +5847,12 @@ impl BodyExecutor {
                 })
             }
             AggregateKind::List => Err(unsupported("list aggregate with a non-structural element", span)),
+            AggregateKind::Set => {
+                let set = ReplacementSet::from_elements(values).map_err(|error| {
+                    unsupported(format!("set aggregate with a non-scalar {} element", error.kind), span)
+                })?;
+                Ok(ReplacementValue::Set(Rc::new(set)))
+            }
             _ => Err(unsupported(format!("{} aggregate", aggregate_label(kind)), span)),
         }
     }
@@ -4179,7 +6096,11 @@ impl BodyExecutor {
                     &target.variant_declaration_id,
                     span,
                 )?;
-                if declaration.name != target.enum_name || variant.name != target.variant_name {
+                if declaration.name != target.enum_name
+                    || declaration.canonical != target.enum_canonical
+                    || variant.name != target.variant_name
+                    || variant.canonical != target.variant_canonical
+                {
                     return Err(unsupported(
                         "fieldless-enum pattern disagrees with its source-local declaration identity",
                         span,
@@ -4216,8 +6137,12 @@ impl BodyExecutor {
                 }
                 Ok(None)
             }
-            Pattern::Struct { .. } | Pattern::Enum { .. } => Err(unsupported(
+            Pattern::Struct { canonical: None, .. } | Pattern::Enum { canonical: None, .. } => Err(unsupported(
                 "match pattern without an exact direct target identity",
+                span,
+            )),
+            Pattern::Struct { canonical: Some(_), .. } | Pattern::Enum { canonical: Some(_), .. } => Err(unsupported(
+                "match pattern without an admitted direct target layout",
                 span,
             )),
         }
@@ -4377,7 +6302,11 @@ impl BodyExecutor {
             &target.variant_declaration_id,
             span,
         )?;
-        if declaration.name != target.enum_name || variant.name != target.variant_name {
+        if declaration.name != target.enum_name
+            || declaration.canonical != target.enum_canonical
+            || variant.name != target.variant_name
+            || variant.canonical != target.variant_canonical
+        {
             return Err(unsupported(
                 format!(
                     "fieldless-enum member `{}::{}` disagrees with its source-local declaration identity",
@@ -4423,6 +6352,12 @@ impl BodyExecutor {
                 span,
             ));
         };
+        if !valid_local_fieldless_enum_declaration(&self.module, declaration) {
+            return Err(unsupported(
+                "fieldless-enum registry lacks exact canonical owner/member identities",
+                span,
+            ));
+        }
         let canonical_names = declaration
             .variants
             .iter()
@@ -4488,7 +6423,11 @@ impl BodyExecutor {
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         let (declaration, variant) =
             self.local_value_enum_variant_by_ids(&target.enum_declaration_id, &target.variant_declaration_id, span)?;
-        if declaration.name != target.enum_name || variant.name != target.variant_name {
+        if declaration.name != target.enum_name
+            || declaration.canonical != target.enum_canonical
+            || variant.name != target.variant_name
+            || variant.canonical != target.variant_canonical
+        {
             return Err(unsupported(
                 format!(
                     "value-enum member `{}::{}` disagrees with its source-local declaration identity",
@@ -4537,6 +6476,23 @@ impl BodyExecutor {
         else {
             return Err(unsupported("`.value()` on a non-value-enum receiver", span));
         };
+        let canonical = target
+            .canonical
+            .as_ref()
+            .ok_or_else(|| unsupported("value-enum `.value()` without a canonical method target", span))?;
+        let canonical_owner = direct_declaration_id_for_canonical(
+            &self.module,
+            canonical,
+            SymbolNamespace::Member,
+            SemanticSourceTargetKind::Method,
+        )
+        .ok_or_else(|| unsupported("value-enum `.value()` with a foreign method target", span))?;
+        if canonical_owner != enum_declaration_id {
+            return Err(unsupported(
+                "value-enum `.value()` target does not belong to its runtime receiver",
+                span,
+            ));
+        }
         let (declaration, variant) =
             self.local_value_enum_variant_by_ids(&enum_declaration_id, &variant_declaration_id, span)?;
         let raw_value = value_enum_scalar_value(&declaration, &variant, span)?;
@@ -4574,6 +6530,12 @@ impl BodyExecutor {
                 span,
             ));
         };
+        if !valid_local_value_enum_declaration(&self.module, declaration) {
+            return Err(unsupported(
+                "value-enum registry lacks exact canonical owner/member identities",
+                span,
+            ));
+        }
         let canonical_names = declaration
             .variants
             .iter()
@@ -4620,6 +6582,25 @@ impl BodyExecutor {
                 span,
             )
         })?;
+        let canonical = target.canonical.as_ref().ok_or_else(|| {
+            unsupported(
+                format!("constructor `{}` without a canonical declaration target", target.name),
+                span,
+            )
+        })?;
+        let canonical_declaration_id = direct_declaration_id_for_canonical(
+            &self.module,
+            canonical,
+            SymbolNamespace::OrdinaryLexical,
+            SemanticSourceTargetKind::Model,
+        )
+        .ok_or_else(|| unsupported("constructor canonical target is not a source-local model", span))?;
+        if canonical_declaration_id != *direct_declaration_id {
+            return Err(unsupported(
+                "constructor canonical target disagrees with its physical Body-IR declaration",
+                span,
+            ));
+        }
         let declaration = self
             .module
             .nominal_declarations
@@ -4635,12 +6616,21 @@ impl BodyExecutor {
                     span,
                 )
             })?;
-        if declaration.name != target.name {
+        if declaration.canonical != *canonical || !valid_local_nominal_declaration(&self.module, &declaration) {
             return Err(unsupported(
-                format!(
-                    "constructor `{}` disagrees with its source-local declaration identity",
-                    target.name
-                ),
+                "constructor canonical target disagrees with the retained declaration identity",
+                span,
+            ));
+        }
+        let canonical_field_layout = target.canonical_field_layout.as_deref().ok_or_else(|| {
+            unsupported(
+                format!("constructor `{}` without a checked canonical field layout", target.name),
+                span,
+            )
+        })?;
+        if declaration.fields != canonical_field_layout {
+            return Err(unsupported(
+                "canonical field layout disagrees with checked constructor facts",
                 span,
             ));
         }
@@ -4651,7 +6641,10 @@ impl BodyExecutor {
             ));
         }
         let fields = declaration.fields.iter().collect::<BTreeSet<_>>();
-        if fields.len() != declaration.fields.len() {
+        if fields.len() != declaration.fields.len()
+            || declaration.field_identities.len() != declaration.fields.len()
+            || declaration.field_identities.iter().collect::<BTreeSet<_>>().len() != declaration.field_identities.len()
+        {
             return Err(unsupported(
                 format!("constructor `{}` has a duplicate canonical field layout", target.name),
                 span,
@@ -4684,7 +6677,10 @@ impl BodyExecutor {
                 span,
             ));
         };
-        if declaration.name != target.name || declaration.type_parameter_count != 0 {
+        if declaration.canonical != target.canonical
+            || !valid_local_nominal_declaration(&self.module, declaration)
+            || declaration.type_parameter_count != 0
+        {
             return Err(unsupported(
                 "nominal match pattern disagrees with its source-local declaration identity",
                 span,
@@ -4742,7 +6738,7 @@ impl BodyExecutor {
         }
         match kind {
             ResultVariantKind::Ok => {
-                self.assign_local(destination, *payload);
+                self.assign_local(destination, *payload, span)?;
                 self.record_frame_evidence(format!(
                     "executed Result try route=ok span={}..{}",
                     span.start, span.end
@@ -4754,12 +6750,15 @@ impl BodyExecutor {
                     "executed Result try route=err span={}..{}",
                     span.start, span.end
                 ));
-                Ok(Flow::Return(Some(ReplacementValue::Result {
-                    kind: ResultVariantKind::Err,
-                    payload,
-                    ok_type,
-                    error_type: carrier_error_type,
-                })))
+                Ok(Flow::Return(
+                    Some(ReplacementValue::Result {
+                        kind: ResultVariantKind::Err,
+                        payload,
+                        ok_type,
+                        error_type: carrier_error_type,
+                    }),
+                    span,
+                ))
             }
         }
     }
@@ -4884,7 +6883,100 @@ impl BodyExecutor {
         }
     }
 
-    /// Read one constant or local place while applying its recorded ownership decision.
+    /// Execute one compiler-selected string helper through the existing shared string semantics.
+    ///
+    /// Operands are receiver-first and evaluated in their retained order. Split creates a fresh structural list;
+    /// its absent separator and empty separator deliberately retain the semantic core's distinct behavior.
+    fn execute_string_helper(
+        &mut self,
+        helper: HelperOp,
+        args: &[&Operand],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let value = match (helper, args) {
+            (
+                comparison @ (HelperOp::StrEq
+                | HelperOp::StrNe
+                | HelperOp::StrLt
+                | HelperOp::StrLe
+                | HelperOp::StrGt
+                | HelperOp::StrGe),
+                [left, right],
+            ) => {
+                let left = self.evaluate_operand(left, span)?.into_string(span)?;
+                let right = self.evaluate_operand(right, span)?.into_string(span)?;
+                let ordering = incan_core::strings::str_cmp(&left, &right);
+                let matches = match comparison {
+                    HelperOp::StrEq => ordering.is_eq(),
+                    HelperOp::StrNe => ordering.is_ne(),
+                    HelperOp::StrLt => ordering.is_lt(),
+                    HelperOp::StrLe => ordering.is_le(),
+                    HelperOp::StrGt => ordering.is_gt(),
+                    HelperOp::StrGe => ordering.is_ge(),
+                    _ => return Err(unsupported("non-comparison string helper", span)),
+                };
+                ReplacementValue::Bool(matches)
+            }
+            (HelperOp::StrUpper, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_upper(&receiver))
+            }
+            (HelperOp::StrLower, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_lower(&receiver))
+            }
+            (HelperOp::StrStrip, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_strip(&receiver))
+            }
+            (HelperOp::StrLen, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Int(incan_core::strings::str_len(&receiver))
+            }
+            (HelperOp::StrReplace, [receiver, from, to]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                let from = self.evaluate_operand(from, span)?.into_string(span)?;
+                let to = self.evaluate_operand(to, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_replace(&receiver, &from, &to))
+            }
+            (HelperOp::StrJoin, [separator, items]) => {
+                let separator = self.evaluate_operand(separator, span)?.into_string(span)?;
+                let items = self.evaluate_list_elements(items, span)?;
+                let items = items
+                    .into_iter()
+                    .map(|item| item.into_string(span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                ReplacementValue::Str(incan_core::strings::str_join(&separator, &items))
+            }
+            (HelperOp::StrSplit, [receiver, rest @ ..]) if rest.len() <= 1 => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                let separator = rest
+                    .first()
+                    .map(|separator| self.evaluate_operand(separator, span)?.into_string(span))
+                    .transpose()?;
+                ReplacementValue::List {
+                    elements: incan_core::strings::str_split(&receiver, separator.as_deref())
+                        .into_iter()
+                        .map(ReplacementValue::Str)
+                        .collect(),
+                    next: 0,
+                }
+            }
+            (HelperOp::StrContains, [haystack, needle]) => {
+                let haystack = self.evaluate_operand(haystack, span)?.into_string(span)?;
+                let needle = self.evaluate_operand(needle, span)?.into_string(span)?;
+                ReplacementValue::Bool(incan_core::strings::str_contains(&haystack, &needle))
+            }
+            _ => {
+                return Err(unsupported(
+                    format!("string helper {} call arity", helper.as_str()),
+                    span,
+                ));
+            }
+        };
+        Ok(value)
+    }
+
     /// Evaluate an operand that must be a list, returning its elements.
     ///
     /// Accepts a collected generator alongside a list because both carry the same materialized element vector, and
@@ -4902,6 +6994,7 @@ impl BodyExecutor {
         }
     }
 
+    /// Read one constant or local place while applying its recorded ownership decision.
     fn evaluate_operand(
         &mut self,
         operand: &Operand,
@@ -4910,7 +7003,7 @@ impl BodyExecutor {
         match operand {
             Operand::Constant(constant) => constant_value(constant, span),
             Operand::Place(place_operand) => {
-                let local = place_operand.place.local;
+                let local = local_root(&place_operand.place, span)?;
                 self.ownership_reads.push(OwnershipRead {
                     span,
                     fact: place_operand.fact,
@@ -4952,7 +7045,7 @@ impl BodyExecutor {
             ));
         }
         self.locals
-            .remove(&place.local)
+            .remove(&bare_local(place, span)?)
             .ok_or_else(|| runtime_failure("read of a moved or dropped local".to_string(), span))
     }
 
@@ -4965,8 +7058,15 @@ impl BodyExecutor {
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         match place.projection.as_slice() {
             [] => Ok(value),
-            [PlaceElem::Field(field)] if field.parse::<usize>().is_ok() => project_tuple_field(value, place, span),
-            [PlaceElem::Field(field)] => self.project_nominal_field(value, field, span),
+            [PlaceElem::Field { name, canonical: None }] if name.parse::<usize>().is_ok() => {
+                project_tuple_field(value, place, span)
+            }
+            [
+                PlaceElem::Field {
+                    name,
+                    canonical: Some(canonical),
+                },
+            ] => self.project_nominal_field(value, name, canonical, span),
             [PlaceElem::Index(index)] => {
                 let index = self.evaluate_operand(index, span)?;
                 let ReplacementValue::Int(index) = index else {
@@ -4999,6 +7099,7 @@ impl BodyExecutor {
         &self,
         value: ReplacementValue,
         field: &str,
+        canonical: &incan_semantics_core::CanonicalSymbolId,
         span: HirSourceSpan,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         let ReplacementValue::Nominal {
@@ -5022,7 +7123,8 @@ impl BodyExecutor {
                     span,
                 )
             })?;
-        if declaration.fields.len() != fields.len()
+        if !valid_local_nominal_declaration(&self.module, declaration)
+            || declaration.fields.len() != fields.len()
             || declaration
                 .fields
                 .iter()
@@ -5034,15 +7136,22 @@ impl BodyExecutor {
                 span,
             ));
         }
-        fields
-            .into_iter()
-            .find_map(|(stored, value)| (stored == field).then_some(value))
-            .ok_or_else(|| {
-                unsupported(
-                    format!("named field projection `.{field}` outside the source-local nominal layout"),
-                    span,
-                )
-            })
+        let Some(slot) = declaration
+            .field_identities
+            .iter()
+            .position(|identity| identity == canonical)
+        else {
+            return Err(unsupported(
+                "nominal field projection without the retained canonical member identity",
+                span,
+            ));
+        };
+        fields.into_iter().nth(slot).map(|(_, value)| value).ok_or_else(|| {
+            unsupported(
+                format!("named field projection `.{field}` outside the source-local nominal layout"),
+                span,
+            )
+        })
     }
 
     /// Assign a complete local or one source-local list element without permitting nested writes.
@@ -5053,10 +7162,7 @@ impl BodyExecutor {
         span: HirSourceSpan,
     ) -> Result<(), ReplacementExecutionError> {
         match place.projection.as_slice() {
-            [] => {
-                self.assign_local(place.local, value);
-                Ok(())
-            }
+            [] => self.assign_local(bare_local(place, span)?, value, span),
             [PlaceElem::Index(index)] => {
                 if !value.is_direct_structural() {
                     return Err(unsupported("list assignment with a non-structural value", span));
@@ -5069,7 +7175,7 @@ impl BodyExecutor {
                     .map_err(|_| runtime_failure("list assignment index is negative".to_string(), span))?;
                 let target = self
                     .locals
-                    .get_mut(&place.local)
+                    .get_mut(&local_root(place, span)?)
                     .ok_or_else(|| runtime_failure("assignment to an unavailable local".to_string(), span))?;
                 let ReplacementValue::List { elements, .. } = target else {
                     return Err(unsupported(
@@ -5111,7 +7217,13 @@ impl ReplacementValue {
     const fn is_copy_shaped(&self) -> bool {
         matches!(
             self,
-            Self::Int(_) | Self::Bool(_) | Self::Unit | Self::FieldlessEnum { .. } | Self::Task(_)
+            Self::Int(_)
+                | Self::Bool(_)
+                | Self::Float(_)
+                | Self::Numeric(_)
+                | Self::Unit
+                | Self::FieldlessEnum { .. }
+                | Self::Task(_)
         )
     }
 
@@ -5168,16 +7280,32 @@ enum Flow {
     /// Continue the innermost normalized loop.
     Continue,
     /// Return from the selected free function.
-    Return(Option<ReplacementValue>),
+    Return(Option<ReplacementValue>, HirSourceSpan),
 }
 
 /// Return one bare local id, refusing fields, indexes, and slices in the first profile.
 fn bare_local(place: &Place, span: HirSourceSpan) -> Result<LocalId, ReplacementExecutionError> {
+    let local = local_root(place, span)?;
     if place.projection.is_empty() {
-        Ok(place.local)
+        Ok(local)
     } else {
         Err(unsupported("place projection", span))
     }
+}
+
+/// Return the local storage root of a place while leaving its already-admitted projection for the caller to apply.
+fn local_root(place: &Place, span: HirSourceSpan) -> Result<LocalId, ReplacementExecutionError> {
+    let local = match &place.root {
+        incan_semantics_core::body_ir::PlaceRoot::Local(local) => *local,
+        incan_semantics_core::body_ir::PlaceRoot::Global(global) => Err(unsupported(
+            format!(
+                "canonical global `{}` is outside the direct replacement value-state profile",
+                global.identity.render_compact()
+            ),
+            span,
+        ))?,
+    };
+    Ok(local)
 }
 
 /// Project one numeric source-local tuple field while retaining the statement's original source authority on refusal.
@@ -5186,7 +7314,13 @@ fn project_tuple_field(
     place: &Place,
     span: HirSourceSpan,
 ) -> Result<ReplacementValue, ReplacementExecutionError> {
-    let [PlaceElem::Field(field)] = place.projection.as_slice() else {
+    let [
+        PlaceElem::Field {
+            name: field,
+            canonical: None,
+        },
+    ] = place.projection.as_slice()
+    else {
         return if place.projection.is_empty() {
             Ok(value)
         } else {
@@ -5233,6 +7367,7 @@ fn unsupported(description: impl Into<String>, span: HirSourceSpan) -> Replaceme
         span,
         span_start: span.start,
         span_end: span.end,
+        module_id: None,
     }
 }
 
@@ -5259,15 +7394,49 @@ fn checked_python_floor_division(
 }
 
 /// Reject a return value that would widen the first replacement profile beyond scalar source observables.
-fn ensure_scalar_result(value: &ReplacementValue, span: HirSourceSpan) -> Result<(), ReplacementExecutionError> {
-    match value {
-        ReplacementValue::Int(_) | ReplacementValue::Bool(_) | ReplacementValue::Str(_) | ReplacementValue::Unit => {
-            Ok(())
-        }
-        _ => Err(unsupported(
+fn ensure_scalar_result(
+    value: &ReplacementValue,
+    return_type: &IncanType,
+    span: HirSourceSpan,
+) -> Result<(), ReplacementExecutionError> {
+    let scalar = matches!(
+        value,
+        ReplacementValue::Int(_)
+            | ReplacementValue::Bool(_)
+            | ReplacementValue::Str(_)
+            | ReplacementValue::Float(_)
+            | ReplacementValue::Numeric(_)
+            | ReplacementValue::Unit
+    );
+    if !scalar {
+        return Err(unsupported(
             format!("returning {} from the scalar replacement profile", value_kind(value)),
             span,
-        )),
+        ));
+    }
+    let matches = match (return_type, value) {
+        (IncanType::Primitive(IncanPrimitiveType::Int), ReplacementValue::Int(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Float), ReplacementValue::Float(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Bool), ReplacementValue::Bool(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Str), ReplacementValue::Str(_))
+        | (IncanType::Primitive(IncanPrimitiveType::Unit), ReplacementValue::Unit) => true,
+        (ty, ReplacementValue::Numeric(value)) => numeric_value_matches_type(value, ty),
+        (IncanType::Unknown | IncanType::Infer, _) => true,
+        _ => false,
+    };
+    if matches {
+        if let ReplacementValue::Numeric(value) = value {
+            validate_numeric_value(value, span)?;
+        }
+        Ok(())
+    } else {
+        Err(unsupported(
+            format!(
+                "returned {} contradicts checked result type `{return_type}`",
+                value_kind(value)
+            ),
+            span,
+        ))
     }
 }
 
@@ -5419,24 +7588,7 @@ fn callee_label(callee: &Callee) -> String {
 
 /// Render a compiler-owned helper name without depending on generated-Rust spellings.
 const fn helper_label(helper: HelperOp) -> &'static str {
-    match helper {
-        HelperOp::StrConcat => "str_concat",
-        HelperOp::StrEq => "str_eq",
-        HelperOp::StrNe => "str_ne",
-        HelperOp::StrLt => "str_lt",
-        HelperOp::StrLe => "str_le",
-        HelperOp::StrGt => "str_gt",
-        HelperOp::StrGe => "str_ge",
-        HelperOp::StrContains => "str_contains",
-        HelperOp::StrNotContains => "str_not_contains",
-        HelperOp::ListConcat => "list_concat",
-        HelperOp::ListContains => "list_contains",
-        HelperOp::ListNotContains => "list_not_contains",
-        HelperOp::SetContains => "set_contains",
-        HelperOp::SetNotContains => "set_not_contains",
-        HelperOp::DictContainsKey => "dict_contains_key",
-        HelperOp::DictNotContainsKey => "dict_not_contains_key",
-    }
+    helper.as_str()
 }
 
 /// Render an aggregate kind as a compact source-level diagnostic label.
@@ -5459,7 +7611,7 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
 -> crate::replacement_compatibility::ReplacementCompatibilityContribution {
     use crate::replacement_compatibility::{
         ComparisonEvidence, OutstandingComparisonEvidence, feature_requirement_link, implementation_requirement,
-        local_implementation_contribution, preserved_feature_at_boundary,
+        local_implementation_contribution, partially_materialized_feature_at_boundary, preserved_feature_at_boundary,
     };
 
     let mut async_tasks = preserved_feature_at_boundary(
@@ -5470,9 +7622,9 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
         "fn lower_race_for",
         "fn execute_race",
     );
-    async_tasks.owner_issue = Some(1155);
+    async_tasks.owner_issue = Some(988);
     async_tasks.migration_or_blocker = Some(
-        "#1155 owns the bounded source-local task profile and its remaining paired source-observable comparison evidence."
+        "Closed #1155 delivered the bounded source-local task profile; open #988 owns its remaining paired source-observable comparison evidence."
             .to_string(),
     );
     if let ComparisonEvidence::Unavailable {
@@ -5480,8 +7632,8 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
     } = &mut async_tasks.evidence.surfaces.independent_comparison
     {
         *outstanding_evidence = OutstandingComparisonEvidence::Scheduled {
-            owner_issue: 1155,
-            note: "#1155 owns exact paired source-observable evidence through #1146's completed route; direct task execution alone remains non-green."
+            owner_issue: 988,
+            note: "Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green."
                 .to_string(),
         };
     }
@@ -5501,11 +7653,22 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
             ),
             preserved_feature_at_boundary(
                 "language.numeric-and-scalar",
-                "Bounded scalar arithmetic, comparisons, boolean operators, and strings execute directly from Body IR.",
+                "Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.",
                 "src/frontend/typechecker/check_expr/ops.rs",
                 "fn check_binary",
                 "fn lower_binary",
                 "fn evaluate_binary",
+            ),
+            partially_materialized_feature_at_boundary(
+                "language.numeric-complete",
+                "Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.",
+                988,
+                "#1279 materializes the typed carrier and bounded movement/output contract. #988 owns the explicitly refused numeric operations, overflow behavior, aggregate integration, Debug formatting, resize methods, and decimal scalar conversions required before the wider feature can become green.",
+                "src/frontend/typechecker/check_stmt.rs",
+                "fn check_assignment",
+                "src/frontend/body_ir/primitives.rs",
+                "fn lower_checked_literal",
+                "fn validate_reachable_typed_numeric_profile",
             ),
             async_tasks,
         ],
@@ -5519,9 +7682,9 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
             ),
             implementation_requirement(
                 "runtime.scalar-values",
-                "Scalars, strings, operators, and conversions preserve checked type and failure behavior.",
+                "Scalars, strings, operators, conversions, and scalar JSON stringification preserve checked type, exact bytes, and failure behavior.",
                 "Body IR operands/rvalues and replacement evaluator",
-                "replacement-body-v0 scalar corpus",
+                "replacement-body-v0 scalar corpus, including replacement-body-v0-025",
                 "Scalar representation is an internal evaluator mechanism.",
             ),
             implementation_requirement(
@@ -5536,6 +7699,7 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
         vec![
             feature_requirement_link("language.control-flow", "control.normalized-flow"),
             feature_requirement_link("language.numeric-and-scalar", "runtime.scalar-values"),
+            feature_requirement_link("language.numeric-complete", "runtime.scalar-values"),
             feature_requirement_link("async.tasks", "async.runtime"),
             feature_requirement_link("async.tasks", "receipts.comparison"),
         ],
@@ -5580,25 +7744,29 @@ const fn binary_label(operator: BinOp) -> &'static str {
 }
 
 /// Render one replacement value's dynamic shape for an unsupported-operation diagnostic.
-const fn value_kind(value: &ReplacementValue) -> &'static str {
+fn value_kind(value: &ReplacementValue) -> String {
     match value {
-        ReplacementValue::Int(_) => "int",
-        ReplacementValue::Bool(_) => "bool",
-        ReplacementValue::Str(_) => "str",
-        ReplacementValue::Float(_) => "float",
-        ReplacementValue::Unit => "unit",
-        ReplacementValue::Range { .. } => "range",
-        ReplacementValue::List { .. } => "list",
-        ReplacementValue::Tuple(_) => "tuple",
-        ReplacementValue::Nominal { .. } => "nominal",
-        ReplacementValue::FieldlessEnum { .. } => "fieldless enum",
-        ReplacementValue::ValueEnum { .. } => "value enum",
-        ReplacementValue::Result { .. } => "Result",
-        ReplacementValue::Callable(_) => "callable",
-        ReplacementValue::Generator(_) => "generator",
-        ReplacementValue::Task(_) => "direct task",
-        ReplacementValue::Adapter(_) => "generator adapter",
-        ReplacementValue::CollectedGenerator { .. } => "collected generator list",
+        ReplacementValue::Int(_) => "int".to_string(),
+        ReplacementValue::Bool(_) => "bool".to_string(),
+        ReplacementValue::Str(_) => "str".to_string(),
+        ReplacementValue::Float(_) => "float".to_string(),
+        ReplacementValue::Numeric(value) => value.type_name(),
+        ReplacementValue::Unit => "unit".to_string(),
+        ReplacementValue::Range { .. } => "range".to_string(),
+        ReplacementValue::List { .. } => "list".to_string(),
+        ReplacementValue::Tuple(_) => "tuple".to_string(),
+        ReplacementValue::Set(_) => "set".to_string(),
+        ReplacementValue::Dict(_) => "dict".to_string(),
+        ReplacementValue::Nominal { .. } => "nominal".to_string(),
+        ReplacementValue::FieldlessEnum { .. } => "fieldless enum".to_string(),
+        ReplacementValue::ValueEnum { .. } => "value enum".to_string(),
+        ReplacementValue::Result { .. } => "Result".to_string(),
+        ReplacementValue::Callable(_) => "callable".to_string(),
+        ReplacementValue::Generator(_) => "generator".to_string(),
+        ReplacementValue::Task(_) => "direct task".to_string(),
+        ReplacementValue::Adapter(_) => "generator adapter".to_string(),
+        ReplacementValue::Zip(_) => "Zip iterator".to_string(),
+        ReplacementValue::CollectedGenerator { .. } => "collected generator list".to_string(),
     }
 }
 
@@ -5613,9 +7781,101 @@ fn constant_value(constant: &Constant, span: HirSourceSpan) -> Result<Replacemen
         Constant::Bool(value) => Ok(ReplacementValue::Bool(*value)),
         Constant::Str(value) => Ok(ReplacementValue::Str(value.clone())),
         Constant::Unit | Constant::None => Ok(ReplacementValue::Unit),
-        Constant::Float(value) => Ok(ReplacementValue::Float(value.clone())),
+        Constant::Float(value) => binary_float_literal_value(value, span),
+        Constant::TypedNumeric(value) => typed_numeric_constant_value(value, span).map(ReplacementValue::Numeric),
         Constant::Bytes(_) => Err(unsupported("byte-string literal", span)),
     }
+}
+
+/// Materialize and validate one exact typed-numeric Body-IR constant.
+fn typed_numeric_constant_value(
+    constant: &TypedNumericConstant,
+    span: HirSourceSpan,
+) -> Result<ReplacementNumericValue, ReplacementExecutionError> {
+    let value = match constant {
+        TypedNumericConstant::Signed { kind, value } => ReplacementNumericValue::Signed {
+            kind: *kind,
+            value: *value,
+        },
+        TypedNumericConstant::Unsigned { kind, value } => ReplacementNumericValue::Unsigned {
+            kind: *kind,
+            value: *value,
+        },
+        TypedNumericConstant::F32 { bits } => ReplacementNumericValue::F32(f32::from_bits(*bits)),
+        TypedNumericConstant::F64 { bits } => ReplacementNumericValue::F64(f64::from_bits(*bits)),
+        TypedNumericConstant::Decimal {
+            precision,
+            scale,
+            coefficient,
+            literal_scale,
+        } => ReplacementNumericValue::Decimal {
+            precision: *precision,
+            scale: *scale,
+            coefficient: *coefficient,
+            literal_scale: *literal_scale,
+        },
+    };
+    validate_numeric_value(&value, span)?;
+    Ok(value)
+}
+
+/// Materialize an ordinary binary-float Body-IR literal with the same value normalization as Rust emission.
+///
+/// Body IR deliberately retains the lexical representation for diagnostics and snapshots. The lexer has already
+/// accepted that spelling as a binary float, but direct execution needs the value rather than its source text so
+/// `str(1_000.50)` and `str(1.0)` use ordinary `f64` Display. A checked decimal uses `TypedNumeric`; a `d` suffix
+/// reaching this legacy variant is malformed Body IR and remains a visible refusal.
+fn binary_float_literal_value(repr: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    if repr.ends_with('d') {
+        return Err(unsupported("decimal literal", span));
+    }
+    let normalized = repr.replace('_', "");
+    normalized
+        .parse::<f64>()
+        .map(ReplacementValue::Float)
+        .map_err(|_| unsupported("binary float literal outside the direct f64 carrier", span))
+}
+
+/// Apply the native emitter's explicit `as i64` scalar conversion to one typed binary numeric.
+fn numeric_to_int(value: ReplacementNumericValue, span: HirSourceSpan) -> Result<i64, ReplacementExecutionError> {
+    match value {
+        ReplacementNumericValue::Signed { value, .. } => Ok(value as i64),
+        ReplacementNumericValue::Unsigned { value, .. } => Ok(value as i64),
+        ReplacementNumericValue::F32(value) => Ok(value as i64),
+        ReplacementNumericValue::F64(value) => Ok(value as i64),
+        ReplacementNumericValue::Decimal { .. } => Err(unsupported(
+            "`int` of decimal has no admitted native scalar-cast contract",
+            span,
+        )),
+    }
+}
+
+/// Apply the native emitter's explicit `as f64` scalar conversion to one typed binary numeric.
+fn numeric_to_float(value: ReplacementNumericValue, span: HirSourceSpan) -> Result<f64, ReplacementExecutionError> {
+    match value {
+        ReplacementNumericValue::Signed { value, .. } => Ok(value as f64),
+        ReplacementNumericValue::Unsigned { value, .. } => Ok(value as f64),
+        ReplacementNumericValue::F32(value) => Ok(f64::from(value)),
+        ReplacementNumericValue::F64(value) => Ok(value),
+        ReplacementNumericValue::Decimal { .. } => Err(unsupported(
+            "`float` of decimal has no admitted native scalar-cast contract",
+            span,
+        )),
+    }
+}
+
+/// Execute the shared `int(str)` policy without exposing the native route's panic-based API to direct execution.
+fn parse_int_conversion(value: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    parse_int_string(value)
+        .map(ReplacementValue::Int)
+        .ok_or_else(|| runtime_failure(IncanError::cannot_convert_to_int(value).to_string(), span))
+}
+
+/// Execute the shared `float(str)` policy while retaining the original input spelling in any diagnostic.
+fn parse_float_conversion(value: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    parse_float_string(value)
+        .map(ReplacementValue::Float)
+        .ok_or_else(|| runtime_failure(IncanError::cannot_convert_to_float(value).to_string(), span))
 }
 
 /// Convert only scalar/unit Body-IR constants to a direct pattern comparison value.
@@ -5628,24 +7888,59 @@ fn direct_pattern_constant(
             constant_value(constant, span)
         }
         Constant::Float(_) => Err(unsupported("floating-point match literal", span)),
+        Constant::TypedNumeric(value) => Err(unsupported(
+            format!("typed numeric `{}` match literal (owned by #988)", value.type_name()),
+            span,
+        )),
         Constant::Bytes(_) => Err(unsupported("byte-string match literal", span)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+    use std::{
+        cell::RefCell,
+        collections::{BTreeMap, BTreeSet},
+        rc::Rc,
+    };
 
     use incan_semantics_core::{
-        CompilerNodeId,
-        body_ir::{Block, RaceArm},
+        CanonicalSymbolId, CompilerNodeId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
+        body_ir::{Block, GlobalPlace, GlobalWritePolicy, RaceArm, ScopeId},
     };
 
     use super::{
         Body, BodyExecutor, BodyIrModule, Constant, GeneratorFrame, HirSourceSpan, LocalId, MAX_EXECUTION_STEPS,
-        Operand, OwnershipFact, Place, ReplacementExecutionError, ReplacementGenerator, ReplacementTask,
-        ReplacementTaskState, ReplacementValue, ScopeId, Statement, StatementKind,
+        Operand, OwnershipFact, Place, ProgramIo, ReplacementExecutionError, ReplacementGenerator, ReplacementTask,
+        ReplacementTaskState, ReplacementValue, Statement, StatementKind, bare_local, validate_read_place,
     };
+
+    #[test]
+    fn canonical_globals_are_refused_without_becoming_missing_frame_locals() {
+        let span = HirSourceSpan::new(10, 20);
+        let identity = CanonicalSymbolId::module_declaration(
+            vec!["provider".to_string()],
+            "LIMIT",
+            SemanticSourceTargetKind::Const,
+            HirSourceSpan::new(0, 5),
+        );
+        let place = Place::from_global(GlobalPlace {
+            identity: identity.clone(),
+            ty: IncanType::Primitive(IncanPrimitiveType::Int),
+            write_policy: GlobalWritePolicy::ReadOnly,
+        });
+
+        for result in [
+            bare_local(&place, span).map(|_| ()),
+            validate_read_place(&place, span, &BTreeSet::new()),
+        ] {
+            assert!(matches!(
+                result,
+                Err(ReplacementExecutionError::Unsupported { description, span: error_span, .. })
+                    if description.contains(&identity.render_compact()) && error_span == span
+            ));
+        }
+    }
 
     /// A resumed generator must retain the steps its parent spent before the first poll.
     #[test]
@@ -5658,7 +7953,17 @@ mod tests {
             value_enum_declarations: Vec::new(),
             bodies: Vec::new(),
         };
-        let mut executor = BodyExecutor::with_locals(&module, BTreeMap::new(), MAX_EXECUTION_STEPS);
+        let mut stdout = std::io::sink();
+        let mut stderr = std::io::sink();
+        let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+        let mut executor = BodyExecutor::with_locals(
+            &module,
+            Rc::new(Vec::new()),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            MAX_EXECUTION_STEPS,
+            &mut io,
+        );
         let mut generator = ReplacementGenerator {
             frame: GeneratorFrame::new(
                 BTreeMap::new(),
@@ -5695,8 +8000,10 @@ mod tests {
         let body = Body {
             decl_id: CompilerNodeId::declaration("replacement.race_failure_test", "child"),
             direct_call_id: CompilerNodeId::declaration_span("replacement.race_failure_test", span.start, span.end),
+            canonical: None,
             name: "child".to_string(),
             span,
+            return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
             locals: Vec::new(),
             params: Vec::new(),
             param_locals: Vec::new(),
@@ -5739,7 +8046,10 @@ mod tests {
         locals.insert(winner_local, ReplacementValue::Task(winner.clone()));
         locals.insert(loser_local, ReplacementValue::Task(loser.clone()));
         locals.insert(later_loser_local, ReplacementValue::Task(later_loser.clone()));
-        let mut executor = BodyExecutor::with_locals(&module, locals, 0);
+        let mut stdout = std::io::sink();
+        let mut stderr = std::io::sink();
+        let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+        let mut executor = BodyExecutor::with_locals(&module, Rc::new(Vec::new()), locals, BTreeMap::new(), 0, &mut io);
         let arms = [
             RaceArm {
                 awaitable: Operand::place(Place::from_local(winner_local), OwnershipFact::Borrow, false),

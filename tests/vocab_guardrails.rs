@@ -8,6 +8,60 @@ use serde::Deserialize;
 
 const SEMANTIC_STRING_AUDIT_PATH: &str = "tests/fixtures/vocab_guardrails/semantic_string_audit.json";
 
+/// Guard RFC 120's one-way projection rule at the compiler boundary.
+///
+/// An artifact inspector may decode the versioned `incan-v1` payload, but frontend, lowering, emission, LSP, and
+/// codegraph code must never recover source meaning by parsing a generated Rust spelling.
+#[test]
+fn semantic_compiler_paths_do_not_reverse_emitted_names_into_source_bindings() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = repo_root();
+    let forbidden = [
+        "decode_incan_symbol_identity",
+        "decode_incan_identity_from_demangled_symbol",
+        "overload_source_name_from_emitted",
+        "source_binding_from_emitted_name",
+    ];
+    let mut offenders = Vec::new();
+
+    let mut semantic_paths = Vec::new();
+    for relative in [
+        "src/backend/ir",
+        "src/frontend",
+        "src/lsp",
+        "src/cli/commands/codegraph.rs",
+    ] {
+        collect_rust_files(&root.join(relative), &mut semantic_paths);
+    }
+    semantic_paths.sort();
+    semantic_paths.dedup();
+    for path in semantic_paths {
+        let source = fs::read_to_string(&path).map_err(|error| {
+            std::io::Error::other(format!(
+                "failed to read semantic compiler path `{}`: {error}",
+                path.display()
+            ))
+        })?;
+        for (line_index, line) in source.lines().enumerate() {
+            if forbidden.iter().any(|pattern| line.contains(pattern)) {
+                offenders.push(format!(
+                    "{}:{}: {}",
+                    rel_path(&root, &path),
+                    line_index + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "compiler semantic paths reverse generated spellings into source bindings:\n{}",
+        offenders.join("\n")
+    );
+    Ok(())
+}
+
 /// Guardrail against reintroducing stringly-typed vocabulary checks.
 ///
 /// This is intentionally a **coarse** safety net. It looks for suspicious patterns like `== "List"` or

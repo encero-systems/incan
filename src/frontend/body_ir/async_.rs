@@ -39,8 +39,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// Each arm's awaitable is lowered into the enclosing block *before* any arm body, which is what makes "every
     /// awaitable is evaluated before selection" observable in the statement sequence rather than a claim in prose.
-    /// Each arm then gets its own scope and its own binding local: the source spells one shared name, but arms
-    /// re-scope it and can resolve it to different types, so one local per arm is the faithful shape.
+    /// Each arm then gets its own scope and type-refined local. Those locals retain the one canonical identity and
+    /// exact token span of the shared header binding, so different arm types do not invent different source objects.
     ///
     /// An arm body containing an unsupported construct keeps its own `Unsupported` node *inside* the represented
     /// race rather than collapsing the whole expression, so a consumer loses only the construct it cannot handle.
@@ -85,12 +85,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // `insert_scope_drops` handles the *drop* obligation; it does not touch name resolution, which
             // is what this restores.
             let enclosing_bindings = self.bindings.clone();
+            let enclosing_identity_bindings = self.identity_bindings.clone();
             let reads = match &arm.body {
-                ast::RaceForBody::Expr(expr) => count_reads_in_expr(&race.binding, &expr.node),
-                ast::RaceForBody::Block(stmts) => count_reads_in_stmts(&race.binding, stmts),
+                ast::RaceForBody::Expr(expr) => count_reads_in_expr(&race.binding.node, &expr.node),
+                ast::RaceForBody::Block(stmts) => count_reads_in_stmts(&race.binding.node, stmts),
             };
-            let binding =
-                self.declare_new_local_with_reads(race.binding.clone(), binding_ty, arm_scope, hir_span_value, reads);
+            let binding = self.declare_new_local_with_reads(
+                race.binding.node.clone(),
+                binding_ty,
+                arm_scope,
+                hir_span(race.binding.span),
+                reads,
+            );
 
             let mut arm_stmts = Vec::new();
             let result = match &arm.body {
@@ -105,6 +111,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // that arm, exactly like a closure body's. Code after the race, and each later arm, must keep resolving
             // every name to whatever it meant outside.
             self.bindings = enclosing_bindings;
+            self.identity_bindings = enclosing_identity_bindings;
             range_layouts_after_arms.push(self.materialized_range_locals.clone());
 
             arms.push(bir::RaceArm {

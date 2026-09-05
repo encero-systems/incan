@@ -861,7 +861,53 @@ fn expr_references_name(expr: &Expr, name: &str) -> bool {
                 .any(|arg| expr_references_name(&arg.node, name))
                 || body_references_name(&block.body, name)
         }
+        // Unlike `Surface` (DSL-owned syntax with no real Incan bindings reachable from this analysis), an
+        // embedded fragment's holes are genuine Incan expressions (RFC 081, `#1023`) that can legitimately
+        // reference a yield-fixture setup binding, so they must be recursed into rather than treated as opaque.
+        Expr::Embedded(fragment) => fragment
+            .nodes
+            .iter()
+            .any(|node| embedded_node_references_name(&node.node, name)),
         Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) | Expr::Partial(_) | Expr::Surface(_) => false,
+    }
+}
+
+/// Return whether an expression hole nested inside one embedded-fragment node references `name`.
+///
+/// Mirrors `expr_references_name`'s traversal shape for `EmbeddedNode`.
+fn embedded_node_references_name(node: &crate::frontend::ast::EmbeddedNode, name: &str) -> bool {
+    use crate::frontend::ast::EmbeddedNode;
+    match node {
+        EmbeddedNode::Text(_)
+        | EmbeddedNode::EntityRef(_)
+        | EmbeddedNode::Comment(_)
+        | EmbeddedNode::Value(_)
+        | EmbeddedNode::Regex { .. }
+        | EmbeddedNode::TypeShape(_) => false,
+        EmbeddedNode::Hole(expr) => expr_references_name(&expr.node, name),
+        EmbeddedNode::Element(element) => {
+            element.attrs.iter().any(|attr| {
+                attr.value
+                    .as_ref()
+                    .is_some_and(|value| embedded_node_references_name(&value.node, name))
+            }) || element
+                .children
+                .iter()
+                .any(|child| embedded_node_references_name(&child.node, name))
+        }
+        EmbeddedNode::StyleRule(rule) => {
+            rule.selectors
+                .iter()
+                .any(|selector| embedded_node_references_name(&selector.node, name))
+                || rule
+                    .declarations
+                    .iter()
+                    .any(|declaration| embedded_node_references_name(&declaration.node, name))
+        }
+        EmbeddedNode::Declaration(declaration) => declaration
+            .value
+            .iter()
+            .any(|value| embedded_node_references_name(&value.node, name)),
     }
 }
 
@@ -3416,5 +3462,58 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
         assert!(generated.contains("__incan_async_block_on(super::test_async(__incan_fixture_value_0_resource))"));
         assert!(generated.contains("__incan_run_teardown"));
         assert!(generated.contains("__incan_async_block_on(super::__incan_fixture_teardown_resource())"));
+    }
+
+    /// Build a minimal `Expr::Embedded` fragment (RFC 081, `#1023`) whose sole node is a `Hole` referencing
+    /// `hole_name` as a bare identifier, for `embedded_node_references_name` coverage below.
+    fn embedded_fragment_expr_with_hole(hole_name: &str) -> Expr {
+        use crate::frontend::ast::{EmbeddedFragmentExpr, EmbeddedNode};
+        use incan_semantics_core::SurfaceFeatureKey;
+        Expr::Embedded(Box::new(EmbeddedFragmentExpr {
+            key: SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "webkit".to_string(),
+                descriptor_key: "html.fragment".to_string(),
+            },
+            submode: incan_vocab::EmbeddedFragmentSubmode::Markup,
+            nodes: vec![Spanned::new(
+                EmbeddedNode::Hole(Box::new(Spanned::new(
+                    Expr::Ident(hole_name.to_string()),
+                    Span::default(),
+                ))),
+                Span::default(),
+            )],
+            source_text: format!("{{{hole_name}}}"),
+        }))
+    }
+
+    #[test]
+    fn expr_references_name_recurses_into_an_embedded_fragment_hole() {
+        // Regression coverage for the RFC 081 (`#1023`) `Expr::Embedded` arm added to `expr_references_name`: a
+        // yield-fixture setup binding referenced only inside an embedded fragment's hole (e.g. `html:\n
+        // <h1>{title}</h1>`) must still be detected, or the test runner could tear down that binding before the
+        // fragment's own hole reads it.
+        let fragment = embedded_fragment_expr_with_hole("title");
+        assert!(expr_references_name(&fragment, "title"));
+        assert!(!expr_references_name(&fragment, "unrelated_name"));
+    }
+
+    #[test]
+    fn embedded_node_references_name_does_not_search_opaque_leaf_nodes() {
+        use crate::frontend::ast::EmbeddedNode;
+        // Leaf node kinds carry no nested Incan expressions to search -- confirms the opaque-leaf arm of
+        // `embedded_node_references_name` (RFC 081, `#1023`) genuinely returns `false` rather than accidentally
+        // matching on the node's own text content.
+        assert!(!embedded_node_references_name(
+            &EmbeddedNode::Text("title".to_string()),
+            "title"
+        ));
+        assert!(!embedded_node_references_name(
+            &EmbeddedNode::EntityRef("title".to_string()),
+            "title"
+        ));
+        assert!(!embedded_node_references_name(
+            &EmbeddedNode::Comment("references title".to_string()),
+            "title"
+        ));
     }
 }

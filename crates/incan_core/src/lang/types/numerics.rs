@@ -18,7 +18,7 @@
 use crate::lang::registry::{Example, RFC, RfcId, Since, Stability};
 
 /// Stable identifier for numeric builtin types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub enum NumericTypeId {
     I8,
     I16,

@@ -94,13 +94,31 @@ impl<'a> IrEmitter<'a> {
                 visibility,
                 name,
                 target_path,
+                target_canonical,
                 target_origin,
                 target_qualifier,
             } => {
                 let vis = self.emit_visibility(visibility);
                 let name_ident = Self::rust_ident(name);
-                let target =
-                    self.emit_symbol_alias_target_path(target_origin.as_ref(), target_qualifier.as_ref(), target_path);
+                let mut emitted_target_path = target_path.clone();
+                if let Some(identity) = target_canonical {
+                    if !super::super::decl::is_projected_source_symbol(identity) {
+                        return Err(EmitError::InternalInvariant(format!(
+                            "source alias `{name}` carries a non-projectable canonical target"
+                        )));
+                    }
+                    let Some(target_name) = emitted_target_path.last_mut() else {
+                        return Err(EmitError::InternalInvariant(format!(
+                            "source alias `{name}` has an empty canonical target path"
+                        )));
+                    };
+                    *target_name = incan_semantics_core::encode_incan_symbol_identity(identity);
+                }
+                let target = self.emit_symbol_alias_target_path(
+                    target_origin.as_ref(),
+                    target_qualifier.as_ref(),
+                    &emitted_target_path,
+                );
                 Ok(quote! {
                     #vis use #target as #name_ident;
                 })
@@ -114,9 +132,10 @@ impl<'a> IrEmitter<'a> {
             IrDeclKind::Static {
                 visibility,
                 name,
+                provenance,
                 ty,
                 value,
-            } => self.emit_static(visibility, name, ty, value),
+            } => self.emit_static(visibility, name, provenance, ty, value),
             IrDeclKind::Import {
                 visibility,
                 origin,
@@ -135,11 +154,20 @@ impl<'a> IrEmitter<'a> {
         &self,
         visibility: &super::super::decl::Visibility,
         name: &str,
+        provenance: &super::super::decl::IrStaticProvenance,
         ty: &IrType,
         value: &super::super::TypedExpr,
     ) -> Result<TokenStream, EmitError> {
         let vis = self.emit_visibility(visibility);
-        let name_ident = Self::rust_static_ident(name);
+        let name_ident = self.rust_static_declaration_ident(name, provenance)?;
+        let rust_facing_alias = if matches!(provenance, super::super::decl::IrStaticProvenance::Source(_))
+            && !matches!(visibility, super::super::decl::Visibility::Private)
+        {
+            let alias = Self::rust_generated_static_ident(name);
+            (alias != name_ident).then(|| quote! { #vis use #name_ident as #alias; })
+        } else {
+            None
+        };
         let ty_tokens = self.emit_type(ty);
         let previous = self.in_static_initializer.replace(true);
         let emitted_value = self.emit_expr(value);
@@ -151,6 +179,7 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! {
             #vis static #name_ident: std::sync::LazyLock<incan_stdlib::storage::StaticCell<#ty_tokens>> =
                 std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(#converted_value));
+            #rust_facing_alias
         })
     }
 
@@ -550,9 +579,9 @@ impl<'a> IrEmitter<'a> {
             // pattern matching.
             if matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import {
                 for item in items {
-                    let key = item.alias.as_ref().unwrap_or(&item.name).clone();
+                    let key = item.emitted_binding_name();
                     let mut full_path = path.to_vec();
-                    full_path.push(item.name.clone());
+                    full_path.push(item.emitted_name());
                     self.rust_import_paths.borrow_mut().insert(key, full_path);
                 }
             }
@@ -567,16 +596,20 @@ impl<'a> IrEmitter<'a> {
                 if matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import {
                     let analysis = self.generated_use_analysis.borrow();
                     items.iter().any(|item| {
-                        let binding = item.alias.as_ref().unwrap_or(&item.name);
+                        let binding = item.emitted_binding_name();
                         item.name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
-                            && analysis.used_imports.contains(binding)
+                            && analysis.used_imports.contains(&binding)
                     })
                 } else {
                     false
                 };
+            // The leading-underscore convention marks a declaration the stdlib keeps to itself, and it is a property
+            // of the *source* spelling. `emitted_binding_name()` is the RFC 120 projection for anything projected,
+            // and every projection begins with `__`, so reading privacy from it classified each projected stdlib
+            // export as private. Functions are projected and types are not, which is why a facade kept its types and
+            // silently dropped its functions.
             let should_reexport_item = |item: &super::super::decl::IrImportItem| {
-                let binding = item.alias.as_ref().unwrap_or(&item.name);
-                if is_incan_source_stdlib && binding.starts_with('_') {
+                if is_incan_source_stdlib && item.source_binding_name().starts_with('_') {
                     return false;
                 }
                 export_item_import || item.force_reexport
@@ -584,29 +617,43 @@ impl<'a> IrEmitter<'a> {
             let item_stmts: Vec<TokenStream> = items
                 .iter()
                 .filter(|item| {
-                    let binding = item.alias.as_ref().unwrap_or(&item.name);
-                    let private_type_like_binding = binding
+                    let binding = if item.is_static {
+                        item.source_binding_name().to_string()
+                    } else {
+                        item.emitted_binding_name()
+                    };
+                    let source_binding = item.source_binding_name();
+                    let private_type_like_binding = source_binding
                         .trim_start_matches('_')
                         .chars()
                         .next()
                         .is_some_and(|ch| ch.is_ascii_uppercase());
-                    if is_incan_source_stdlib && binding.starts_with('_') && !private_type_like_binding {
-                        return self.should_emit_extension_trait_import(binding);
+                    if is_incan_source_stdlib && source_binding.starts_with('_') && !private_type_like_binding {
+                        return self.should_emit_import_binding(&binding)
+                            || self.should_emit_extension_trait_import(&binding);
                     }
                     should_reexport_item(item)
-                        || self.should_emit_import_binding(binding)
-                        || self.should_emit_extension_trait_import(binding)
+                        || self.should_emit_import_binding(&binding)
+                        || self.should_emit_extension_trait_import(&binding)
                         || (preserve_metadata_missing_trait_candidate
                             && item.rust_trait_import.is_none()
                             && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {
-                    let binding = item.alias.as_ref().unwrap_or(&item.name);
-                    let name_ident = if item.is_static {
-                        Self::rust_static_ident(&item.name)
+                    let binding = item.emitted_binding_name();
+                    let source_binding = item.source_binding_name();
+                    let emitted_name = if is_incan_source_stdlib {
+                        let mut canonical_path = path.to_vec();
+                        canonical_path.push(item.name.clone());
+                        self.function_registry
+                            .canonical_identity_for_source_name(&item.name)
+                            .or_else(|| self.canonical_stdlib_function_identity(&canonical_path))
+                            .map(incan_semantics_core::encode_incan_symbol_identity)
+                            .unwrap_or_else(|| item.emitted_name())
                     } else {
-                        Self::rust_ident(&item.name)
+                        item.emitted_name()
                     };
+                    let name_ident = Self::rust_ident(&emitted_name);
                     let runtime_surface_reexport_path = if should_reexport_item(item) && is_incan_source_stdlib {
                         self.stdlib_runtime_surface_type_reexport_path(path, &item.name)
                     } else {
@@ -615,9 +662,10 @@ impl<'a> IrEmitter<'a> {
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     let absolute_path = matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
-                    let static_init_import = if item.is_static && self.static_needs_imported_init_import(binding) {
+                    let static_init_import = if item.is_static && self.static_needs_imported_init_import(source_binding)
+                    {
                         let init_ident = Self::rust_ident("__incan_init_module_statics");
-                        let init_alias = Self::imported_static_init_ident(binding);
+                        let init_alias = Self::imported_static_init_ident(source_binding);
                         if absolute_path {
                             quote! { use :: #path_ts_clone :: #init_ident as #init_alias; }
                         } else {
@@ -636,9 +684,14 @@ impl<'a> IrEmitter<'a> {
                         return quote! {};
                     }
 
-                    let item_import = if let Some(alias) = &item.alias {
-                        let alias_ident = if item.is_static {
-                            Self::rust_static_ident(alias)
+                    // A source alias of a canonical symbol deliberately binds the provider's one projection.
+                    // Do not render `use path::projection as projection`: it is a duplicate self-alias and, in a
+                    // provider module, can become a duplicate self-import. Non-canonical aliases retain their local
+                    // Rust binding as before.
+                    let effective_alias = item.alias.as_ref().filter(|_| binding != emitted_name);
+                    let item_import = if let Some(alias) = effective_alias {
+                        let alias_ident = if item.canonical.is_some() {
+                            Self::rust_ident(&binding)
                         } else {
                             Self::rust_ident(alias)
                         };
@@ -674,7 +727,27 @@ impl<'a> IrEmitter<'a> {
                             }
                         }
                     };
-                    quote! { #static_init_import #item_import }
+                    let rust_facing_reexport = if should_reexport_item(item)
+                        && item
+                            .canonical
+                            .as_ref()
+                            .is_some_and(super::super::decl::is_projected_source_symbol)
+                        && source_binding != emitted_name
+                    {
+                        let source_ident = if item.is_static {
+                            Self::rust_generated_static_ident(source_binding)
+                        } else {
+                            Self::rust_ident(source_binding)
+                        };
+                        if absolute_path {
+                            quote! { pub use :: #path_ts_clone :: #name_ident as #source_ident; }
+                        } else {
+                            quote! { pub use #path_ts_clone :: #name_ident as #source_ident; }
+                        }
+                    } else {
+                        quote! {}
+                    };
+                    quote! { #static_init_import #item_import #rust_facing_reexport }
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })

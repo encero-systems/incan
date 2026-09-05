@@ -45,6 +45,7 @@ pub(super) fn collect_local_function_declarations(program: &ast::Program) -> Loc
 pub(super) fn collect_local_nominal_declarations(
     program: &ast::Program,
     module_identity: &str,
+    type_info: &TypeCheckInfo,
 ) -> Vec<bir::NominalDeclaration> {
     program
         .declarations
@@ -53,14 +54,35 @@ pub(super) fn collect_local_nominal_declarations(
             let ast::Declaration::Model(model) = &declaration.node else {
                 return None;
             };
-            is_direct_replacement_plain_model(model).then(|| bir::NominalDeclaration {
+            if !is_direct_replacement_plain_model(model) {
+                return None;
+            }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            let field_identities = model
+                .fields
+                .iter()
+                .map(|field| {
+                    type_info
+                        .declarations
+                        .member_declaration_identities
+                        .get(&(field.span.start, field.span.end))
+                        .cloned()
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::NominalDeclaration {
                 direct_declaration_id: CompilerNodeId::declaration_span(
                     module_identity,
                     declaration.span.start,
                     declaration.span.end,
                 ),
+                canonical,
                 name: model.name.clone(),
                 fields: model.fields.iter().map(|field| field.node.name.clone()).collect(),
+                field_identities,
                 type_parameter_count: model.type_params.len(),
             })
         })
@@ -73,6 +95,7 @@ pub(super) fn collect_local_nominal_declarations(
 pub(super) fn collect_local_fieldless_enum_declarations(
     program: &ast::Program,
     module_identity: &str,
+    type_info: &TypeCheckInfo,
 ) -> Vec<bir::FieldlessEnumDeclaration> {
     program
         .declarations
@@ -81,25 +104,43 @@ pub(super) fn collect_local_fieldless_enum_declarations(
             let ast::Declaration::Enum(enum_decl) = &declaration.node else {
                 return None;
             };
-            is_direct_replacement_fieldless_enum(enum_decl).then(|| bir::FieldlessEnumDeclaration {
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
-                name: enum_decl.name.clone(),
-                variants: enum_decl
-                    .variants
-                    .iter()
-                    .map(|variant| bir::FieldlessEnumVariantDeclaration {
+            if !is_direct_replacement_fieldless_enum(enum_decl) {
+                return None;
+            }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            let variants = enum_decl
+                .variants
+                .iter()
+                .map(|variant| {
+                    let canonical = type_info
+                        .declarations
+                        .member_declaration_identities
+                        .get(&(variant.span.start, variant.span.end))?
+                        .clone();
+                    Some(bir::FieldlessEnumVariantDeclaration {
                         direct_declaration_id: CompilerNodeId::declaration_span(
                             module_identity,
                             variant.span.start,
                             variant.span.end,
                         ),
+                        canonical,
                         name: variant.node.name.clone(),
                     })
-                    .collect(),
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::FieldlessEnumDeclaration {
+                direct_declaration_id: CompilerNodeId::declaration_span(
+                    module_identity,
+                    declaration.span.start,
+                    declaration.span.end,
+                ),
+                canonical,
+                name: enum_decl.name.clone(),
+                variants,
             })
         })
         .collect()
@@ -112,6 +153,7 @@ pub(super) fn collect_local_fieldless_enum_declarations(
 pub(super) fn collect_local_value_enum_declarations(
     program: &ast::Program,
     module_identity: &str,
+    type_info: &TypeCheckInfo,
 ) -> Vec<bir::ValueEnumDeclaration> {
     program
         .declarations
@@ -123,6 +165,11 @@ pub(super) fn collect_local_value_enum_declarations(
             if !is_direct_replacement_value_enum(enum_decl) {
                 return None;
             }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
             let backing = match enum_decl.value_type.as_ref().map(|value| value.node) {
                 Some(ast::ValueEnumType::Int) => bir::ValueEnumBacking::Int,
                 Some(ast::ValueEnumType::Str) => bir::ValueEnumBacking::Str,
@@ -132,6 +179,11 @@ pub(super) fn collect_local_value_enum_declarations(
                 .variants
                 .iter()
                 .filter_map(|variant| {
+                    let canonical = type_info
+                        .declarations
+                        .member_declaration_identities
+                        .get(&(variant.span.start, variant.span.end))?
+                        .clone();
                     let raw_value = match variant.node.value.as_ref().map(|value| &value.node) {
                         Some(ast::ValueEnumLiteral::Int(value)) if matches!(backing, bir::ValueEnumBacking::Int) => {
                             bir::Constant::Int(value.value)
@@ -147,6 +199,7 @@ pub(super) fn collect_local_value_enum_declarations(
                             variant.span.start,
                             variant.span.end,
                         ),
+                        canonical,
                         name: variant.node.name.clone(),
                         raw_value,
                     })
@@ -158,6 +211,7 @@ pub(super) fn collect_local_value_enum_declarations(
                     declaration.span.start,
                     declaration.span.end,
                 ),
+                canonical,
                 name: enum_decl.name.clone(),
                 backing,
                 variants,

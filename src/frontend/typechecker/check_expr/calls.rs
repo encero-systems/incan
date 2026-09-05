@@ -3,7 +3,7 @@
 //! This module keeps the call-expression coordinator (`foo(...)`) thin and delegates argument binding, constructor
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
-use crate::frontend::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
+use crate::frontend::ast::{CallArg, Expr, ImportPath, ParamKind, Span, Spanned, Type};
 use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
 use crate::frontend::symbols::{
@@ -26,6 +26,7 @@ use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::traits::{self, TraitId};
+use incan_semantics_core::SemanticSourceTargetKind;
 use std::collections::HashSet;
 
 use super::TypeChecker;
@@ -55,6 +56,21 @@ fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
 }
 
 impl TypeChecker {
+    /// Record the identity already attached to the active direct callee binding.
+    ///
+    /// This deliberately reads the symbol table's resolution result instead of deriving an identity from the written
+    /// name. Bindings whose declaration could not be proven therefore leave the reference map empty.
+    fn record_direct_callee_identity(&mut self, name: &str, callee_span: Span) {
+        let identity = self
+            .symbols
+            .lookup(name)
+            .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+            .cloned();
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(callee_span, identity);
+        }
+    }
+
     /// Type-check a call expression after parsing has identified the callee, explicit type arguments, and value
     /// arguments.
     ///
@@ -123,6 +139,11 @@ impl TypeChecker {
         }
         if let Some(name) = Self::explicit_builtin_member_name(callee) {
             let result = self.check_explicit_builtin_call(name, args, span);
+            if let Some(builtin) = self.type_info.resolved_builtin_call(span)
+                && let Some(identity) = self.symbols.builtin_function_identity(builtin)
+            {
+                self.type_info.record_resolved_identity(callee.span, identity);
+            }
             if !type_args.is_empty() {
                 self.errors
                     .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -154,11 +175,15 @@ impl TypeChecker {
                 && (enum_info.variants.iter().any(|v| v == member_name)
                     || enum_info.variant_aliases.contains_key(member_name))
             {
+                let variant_identity = enum_info.variant_identities.get(member_name).cloned();
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
                 }
                 self.check_call_args(args);
+                if let Some(identity) = variant_identity {
+                    self.type_info.record_resolved_identity(callee.span, identity);
+                }
                 return ResolvedType::Named(enum_name.clone());
             }
             if self.receiver_has_computed_property(&base_ty, member_name, span) {
@@ -182,6 +207,7 @@ impl TypeChecker {
                     Ok(resolved) => resolved.map(|resolved| {
                         (
                             resolved.kind,
+                            resolved.canonical,
                             resolved.source_module_path,
                             resolved.source_name,
                             Some(module_path[1].clone()),
@@ -200,9 +226,13 @@ impl TypeChecker {
                 }
             } else {
                 self.resolve_imported_module_function_member_with_source(&module_path, method.as_str())
-                    .map(|(kind, source_module_path)| (kind, source_module_path, method.clone(), None))
+                    .map(|(kind, source_module_path)| {
+                        let canonical =
+                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), method);
+                        (kind, canonical, source_module_path, method.clone(), None)
+                    })
             };
-            if let Some((kind, source_module_path, source_name, public_library)) = resolved {
+            if let Some((kind, canonical, source_module_path, source_name, public_library)) = resolved {
                 let callable = format!("{module_name}.{method}");
                 if is_public_library_module
                     && let Some(projection) = self.lookup_pub_library_module_partial_projection(
@@ -225,6 +255,9 @@ impl TypeChecker {
                     source_name.clone(),
                     source_kind,
                 );
+                if let Some(identity) = canonical {
+                    self.type_info.record_resolved_identity(callee.span, identity);
+                }
                 return match (kind, public_library) {
                     (SymbolKind::Function(info), _) => self.validate_stdlib_module_function_call(
                         callable.as_str(),
@@ -234,14 +267,16 @@ impl TypeChecker {
                         span,
                         expected_return_ty,
                     ),
-                    (SymbolKind::FunctionOverloads(overloads), _) => self.validate_function_overload_call(
-                        callable.as_str(),
-                        &overloads,
-                        type_args,
-                        args,
-                        span,
-                        expected_return_ty,
-                    ),
+                    (SymbolKind::FunctionOverloads(overloads), _) => self
+                        .validate_function_overload_call_with_callee_span(
+                            callable.as_str(),
+                            &overloads,
+                            type_args,
+                            args,
+                            span,
+                            Some(callee.span),
+                            expected_return_ty,
+                        ),
                     (
                         SymbolKind::Type(type_info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))),
                         Some(library),
@@ -267,8 +302,16 @@ impl TypeChecker {
         }
 
         if let Expr::Ident(name) = &callee.node {
+            let class_receiver_identity = self
+                .symbols
+                .lookup(name)
+                .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+                .filter(|identity| {
+                    identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "cls"
+                })
+                .cloned();
             if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
-                && self.symbols.lookup(name).is_none()
+                && let Some(identity) = class_receiver_identity
                 && let (Some(owner_name), Some(self_ty)) = (
                     self.current_method_owner.clone(),
                     self.current_classmethod_self_ty.clone(),
@@ -281,6 +324,7 @@ impl TypeChecker {
                         _ => None,
                     });
                 if let Some(fields) = ctor_fields {
+                    self.type_info.record_resolved_identity(callee.span, identity);
                     self.record_expr_type(callee.span, self_ty.clone());
                     self.type_info
                         .expressions
@@ -309,6 +353,11 @@ impl TypeChecker {
                         .push(errors::explicit_call_site_type_args_not_supported(span));
                     return ResolvedType::Unknown;
                 }
+                if let Some(builtin) = self.type_info.resolved_builtin_call(span)
+                    && let Some(identity) = self.symbols.builtin_function_identity(builtin)
+                {
+                    self.type_info.record_resolved_identity(callee.span, identity);
+                }
                 return result;
             }
 
@@ -328,6 +377,7 @@ impl TypeChecker {
                         if let Some(ret) =
                             self.check_type_constructor_hook_call(name, &type_info, type_args, args, span)
                         {
+                            self.record_direct_callee_identity(name, callee.span);
                             self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                             self.type_info
                                 .expressions
@@ -336,6 +386,7 @@ impl TypeChecker {
                             return ret;
                         }
                         if stdlib::is_graph_constructor_type(name) && args.is_empty() {
+                            self.record_direct_callee_identity(name, callee.span);
                             return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
                         }
                         if let Some(tid) = surface_types::from_str(name) {
@@ -345,6 +396,7 @@ impl TypeChecker {
                                 self.check_call_args(args);
                                 return ResolvedType::Unknown;
                             }
+                            self.record_direct_callee_identity(name, callee.span);
                             self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                             self.type_info
                                 .expressions
@@ -375,6 +427,7 @@ impl TypeChecker {
                             return ResolvedType::Unknown;
                         }
                         if matches!(type_info, TypeInfo::Newtype(_)) {
+                            self.record_direct_callee_identity(name, callee.span);
                             self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                             self.type_info
                                 .expressions
@@ -391,6 +444,7 @@ impl TypeChecker {
                         let Some(mut fields) = ctor_fields else {
                             return ResolvedType::Unknown;
                         };
+                        self.record_direct_callee_identity(name, callee.span);
                         if let Some((_, type_bindings)) = &explicit_constructor_context {
                             for field in fields.values_mut() {
                                 field.ty = substitute_resolved_type(&field.ty, type_bindings);
@@ -423,14 +477,15 @@ impl TypeChecker {
                             );
                             self.record_c_abi_function_call_target(span, target);
                         }
-                        return self.validate_function_call(
-                            name,
-                            &func_info,
-                            type_args,
-                            args,
-                            span,
-                            expected_return_ty,
-                        );
+                        self.record_direct_callee_identity(name, callee.span);
+                        let declaration = self.type_info.resolved_identity(callee.span).cloned();
+                        let first_error = self.errors.len();
+                        let result =
+                            self.validate_function_call(name, &func_info, type_args, args, span, expected_return_ty);
+                        if let Some(declaration) = declaration {
+                            self.attach_related_declaration_to_new_errors(first_error, &declaration);
+                        }
+                        return result;
                     }
                     SymbolKind::FunctionOverloads(overloads) => {
                         if let Some(target) =
@@ -450,12 +505,13 @@ impl TypeChecker {
                             );
                             self.record_c_abi_function_call_target(span, target);
                         }
-                        return self.validate_function_overload_call(
+                        return self.validate_direct_function_overload_call(
                             name,
                             &overloads,
                             type_args,
                             args,
                             span,
+                            callee.span,
                             expected_return_ty,
                         );
                     }
@@ -948,7 +1004,7 @@ impl TypeChecker {
         parameter_name: &str,
     ) -> Option<&'a Spanned<Expr>> {
         if let Some(value) = args.iter().find_map(|argument| match argument {
-            CallArg::Named(name, value) if name == parameter_name => Some(value),
+            CallArg::Named(name, value) if name.node == parameter_name => Some(value),
             _ => None,
         }) {
             return Some(value);
@@ -1091,8 +1147,7 @@ impl TypeChecker {
             return None;
         };
         if !self
-            .import_aliases
-            .get(namespace)
+            .import_binding_path(namespace)
             .is_some_and(|segments| c_abi::is_interop_namespace_path(segments.iter().map(String::as_str)))
         {
             return None;
@@ -1182,8 +1237,7 @@ impl TypeChecker {
             return None;
         };
         if !self
-            .import_aliases
-            .get(namespace)
+            .import_binding_path(namespace)
             .is_some_and(|segments| c_abi::is_interop_namespace_path(segments.iter().map(String::as_str)))
         {
             return None;
@@ -1451,7 +1505,7 @@ impl TypeChecker {
             self.check_call_args(args);
             return Some(ResolvedType::Unknown);
         };
-        if !type_args.is_empty() || name != "max_bytes" {
+        if !type_args.is_empty() || name.node != "max_bytes" {
             self.errors.push(CompileError::type_error(
                 "a scoped C string view requires copy_utf8(max_bytes=<positive int>)".to_string(),
                 span,
@@ -1502,8 +1556,7 @@ impl TypeChecker {
             return None;
         };
         if !self
-            .import_aliases
-            .get(namespace)
+            .import_binding_path(namespace)
             .is_some_and(|segments| c_abi::is_interop_namespace_path(segments.iter().map(String::as_str)))
         {
             return None;
@@ -1584,9 +1637,10 @@ impl TypeChecker {
                     next_positional += 1;
                     (parameter, expr)
                 }
-                CallArg::Named(name, expr) => {
-                    (symbol.parameters.iter().find(|parameter| parameter.name == *name), expr)
-                }
+                CallArg::Named(name, expr) => (
+                    symbol.parameters.iter().find(|parameter| parameter.name == name.node),
+                    expr,
+                ),
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => continue,
             };
             let Some(parameter) = parameter else {
@@ -1745,9 +1799,10 @@ impl TypeChecker {
                     next_positional += 1;
                     (parameter, expr)
                 }
-                CallArg::Named(name, expr) => {
-                    (symbol.parameters.iter().find(|parameter| parameter.name == *name), expr)
-                }
+                CallArg::Named(name, expr) => (
+                    symbol.parameters.iter().find(|parameter| parameter.name == name.node),
+                    expr,
+                ),
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => continue,
             };
             let Some(CBindingType::Resource { access, .. }) = parameter.map(|parameter| &parameter.ty) else {
@@ -1856,17 +1911,39 @@ impl TypeChecker {
         result
     }
 
-    /// Resolve a direct call to a top-level same-name overload set.
-    ///
-    /// Candidate checking runs through the ordinary function-call validator and rolls back failed candidates.
-    /// That keeps overload dispatch on the ordinary checker while preserving argument-shape metadata for lowering.
-    pub(in crate::frontend::typechecker) fn validate_function_overload_call(
+    /// Resolve a direct source overload call and publish only the selected declaration at the callee token.
+    #[allow(clippy::too_many_arguments)] // The wrapper keeps overload inputs and the exact callee span distinct.
+    fn validate_direct_function_overload_call(
         &mut self,
         func_name: &str,
         overloads: &[FunctionOverloadInfo],
         type_args: &[Spanned<Type>],
         args: &[CallArg],
         span: Span,
+        callee_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        self.validate_function_overload_call_with_callee_span(
+            func_name,
+            overloads,
+            type_args,
+            args,
+            span,
+            Some(callee_span),
+            expected_return_ty,
+        )
+    }
+
+    /// Resolve an overload call, optionally recording a direct callee reference after unique candidate selection.
+    #[allow(clippy::too_many_arguments)] // Candidate selection consumes independent call and identity evidence axes.
+    pub(in crate::frontend::typechecker::check_expr) fn validate_function_overload_call_with_callee_span(
+        &mut self,
+        func_name: &str,
+        overloads: &[FunctionOverloadInfo],
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        callee_span: Option<Span>,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let baseline_errors = self.errors.clone();
@@ -1884,8 +1961,16 @@ impl TypeChecker {
             let result =
                 self.validate_function_call(func_name, &overload.info, type_args, args, span, expected_return_ty);
             if self.errors.len() == baseline_errors.len() {
+                let selected_identity = overload.identity.clone().or_else(|| {
+                    baseline_type_info
+                        .declarations
+                        .function_bindings_by_span
+                        .get(&(overload.span.start, overload.span.end))
+                        .and_then(|binding| binding.identity.clone())
+                });
                 matches.push((
                     overload.info.emitted_name.clone(),
+                    selected_identity,
                     result,
                     self.errors.clone(),
                     self.warnings.clone(),
@@ -1897,13 +1982,17 @@ impl TypeChecker {
 
         match matches.len() {
             1 => {
-                let (emitted_name, result, errors, warnings, type_info, consumed_iterator_bindings) = matches.remove(0);
+                let (emitted_name, selected_identity, result, errors, warnings, type_info, consumed_iterator_bindings) =
+                    matches.remove(0);
                 self.errors = errors;
                 self.warnings = warnings;
                 self.type_info = type_info;
                 self.consumed_iterator_bindings = consumed_iterator_bindings;
                 if let Some(emitted_name) = emitted_name {
                     self.type_info.record_selected_function_emitted_name(span, emitted_name);
+                }
+                if let (Some(callee_span), Some(identity)) = (callee_span, selected_identity) {
+                    self.type_info.record_resolved_identity(callee_span, identity);
                 }
                 result
             }
@@ -2014,9 +2103,11 @@ impl TypeChecker {
                     selected_fields.push(field.name.clone());
                 }
                 CallArg::Named(field_name, expr) => {
-                    let Some(field) = Self::rust_field_for_source_name(&type_info.fields, field_name.as_str()) else {
+                    let Some(field) = Self::rust_field_for_source_name(&type_info.fields, field_name.node.as_str())
+                    else {
                         self.check_expr(expr);
-                        self.errors.push(errors::missing_field(path, field_name, expr.span));
+                        self.errors
+                            .push(errors::missing_field(path, &field_name.node, field_name.span));
                         has_shape_error = true;
                         continue;
                     };
@@ -2149,16 +2240,16 @@ impl TypeChecker {
             match arg {
                 CallArg::Named(field_name, expr) => {
                     self.check_expr(expr);
-                    if !provided.insert(field_name.clone()) {
+                    if !provided.insert(field_name.node.clone()) {
                         self.errors.push(errors::duplicate_constructor_field(
                             path,
-                            field_name.as_str(),
-                            expr.span,
+                            field_name.node.as_str(),
+                            field_name.span,
                         ));
                         has_shape_error = true;
                         continue;
                     }
-                    selected_fields.push(field_name.clone());
+                    selected_fields.push(field_name.node.clone());
                 }
                 CallArg::Positional(expr) => {
                     self.check_expr(expr);

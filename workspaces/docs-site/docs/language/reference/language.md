@@ -183,6 +183,15 @@ Panics at runtime with `ValueError: cannot convert 'abc' to float`.
 
 ```incan
 def main() -> None:
+    assert int("1_000") == 1000
+    assert float("1_000.50") == 1000.5
+
+```
+
+Numeric strings accept `_` only between digits. Invalid placement raises the canonical `ValueError` with the original input spelling.
+
+```incan
+def main() -> None:
     # range step cannot be zero (Python-like)
     for i in range(0, 5, 0):
         print(i)

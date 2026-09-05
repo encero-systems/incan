@@ -28,7 +28,7 @@ impl Formatter {
         match arg {
             CallArg::Positional(expr) => self.format_expr(&expr.node),
             CallArg::Named(name, expr) => {
-                self.writer.write(name);
+                self.writer.write(&name.node);
                 self.writer.write("=");
                 self.format_expr(&expr.node);
             }
@@ -331,6 +331,12 @@ impl Formatter {
                 _ => self.writer.write("<surface_expr>"),
             },
             Expr::VocabBlock(block) => self.format_expression_vocab_block_braced(block),
+            // Descriptor-gated embedded fragment (RFC 081, `#1023`): structural, understood-grammar formatting
+            // (and any layout-sensitive verbatim decision that depends on the owning descriptor's format hint) is
+            // `#1022`'s territory. Writing the fragment's preserved verbatim source text here is a safe, honest
+            // fallback in the meantime -- unlike the `<surface_expr>` placeholder above, this reproduces real
+            // source rather than a string that would visibly corrupt formatted output.
+            Expr::Embedded(fragment) => self.writer.write(&fragment.source_text),
             Expr::Try(inner) => {
                 self.format_expr(&inner.node);
                 self.writer.write("?");
@@ -500,7 +506,7 @@ impl Formatter {
     /// Format an import-activated `race for value:` expression block.
     fn format_race_for_expr(&mut self, race: &RaceForExpr) {
         self.writer.write("race for ");
-        self.writer.write(&race.binding);
+        self.writer.write(&race.binding.node);
         self.writer.writeln(":");
         self.writer.indent();
         for arm in &race.arms {
@@ -744,7 +750,7 @@ impl Formatter {
             Pattern::Binding(name) => self.writer.write(name),
             Pattern::Literal(lit) => self.format_literal(lit),
             Pattern::Constructor(name, patterns) => {
-                self.write_pattern_constructor_name(name);
+                self.write_pattern_constructor_name(&name.node);
                 if !patterns.is_empty() {
                     self.writer.write("(");
                     for (i, p) in patterns.iter().enumerate() {
@@ -756,7 +762,7 @@ impl Formatter {
                                 self.format_pattern(&pat.node);
                             }
                             PatternArg::Named(name, pat) => {
-                                self.writer.write(name);
+                                self.writer.write(&name.node);
                                 self.writer.write("=");
                                 self.format_pattern(&pat.node);
                             }

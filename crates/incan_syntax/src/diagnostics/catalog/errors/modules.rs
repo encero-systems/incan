@@ -166,9 +166,13 @@ pub fn library_reexport_unknown_module(module_path: &str, known_modules: &[Strin
 }
 
 /// Duplicate exported name in `src/lib.incn`.
-pub fn duplicate_library_export(name: &str, span: Span) -> CompileError {
-    CompileError::new(format!("Duplicate library export `{name}` in `src/lib.incn`"), span)
-        .with_hint("Rename one of the exports with `as`, or remove the duplicate")
+pub fn duplicate_library_export(name: &str, first_span: Span, duplicate_span: Span) -> CompileError {
+    CompileError::new(
+        format!("Duplicate library export `{name}` in `src/lib.incn`"),
+        duplicate_span,
+    )
+    .with_related_span(first_span, "First export with this public name")
+    .with_hint("Rename one of the exports with `as`, or remove the duplicate")
 }
 
 /// `from pub::... import ...` references a library not declared in `incan.toml [dependencies]`.

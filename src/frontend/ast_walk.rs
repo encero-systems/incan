@@ -23,8 +23,8 @@
 //! - import-path traversal
 
 use crate::frontend::ast::{
-    AssertKind, CallArg, ComprehensionClause, Condition, Declaration, DecoratorArg, DecoratorArgValue, DictEntry, Expr,
-    ListEntry, MatchBody, Program, Spanned, Statement,
+    AssertKind, CallArg, ComprehensionClause, Condition, Declaration, DecoratorArg, DecoratorArgValue, DictEntry,
+    EmbeddedNode, Expr, ListEntry, MatchBody, Program, Spanned, Statement,
 };
 
 /// Returns `true` if any expression in `program` satisfies `pred`.
@@ -394,7 +394,53 @@ where
         Expr::VocabBlock(block) => {
             block.header_args.iter().any(|arg| expr_has(&arg.node, pred)) || any_expr_in_body_impl(&block.body, pred)
         }
+        Expr::Embedded(fragment) => fragment
+            .nodes
+            .iter()
+            .any(|node| embedded_node_has_expr(&node.node, pred)),
         Expr::Yield(None) | Expr::Partial(_) => false,
+    }
+}
+
+/// Recursive walker over the expression holes nested inside one embedded-fragment node (RFC 081, `#1023`).
+///
+/// Mirrors `expr_has`'s traversal shape for `EmbeddedNode`: only `Hole` carries a real `Expr` to test `pred`
+/// against; container kinds recurse into their children/attrs/selectors/declarations.
+fn embedded_node_has_expr<F>(node: &EmbeddedNode, pred: &mut F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    match node {
+        EmbeddedNode::Text(_)
+        | EmbeddedNode::EntityRef(_)
+        | EmbeddedNode::Comment(_)
+        | EmbeddedNode::Value(_)
+        | EmbeddedNode::Regex { .. }
+        | EmbeddedNode::TypeShape(_) => false,
+        EmbeddedNode::Hole(expr) => expr_has(&expr.node, pred),
+        EmbeddedNode::Element(element) => {
+            element.attrs.iter().any(|attr| {
+                attr.value
+                    .as_ref()
+                    .is_some_and(|value| embedded_node_has_expr(&value.node, pred))
+            }) || element
+                .children
+                .iter()
+                .any(|child| embedded_node_has_expr(&child.node, pred))
+        }
+        EmbeddedNode::StyleRule(rule) => {
+            rule.selectors
+                .iter()
+                .any(|selector| embedded_node_has_expr(&selector.node, pred))
+                || rule
+                    .declarations
+                    .iter()
+                    .any(|declaration| embedded_node_has_expr(&declaration.node, pred))
+        }
+        EmbeddedNode::Declaration(declaration) => declaration
+            .value
+            .iter()
+            .any(|value| embedded_node_has_expr(&value.node, pred)),
     }
 }
 

@@ -49,8 +49,8 @@ skip = [
 skip-tree = [
     # Upstream-locked duplicate trees:
     # - rust-analyzer crates (ra_ap_*) pull older hashbrown/foldhash/winnow lines
-    # - wasmtime/wasi stack pulls a separate native/runtime dependency graph; 36.0.13 is the patched
-    #   RUSTSEC-2026-0222 line that retains the Rust 1.93 MSRV (patched 46.0.2 requires Rust 1.94)
+    # - wasmtime/wasi stack pulls a separate native/runtime dependency graph; 36.0.13 is the established patched
+    #   RUSTSEC-2026-0222 line, while changing runtime generations remains a separate compatibility decision
     { name = "ra_ap_load-cargo", version = "0.0.325" },
     { name = "wasmtime-wasi", version = "36.0.13" },
 ]

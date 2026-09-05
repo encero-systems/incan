@@ -24,7 +24,7 @@ use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
     ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FieldExport, FieldVisibilityExport, FunctionExport,
-    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryContractMetadata, LibraryExports, LibraryIdentityGraph,
+    LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryContractMetadata, LibraryExports, LibraryIdentityGraph,
     LibraryManifest, LibraryRustAbi, MethodExport, ModelExport, ParamDefaultCallArgExport,
     ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport, PartialExport,
     PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport, TraitExport,
@@ -96,6 +96,7 @@ fn empty_trait_stub_recovers_its_method_contract_from_provider_metadata() {
     provider_methods.insert(
         "materialize".to_string(),
         MethodInfo {
+            identity: None,
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),
             type_param_bound_details: HashMap::new(),
@@ -1002,7 +1003,7 @@ pub default_config = partial configure(profile=Profile(name="ops"))
 }
 
 #[test]
-fn test_import_module_collects_public_partial_as_callable() {
+fn test_check_with_imports_collects_explicit_public_partial_as_callable() -> Result<(), String> {
     let library = parse_program(
         r#"
 pub def route(method: str, path: str) -> str:
@@ -1014,6 +1015,8 @@ pub get = partial route(method="GET")
     );
     let consumer = parse_program(
         r#"
+from routes import get
+
 def use() -> str:
   return get(path="/health")
 "#,
@@ -1021,10 +1024,10 @@ def use() -> str:
     );
 
     let mut checker = TypeChecker::new();
-    checker.import_module(&library, "routes");
     checker
-        .check_program(&consumer)
-        .unwrap_or_else(|errs| panic!("consumer should import public partial callable: {errs:?}"));
+        .check_with_imports(&consumer, &[("routes", &library)])
+        .map_err(|errs| format!("consumer should import public partial callable: {errs:?}"))?;
+    Ok(())
 }
 
 #[test]
@@ -1684,24 +1687,140 @@ def main(data: bytes) -> None:
 }
 
 #[test]
-fn rfc009_binary_float_literals_are_checked_for_f32_targets() {
+fn rfc009_binary_float_literals_are_checked_for_f32_targets() -> Result<(), String> {
     let ok = r#"
 def main() -> None:
   value: f32 = 1.5
 "#;
-    check_str(ok).unwrap_or_else(|errs| panic!("expected f32 literal to typecheck: {errs:?}"));
+    check_str(ok).map_err(|errs| format!("expected f32 literal to typecheck: {errs:?}"))?;
 
     let too_large = r#"
 def main() -> None:
   value: f32 = 1e100
 "#;
-    let errors = check_str_err(too_large, "expected out-of-range f32 literal to fail");
+    let errors = check_str(too_large)
+        .err()
+        .ok_or_else(|| "expected out-of-range f32 literal to fail".to_string())?;
     assert!(
         errors
             .iter()
             .any(|err| err.message.contains("Float literal 1e100 does not fit in f32")),
         "expected f32 range diagnostic, got: {errors:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn rfc009_non_finite_exact_float_literals_are_rejected_with_source_spans() -> Result<(), String> {
+    let cases = [
+        (
+            "positive f32 local",
+            "def main() -> None:\n  value: f32 = 1e9999\n",
+            "f32",
+            "1e9999",
+        ),
+        (
+            "negative f32 local",
+            "def main() -> None:\n  value: f32 = -1e9999\n",
+            "f32",
+            "1e9999",
+        ),
+        (
+            "positive f64 local",
+            "def main() -> None:\n  value: f64 = 1e9999\n",
+            "f64",
+            "1e9999",
+        ),
+        (
+            "negative f64 local",
+            "def main() -> None:\n  value: f64 = -1e9999\n",
+            "f64",
+            "1e9999",
+        ),
+        ("positive f32 const", "const VALUE: f32 = 1e9999\n", "f32", "1e9999"),
+        ("negative f32 const", "const VALUE: f32 = -1e9999\n", "f32", "-1e9999"),
+        ("positive f64 const", "const VALUE: f64 = 1e9999\n", "f64", "1e9999"),
+        ("negative f64 const", "const VALUE: f64 = -1e9999\n", "f64", "-1e9999"),
+    ];
+
+    for (case, source, target, expected_span) in cases {
+        let errors = check_str(source)
+            .err()
+            .ok_or_else(|| format!("expected {case} to be rejected"))?;
+        let error = errors
+            .iter()
+            .find(|error| error.message.contains(&format!("does not fit in {target}")))
+            .ok_or_else(|| format!("expected a finite-only {target} diagnostic for {case}, got {errors:?}"))?;
+        let actual_span = source
+            .get(error.span.start..error.span.end)
+            .ok_or_else(|| format!("invalid diagnostic span {:?} for {case}", error.span))?;
+        assert_eq!(actual_span, expected_span, "wrong source span for {case}");
+    }
+    Ok(())
+}
+
+#[test]
+fn non_finite_exact_float_literals_nested_in_arithmetic_keep_literal_spans() -> Result<(), String> {
+    let cases = [
+        ("f32", "1e9999 + 0.0", "1e9999"),
+        ("f64", "0.0 + -1e9999", "1e9999"),
+        ("f64", "(0.0 + (1e9999 * 1.0))", "1e9999"),
+    ];
+    for (target, expression, expected_span) in cases {
+        let source = format!("def main() -> None:\n  value: {target} = {expression}\n");
+        let errors = check_str(&source)
+            .err()
+            .ok_or_else(|| format!("expected nested {target} non-finite literal to fail"))?;
+        let error = errors
+            .iter()
+            .find(|error| {
+                error.message.contains("Float literal") && error.message.contains(&format!("does not fit in {target}"))
+            })
+            .ok_or_else(|| format!("expected a nested exact-float diagnostic, got {errors:?}"))?;
+        let actual_span = source
+            .get(error.span.start..error.span.end)
+            .ok_or_else(|| format!("invalid diagnostic span {:?}", error.span))?;
+        assert_eq!(actual_span, expected_span, "wrong nested literal span for {target}");
+    }
+    Ok(())
+}
+
+#[test]
+fn folded_non_finite_exact_float_const_reports_a_constant_value() -> Result<(), String> {
+    let source = "const VALUE: f64 = -1e9999\n";
+    let errors = check_str(source)
+        .err()
+        .ok_or_else(|| "expected folded non-finite f64 const to fail".to_string())?;
+    let error = errors
+        .iter()
+        .find(|error| error.message.contains("Constant value") && error.message.contains("does not fit in f64"))
+        .ok_or_else(|| format!("expected a folded-constant diagnostic, got {errors:?}"))?;
+    let actual_span = source
+        .get(error.span.start..error.span.end)
+        .ok_or_else(|| format!("invalid folded-constant diagnostic span {:?}", error.span))?;
+    assert_eq!(actual_span, "-1e9999");
+    Ok(())
+}
+
+#[test]
+fn ordinary_float_literals_remain_ieee_non_finite() -> Result<(), String> {
+    let source = "const VALUE: float = 1e9999\n\ndef main() -> None:\n  value: float = -1e9999\n";
+    check_str(source).map_err(|errors| format!("ordinary float must retain IEEE non-finite values: {errors:?}"))
+}
+
+#[test]
+fn ordinary_float_values_cannot_narrow_to_exact_f32() -> Result<(), String> {
+    let source = "def exact(value: str) -> f32:\n  return float(value)\n";
+    let errors = check_str(source)
+        .err()
+        .ok_or_else(|| "ordinary float must not narrow to exact f32".to_string())?;
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Return type mismatch: expected 'f32', found 'float'")),
+        "expected the exact-f32 return boundary to reject ordinary float, got {errors:?}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1740,15 +1859,18 @@ def distance(time: f32) -> f32:
 }
 
 #[test]
-fn exact_width_float_const_literals_reject_out_of_range_f32_issue1219() {
+fn exact_width_float_const_literals_reject_out_of_range_f32_issue1219() -> Result<(), String> {
     let source = r#"
 const TOO_LARGE: f32 = 1e100
 "#;
-    let errors = check_str_err(source, "expected out-of-range f32 const literal to fail");
+    let errors = check_str(source)
+        .err()
+        .ok_or_else(|| "expected out-of-range f32 const literal to fail".to_string())?;
     assert!(
         errors.iter().any(|error| error.message.contains("does not fit in f32")),
         "expected an f32 range diagnostic, got: {errors:?}"
     );
+    Ok(())
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -2460,6 +2582,56 @@ def unpack(vault: Vault) -> str:
     );
 }
 
+/// A public alias targeting a function in its own module publishes that function's callable metadata.
+///
+/// The projection pass keys candidates by resolved declaration path, `["provider", "helper"]`, while an alias whose
+/// target lives in its own module records the target as the source writes it, `["helper"]`. The two never met, so
+/// every same-module alias published `projected_function: None` and any consumer requiring callable metadata for a
+/// canonical callable target refused it.
+///
+/// The existing coverage did not catch this because it aliases across modules, where the recorded target is already
+/// qualified and the lookup happens to line up.
+#[test]
+fn a_same_module_public_alias_publishes_its_target_callable_metadata() -> Result<(), String> {
+    let source = "pub def helper(value: int) -> int:\n  return value + 1\n\npub run = alias helper\n";
+    let ast = parse_program(source, "same-module alias provider");
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["provider".to_string()]));
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("same-module alias provider should typecheck: {errors:?}"))?;
+
+    let mut api_modules = vec![collect_checked_api_metadata(
+        &ast,
+        &checker,
+        vec!["provider".to_string()],
+    )];
+    materialize_api_alias_projections(&mut api_modules);
+
+    let alias = api_modules
+        .iter()
+        .flat_map(|module| module.declarations.iter())
+        .find_map(|declaration| match declaration {
+            ApiDeclaration::Alias(alias) if alias.name == "run" => Some(alias),
+            _ => None,
+        })
+        .ok_or("the checked API must publish the `run` alias")?;
+    let projected = alias
+        .projected_function
+        .as_ref()
+        .ok_or("a same-module alias must publish its target's callable metadata")?;
+    assert_eq!(
+        projected.callable.name, "run",
+        "a projection is published under the alias's own name"
+    );
+    assert_eq!(
+        projected.source_path,
+        vec!["provider".to_string(), "helper".to_string()],
+        "the projection must point at the declaration the alias targets"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_class_private_parent_field_access_rejected_in_child_method() {
     let source = r#"
@@ -2748,6 +2920,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 methods: vec![MethodExport {
                     alias_of: None,
                     name: "label".to_string(),
+                    canonical: None,
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
@@ -2768,11 +2941,13 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 variants: vec![
                     EnumVariantExport {
                         name: "Active".to_string(),
+                        canonical: None,
                         fields: Vec::new(),
                         value: Some(EnumValueExport::Str("active".to_string())),
                     },
                     EnumVariantExport {
                         name: "Disabled".to_string(),
+                        canonical: None,
                         fields: Vec::new(),
                         value: Some(EnumValueExport::Str("disabled".to_string())),
                     },
@@ -2781,6 +2956,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 methods: vec![MethodExport {
                     alias_of: None,
                     name: "label".to_string(),
+                    canonical: None,
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
@@ -2822,13 +2998,14 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         rust_abi: None,
     };
     manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
-        schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+        schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
         exports: vec![ExportIdentity {
             public_name: "Widget".to_string(),
             public_path: vec!["mylib".to_string(), "Widget".to_string()],
             source_path: vec!["widgets".to_string(), "Widget".to_string()],
             kind: ExportIdentityKind::Model,
             projection: ExportIdentityProjection::Direct,
+            canonical: None,
         }],
     };
 
@@ -2863,6 +3040,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             derives: Vec::new(),
             fields: vec![FieldExport {
                 name: "widget".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "Widget".to_string(),
                 },
@@ -2905,6 +3083,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             ordinal_type_identity: None,
             variants: vec![EnumVariantExport {
                 name: "WithWidget".to_string(),
+                canonical: None,
                 fields: vec![TypeRef::Named {
                     name: "Widget".to_string(),
                 }],
@@ -2915,7 +3094,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             derives: Vec::new(),
         });
         manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
-            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
             exports: vec![
                 ExportIdentity {
                     public_name: "Widget".to_string(),
@@ -2923,6 +3102,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                     source_path: vec!["widgets".to_string(), "Widget".to_string()],
                     kind: ExportIdentityKind::Model,
                     projection: ExportIdentityProjection::Direct,
+                    canonical: None,
                 },
                 ExportIdentity {
                     public_name: "Envelope".to_string(),
@@ -2930,6 +3110,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                     source_path: vec!["widgets".to_string(), "Envelope".to_string()],
                     kind: ExportIdentityKind::Enum,
                     projection: ExportIdentityProjection::Direct,
+                    canonical: None,
                 },
                 ExportIdentity {
                     public_name: "Factory".to_string(),
@@ -2937,6 +3118,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                     source_path: vec!["widgets".to_string(), "Factory".to_string()],
                     kind: ExportIdentityKind::Model,
                     projection: ExportIdentityProjection::Direct,
+                    canonical: None,
                 },
             ],
         };
@@ -2981,6 +3163,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
         fields: vec![
             FieldExport {
                 name: "secret".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },
@@ -2993,6 +3176,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
             },
             FieldExport {
                 name: "label".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },
@@ -3025,6 +3209,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
             },
             FieldExport {
                 name: "computed_secret".to_string(),
+                canonical: None,
                 ty: TypeRef::Named {
                     name: "int".to_string(),
                 },
@@ -3188,7 +3373,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
             }),
             registry: None,
             identity_graph: LibraryIdentityGraph {
-                schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+                schema_version: LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
                 exports: vec![ExportIdentity {
                     public_name: "safe_cast".to_string(),
                     public_path: vec!["mylib".to_string(), "safe_cast".to_string()],
@@ -3197,6 +3382,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
                     projection: ExportIdentityProjection::Alias {
                         target_path: vec!["helpers".to_string(), "cast".to_string()],
                     },
+                    canonical: None,
                 }],
             },
             provider: Default::default(),
@@ -3269,6 +3455,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         type_args: vec![TypeRef::Named {
             name: "int".to_string(),
         }],
+        implementation_type_params: Vec::new(),
     };
     let convert_float = TypeBoundExport {
         name: "Convert".to_string(),
@@ -3277,6 +3464,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         type_args: vec![TypeRef::Named {
             name: "float".to_string(),
         }],
+        implementation_type_params: Vec::new(),
     };
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
@@ -3298,6 +3486,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3310,6 +3499,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3335,6 +3525,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 methods: vec![MethodExport {
                     alias_of: None,
                     name: "convert".to_string(),
+                    canonical: None,
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
@@ -3352,6 +3543,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 ordinal_type_identity: None,
                 variants: vec![EnumVariantExport {
                     name: "Number".to_string(),
+                    canonical: None,
                     fields: Vec::new(),
                     value: None,
                 }],
@@ -3360,6 +3552,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3372,6 +3565,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     MethodExport {
                         alias_of: None,
                         name: "convert".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3445,6 +3639,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         MethodExport {
                             alias_of: None,
                             name: "default".to_string(),
+                            canonical: None,
                             type_params: Vec::new(),
                             receiver: None,
                             params: Vec::new(),
@@ -3457,6 +3652,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         MethodExport {
                             alias_of: None,
                             name: "read_csv".to_string(),
+                            canonical: None,
                             type_params: vec![type_param_t.clone()],
                             receiver: Some(ReceiverExport::Mutable),
                             params: vec![
@@ -3497,6 +3693,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         MethodExport {
                             alias_of: None,
                             name: "collect".to_string(),
+                            canonical: None,
                             type_params: vec![type_param_t.clone()],
                             receiver: Some(ReceiverExport::Immutable),
                             params: vec![ParamExport {
@@ -3536,6 +3733,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         source_name: None,
                         module_path: None,
                         type_args: Vec::new(),
+                        implementation_type_params: Vec::new(),
                     }],
                     derives: vec![shadowed_trait_name()],
                     fields: Vec::new(),
@@ -3552,6 +3750,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         source_name: None,
                         module_path: None,
                         type_args: Vec::new(),
+                        implementation_type_params: Vec::new(),
                     }],
                     derives: vec![shadowed_trait_name()],
                     fields: Vec::new(),
@@ -3559,6 +3758,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     methods: vec![MethodExport {
                         alias_of: None,
                         name: "collect".to_string(),
+                        canonical: None,
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
@@ -3616,6 +3816,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         source_name: None,
                         module_path: None,
                         type_args: vec![TypeRef::TypeParam { name: "T".to_string() }],
+                        implementation_type_params: Vec::new(),
                     }],
                     requires: Vec::new(),
                     methods: Vec::new(),
@@ -3874,6 +4075,15 @@ def choose(value: Attempts = 3) -> Attempts:
     assert_eq!(coercion.steps.len(), 1);
     assert_eq!(coercion.steps[0].newtype_name, "Attempts");
     assert_eq!(coercion.steps[0].ctor.as_deref(), Some("from_underlying"));
+    let ctor_identity = coercion.steps[0]
+        .ctor_identity
+        .as_ref()
+        .ok_or("checked coercion must retain the selected hook identity")?;
+    assert_eq!(
+        ctor_identity.kind,
+        incan_semantics_core::SemanticSourceTargetKind::Method
+    );
+    assert_eq!(ctor_identity.declaration_name, "from_underlying");
 
     Ok(())
 }
@@ -4951,6 +5161,31 @@ def normalize(value: int | str | None) -> str:
       return value.upper()
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn explicit_builtin_isinstance_narrows_union_and_option_branches() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def normalize_union(value: int | str) -> str:
+  if std.builtins.isinstance(value, str):
+    return value.upper()
+  return "number"
+
+def normalize_option(value: int | str | None) -> str:
+  if std.builtins.isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
+"#;
+    check_str(source).map_err(|errors| {
+        std::io::Error::other(format!(
+            "the explicit builtin identity must drive the same union and option narrowing as the ambient spelling: {errors:?}"
+        ))
+    })?;
+    Ok(())
 }
 
 #[test]
@@ -9346,6 +9581,330 @@ class Account:
     );
 }
 
+/// A type-owned factory and stored instance field may share a spelling because the receiver determines which
+/// declaration can be selected. The factory parameter remains nominally typed; its underlying integer argument is
+/// admitted through the ordinary validated-newtype coercion path.
+#[test]
+fn static_factory_and_instance_field_have_distinct_member_surfaces() -> Result<(), String> {
+    let source = r#"
+type Days = newtype int
+
+model TimeDelta:
+  days: Days
+
+  @staticmethod
+  def days(value: Days) -> TimeDelta:
+    return TimeDelta(days=value)
+
+def selected() -> TimeDelta:
+  return TimeDelta.days(-7)
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("member-surface source should lex: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("member-surface source should parse: {errors:?}"))?;
+    let Some(Declaration::Model(model)) = program.declarations.get(1).map(|declaration| &declaration.node) else {
+        return Err("expected TimeDelta model declaration".to_string());
+    };
+    let field_span = model.fields[0].span;
+    let method_span = model.methods[0].span;
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("type-owned factory and instance field should coexist: {errors:?}"))?;
+    let declarations = &checker.type_info().declarations.member_declaration_identities;
+    assert!(
+        declarations.contains_key(&(field_span.start, field_span.end)),
+        "the instance field must retain its declaration identity"
+    );
+    assert!(
+        declarations.contains_key(&(method_span.start, method_span.end)),
+        "the type-owned factory must retain its declaration identity"
+    );
+    Ok(())
+}
+
+#[test]
+fn static_factory_cannot_be_called_through_an_instance() {
+    let source = r#"
+model TimeDelta:
+  days: int
+
+  @staticmethod
+  def days(value: int) -> TimeDelta:
+    return TimeDelta(days=value)
+
+def invalid(delta: TimeDelta) -> TimeDelta:
+  return delta.days(-7)
+"#;
+    let errors = check_str_err(source, "staticmethod instance receiver should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Type 'TimeDelta' has no method 'days(...)'")),
+        "a stored field must not make the type-owned factory callable through an instance: {errors:?}"
+    );
+}
+
+#[test]
+fn static_and_instance_methods_may_share_a_spelling() {
+    let source = r#"
+model Counter:
+  value: int
+
+  @staticmethod
+  def next(value: int) -> Counter:
+    return Counter(value=value)
+
+  def next(self) -> int:
+    return self.value + 1
+
+def selected() -> int:
+  counter = Counter.next(4)
+  return counter.next()
+"#;
+    assert!(
+        check_str(source).is_ok(),
+        "receiver ownership must disambiguate type-owned and instance-owned methods"
+    );
+}
+
+#[test]
+fn stored_field_static_factory_and_instance_accumulator_support_fluent_chaining() {
+    let source = r#"
+model TimeDelta:
+  days: int
+  seconds: int
+
+  @staticmethod
+  def days(value: int) -> TimeDelta:
+    return TimeDelta(days=value, seconds=0)
+
+  def days(self, value: int) -> TimeDelta:
+    return TimeDelta(days=self.days + value, seconds=self.seconds)
+
+  def hours(self, value: int) -> TimeDelta:
+    return TimeDelta(days=self.days, seconds=self.seconds + value * 3600)
+
+def selected() -> TimeDelta:
+  return TimeDelta.days(-7).hours(20).days(2)
+"#;
+    assert!(
+        check_str(source).is_ok(),
+        "field access, type-owned construction, and fluent instance accumulation must remain distinct"
+    );
+}
+
+#[test]
+fn instance_method_cannot_be_called_through_its_type() {
+    let source = r#"
+model Counter:
+  value: int
+
+  def next(self) -> int:
+    return self.value + 1
+
+def invalid() -> int:
+  return Counter.next()
+"#;
+    let errors = check_str_err(source, "instance method type receiver should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Type 'Counter' has no method 'next(...)'")),
+        "an instance method must not resolve through its type: {errors:?}"
+    );
+}
+
+#[test]
+fn test_colliding_member_bindings_keep_distinct_field_and_method_declarations() -> Result<(), String> {
+    let source = r#"
+class Surface:
+  clash: int
+
+  def source(self) -> int:
+    return 1
+
+  def clash(self) -> int:
+    return 2
+
+  property clash -> int:
+    return 3
+
+  clash = source
+  clash = partial source()
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("member collision source should lex: {errors:?}"))?;
+    let program =
+        parser::parse(&tokens).map_err(|errors| format!("member collision source should parse: {errors:?}"))?;
+    let Some(Declaration::Class(class)) = program.declarations.first().map(|declaration| &declaration.node) else {
+        return Err("expected class declaration".to_string());
+    };
+    let first_span = class.fields[0].span;
+    let method_span = class
+        .methods
+        .iter()
+        .find(|method| method.node.name == "clash")
+        .ok_or("missing clashing method")?
+        .span;
+    let rejected_spans = [
+        class.properties[0].span,
+        class.method_aliases[0].span,
+        class.method_partials[0].span,
+    ];
+
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_program(&program) {
+        Ok(()) => return Err("cross-kind member collisions should fail".to_string()),
+        Err(errors) => errors,
+    };
+    let collision_errors = errors
+        .iter()
+        .filter(|error| {
+            error.message.starts_with("Duplicate member")
+                || error.message.starts_with("Duplicate method alias")
+                || error.message.starts_with("Duplicate method partial")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        collision_errors.len(),
+        3,
+        "property, alias, and partial must each collide with the first field while the callable method remains distinct: {errors:?}"
+    );
+    let first_note = format!("First declaration span: {}..{}", first_span.start, first_span.end);
+    assert!(
+        collision_errors
+            .iter()
+            .all(|error| error.notes.iter().any(|note| note == &first_note)),
+        "every collision must retain the source-first field: {collision_errors:?}"
+    );
+
+    let exported = &checker.type_info().declarations.member_declaration_identities;
+    assert!(
+        exported.contains_key(&(first_span.start, first_span.end)),
+        "the accepted field declaration must be exported"
+    );
+    assert!(
+        exported.contains_key(&(method_span.start, method_span.end)),
+        "the separately callable method declaration must be exported"
+    );
+    assert!(
+        rejected_spans
+            .iter()
+            .all(|span| !exported.contains_key(&(span.start, span.end))),
+        "rejected member bindings must not be exported as declarations"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_duplicate_enum_variants_keep_first_metadata_and_export_only_the_accepted_declaration() -> Result<(), String> {
+    let source = r#"
+enum Status:
+  Ready
+  Ready
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("duplicate enum source should lex: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("duplicate enum source should parse: {errors:?}"))?;
+    let Some(Declaration::Enum(en)) = program.declarations.first().map(|declaration| &declaration.node) else {
+        return Err("expected enum declaration".to_string());
+    };
+    let first_span = en.variants[0].span;
+    let rejected_span = en.variants[1].span;
+
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_program(&program) {
+        Ok(()) => return Err("duplicate enum variant was accepted".to_string()),
+        Err(errors) => errors,
+    };
+    let duplicates = errors
+        .iter()
+        .filter(|error| error.message == "Duplicate definition of 'Ready'")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        duplicates.len(),
+        1,
+        "expected one shared-registry diagnostic: {errors:?}"
+    );
+    assert_eq!(duplicates[0].span, rejected_span);
+    assert_eq!(
+        duplicates[0].related_spans().first().map(|related| related.span),
+        Some(first_span)
+    );
+
+    let status_id = checker.symbols.lookup("Status").ok_or("missing Status symbol")?;
+    let status = checker.symbols.get(status_id).ok_or("missing Status metadata")?;
+    let SymbolKind::Type(TypeInfo::Enum(info)) = &status.kind else {
+        return Err("Status should retain enum metadata".to_string());
+    };
+    assert_eq!(info.variants, vec!["Ready"]);
+    let retained = info
+        .variant_identities
+        .get("Ready")
+        .ok_or("accepted Ready variant has no canonical identity")?;
+    assert_eq!(retained.declaration_span.start, first_span.start);
+    assert_eq!(retained.declaration_span.end, first_span.end);
+
+    let exported = &checker.type_info().declarations.member_declaration_identities;
+    assert!(exported.contains_key(&(first_span.start, first_span.end)));
+    assert!(!exported.contains_key(&(rejected_span.start, rejected_span.end)));
+    Ok(())
+}
+
+#[test]
+fn enum_variant_and_instance_method_have_distinct_member_surfaces() -> Result<(), String> {
+    let source = r#"
+enum Signal:
+  Ready
+
+  def Ready(self) -> int:
+    return 1
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("enum collision source should lex: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("enum collision source should parse: {errors:?}"))?;
+    let Some(Declaration::Enum(en)) = program.declarations.first().map(|declaration| &declaration.node) else {
+        return Err("expected enum declaration".to_string());
+    };
+    let variant_span = en.variants[0].span;
+    let method_span = en.methods[0].span;
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("type-owned enum variant and instance method should coexist: {errors:?}"))?;
+
+    let signal_id = checker.symbols.lookup("Signal").ok_or("missing Signal symbol")?;
+    let signal = checker.symbols.get(signal_id).ok_or("missing Signal metadata")?;
+    let SymbolKind::Type(TypeInfo::Enum(info)) = &signal.kind else {
+        return Err("Signal should retain enum metadata".to_string());
+    };
+    assert!(info.variant_identities.contains_key("Ready"));
+    assert!(info.method_overloads.contains_key("Ready"));
+
+    let exported = &checker.type_info().declarations.member_declaration_identities;
+    assert!(exported.contains_key(&(variant_span.start, variant_span.end)));
+    assert!(exported.contains_key(&(method_span.start, method_span.end)));
+    Ok(())
+}
+
+#[test]
+fn enum_variant_and_static_method_still_collide_on_the_type_surface() {
+    let source = r#"
+enum Signal:
+  Ready
+
+  @staticmethod
+  def Ready() -> int:
+    return 1
+"#;
+    let errors = check_str_err(source, "enum type-surface collision should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Signal.Ready' declared as both variant and method")),
+        "a static method and enum variant must still collide on the type surface: {errors:?}"
+    );
+}
+
 #[test]
 fn test_alias_self_keyword() {
     let source = r#"
@@ -10704,6 +11263,10 @@ def main() -> Result[None, SessionError]:
     checker
         .check_with_imports(&consumer_ast, &[("dataset", &dataset_ast), ("session", &session_ast)])
         .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    let mut reverse_checker = TypeChecker::new();
+    reverse_checker
+        .check_with_imports(&consumer_ast, &[("session", &session_ast), ("dataset", &dataset_ast)])
+        .map_err(|errs| format!("reverse-order typecheck failed: {errs:?}"))?;
     Ok(())
 }
 
@@ -13331,6 +13894,51 @@ def foo() -> int:
 }
 
 #[test]
+fn builtin_json_stringify_requires_exactly_one_operand_at_the_call_span() -> Result<(), String> {
+    for (source, call, expected) in [
+        (
+            "def main() -> str:\n  return json_stringify()\n",
+            "json_stringify()",
+            "json_stringify() expects 1 argument(s), got 0",
+        ),
+        (
+            "def main() -> str:\n  return std.builtins.json_stringify(1, 2)\n",
+            "std.builtins.json_stringify(1, 2)",
+            "json_stringify() expects 1 argument(s), got 2",
+        ),
+    ] {
+        let errors = check_str(source)
+            .err()
+            .ok_or_else(|| "json_stringify arity mismatch should fail".to_string())?;
+        let error = errors
+            .iter()
+            .find(|error| error.message == expected)
+            .ok_or_else(|| format!("expected {expected:?}, got {errors:?}"))?;
+        let actual_span = source
+            .get(error.span.start..error.span.end)
+            .ok_or_else(|| format!("invalid json_stringify diagnostic span {:?}", error.span))?;
+        assert_eq!(
+            actual_span, call,
+            "the arity diagnostic must own the complete source call"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn local_function_named_json_stringify_remains_an_ordinary_lexical_binding() -> Result<(), String> {
+    let source = r#"
+def json_stringify(value: int) -> int:
+  return value + 1
+
+def main() -> int:
+  return json_stringify(41)
+"#;
+    check_str(source).map_err(|errors| format!("local json_stringify binding should typecheck: {errors:?}"))?;
+    Ok(())
+}
+
+#[test]
 fn test_local_function_named_sum_shadows_builtin_sum() {
     let source = r#"
 def sum(value: str) -> str:
@@ -14412,6 +15020,111 @@ fn provider_plan_for_sdk_modules(
 }
 
 #[test]
+fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), String> {
+    let package_name = "incan_stdlib_fixture";
+    let module_path = vec!["helpers".to_string()];
+    let provider_ast = parse_program("pub def helper() -> int:\n  return 42\n", "canonical SDK provider");
+    let mut provider_checker = TypeChecker::new();
+    provider_checker.set_current_package_identity(Some(package_name.to_string()));
+    provider_checker.set_current_module_path(Some(module_path.clone()));
+    provider_checker
+        .check_program(&provider_ast)
+        .map_err(|errors| format!("canonical SDK provider should typecheck: {errors:?}"))?;
+    let checked_exports = collect_checked_public_exports(&provider_ast, &provider_checker);
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![collect_checked_api_metadata(
+            &provider_ast,
+            &provider_checker,
+            module_path.clone(),
+        )],
+        public_namespaces: Vec::new(),
+    };
+    materialize_checked_api_public_namespaces(&mut api).map_err(|error| error.to_string())?;
+    let mut identity_graph = LibraryIdentityGraph::from_checked_exports(package_name, &[]);
+    identity_graph
+        .extend_checked_api_exports(package_name, &api, &[(module_path.clone(), checked_exports)])
+        .map_err(|error| error.to_string())?;
+    let public_path = vec![package_name.to_string(), "helpers".to_string(), "helper".to_string()];
+    if identity_graph.canonical_for_public_path(&public_path).is_none() {
+        return Err(format!(
+            "fixture identity graph did not retain {public_path:?}: {:?}",
+            identity_graph.exports
+        ));
+    }
+    let mut manifest = LibraryManifest::new(package_name, "0.5.0");
+    manifest.contract_metadata.api = Some(api);
+    manifest.contract_metadata.identity_graph = identity_graph;
+
+    let namespace_claims = BTreeSet::from([vec!["std".to_string(), "helpers".to_string()]]);
+    let plan = ProviderPlan::new(
+        LibraryManifestIndex::default(),
+        vec![ProviderRecord {
+            identity: ProviderIdentity {
+                name: package_name.to_string(),
+                version: "0.5.0".to_string(),
+                digest: "sha256:canonical-fixture".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-fixture".to_string(),
+                inventory_path: None,
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: namespace_claims.clone(),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(manifest)),
+            artifact: None,
+            implementation_facets: Vec::new(),
+        }],
+        namespace_claims,
+    )
+    .map_err(|error| error.to_string())?;
+    let consumer_source = "from std.helpers import helper\n\ndef run() -> int:\n  return helper()\n";
+    let consumer_ast = parse_program(consumer_source, "canonical SDK consumer");
+    let mut consumer_checker = TypeChecker::new();
+    consumer_checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    consumer_checker.set_provider_plan(Arc::new(plan));
+    let seeded = consumer_checker
+        .dependency_direct_member_identities
+        .get("std.helpers")
+        .and_then(|identities| identities.get("helper"))
+        .ok_or("SDK provider seeding must retain the manifest identity")?;
+    assert_eq!(
+        seeded.origin,
+        SymbolOrigin::Package {
+            library: package_name.to_string(),
+            module_path: module_path.clone(),
+        }
+    );
+    consumer_checker
+        .check_program(&consumer_ast)
+        .map_err(|errors| format!("canonical SDK consumer should typecheck: {errors:?}"))?;
+
+    let imported = consumer_checker
+        .type_info()
+        .resolved_import_identity("helper")
+        .ok_or("SDK import must retain its manifest canonical identity")?;
+    assert_eq!(
+        imported.origin,
+        SymbolOrigin::Package {
+            library: package_name.to_string(),
+            module_path: module_path.clone(),
+        }
+    );
+    let call_start = consumer_source.rfind("helper").ok_or("missing helper call")?;
+    let called = consumer_checker
+        .type_info()
+        .resolved_identity(Span::new(call_start, call_start + "helper".len()))
+        .ok_or("SDK call must retain its manifest canonical identity")?;
+    assert_eq!(called, imported);
+    Ok(())
+}
+
+#[test]
 fn disabled_sdk_component_import_has_a_component_selection_remedy() -> Result<(), Box<dyn std::error::Error>> {
     let ast = parse_program("import std.web\n", "disabled SDK provider import");
     let mut checker = TypeChecker::new();
@@ -15221,6 +15934,46 @@ module tests:
 }
 
 #[test]
+fn test_testing_decorator_alias_uses_checked_import_binding_in_either_source_order() -> Result<(), String> {
+    let sources = [
+        r#"
+resource = alias fixture
+from std.testing import fixture
+
+@resource
+def database() -> int:
+  return 1
+"#,
+        r#"
+from std.testing import fixture
+resource = alias fixture
+
+@resource
+def database() -> int:
+  return 1
+"#,
+    ];
+
+    for source in sources {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        assert_eq!(
+            checker.type_info().import_binding_path("resource"),
+            Some(["std".to_string(), "testing".to_string(), "fixture".to_string()].as_slice())
+        );
+        if checker.type_info().testing_fixture("database").is_none() {
+            return Err("decorator alias did not record database as a fixture".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_async_fixture_records_frontend_metadata() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 import std.async
@@ -15626,6 +16379,25 @@ def unwrap_err(value: Result[int, str]) -> str:
   return message
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_is_binding_uses_shared_duplicate_registration() {
+    let source = r#"
+import std.testing
+
+def unwrap_name(value: Option[str]) -> str:
+  let name = "fallback"
+  assert value is Some(name)
+  return name
+"#;
+    let errors = check_str_err(source, "an assert pattern cannot silently replace an active local");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message == "Duplicate definition of 'name'"),
+        "expected shared duplicate-binding diagnostic, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -16263,16 +17035,16 @@ fn test_rust_generic_argument_retains_imported_public_provider_identity_issue885
         "Payload".to_string(),
         PublicLibraryTypeIdentity::new("compiled_parent", &["classes".to_string(), "Payload".to_string()]),
     );
-    checker.import_aliases.insert(
-        "Payload".to_string(),
+    checker.symbols.define_import_binding_at_path(
+        Symbol {
+            name: "Payload".to_string(),
+            kind: SymbolKind::Type(TypeInfo::TypeAlias),
+            span: Span::default(),
+            scope: 0,
+        },
+        None,
         vec!["pub".to_string(), "compiled_parent".to_string(), "Payload".to_string()],
     );
-    checker.symbols.define(Symbol {
-        name: "Payload".to_string(),
-        kind: SymbolKind::Type(TypeInfo::TypeAlias),
-        span: Span::default(),
-        scope: 0,
-    });
     checker.symbols.define(Symbol {
         name: "RustEnvelope".to_string(),
         kind: SymbolKind::RustItem(RustItemInfo {
@@ -17461,6 +18233,7 @@ fn test_same_trait_adapter_chain_preserves_defining_module_dispatch() {
             trait_name: "Stream".to_string(),
             module_path: Some(vec!["streams".to_string()]),
             type_args: vec![ResolvedType::Int, ResolvedType::Str],
+            implementation_type_params: Vec::new(),
             receiver_is_mutable: false,
         },
     );
@@ -17471,6 +18244,7 @@ fn test_same_trait_adapter_chain_preserves_defining_module_dispatch() {
             trait_name: "Stream".to_string(),
             module_path: None,
             type_args: vec![ResolvedType::Int, ResolvedType::Str],
+            implementation_type_params: Vec::new(),
             receiver_is_mutable: false,
         },
     );
@@ -18041,7 +18815,7 @@ def main() -> None:
 }
 
 #[test]
-fn test_enum_duplicate_identical_trait_instantiation_rejected() {
+fn test_enum_duplicate_identical_trait_instantiation_rejected() -> Result<(), String> {
     let source = r#"
 trait Convert[T]:
   def convert(self) -> T: ...
@@ -18054,14 +18828,22 @@ enum Token with Convert[int], Convert[int]:
 "#;
 
     let Err(errs) = check_str(source) else {
-        panic!("expected duplicate enum trait instantiation diagnostic");
+        return Err("expected duplicate enum trait instantiation diagnostic".to_string());
     };
-    assert!(
-        errs.iter().any(|err| err
-            .message
-            .contains("Trait 'Convert' is adopted more than once with type arguments [int]")),
-        "expected duplicate enum trait instantiation diagnostic, got: {errs:?}"
+    let duplicate = errs
+        .iter()
+        .find(|err| {
+            err.message
+                .contains("Trait 'Convert' is adopted more than once with type arguments [int]")
+        })
+        .ok_or_else(|| format!("expected duplicate enum trait instantiation diagnostic, got: {errs:?}"))?;
+    assert_eq!(
+        duplicate.related_spans().len(),
+        1,
+        "duplicate trait adoption must retain the first adoption site"
     );
+    assert_ne!(duplicate.related_spans()[0].span, duplicate.span);
+    Ok(())
 }
 
 #[test]
@@ -18602,6 +19384,31 @@ def build() -> LibWidget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected alias recovery to typecheck, got: {result:?}");
+}
+
+/// #1249: a public import cannot introduce either spelling of the protected print builtin.
+#[test]
+fn test_pub_import_alias_cannot_replace_protected_print_builtin_issue1249() -> Result<(), String> {
+    for alias in ["print", "println"] {
+        let source = format!("from pub::mylib import make_widget as {alias}\n");
+        let errors = check_str_with_library_index_err(
+            &source,
+            library_index_with_mylib_exports(),
+            "public import aliases must not replace protected print bindings",
+        )?;
+        assert_eq!(
+            errors.len(),
+            1,
+            "protected public import alias `{alias}` should report only its primary diagnostic, got {errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("protected builtin binding")),
+            "expected protected-binding diagnostic for `{alias}`, got {errors:?}"
+        );
+    }
+    Ok(())
 }
 
 /// Regression for #892: callable signatures retain provider identity across separate import statements.
@@ -21495,10 +22302,18 @@ def run() -> int:
 
     let facts = info.semantic_fact_store(&module_path);
     let rendered = facts.iter().map(|fact| fact.render_snapshot()).collect::<Vec<_>>();
-    let mut sorted = rendered.clone();
-    sorted.sort();
+    let repeated = info.semantic_fact_store(&module_path);
+    let structured = facts.iter().cloned().collect::<Vec<_>>();
+    let repeated_structured = repeated.iter().cloned().collect::<Vec<_>>();
 
-    assert_eq!(rendered, sorted, "semantic facts should iterate deterministically");
+    assert_eq!(
+        structured, repeated_structured,
+        "semantic facts should iterate deterministically"
+    );
+    assert!(
+        structured.windows(2).all(|pair| pair[0] <= pair[1]),
+        "semantic facts should preserve their structured store order"
+    );
     assert!(
         rendered
             .iter()
@@ -21822,6 +22637,13 @@ pub static package_capability: RegistryEntry[FeatureId, CapabilitySpec] = capabi
     )?;
 
     let facts = info.semantic_fact_store(&module_path);
+    assert!(
+        info.references.resolved_identities.values().any(|identity| {
+            identity.kind == incan_semantics_core::SemanticSourceTargetKind::Method
+                && identity.declaration_name == "entry"
+        }),
+        "the declaration-only Registry.entry validation path must retain its selected source method identity"
+    );
     let unit_entry = facts
         .iter()
         .find(|fact| {
@@ -22543,7 +23365,7 @@ fn checked_c_string_view_copy_requires_unsafe_and_a_named_bound() {
             "copy_utf8".to_string(),
             Vec::new(),
             vec![CallArg::Named(
-                "max_bytes".to_string(),
+                Spanned::new("max_bytes".to_string(), span),
                 Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(64))), span),
             )],
         ),
@@ -23748,6 +24570,79 @@ fn plain_chained_assignment_reassigns_enclosing_mutable_bindings() {
         check_str(source).is_ok(),
         "plain chained assignment must resolve every target through the enclosing scope chain"
     );
+}
+
+// ---- #1281: retain checked `isinstance` target facts for Body IR ----
+
+#[test]
+fn isinstance_records_the_resolved_alias_target_and_original_target_span() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "type Text = str\n\ndef probe(value: int | str) -> bool:\n  return isinstance(value, Text)\n";
+    let info = typecheck_info_for_module(
+        source,
+        vec!["facts".to_string(), "isinstance".to_string()],
+        "checked isinstance target",
+    )?;
+
+    let targets = info.calls.isinstance_targets.values().collect::<Vec<_>>();
+    let [target] = targets.as_slice() else {
+        return Err("expected exactly one checked isinstance target".into());
+    };
+    let target_start = source.rfind("Text").ok_or("fixture must contain the target spelling")?;
+    assert_eq!(target.ty, ResolvedType::Str, "aliases must be expanded before lowering");
+    assert_eq!(target.span, Span::new(target_start, target_start + "Text".len()));
+    Ok(())
+}
+
+#[test]
+fn invalid_isinstance_target_does_not_create_checked_executable_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def probe(value: int) -> bool:\n  return isinstance(value, 1)\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    let errors = checker
+        .check_program(&ast)
+        .err()
+        .ok_or("a value must not typecheck as an isinstance type target")?;
+
+    assert!(
+        errors.iter().any(|error| error.message.contains("Type mismatch")),
+        "expected the existing type-target diagnostic, got {errors:?}"
+    );
+    assert!(
+        checker.type_info().calls.isinstance_targets.is_empty(),
+        "a rejected target must not leave executable checked evidence"
+    );
+    Ok(())
+}
+
+#[test]
+fn isinstance_retains_a_nominal_targets_canonical_declaration_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Marker:\n  value: int\n\ntype Alias = Marker\n\ndef probe(value: Marker | str) -> bool:\n  return isinstance(value, Alias)\n";
+    let module_path = vec!["facts".to_string(), "nominal_isinstance".to_string()];
+    let info = typecheck_info_for_module(source, module_path.clone(), "nominal isinstance target")?;
+    let target = info
+        .calls
+        .isinstance_targets
+        .values()
+        .next()
+        .ok_or("fixture must retain its checked target")?;
+    let identity = target
+        .canonical
+        .as_ref()
+        .ok_or("a nominal target must retain its declaration identity")?;
+
+    assert_eq!(target.ty, ResolvedType::Named("Marker".to_string()));
+    assert_eq!(identity.module_path(), Some(module_path.as_slice()));
+    assert_eq!(identity.declaration_name, "Marker");
+    assert_eq!(identity.kind, incan_semantics_core::SemanticSourceTargetKind::Model);
+    let alias_target = source.rfind("Alias").ok_or("fixture must contain the target alias")?;
+    assert_eq!(target.span, Span::new(alias_target, alias_target + "Alias".len()));
+    assert_eq!(
+        source.get(target.span.start..target.span.end),
+        Some("Alias"),
+        "the target fact must retain the reference span, not the declaration span"
+    );
+    Ok(())
 }
 
 /// A dependency that re-exports the `alloc` crate lets generated code spell `::carrier::alloc::boxed::Box<T>`.
