@@ -55,6 +55,28 @@ pub enum ManifestError {
         location: ManifestLocationDisplay,
         message: String,
     },
+
+    /// A directory holds `incan.toml` but no `loaf.toml`.
+    ///
+    /// RFC 117 rule 10 requires a targeted diagnostic here rather than legacy parsing: `incan.toml` is not a project
+    /// manifest after the Loaf cutover, and silently reading it would make the authority transition invisible. Emitted
+    /// by manifest discovery, never by parsing, because the file is deliberately not read.
+    #[error(
+        "{path} is not a project manifest: `loaf.toml` is the authored Oven manifest, and `incan.toml` is not read as a \
+         compatibility format. Rename it to `loaf.toml` once its tables satisfy the Loaf schema."
+    )]
+    LegacyIncanOnly { path: PathBuf },
+
+    /// A Loaf project directory also holds `Cargo.toml`.
+    ///
+    /// RFC 117 rule 11 requires Oven to warn and ignore the Cargo configuration, naming the ignored file and explaining
+    /// that Cargo compatibility is selected explicitly. A directory holding `loaf.toml` is a Loaf project; the two
+    /// manifests are never merged, so this reports an ignored input rather than a conflict to resolve.
+    #[error(
+        "{path} is ignored: this is a Loaf project, and Cargo files here do not contribute to its build. Run Cargo \
+         through explicit Cargo-compatibility mode if you need it."
+    )]
+    CargoIgnored { path: PathBuf },
 }
 
 /// 1-based line/column location within a manifest file.
@@ -2009,6 +2031,54 @@ mod tests {
     use std::fs;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn the_legacy_manifest_diagnostic_names_the_file_and_refuses_to_read_it() {
+        let rendered = ManifestError::LegacyIncanOnly {
+            path: PathBuf::from("/w/demo/incan.toml"),
+        }
+        .to_string();
+        // RFC 117 rule 10: a targeted diagnostic rather than legacy parsing.
+        assert!(
+            rendered.contains("/w/demo/incan.toml"),
+            "must name the file: {rendered}"
+        );
+        assert!(rendered.contains("loaf.toml"), "must name the replacement: {rendered}");
+        assert!(
+            rendered.contains("not read as a compatibility format"),
+            "must say the file is not parsed, not merely that it is wrong: {rendered}"
+        );
+    }
+
+    #[test]
+    fn the_ignored_cargo_diagnostic_names_the_file_and_the_explicit_escape_hatch() {
+        let rendered = ManifestError::CargoIgnored {
+            path: PathBuf::from("/w/demo/Cargo.toml"),
+        }
+        .to_string();
+        // RFC 117 rule 11: name the ignored file and explain explicit Cargo-compatibility selection.
+        assert!(
+            rendered.contains("/w/demo/Cargo.toml"),
+            "must name the ignored file: {rendered}"
+        );
+        assert!(
+            rendered.contains("Cargo-compatibility mode"),
+            "must explain how to select Cargo deliberately: {rendered}"
+        );
+    }
+
+    #[test]
+    fn neither_new_diagnostic_suggests_that_a_rename_alone_is_sufficient() {
+        // RFC 117's migration section: "a raw rename is valid only when the resulting tables satisfy the new schema."
+        let rendered = ManifestError::LegacyIncanOnly {
+            path: PathBuf::from("incan.toml"),
+        }
+        .to_string();
+        assert!(
+            rendered.contains("once its tables satisfy"),
+            "a rename is conditional on the schema, and the diagnostic must say so: {rendered}"
+        );
+    }
 
     #[test]
     fn loaf_manifest_is_discovered_when_present() -> TestResult {
