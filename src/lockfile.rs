@@ -23,6 +23,13 @@ use crate::provider::{
     ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
 };
 
+/// The generated project lockfile's filename, resolved relative to a project or workspace root.
+///
+/// This names the *project* lock that records the resolved dependency, provider, and interop graph. It is distinct from
+/// the artifact-store coordination lock and from the publication sibling this module derives from a lock's own
+/// filename; renaming this constant must not be taken to rename either of those.
+pub const LOCK_FILENAME: &str = "incan.lock";
+
 const LOCKFILE_FORMAT_VERSION: u32 = 2;
 const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
 #[derive(Debug, thiserror::Error)]

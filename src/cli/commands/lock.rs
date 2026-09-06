@@ -38,8 +38,8 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::generated_cache::{GeneratedCacheLease, resolve_generated_cargo_target};
 use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, compute_resolved_fingerprint_with_sdk_paths,
-    semantic_lock_state, workspace_semantic_lock_state,
+    CargoFeatureSelection, IncanLock, LOCK_FILENAME, PublicationLock, SemanticLockState,
+    compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
 use crate::oven::legacy_cargo::OvenLegacyCargoInspectionPackage;
@@ -253,7 +253,7 @@ fn collect_and_publish_project_lock(
     if let Some(workspace) =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
     {
-        let lock_path = workspace.root().join("incan.lock");
+        let lock_path = workspace.root().join(LOCK_FILENAME);
         let publication_lock = crate::lockfile::acquire_publication_lock(&lock_path).map_err(|error| {
             CliError::failure(format!("failed to acquire workspace lock publication guard: {error}"))
         })?;
@@ -1411,7 +1411,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     } else {
         (caller_resolved.clone(), project_requirements.clone())
     };
-    let lock_path = project_root.join("incan.lock");
+    let lock_path = project_root.join(LOCK_FILENAME);
     let mut canonical_resolved_with_requirements = canonical_resolved;
     merge_project_requirement_dependencies(
         &mut canonical_resolved_with_requirements,
@@ -1595,7 +1595,7 @@ fn validate_oven_lock_policy_impl(
             &semantic_sdk_path_dependencies(&context.project_requirements),
         );
         return validate_oven_existing_lock(
-            &workspace.root().join("incan.lock"),
+            &workspace.root().join(LOCK_FILENAME),
             &fingerprint,
             "workspace incan.lock is missing; run `incan lock` from any workspace member or the workspace root",
             "workspace incan.lock",
@@ -1626,7 +1626,7 @@ fn validate_oven_lock_policy_impl(
         &semantic_sdk_path_dependencies(&context.project_requirements),
     );
     validate_oven_existing_lock(
-        &project_root.join("incan.lock"),
+        &project_root.join(LOCK_FILENAME),
         &fingerprint,
         "incan.lock is missing; run `incan lock`",
         "incan.lock",
@@ -1712,7 +1712,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
 
     let caller_resolved = caller_resolved.clone();
 
-    let lock_path = workspace.root().join("incan.lock");
+    let lock_path = workspace.root().join(LOCK_FILENAME);
     if lock_path.exists() {
         let lock = IncanLock::load(&lock_path).map_err(|error| CliError::failure(error.to_string()))?;
         if lock.deps_fingerprint != fingerprint {
@@ -1750,7 +1750,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         ));
     }
 
-    let publication_lock = crate::lockfile::acquire_publication_lock(&workspace.root().join("incan.lock"))
+    let publication_lock = crate::lockfile::acquire_publication_lock(&workspace.root().join(LOCK_FILENAME))
         .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
     generate_oven_lockfile(
         workspace.root(),
@@ -2594,7 +2594,7 @@ fn generate_oven_lockfile(
     semantic: &SemanticLockState,
     publication_lock: Option<&PublicationLock>,
 ) -> CliResult<IncanLock> {
-    let lock_path = project_root.join("incan.lock");
+    let lock_path = project_root.join(LOCK_FILENAME);
     let owned_publication_lock = if publication_lock.is_none() {
         Some(
             crate::lockfile::acquire_publication_lock(&lock_path)

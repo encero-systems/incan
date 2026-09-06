@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::lockfile::IncanLock;
+use crate::lockfile::{IncanLock, LOCK_FILENAME};
 use crate::manifest::ProjectManifest;
 use crate::oven_interop::{
     InteropDeploymentAction, InteropDeploymentPlan, InteropDeploymentPlatform, LockedInteropTarget,
@@ -91,7 +91,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
     else {
         let current = locked_oven_interop_targets(manifest)
             .map_err(|error| CliError::failure(format!("invalid Oven interop requirements: {error}")))?;
-        let lock = load_interop_plan_lock(&manifest.project_root().join("incan.lock"))?;
+        let lock = load_interop_plan_lock(&manifest.project_root().join(LOCK_FILENAME))?;
         let locked = lock.semantic.oven.map(|oven| oven.interop).unwrap_or_default();
         return Ok(InteropPlanLockContext { current, locked });
     };
@@ -116,7 +116,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
         .map_err(|error| CliError::failure(format!("invalid Oven interop requirements: {error}")))?;
 
     // ---- Canonical workspace lock projection ----
-    let lock = load_interop_plan_lock(&workspace.root().join("incan.lock"))?;
+    let lock = load_interop_plan_lock(&workspace.root().join(LOCK_FILENAME))?;
     let member_root = portable_workspace_member_root(workspace.root(), member.root())?;
     let locked = lock
         .semantic
