@@ -16,6 +16,14 @@ use crate::oven_interop::{OvenInteropSection, OvenSection};
 
 /// The canonical manifest filename that the compiler searches for.
 pub const MANIFEST_FILENAME: &str = "incan.toml";
+/// The authored Loaf manifest filename RFC 117 makes the sole project manifest.
+///
+/// Lowercase deliberately, as RFC 117's Design decisions record: a case-only difference between two spellings is
+/// meaningless on the case-insensitive filesystems Windows and macOS use by default and significant on Linux and in CI.
+///
+/// Discovery does not yet prefer this file. [`discovered_manifest_kind`] reports which manifest a directory holds so
+/// the cutover has one place to change, rather than a filename comparison spread across every discovery caller.
+pub const LOAF_MANIFEST_FILENAME: &str = "loaf.toml";
 /// Internal manifest-path override used for nested `incan` subprocesses launched via `incan env run`.
 pub const INTERNAL_MANIFEST_OVERRIDE_ENV: &str = "INCAN_INTERNAL_MANIFEST_OVERRIDE";
 /// Internal project-root override used for nested `incan` subprocesses launched via `incan env run`.
@@ -706,6 +714,38 @@ impl ProjectManifest {
             .map(|(name, spec)| (name.clone(), dependency_spec_to_toml_value(spec)))
             .collect()
     }
+}
+
+/// Which project manifest a single directory holds.
+///
+/// RFC 117 makes `loaf.toml` the sole authored manifest and refuses to read `incan.toml` as a compatibility format, so
+/// the two cases need different answers rather than one filename lookup: a directory holding only `incan.toml` is a
+/// diagnostic, not a project. Naming that distinction here keeps the cutover to one function instead of a filename
+/// comparison repeated at every discovery caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscoveredManifest {
+    /// The directory holds `loaf.toml`, the authored Loaf manifest.
+    Loaf(PathBuf),
+    /// The directory holds only `incan.toml`. RFC 117 rule 10 makes this a targeted diagnostic rather than a parse.
+    LegacyIncanOnly(PathBuf),
+    /// The directory holds neither manifest.
+    None,
+}
+
+/// Report which project manifest `dir` holds, without walking upward and without reading either file.
+///
+/// `loaf.toml` wins when both are present: RFC 117 rule 13 makes a directory containing the Loaf manifest a Loaf
+/// project, and a neighbouring legacy file there is ignored rather than merged.
+pub fn discovered_manifest_kind(dir: &Path) -> DiscoveredManifest {
+    let loaf = dir.join(LOAF_MANIFEST_FILENAME);
+    if loaf.is_file() {
+        return DiscoveredManifest::Loaf(loaf);
+    }
+    let legacy = dir.join(MANIFEST_FILENAME);
+    if legacy.is_file() {
+        return DiscoveredManifest::LegacyIncanOnly(legacy);
+    }
+    DiscoveredManifest::None
 }
 
 /// Walk upward from `start_dir` to find an `incan.toml` file.
@@ -1969,6 +2009,55 @@ mod tests {
     use std::fs;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn loaf_manifest_is_discovered_when_present() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
+        match discovered_manifest_kind(dir.path()) {
+            DiscoveredManifest::Loaf(path) => assert_eq!(path, dir.path().join("loaf.toml")),
+            other => return Err(format!("expected a Loaf manifest, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_directory_holding_only_incan_toml_is_reported_as_legacy_rather_than_a_project() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join(MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
+        match discovered_manifest_kind(dir.path()) {
+            DiscoveredManifest::LegacyIncanOnly(path) => assert_eq!(path, dir.path().join("incan.toml")),
+            other => return Err(format!("expected the legacy manifest, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn loaf_manifest_wins_over_a_neighbouring_legacy_manifest() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
+        fs::write(dir.path().join(MANIFEST_FILENAME), "[project]\nname = \"stale\"\n")?;
+        match discovered_manifest_kind(dir.path()) {
+            DiscoveredManifest::Loaf(path) => assert_eq!(path, dir.path().join("loaf.toml")),
+            other => return Err(format!("expected the Loaf manifest to win, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_directory_holds_no_manifest() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        assert_eq!(discovered_manifest_kind(dir.path()), DiscoveredManifest::None);
+        Ok(())
+    }
+
+    #[test]
+    fn the_authored_manifest_and_lock_filenames_are_lowercase() {
+        // RFC 117 settles both spellings. Asserted against literals rather than the constants so a capitalized
+        // reintroduction fails here instead of passing quietly on a case-insensitive filesystem.
+        assert_eq!(LOAF_MANIFEST_FILENAME, "loaf.toml");
+        assert_eq!(crate::lockfile::LOCK_FILENAME, "incan.lock");
+    }
 
     #[test]
     fn parse_empty_manifest() -> Result<(), ManifestError> {
