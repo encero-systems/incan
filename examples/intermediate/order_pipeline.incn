@@ -1,0 +1,40 @@
+"""
+Pricing a stream of orders, showing the pieces that keep the arithmetic and the plumbing honest.
+
+Exact numeric types stop money being a float. A generator yields rows one at a time without materializing the batch.
+A function value lets the caller choose how a row is rendered without the pipeline knowing anything about it.
+"""
+
+
+def numbers() -> Generator[int]:
+    """Yield the quantities of a batch one at a time, rather than building the whole list first."""
+    for value in [2, 5, 1]:
+        yield value
+
+
+def label(quantity: int) -> str:
+    """Describe one quantity for display."""
+    return f"{quantity} unit(s)"
+
+
+def shout(quantity: int) -> str:
+    """Describe one quantity loudly, to show the caller picks the renderer."""
+    return f"{quantity} UNITS"
+
+
+def render_all(handler: Callable[int, str]) -> None:
+    """Render every quantity in the batch with whichever formatter the caller supplied."""
+    for quantity in numbers():
+        println(f"  {handler(quantity)}")
+
+
+def main() -> None:
+    # Exact types: a count with a declared width, and money that is not a float.
+    count: u32 = 1
+    price: decimal[12, 2] = 19.99d
+    println(f"unit price: {price}, opening count: {count}")
+
+    # The same pipeline, two renderers, chosen at the call site.
+    handler: Callable[int, str] = label
+    render_all(handler)
+    render_all(shout)

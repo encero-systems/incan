@@ -26,6 +26,12 @@ pub const PATTERN_FRAGMENT_DESCRIPTOR: &str = "pattern.fragment";
 /// Stable descriptor key for the `shape:` block body.
 pub const SHAPE_FRAGMENT_DESCRIPTOR: &str = "shape.fragment";
 
+/// Note block keyword introduced by this example DSL: verbatim text preserved as written.
+pub const NOTE_KW: &str = "note";
+
+/// Stable descriptor key for the `note:` block body.
+pub const NOTE_FRAGMENT_DESCRIPTOR: &str = "note.fragment";
+
 /// Return the complete vocabulary registration for the example companion crate.
 ///
 /// No desugarer is registered here: RFC 081 embedded fragments do not need one to prove the parser-to-lowering
@@ -39,6 +45,7 @@ pub fn library_vocab() -> VocabRegistration {
             DslSurface::on_import(NAMESPACE)
                 .with_declaration(DeclarationSurface::named(PATTERN_KW).with_statement_body())
                 .with_declaration(DeclarationSurface::named(SHAPE_KW).with_statement_body())
+                .with_declaration(DeclarationSurface::named(NOTE_KW).with_statement_body())
                 .with_embedded_fragment(
                     EmbeddedFragmentDescriptor::new(
                         PATTERN_FRAGMENT_DESCRIPTOR,
@@ -46,6 +53,14 @@ pub fn library_vocab() -> VocabRegistration {
                         "pattern_nodes",
                     )
                     .in_declaration_body(PATTERN_KW),
+                )
+                .with_embedded_fragment(
+                    EmbeddedFragmentDescriptor::new(
+                        NOTE_FRAGMENT_DESCRIPTOR,
+                        EmbeddedFragmentSubmode::RawText,
+                        "note_nodes",
+                    )
+                    .in_declaration_body(NOTE_KW),
                 )
                 .with_embedded_fragment(
                     EmbeddedFragmentDescriptor::new(

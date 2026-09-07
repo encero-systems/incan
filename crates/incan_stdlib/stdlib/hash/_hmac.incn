@@ -1,0 +1,101 @@
+"""
+Keyed message authentication for `std.hash`.
+
+The rest of `std.hash` is unkeyed. An unkeyed digest proves only that a value is internally self-consistent: the hash
+formula is public source, so anyone who reads it can compute a matching digest for a value they made up. That is
+enough to catch accidental corruption and lazy hand-assembly, and not enough to catch a caller who is willing to
+reproduce the formula.
+
+HMAC closes that gap. The key stays in the trusted process's own custody and never crosses the boundary the value
+arrives from, so a tag that verifies is evidence the value was produced by that process rather than forged by whoever
+submitted it. This matters most where a pure evaluation function accepts caller-supplied prior state across an
+untrusted edge.
+
+Tags must be compared in constant time, which is why `verify` exists. Comparing two tags with `==` leaks how many
+leading bytes matched, and that timing signal lets an attacker search for a valid tag one byte at a time instead of
+guessing the whole thing at once. Prefer `verify` over comparing `digest()` output yourself.
+"""
+
+from rust::hmac with ["reset"] import Hmac, Mac
+from rust::incan_stdlib::errors import raise_value_error
+from rust::sha2 import Sha256
+
+type _HmacSha256 = rusttype Hmac[Sha256]
+
+
+def _must_keyed(key: bytes) -> _HmacSha256:
+    """
+    Return a fresh MAC state keyed with `key`, or raise `ValueError`.
+
+    Named `_must_` after the `_must_digest_bytes` family in `_core`: it converts a fallible constructor into an
+    infallible signature by raising, which is what lets the public namespace helpers stay unfallible.
+
+    HMAC accepts a key of any length: shorter keys are zero-padded to the block size and longer ones are hashed
+    first, so this does not fail on key size. The underlying constructor still reports a length error in its
+    signature, and that branch raises `ValueError` rather than being silently absorbed.
+    """
+    match _HmacSha256.new_from_slice(key.as_slice()):
+        Ok(state) => return state
+        Err(err) => return raise_value_error(f"hmac_sha256 rejected the key: {err}")
+
+
+pub class HmacSha256Signer:
+    """
+    Storable incremental HMAC-SHA256 signer.
+
+    Create a handle with `hmac_sha256.new(key)`, retain it in a model or class field, then call `update` from each
+    method that contributes canonical bytes. `finalize_bytes()` returns the tag for the bytes already supplied and
+    resets the handle for a subsequent stream under the same key. Like the unkeyed hashers, this type does not decide
+    which bytes are canonical for an application identity; that is the caller's contract to define and keep stable.
+    """
+
+    handle: _HmacSha256
+
+    def update(mut self, chunk: bytes) -> None:
+        """
+        Add `chunk` to the authenticated byte stream.
+        """
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        """
+        Return the tag for the bytes supplied so far, resetting the handle for the next stream.
+        """
+        return self.handle.finalize_reset().into_bytes().to_vec()
+
+
+@rust.allow("non_camel_case_types")
+pub class hmac_sha256:
+    """
+    HMAC-SHA256 namespace with one-shot and incremental authentication.
+    """
+
+    @staticmethod
+    def digest(key: bytes, data: bytes) -> bytes:
+        """
+        Return the HMAC-SHA256 tag for `data` under `key`.
+        """
+        mut signer = hmac_sha256.new(key)
+        signer.update(data)
+        return signer.finalize_bytes()
+
+    @staticmethod
+    def new(key: bytes) -> HmacSha256Signer:
+        """
+        Create an incremental signer keyed with `key`.
+        """
+        return HmacSha256Signer(handle=_must_keyed(key))
+
+    @staticmethod
+    def verify(key: bytes, data: bytes, tag: bytes) -> bool:
+        """
+        Return whether `tag` authenticates `data` under `key`, comparing in constant time.
+
+        Use this rather than computing a tag and comparing it yourself: the comparison here does not short-circuit on
+        the first differing byte, so it does not leak how much of a candidate tag was correct.
+        """
+        mut state = _must_keyed(key)
+        state.update(data.as_slice())
+        match state.verify_slice(tag.as_slice()):
+            Ok(_) => return true
+            Err(_) => return false

@@ -2536,6 +2536,13 @@ impl AstLowering {
                     // Module-level docstrings and inline test modules are not part of production IR.
                     continue;
                 }
+                ast::Declaration::Capability(_) => {
+                    // A capability declares authority, not code: it has no body and emits no Rust item. Consumers
+                    // reach it through its checked identity, so skipping it here is the declaration's whole lowering
+                    // contract rather than an omission. Letting it fall through would fail any module that declares
+                    // one, which is what kept `std.runtime` from compiling as an ordinary stdlib module (RFC 104).
+                    continue;
+                }
                 ast::Declaration::Const(c) if c.name == "__derives__" => {
                     continue;
                 }

@@ -1,6 +1,6 @@
 # RFC 081: Language-shaped DSL embeddings
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-27
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -8,9 +8,9 @@
     - RFC 040 (scoped DSL surface forms)
     - RFC 045 (scoped DSL symbol surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/555
-- **RFC PR:** —
+- **RFC PR:** [#1410](https://github.com/encero-systems/incan/pull/1410)
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.6
 
 ## Summary
 
@@ -150,6 +150,55 @@ This RFC is additive. Code that does not import and use a DSL with language-shap
 - **LSP / tooling** — must expose ownership, highlighting, hover, diagnostics, and completions across ordinary Incan and embedded submodes.
 - **Docs / examples** — must clearly distinguish narrow product-specific fragments from full language-compatible embeddings.
 - **Vocab / desugarer tooling** — must support compiling Incan-authored desugarers through the replacement backend to the existing WASM artifact contract, and must retire the Rust-native authoring surface for new work without breaking already-published artifacts.
+
+## Implementation Plan
+
+### Phase 1: Descriptor-gated lexical submodes
+
+- Admit a lexical submode only where its owning descriptor claims an eligible position, so no fragment syntax leaks into ordinary Incan.
+- Parse the accepted submode families: markup, style, raw text and comments, regex and template literals, selector and declaration values, and type positions.
+- Reject ambiguous same-depth descriptor claims deterministically rather than resolving them by declaration order.
+
+### Phase 2: Typed fragment artifacts through the pipeline
+
+- Carry a typed fragment artifact with source anchors through parsing, typechecking, symbol ownership, and lowering.
+- Type expression holes as ordinary Incan expressions rather than erasing them before typechecking.
+- Refuse emission explicitly, since a descriptor owns its fragment's runtime semantics and the compiler must not guess them.
+
+### Phase 3: Representative consumer fixtures
+
+- Prove each submode through a real example project rather than parser fixtures alone.
+
+### Phase 4: Formatting, LSP, and conformance
+
+- Keep formatting structural for known fragments and source-preserving for opaque ones, and complete editor and conformance surfaces. Tracked by #1022.
+
+## Progress Checklist
+
+### Descriptor-gated parsing
+
+- [x] Admit lexical submodes only through an owning descriptor's claimed position.
+- [x] Parse markup, style, raw-text/comment, regex/template, selector/declaration-value, and type-position submodes.
+- [x] Reject ambiguous same-depth descriptor claims with a deterministic diagnostic.
+- [x] Leave core Incan behavior unchanged outside eligible positions.
+
+### Typed artifacts and pipeline
+
+- [x] Carry typed fragment artifacts and source anchors through parsing and typechecking.
+- [x] Type expression holes as real Incan expressions inside a fragment.
+- [x] Lower fragments and refuse emission with an explicit, documented message rather than guessing runtime semantics.
+
+### Fixtures and conformance
+
+- [x] Markup fixture (`examples/pro/vocab_markform`).
+- [x] Style and selector/declaration-value fixtures (`examples/pro/vocab_styleforge`).
+- [x] Regex/template, type-position, and raw-text/comment fixtures (`examples/pro/vocab_scriptkit`).
+- [x] All six accepted submodes have consumer example coverage.
+- [x] User-facing documentation naming the accepted subsets and exclusions honestly, and stating plainly that a submode is not the language it resembles.
+- [x] Structural formatting for known fragments, and LSP ownership inside expression holes (#1022).
+- [x] End-to-end conformance across all six accepted submodes: typed artifact, hole ownership, typecheck, lowering, emission refusal, and both formatter modes (#1022).
+- [x] Editor ownership at the fragment boundary: DSL-owned syntax reports its owning submode and descriptor rather than resolving against ordinary Incan scope (#1022).
+- [x] Semantic highlighting that makes the ownership boundary visible while reading: DSL-owned bytes take their submode's category and expression holes are highlighted as ordinary Incan (#1400).
 
 ## Design Decisions
 

@@ -953,6 +953,57 @@ pub enum CodegraphRecord {
     CBindingCall(CodegraphCBindingCallRecord),
     /// Compiler-proven public facade to private checked-C bridge relation.
     CBindingFacade(CodegraphCBindingFacadeRecord),
+    /// Compiler-checked RFC 104 capability declaration.
+    Capability(CodegraphCapabilityRecord),
+}
+
+/// One compiler-checked RFC 104 capability declaration.
+///
+/// RFC 104 requires its authority contract to be inspectable without executing source. This is that projection: a
+/// policy, CI job, editor, or agent reads what a package declares it can do, and what each capability itself
+/// requires, from checked identities rather than by parsing source or reading logs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphCapabilityRecord {
+    /// Stable id unique within the export.
+    pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
+    /// Module that owns the declaration.
+    pub module_id: String,
+    /// Canonical compiler identity of the declared capability.
+    pub capability_identity: CodegraphCanonicalSymbolId,
+    /// Declared capability name as written.
+    pub name: String,
+    /// Whether the declaration is public to package consumers.
+    pub public: bool,
+    /// Prose from the `description` clause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Typed scope dimensions a grant may constrain, in declaration order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<CodegraphCapabilityScopeDimension>,
+    /// Canonical identities of the capabilities this one declares it requires, in declaration order.
+    ///
+    /// Holding a capability never grants what it requires; this edge is inspectable documentation, which is exactly
+    /// why it must carry resolved identities rather than the spellings an author wrote.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<CodegraphCanonicalSymbolId>,
+    /// Declaration span in the owning source file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<CodegraphSourceSpan>,
+    /// Provenance of this fact.
+    pub provenance: CodegraphProvenance,
+    /// Whether this record was produced from a degraded compilation.
+    pub degraded: bool,
+}
+
+/// One typed scope dimension a capability grant may constrain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphCapabilityScopeDimension {
+    /// Dimension name as declared.
+    pub name: String,
+    /// Rendered declared type of the dimension.
+    pub ty: String,
 }
 
 /// Serialize records as newline-delimited JSON, preserving caller-provided deterministic ordering.

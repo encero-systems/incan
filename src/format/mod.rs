@@ -239,6 +239,85 @@ mod tests {
         })
     }
 
+    /// Format one source file whose fragments are claimed by a `note:` raw-text descriptor.
+    ///
+    /// The formatter has no descriptor map of its own, so an embedded fragment can only be formatted through a
+    /// parse that already carries one. This mirrors `format_source_with_query_vocab` for the RFC 081 surface.
+    fn format_source_with_note_fragment_vocab(source: &str) -> Result<String, FormatError> {
+        let tokens = lexer::lex(source).map_err(|errs| {
+            FormatError::SyntaxError(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n"))
+        })?;
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("notekit")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("note").with_statement_body())
+                    .with_embedded_fragment(
+                        incan_vocab::EmbeddedFragmentDescriptor::new(
+                            "note.fragment",
+                            incan_vocab::EmbeddedFragmentSubmode::RawText,
+                            "note_nodes",
+                        )
+                        .in_declaration_body("note"),
+                    ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "notekit".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "notekit".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::block("note")],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("notekit".to_string(), metadata.dsl_surfaces);
+        // `parse_with_source` is the only entrypoint that enables RFC 081 fragments: the parser needs the original
+        // source to slice a claimed submode's raw byte range rather than reusing whatever the ordinary lexer made
+        // of it. This mirrors what `incan fmt` does through `CompilationSession`.
+        let ast = parser::parse_with_source(&tokens, None, Some(&keyword_map), Some(&surface_map), source).map_err(
+            |errs| {
+                let mut msg = String::new();
+                for err in &errs {
+                    msg.push_str(&diagnostics::format_error("<input>", source, err));
+                }
+                FormatError::SyntaxError(msg)
+            },
+        )?;
+        format_parsed_source_with_config(source, &ast, FormatConfig::default())
+    }
+
+    /// An embedded fragment survives formatting byte-for-byte, and reformatting changes nothing further.
+    ///
+    /// RFC 081 fragments are foreign syntax the formatter does not own, so its declared fallback is to reproduce
+    /// the preserved source text verbatim. Structural formatting for known fragments is #1022's work; until that
+    /// lands, the fallback is the contract, and it was previously untested. A regression here would silently
+    /// rewrite content the compiler explicitly refuses to interpret.
+    #[test]
+    fn embedded_fragment_formatting_preserves_its_source_and_is_idempotent() -> Result<(), FormatError> {
+        let source = concat!(
+            "import pub::notekit\n",
+            "\n",
+            "def deploy_note(owner: str) -> None:\n",
+            "    note:\n",
+            "        TODO({owner}): rotate   the  key before <<release>>\n",
+        );
+
+        let once = format_source_with_note_fragment_vocab(source)?;
+        let twice = format_source_with_note_fragment_vocab(&once)?;
+        assert_eq!(once, twice, "formatting an embedded fragment should be idempotent");
+
+        // The irregular inner spacing is deliberate: it is exactly what a structural formatter would normalize,
+        // and exactly what the verbatim fallback must not touch.
+        assert!(
+            once.contains("TODO({owner}): rotate   the  key before <<release>>"),
+            "the fragment's source text must survive verbatim, got:\n{once}"
+        );
+        Ok(())
+    }
+
     fn format_source_with_query_vocab(source: &str) -> Result<String, FormatError> {
         let tokens = lexer::lex(source).map_err(|errs| {
             FormatError::SyntaxError(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n"))

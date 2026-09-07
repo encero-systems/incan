@@ -317,11 +317,53 @@ let manifest = LibraryManifest {
 
 Then the desugarer can emit `IncanExpr::Helper("filter".to_string())`, and the compiler will inject a hidden `pub::` import for the matching library export before lowering the desugared code back into the host AST.
 
-`incan build --lib` validates these bindings structurally:
+`incan build --lib` validates these bindings before the `.incnlib` artifact is written:
 
 - each helper `key` must be unique within `helper_bindings`
 - each `exported_name` must point at a real public export from the library artifact
-- empty keys or export names are rejected before the `.incnlib` artifact is written
+- each `exported_name` must be something a call can name
+- empty keys or export names are rejected
+
+### What a helper may bind to
+
+A helper reference is spliced into **call position** in the desugared program, so the export it names has to be callable. These kinds are accepted:
+
+| Kind | Why it works |
+| --- | --- |
+| function | called directly |
+| class, model, newtype | called as a constructor |
+| enum variant | called as a constructor |
+| alias | resolved to whatever it reexports, then checked by that kind |
+
+Traits, bare enum types, type aliases, constants, and statics are rejected. They are real public exports, so they pass the unknown-symbol check, but a call cannot name them:
+
+```text
+vocab helper binding `filter` points to trait `Filterable`, which cannot be called;
+bind the helper to a function, class, model, newtype, enum variant, or alias
+```
+
+Catching this at your build rather than a consumer's is deliberate. Without it the mistake surfaces as generated Rust that will not compile, reported against code the consumer never wrote.
+
+### Binding a reexported name
+
+You may bind the spelling your library publishes rather than the one it declares. An alias is followed to its target and then checked as that target's kind, so this works:
+
+```rust
+// The library declares `filter_rows` and reexports it as `where_`.
+HelperBinding { key: "filter".to_string(), exported_name: "where_".to_string() }
+```
+
+Following the alias does not launder an ineligible target: an alias that resolves to a constant is still rejected, and the diagnostic names the resolved kind rather than the alias. A chain that cannot be resolved — because it is cyclic, or reaches something the artifact does not describe — is admitted rather than rejected, on the principle that incomplete information should not fail a build that may be correct.
+
+### Duplicate keys
+
+Two bindings for one key are an error, not a silent choice:
+
+```text
+vocab provider_manifest.helper_bindings contains duplicate key `filter`
+```
+
+Resolution rejects the same case with a message naming both exports, so a manifest that reaches a consumer without revalidation still fails loudly instead of resolving by declaration order.
 
 ## 6. Add descriptor-gated embedded fragments (RFC 081)
 
@@ -400,7 +442,11 @@ EmbeddedFragmentDescriptor::new("html.fragment", EmbeddedFragmentSubmode::Markup
     .layout_sensitive()
 ```
 
-The formatter has exactly two states for an embedded fragment: format it structurally from the typed artifact, or preserve its original source layout verbatim. `layout_sensitive()` requests the second -- this is a stable, load-bearing signal for that future formatter work, but the formatter itself does not consume it yet. Today the formatter always writes an embedded fragment's verbatim source text regardless of this flag; `layout_sensitive()` has no observable effect until the structural-formatting path lands.
+The formatter has exactly two states for an embedded fragment, and this flag selects between them. By default it renders the fragment from the typed artifact: your submode's structure is laid out consistently and the whitespace a user happened to write between nodes is re-derived rather than reproduced. `layout_sensitive()` requests the other state, in which the fragment's original source text is reproduced exactly.
+
+Choose it when whitespace inside your fragment is content rather than presentation. It is a per-descriptor declaration, so a consumer cannot opt in or out per file.
+
+Both states are idempotent: formatting already-formatted source returns the same bytes, which is what makes `incan fmt --check` meaningful for files containing your blocks. If you add a submode whose delimiters the parser consumes rather than storing as nodes -- the way `RegexTemplate` handles a template string's backticks and `${...}` -- the structural renderer has to reconstruct them, or formatting will emit something your own grammar rejects.
 
 ## 7. Add an optional desugarer
 
@@ -510,4 +556,4 @@ from pub::routekit import routekit_name
 - [RFC 027: `incan_vocab`](../../RFCs/closed/implemented/027_incan_vocab_crate.md)
 - [RFC 040: Scoped DSL surface forms](../../RFCs/closed/implemented/040_scoped_dsl_surface_forms.md)
 - [RFC 045: Scoped DSL symbol surfaces](../../RFCs/closed/implemented/045_scoped_dsl_symbol_surfaces.md)
-- [RFC 081: Language-shaped DSL embeddings](../../RFCs/081_language_shaped_dsl_embeddings.md)
+- [RFC 081: Language-shaped DSL embeddings](../../RFCs/closed/implemented/081_language_shaped_dsl_embeddings.md)
