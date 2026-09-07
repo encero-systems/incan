@@ -95,7 +95,7 @@ Editors that support semantic tokens colour Incan from what the compiler actuall
 - Type positions come from the parsed program, not from capitalisation. `str` in `label: str` is a type, and a local named `Total` is still a local.
 - `value.lower()` colours `lower` as a method while `value.length` colours `length` as a property.
 - Inside an f-string, the interpolated expressions are coloured as code; only the literal text around them is string content.
-- An embedded fragment (RFC 081) is coloured as its own submode, so a markup tag or a style selector never renders as if it were an Incan local. The expression holes inside a fragment *are* ordinary Incan, and are coloured as such — which is what makes the ownership boundary visible while reading.
+- An embedded fragment — a block where a library's DSL claims another language's syntax inside Incan source, such as markup or style rules — is coloured as that submode, so a tag name or a selector never renders as if it were an Incan local. The expression holes inside a fragment *are* ordinary Incan, and are coloured as such, which is what makes the boundary between the two visible while reading.
 
 Highlighting does not disappear while you type. A file that does not currently parse is still coloured from its token stream; only type positions and embedded-fragment ownership need a successful parse, so those two degrade rather than the whole file going flat.
 
