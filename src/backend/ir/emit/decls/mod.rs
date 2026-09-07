@@ -704,6 +704,9 @@ impl<'a> IrEmitter<'a> {
                     // exports them only that way, so they are not an alias over another declaration in this sense --
                     // importing one by its bare projection names something no module exports.
                     let renames_shared_projection = binding == emitted_name
+                        // A binding that already carries the name it would be renamed to is not a rename: emitting
+                        // `use path::Name as Name;` beside `use path::Name;` defines one name twice.
+                        && source_binding != emitted_name
                         && !is_overload_emitted_name(&item.name)
                         && item
                             .canonical
