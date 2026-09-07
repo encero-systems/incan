@@ -23,6 +23,16 @@ use incan_core::lang::surface::{
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 
+/// Whether a module-static reference names source storage or a compiler-generated helper.
+///
+/// Source storage must resolve through the compiler-owned canonical projection table. Generated storage must never
+/// consult that table, even when its synthetic spelling collides with a source declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrStaticReferenceKind {
+    Source,
+    CompilerGenerated,
+}
+
 /// A typed expression in IR
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
@@ -133,11 +143,13 @@ pub enum IrExprKind {
     /// Read from a compiler-managed module static storage cell.
     StaticRead {
         name: String,
+        reference_kind: IrStaticReferenceKind,
     },
 
     /// Create a live local binding wrapper from a compiler-managed module static.
     StaticBinding {
         name: String,
+        reference_kind: IrStaticReferenceKind,
     },
 
     /// Reference an associated function item such as `Type::method`.
@@ -389,6 +401,24 @@ pub enum IrExprKind {
 
     // serde_json::from_str(s) - contains the target type name
     SerdeFromJson(String),
+
+    /// Descriptor-gated embedded-fragment artifact (RFC 081, `#1023`).
+    ///
+    /// Carries the fragment's identity (`submode`, verbatim `source_text`) opaquely as data, plus every expression
+    /// hole it contained, already fully lowered in source order. Per RFC 081 §Semantics ("their runtime meaning is
+    /// supplied by the owning DSL's desugarer or lowering hook, not by core Incan evaluation"), the DSL-owned
+    /// structural content (tags, selectors, declarations, regex/type shapes, ...) deliberately does **not** get a
+    /// mirrored IR node tree here — Body IR's job is Rust code generation, and there is no code to generate for
+    /// content with no runtime meaning yet. Only the holes, which are genuine Incan expressions, need real IR
+    /// representation. Emission (`src/backend/ir/emit/expressions/mod.rs`) refuses to emit Rust code for this node
+    /// with a clear `EmitError` rather than guessing at semantics, exactly as `VocabBlock`/`Surface` refuse at
+    /// lowering when they reach it unexpectedly — the difference is where in the pipeline the refusal happens,
+    /// because this node's holes genuinely do need to reach lowering, unlike those DSL-erased nodes.
+    EmbeddedFragment {
+        submode: incan_vocab::EmbeddedFragmentSubmode,
+        source_text: String,
+        holes: Vec<IrExpr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -640,11 +670,16 @@ pub enum Pattern {
 /// 3. Update `emit_builtin_call()` in `expressions/builtins.rs` to emit the Rust code
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinFn {
+    /// Compiler-owned `isinstance(value, Target)` with a retained checked target token.
+    ///
+    /// `from_name` never constructs this variant; lowering may select it only from the typechecker's call-site
+    /// builtin identity and checked target fact.
+    IsInstance,
     /// `print(x)` / `println(x)` → `println!("{}", x)`
     Print,
-    /// `len(x)` → `::std::convert::identity(x.len() as i64)`
+    /// `len(x)` → the type-selected string or collection length operation
     Len,
-    /// `sum(x)` → `x.iter().sum::<i64>()`
+    /// `sum(x)` → checked integer accumulation
     Sum,
     /// `min(xs)` → minimum element
     Min,
@@ -658,11 +693,11 @@ pub enum BuiltinFn {
     Float,
     /// `bool(x)` → convert to bool
     Bool,
-    /// `abs(x)` → `x.abs()`
+    /// `abs(x)` → checked integer absolute value
     Abs,
     /// `range(...)` → Rust range expressions
     Range,
-    /// `enumerate(x)` → `x.iter().enumerate()` with the index cast to Incan `int`.
+    /// `enumerate(x)` yields a list of pairs with Incan `int` indices; direct loop consumers can stay lazy.
     Enumerate,
     /// `zip(a, b)` → the same source-owned `Iterator[(T, U)]` model as `a.iter().zip(b.iter())`
     Zip,
@@ -713,13 +748,29 @@ impl BuiltinFn {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrMethodDispatch {
     /// Preserve the selected trait owner and, when required, emit a fully-qualified trait method call.
-    Trait {
-        trait_path: String,
-        type_args: Vec<IrType>,
-        receiver_is_mutable: bool,
-    },
+    Trait(Box<IrTraitDispatch>),
+    /// Emit a compiler-proved inherent source projection while retaining the selected trait evidence for bound
+    /// propagation and receiver mutability.
+    SourceProjection(Box<IrTraitDispatch>),
     /// Keep the emitted call as regular Rust method lookup while retaining this extension-trait import binding.
     RustExtensionTraitImport { binding: String },
+}
+
+/// Compiler-owned semantics and emission data for one selected trait dispatch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IrTraitDispatch {
+    /// Canonical source declaration name selected by the typechecker, before backend path rewriting.
+    pub trait_source_name: String,
+    /// Canonical source module that owns the selected trait, when semantic resolution crossed an import boundary.
+    pub trait_module_path: Option<Vec<String>>,
+    /// Compiler-resolved generic header attached to the exact selected implementation.
+    pub implementation_type_params: Vec<super::decl::IrTypeParam>,
+    /// Rust-visible path used only for emission.
+    pub trait_path: String,
+    /// Checked trait instantiation used by both propagation and emission.
+    pub type_args: Vec<IrType>,
+    /// Whether the selected trait method takes a mutable receiver.
+    pub receiver_is_mutable: bool,
 }
 
 /// Known method kinds recognized by the Incan compiler.
@@ -756,6 +807,8 @@ pub enum StringMethodKind {
     Lower,
     /// `s.strip()` → `s.trim().to_string()`
     Strip,
+    /// `s.len()` → Unicode scalar count
+    Len,
     /// `s.split(sep)` → `s.split(sep).map(...).collect()`
     Split,
     /// `s.replace(old, new)` → `s.replace(old, new)`
@@ -894,6 +947,7 @@ impl MethodKind {
                     S::Upper => StringMethodKind::Upper,
                     S::Lower => StringMethodKind::Lower,
                     S::Strip => StringMethodKind::Strip,
+                    S::Len => StringMethodKind::Len,
                     S::Split => StringMethodKind::Split,
                     S::Replace => StringMethodKind::Replace,
                     S::Join => StringMethodKind::Join,

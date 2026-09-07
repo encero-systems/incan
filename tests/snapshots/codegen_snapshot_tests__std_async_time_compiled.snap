@@ -171,7 +171,7 @@ impl Duration {
     /// Create a duration from floating-point seconds, clamping negatives to zero.
     pub fn from_secs_f64(secs: f64) -> Duration {
         let _ = "Create a duration from floating-point seconds, clamping negatives to zero.";
-        if secs <= (0) as f64 {
+        if secs <= ((0) as f64) {
             return Duration { secs: 0, nanos: 0 };
         }
         let whole = (secs) as i64;

@@ -10,7 +10,7 @@
     - RFC 023 (compilable stdlib and rust.module binding)
     - RFC 025 (multi-instantiation trait dispatch)
 - **Issue:** https://github.com/encero-systems/incan/issues/148
-- **RFC PR:** —
+- **RFC PR:** [#522](https://github.com/encero-systems/incan/pull/522)
 - **Written against:** v0.1
 - **Shipped in:** v0.3
 

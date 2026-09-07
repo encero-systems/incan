@@ -54,10 +54,11 @@ use proc_macro2::{Literal, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use std::sync::LazyLock;
 
+use super::super::conversions::exact_float_value_validation;
 use super::super::decl::IrInteropAdapterKind;
 use super::super::expr::{
     CollectionMethodKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry, IrMethodDispatch,
-    Literal as IrLiteral, MethodKind, NumericResizePolicy, TypedExpr, UnaryOp, VarRefKind,
+    IrStaticReferenceKind, Literal as IrLiteral, MethodKind, NumericResizePolicy, TypedExpr, UnaryOp, VarRefKind,
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
@@ -68,7 +69,10 @@ use incan_core::lang::types::collections::{self, CollectionTypeId};
 #[derive(Debug, Clone)]
 pub(super) enum StorageRoot {
     /// A module-level static storage slot.
-    Static(String),
+    Static {
+        name: String,
+        reference_kind: IrStaticReferenceKind,
+    },
     /// A local alias that wraps static storage in the current emitted statement slice.
     Binding(String),
 }
@@ -98,10 +102,8 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
 pub(in crate::backend::ir::emit) fn method_dispatch_uses_mutable_receiver(dispatch: Option<&IrMethodDispatch>) -> bool {
     matches!(
         dispatch,
-        Some(IrMethodDispatch::Trait {
-            receiver_is_mutable: true,
-            ..
-        })
+        Some(IrMethodDispatch::Trait(dispatch) | IrMethodDispatch::SourceProjection(dispatch))
+            if dispatch.receiver_is_mutable
     )
 }
 
@@ -193,7 +195,7 @@ impl<'a> IrEmitter<'a> {
                 "generic decorated function cache requires a function pointer type".to_string(),
             ));
         }
-        let cache_ident = Self::rust_static_ident(&format!("__incan_generic_decorated_{cache_name}"));
+        let cache_ident = Self::rust_generated_static_ident(&format!("__incan_generic_decorated_{cache_name}"));
         let fn_ty = self.emit_type(&value.ty);
         let value_tokens = self.emit_expr(value)?;
         let type_key_parts = type_param_names
@@ -731,7 +733,8 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     self.emit_expr(inner)?
                 };
-                return Ok(quote! { #inner_tokens? });
+                let emitted = quote! { #inner_tokens? };
+                return Ok(exact_float_value_validation(&expr.ty).apply(emitted));
             }
             IrExprKind::MethodCall {
                 receiver,
@@ -752,6 +755,7 @@ impl<'a> IrEmitter<'a> {
                     *arg_policy,
                     site,
                 )?;
+                let emitted = exact_float_value_validation(&expr.ty).apply(emitted);
                 let emitted = plan_value_use(expr, site).apply(emitted);
                 if let Some(target_ty) = resolved_target_ty.as_ref() {
                     let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
@@ -797,6 +801,7 @@ impl<'a> IrEmitter<'a> {
                     canonical_path.as_deref(),
                     target_site,
                 )?;
+                let emitted = exact_float_value_validation(&expr.ty).apply(emitted);
                 let emitted = plan_value_use(expr, site).apply(emitted);
                 if let Some(target_ty) = resolved_target_ty.as_ref() {
                     let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
@@ -916,9 +921,13 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Recover the source static or local binding at the root of an assignable expression.
     pub(super) fn expr_storage_root(expr: &TypedExpr) -> Option<StorageRoot> {
         match &expr.kind {
-            IrExprKind::StaticRead { name } => Some(StorageRoot::Static(name.clone())),
+            IrExprKind::StaticRead { name, reference_kind } => Some(StorageRoot::Static {
+                name: name.clone(),
+                reference_kind: *reference_kind,
+            }),
             IrExprKind::Var {
                 name,
                 ref_kind: VarRefKind::StaticBinding,
@@ -992,13 +1001,14 @@ impl<'a> IrEmitter<'a> {
     pub(super) fn emit_storage_with_ref(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
-            Some(StorageRoot::Static(name)) => {
-                let ident = Self::rust_static_ident(&name);
-                let init_call = if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(&name)
+            Some(StorageRoot::Static { name, reference_kind }) => {
+                let ident = self.rust_static_reference_ident(&name, reference_kind)?;
+                let init_call = if *self.in_static_initializer.borrow()
+                    && !self.static_reference_needs_imported_init_call(&name, reference_kind)
                 {
                     quote! {}
                 } else {
-                    self.emit_static_init_call_for_static(&name)
+                    self.emit_static_init_call_for_reference(&name, reference_kind)
                 };
                 Ok(quote! {{
                     #init_call
@@ -1017,13 +1027,14 @@ impl<'a> IrEmitter<'a> {
     pub(super) fn emit_storage_with_mut(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
-            Some(StorageRoot::Static(name)) => {
-                let ident = Self::rust_static_ident(&name);
-                let init_call = if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(&name)
+            Some(StorageRoot::Static { name, reference_kind }) => {
+                let ident = self.rust_static_reference_ident(&name, reference_kind)?;
+                let init_call = if *self.in_static_initializer.borrow()
+                    && !self.static_reference_needs_imported_init_call(&name, reference_kind)
                 {
                     quote! {}
                 } else {
-                    self.emit_static_init_call_for_static(&name)
+                    self.emit_static_init_call_for_reference(&name, reference_kind)
                 };
                 Ok(quote! {{
                     #init_call
@@ -1062,6 +1073,13 @@ impl<'a> IrEmitter<'a> {
                 }
                 _ => Ok(quote! { None }),
             },
+            IrExprKind::EmbeddedFragment { submode, .. } => Err(EmitError::Unsupported(format!(
+                "cannot emit Rust code for a descriptor-gated embedded fragment ({submode:?} submode): no owning \
+                 DSL lowering hook is registered for it yet. Its expression holes already typecheck and lower \
+                 normally (RFC 081, #1023) -- only Rust codegen for the DSL-owned structural content is not wired \
+                 up, and doing so is downstream tooling's responsibility, not core Incan evaluation (see RFC 081 \
+                 §Semantics)."
+            ))),
             IrExprKind::Bool(b) => Ok(if *b {
                 quote! { true }
             } else {
@@ -1122,12 +1140,14 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { incan_stdlib::reflection::TypeToken::<#token_ty>::new() })
             }
 
-            IrExprKind::StaticRead { name } => {
-                let n = Self::rust_static_ident(name);
-                if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(name) {
+            IrExprKind::StaticRead { name, reference_kind } => {
+                let n = self.rust_static_reference_ident(name, *reference_kind)?;
+                if *self.in_static_initializer.borrow()
+                    && !self.static_reference_needs_imported_init_call(name, *reference_kind)
+                {
                     Ok(quote! { #n.get() })
                 } else {
-                    let init_call = self.emit_static_init_call_for_static(name);
+                    let init_call = self.emit_static_init_call_for_reference(name, *reference_kind);
                     Ok(quote! {{
                         #init_call
                         #n.get()
@@ -1135,12 +1155,14 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
-            IrExprKind::StaticBinding { name } => {
-                let n = Self::rust_static_ident(name);
-                if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(name) {
+            IrExprKind::StaticBinding { name, reference_kind } => {
+                let n = self.rust_static_reference_ident(name, *reference_kind)?;
+                if *self.in_static_initializer.borrow()
+                    && !self.static_reference_needs_imported_init_call(name, *reference_kind)
+                {
                     Ok(quote! { incan_stdlib::storage::StaticBinding::from_static(&#n) })
                 } else {
-                    let init_call = self.emit_static_init_call_for_static(name);
+                    let init_call = self.emit_static_init_call_for_reference(name, *reference_kind);
                     Ok(quote! {{
                         #init_call
                         incan_stdlib::storage::StaticBinding::from_static(&#n)
@@ -1163,7 +1185,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::FunctionItem { name, type_args } => {
-                let ident = Self::rust_ident(name);
+                let ident = self.rust_function_ident(name);
                 if type_args.is_empty() {
                     Ok(quote! { #ident })
                 } else {
@@ -1201,13 +1223,16 @@ impl<'a> IrEmitter<'a> {
                 args,
                 callable_signature,
                 canonical_path,
-            } => self.emit_call_expr(
-                func,
-                type_args,
-                args,
-                callable_signature.as_ref(),
-                canonical_path.as_deref(),
-            ),
+            } => {
+                let emitted = self.emit_call_expr(
+                    func,
+                    type_args,
+                    args,
+                    callable_signature.as_ref(),
+                    canonical_path.as_deref(),
+                )?;
+                Ok(exact_float_value_validation(&expr.ty).apply(emitted))
+            }
             IrExprKind::BuiltinCall { func, args } => self.emit_builtin_call(func, args),
             IrExprKind::MethodCall {
                 receiver,
@@ -1217,19 +1242,31 @@ impl<'a> IrEmitter<'a> {
                 args,
                 callable_signature,
                 arg_policy,
-            } => self.emit_method_call_expr(
-                receiver,
-                method,
-                dispatch.as_ref(),
-                type_args,
-                args,
-                callable_signature.as_ref(),
-                *arg_policy,
-            ),
-            IrExprKind::KnownMethodCall { receiver, kind, args } => self.emit_known_method_call(receiver, kind, args),
+            } => {
+                let emitted = self.emit_method_call_expr(
+                    receiver,
+                    method,
+                    dispatch.as_ref(),
+                    type_args,
+                    args,
+                    callable_signature.as_ref(),
+                    *arg_policy,
+                )?;
+                Ok(exact_float_value_validation(&expr.ty).apply(emitted))
+            }
+            IrExprKind::KnownMethodCall { receiver, kind, args } => {
+                let emitted = self.emit_known_method_call(receiver, kind, args)?;
+                Ok(exact_float_value_validation(&expr.ty).apply(emitted))
+            }
 
-            IrExprKind::Field { object, field } => self.emit_field_expr(object, field),
-            IrExprKind::Index { object, index } => self.emit_index_expr(object, index),
+            IrExprKind::Field { object, field } => {
+                let emitted = self.emit_field_expr(object, field)?;
+                Ok(exact_float_value_validation(&expr.ty).apply(emitted))
+            }
+            IrExprKind::Index { object, index } => {
+                let emitted = self.emit_index_expr(object, index)?;
+                Ok(exact_float_value_validation(&expr.ty).apply(emitted))
+            }
             IrExprKind::Slice {
                 target,
                 start,
@@ -3933,11 +3970,20 @@ mod tests {
                     IrType::Struct("Stream".to_string()),
                 )),
                 method: "take".to_string(),
-                dispatch: Some(IrMethodDispatch::Trait {
-                    trait_path: "crate::__incan_std::derives::collection::FallibleIterator".to_string(),
-                    type_args: vec![IrType::Int, IrType::String],
-                    receiver_is_mutable: false,
-                }),
+                dispatch: Some(IrMethodDispatch::Trait(Box::new(
+                    crate::backend::ir::expr::IrTraitDispatch {
+                        trait_source_name: "FallibleIterator".to_string(),
+                        trait_module_path: Some(vec![
+                            "std".to_string(),
+                            "derives".to_string(),
+                            "collection".to_string(),
+                        ]),
+                        implementation_type_params: Vec::new(),
+                        trait_path: "crate::__incan_std::derives::collection::FallibleIterator".to_string(),
+                        type_args: vec![IrType::Int, IrType::String],
+                        receiver_is_mutable: false,
+                    },
+                ))),
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -4229,6 +4275,51 @@ mod tests {
             rendered, "child . as_ref ()",
             "a match scrutinee must not clone a borrowed as_ref() result it can bind directly, got `{rendered}`"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn exact_float_rust_call_results_are_guarded_without_changing_ordinary_float() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let rust_call = |name: &str, return_ty: IrType| {
+            let func = TypedExpr::new(
+                IrExprKind::Var {
+                    name: name.to_string(),
+                    access: VarAccess::Copy,
+                    ref_kind: VarRefKind::ExternalRustName,
+                },
+                IrType::Function {
+                    params: Vec::new(),
+                    ret: Box::new(return_ty.clone()),
+                },
+            );
+            TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(func),
+                    type_args: Vec::new(),
+                    args: Vec::new(),
+                    callable_signature: None,
+                    canonical_path: None,
+                },
+                return_ty,
+            )
+        };
+
+        let exact = emitter
+            .emit_expr(&rust_call("read_exact", IrType::Numeric(NumericTypeId::F32)))
+            .map_err(|err| format!("expected exact Rust call emission, got {err:?}"))?
+            .to_string();
+        assert_eq!(
+            exact, "incan_stdlib :: num :: require_finite_f32 (read_exact ())",
+            "an exact Rust result must be validated at ingress"
+        );
+
+        let ordinary = emitter
+            .emit_expr(&rust_call("read_ieee", IrType::Float))
+            .map_err(|err| format!("expected ordinary Rust call emission, got {err:?}"))?
+            .to_string();
+        assert_eq!(ordinary, "read_ieee ()", "ordinary float must retain IEEE behavior");
         Ok(())
     }
 

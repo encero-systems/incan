@@ -4,6 +4,7 @@
 //! field/alias validation, mutability, and pattern matching.
 
 use crate::ast::Span;
+use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::derives::{self, DeriveId};
 
 use crate::diagnostics::CompileError;
@@ -17,6 +18,41 @@ pub fn unknown_symbol(name: &str, span: Span) -> CompileError {
 
 pub fn duplicate_definition(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Duplicate definition of '{}'", name), span)
+}
+
+/// Report a source binding that attempts to replace a protected builtin spelling.
+pub fn protected_builtin_binding(name: &str, builtin: BuiltinFnId, span: Span) -> CompileError {
+    let canonical = builtins::as_str(builtin);
+    CompileError::type_error(
+        format!(
+            "Cannot bind '{}': it is a protected builtin binding for '{}'",
+            name, canonical
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Choose a different name; '{}' and its registered aliases remain globally available",
+        canonical
+    ))
+}
+
+/// Report two active source bindings for one spelling in the same RFC 120 namespace.
+pub fn duplicate_binding(name: &str, first_span: Span, second_span: Span) -> CompileError {
+    CompileError::type_error(format!("Duplicate definition of '{}'", name), second_span)
+        .with_related_span(first_span, format!("First binding of '{name}'"))
+}
+
+/// Report two imports whose same local spelling cannot be proven to name one canonical declaration.
+pub fn ambiguous_import_binding(name: &str, first_span: Span, second_span: Span) -> CompileError {
+    CompileError::type_error(format!("Ambiguous import binding '{}'", name), second_span)
+        .with_related_span(first_span, format!("Conflicting import binding of '{name}'"))
+        .with_hint("Use an explicit import alias so each declaration has a distinct local spelling")
+}
+
+/// Reject replacing one of the language's immutable builtin-function spellings.
+pub fn immutable_builtin_redefinition(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Cannot redefine immutable built-in function '{name}'"), span)
+        .with_hint("Use a different name; `print` and `println` are reserved language functions")
 }
 
 /// Report a value enum declaration that attempts to use type parameters.
@@ -920,14 +956,20 @@ pub fn trait_conflict(trait_a: &str, trait_b: &str, method: &str, span: Span) ->
 }
 
 /// Report an identical generic trait adoption appearing more than once on one type.
-pub fn duplicate_trait_instantiation(trait_name: &str, type_args: &str, span: Span) -> CompileError {
+pub fn duplicate_trait_instantiation(
+    trait_name: &str,
+    type_args: &str,
+    first_span: Span,
+    duplicate_span: Span,
+) -> CompileError {
     CompileError::type_error(
         format!(
             "Trait '{}' is adopted more than once with type arguments [{}]",
             trait_name, type_args
         ),
-        span,
+        duplicate_span,
     )
+    .with_related_span(first_span, "First matching trait adoption")
     .with_hint("Remove the duplicate `with` entry or use a different trait type argument")
 }
 

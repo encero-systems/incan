@@ -687,6 +687,7 @@ fn public_statement_to_internal_with_spans(
         incan_vocab::IncanStatement::Assign { target, value } => Ok(ast::Statement::Assignment(ast::AssignmentStmt {
             binding: ast::BindingKind::Reassign,
             name: target.clone(),
+            name_span: spans.next(),
             ty: None,
             value: ast::Spanned::new(public_expr_to_internal_with_spans(value, spans)?, spans.next()),
         })),
@@ -698,6 +699,7 @@ fn public_statement_to_internal_with_spans(
                     ast::BindingKind::Let
                 },
                 name: name.clone(),
+                name_span: spans.next(),
                 ty: None,
                 value: ast::Spanned::new(public_expr_to_internal_with_spans(value, spans)?, spans.next()),
             }))
@@ -981,7 +983,7 @@ fn internal_race_for_to_public(race: &ast::RaceForExpr) -> Result<incan_vocab::I
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(incan_vocab::IncanRaceForExpr {
-        binding: race.binding.clone(),
+        binding: race.binding.node.clone(),
         arms,
     })
 }
@@ -1163,7 +1165,7 @@ fn public_race_for_to_internal(
             descriptor_key: "race_for".to_string(),
         },
         payload: ast::SurfaceExprPayload::RaceFor(Box::new(ast::RaceForExpr {
-            binding: race.binding.clone(),
+            binding: ast::Spanned::new(race.binding.clone(), spans.next()),
             arms,
         })),
     })))
@@ -1856,7 +1858,7 @@ mod tests {
                 descriptor_key: "race_for".to_string(),
             },
             payload: ast::SurfaceExprPayload::RaceFor(Box::new(ast::RaceForExpr {
-                binding: "value".to_string(),
+                binding: ast::Spanned::new("value".to_string(), ast::Span::default()),
                 arms: vec![
                     ast::RaceForArm {
                         awaitable: ast::Spanned::new(ast::Expr::Ident("fast".to_string()), ast::Span::default()),

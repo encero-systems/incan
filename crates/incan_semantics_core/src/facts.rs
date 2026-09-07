@@ -82,6 +82,17 @@ impl CompilerNodeId {
         )
     }
 
+    /// Build one declaration-binding identity for a source declaration that introduces multiple bindings.
+    ///
+    /// The ordinal is the binding's checked source order within the declaration. It is not a source spelling and
+    /// carries no resolution meaning; canonical symbol identity remains the authority for what the binding names.
+    pub fn declaration_binding_span(module_identity: &str, start: usize, end: usize, binding_ordinal: usize) -> Self {
+        Self::new(
+            CompilerNodeKind::Declaration,
+            format!("{module_identity}#decl.{start}..{end}.binding.{binding_ordinal}"),
+        )
+    }
+
     /// Build an expression identity from its module and source byte span.
     pub fn expression_span(module_identity: &str, start: usize, end: usize) -> Self {
         Self::new(
@@ -130,6 +141,7 @@ impl fmt::Display for CompilerNodeId {
 pub enum SemanticFactKind {
     Type,
     SymbolTarget,
+    SymbolIdentity,
     Registry,
     RuntimeRequirement,
     Diagnostic,
@@ -143,6 +155,7 @@ impl SemanticFactKind {
         match self {
             Self::Type => "type",
             Self::SymbolTarget => "symbol_target",
+            Self::SymbolIdentity => "symbol_identity",
             Self::Registry => "registry",
             Self::RuntimeRequirement => "runtime_requirement",
             Self::Diagnostic => "diagnostic",
@@ -162,8 +175,9 @@ pub enum SemanticFactValue {
     Text(String),
     Type(IncanType),
     SourceTarget(SemanticSourceTarget),
+    CanonicalIdentity(CanonicalSymbolId),
     RegistryEntry(SemanticRegistryEntry),
-    AuthorityDecision(AuthorityDecision),
+    AuthorityDecision(Box<AuthorityDecision>),
     Flag(bool),
 }
 
@@ -183,6 +197,11 @@ impl SemanticFactValue {
         Self::SourceTarget(value)
     }
 
+    /// Build a canonical symbol-identity fact value.
+    pub fn canonical_identity(value: CanonicalSymbolId) -> Self {
+        Self::CanonicalIdentity(value)
+    }
+
     /// Build one checked typed-registry entry fact.
     pub fn registry_entry(value: SemanticRegistryEntry) -> Self {
         Self::RegistryEntry(value)
@@ -190,7 +209,7 @@ impl SemanticFactValue {
 
     /// Build one RFC 104 authority-decision fact value.
     pub fn authority_decision(value: AuthorityDecision) -> Self {
-        Self::AuthorityDecision(value)
+        Self::AuthorityDecision(Box::new(value))
     }
 
     /// Render a deterministic maintainer-facing fact payload snapshot.
@@ -199,6 +218,7 @@ impl SemanticFactValue {
             Self::Text(value) => format!("{value:?}"),
             Self::Type(value) => value.to_string(),
             Self::SourceTarget(value) => value.to_string(),
+            Self::CanonicalIdentity(value) => value.render_compact(),
             Self::RegistryEntry(value) => value.to_string(),
             Self::AuthorityDecision(value) => value.to_string(),
             Self::Flag(value) => value.to_string(),
@@ -491,12 +511,19 @@ impl SemanticSourceTargetKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityMode {
-    /// Operations run normally and receipts may be disabled.
+    /// Operations run normally with authority reporting disabled.
     Permissive,
     /// Operations run normally and receipts are emitted.
     Observe,
     /// Operations require granted capabilities and receipts are emitted.
     Governed,
+}
+
+impl Default for AuthorityMode {
+    /// Observe authority-bearing operations unless a project-owned policy selects another mode.
+    fn default() -> Self {
+        Self::Observe
+    }
 }
 
 impl AuthorityMode {
@@ -556,14 +583,17 @@ pub enum AuthorityOutcome {
 ///
 /// RFC 104 makes the ceiling a distinct grant source from the per-invocation request, and requires the effective grant
 /// to be their **intersection, never their union**: an invocation can only ever receive less than its ceiling allows,
-/// regardless of what it asks for. Recording whether a ceiling applied is therefore part of the decision, because
-/// `Allowed` under a ceiling and `Allowed` with no ceiling are different facts about the run.
+/// regardless of what it asks for. The durable fact retains both the resulting grant set and the exact ceiling, because
+/// `Allowed` under a ceiling and `Allowed` with no constraint are different facts about the run.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AuthorityGrantContext {
     /// Scope dimensions the operation requested, as `(dimension, value)` in the capability's declaration order.
     pub requested_scope: Vec<(String, String)>,
-    /// Whether a host ceiling bounded this invocation.
-    pub ceiling_applied: bool,
+    /// The invocation's effective canonical capability grants after project policy and any host ceiling were
+    /// intersected.
+    pub effective_grants: Vec<CanonicalSymbolId>,
+    /// The host-supplied capability ceiling that constrained this invocation, when one applied.
+    pub ceiling: Option<Vec<CanonicalSymbolId>>,
 }
 
 /// Enough provenance to raise a source-owned governed denial diagnostic.
@@ -655,17 +685,47 @@ impl std::fmt::Display for AuthorityDecision {
             AuthorityOutcome::Allowed => "allowed".to_string(),
             AuthorityOutcome::Denied(reason) => format!("denied:{}", reason.as_str()),
         };
-        let ceiling = if self.grant.ceiling_applied { " ceiling" } else { "" };
+        let grants = render_authority_grants(&self.grant.effective_grants);
+        let ceiling = self
+            .grant
+            .ceiling
+            .as_ref()
+            .map_or_else(|| "none".to_string(), |values| render_authority_grants(values));
         write!(
             f,
-            "{} {} {}{} <- {}",
+            "{} {} {} grants=[{}] ceiling=[{}] <- {}",
             self.capability.declaration_name,
             self.mode.as_str(),
             outcome,
+            grants,
             ceiling,
             self.provenance.operation.declaration_name
         )
     }
+}
+
+/// Render canonical grant identities for an inspectable maintainer-facing fact snapshot.
+fn render_authority_grants(grants: &[CanonicalSymbolId]) -> String {
+    grants.iter().map(render_authority_grant).collect::<Vec<_>>().join(",")
+}
+
+/// Render every identity component that distinguishes one canonical capability grant from another.
+fn render_authority_grant(grant: &CanonicalSymbolId) -> String {
+    let origin = match &grant.origin {
+        SymbolOrigin::Module(path) => format!("module:{}", path.join(".")),
+        SymbolOrigin::Package { library, module_path } => {
+            format!("package:{library}:{}", module_path.join("."))
+        }
+        SymbolOrigin::RustCrate(path) => format!("rust:{}", path.join(".")),
+        SymbolOrigin::Builtin => "builtin".to_string(),
+    };
+    format!(
+        "{origin}:{}:{}@{}..{}",
+        grant.kind.as_str(),
+        grant.declaration_name,
+        grant.declaration_span.start,
+        grant.declaration_span.end
+    )
 }
 
 /// Render a module path into the identity string used by HIR, Body IR, and declaration identities.
@@ -783,6 +843,40 @@ impl CanonicalSymbolId {
             _ => None,
         }
     }
+
+    /// Render a deterministic, compact single-line spelling for maintainer-facing snapshots.
+    ///
+    /// This is a projection of the identity for humans; nothing may compare or dispatch on it. The shape is
+    /// `<kind>:<origin>::<name>[#<scope>]@<start>..<end>`, with member- and path-namespace identities prefixed by
+    /// their namespace so a member and a lexical binding sharing a spelling render visibly differently.
+    pub fn render_compact(&self) -> String {
+        let origin = match &self.origin {
+            SymbolOrigin::Module(path) => module_identity_for_path(path),
+            SymbolOrigin::Package { library, module_path } => {
+                let mut parts = vec![format!("pub::{library}")];
+                parts.extend(module_path.iter().cloned());
+                parts.join("::")
+            }
+            SymbolOrigin::RustCrate(path) => format!("rust::{}", path.join("::")),
+            SymbolOrigin::Builtin => "builtin".to_string(),
+        };
+        let namespace = match self.namespace {
+            SymbolNamespace::OrdinaryLexical => "",
+            SymbolNamespace::Member => "member/",
+            SymbolNamespace::ModulePath => "path/",
+        };
+        let scope = self
+            .scope_discriminant
+            .map(|ScopeDiscriminant(scope)| format!("#{scope}"))
+            .unwrap_or_default();
+        format!(
+            "{namespace}{}:{origin}::{}{scope}@{}..{}",
+            self.kind.as_str(),
+            self.declaration_name,
+            self.declaration_span.start,
+            self.declaration_span.end
+        )
+    }
 }
 
 impl fmt::Display for SemanticSourceTargetKind {
@@ -872,6 +966,15 @@ impl SemanticFactStore {
             })
     }
 
+    /// Return compiler-owned canonical symbol identities for one source node.
+    pub fn symbol_identities_for(&self, subject: &CompilerNodeId) -> impl Iterator<Item = &CanonicalSymbolId> {
+        self.facts_for_kind(subject, SemanticFactKind::SymbolIdentity)
+            .filter_map(|fact| match &fact.value {
+                SemanticFactValue::CanonicalIdentity(identity) => Some(identity),
+                _ => None,
+            })
+    }
+
     /// Return all subjects that have at least one fact.
     pub fn subjects(&self) -> impl Iterator<Item = &CompilerNodeId> {
         self.facts.keys()
@@ -927,6 +1030,18 @@ mod tests {
         (capability, provenance)
     }
 
+    /// Build a distinct canonical capability for ceiling and identity-separation tests.
+    fn fs_read_capability() -> super::CanonicalSymbolId {
+        use super::{CanonicalSymbolId, SemanticSourceTargetKind};
+
+        CanonicalSymbolId::module_declaration(
+            vec!["host".to_string(), "fs".to_string()],
+            "read",
+            SemanticSourceTargetKind::Capability,
+            crate::HirSourceSpan::new(30, 40),
+        )
+    }
+
     /// An allowed decision must be actionable without a consumer re-reading source or emitted Rust.
     #[test]
     fn an_allowed_authority_decision_carries_its_mode_and_grant_context() {
@@ -934,11 +1049,12 @@ mod tests {
 
         let (capability, provenance) = authority_fixture();
         let decision = AuthorityDecision::allowed(
-            capability,
+            capability.clone(),
             AuthorityMode::Governed,
             AuthorityGrantContext {
                 requested_scope: vec![("host".to_string(), "api.example.com".to_string())],
-                ceiling_applied: true,
+                effective_grants: vec![capability.clone()],
+                ceiling: Some(vec![capability.clone()]),
             },
             provenance,
         );
@@ -946,10 +1062,8 @@ mod tests {
         assert!(decision.is_allowed());
         assert_eq!(decision.denial_reason(), None);
         assert_eq!(decision.mode, AuthorityMode::Governed);
-        assert!(
-            decision.grant.ceiling_applied,
-            "a ceiling bounds the effective grant by intersection, so whether one applied is part of the decision",
-        );
+        assert_eq!(decision.grant.effective_grants, vec![capability.clone()]);
+        assert_eq!(decision.grant.ceiling, Some(vec![capability]));
         assert_eq!(decision.provenance.suggested_grant, "host.http.request");
     }
 
@@ -959,13 +1073,15 @@ mod tests {
         use super::{AuthorityDecision, AuthorityDenialReason, AuthorityGrantContext, AuthorityMode};
 
         let (capability, provenance) = authority_fixture();
+        let ceiling = fs_read_capability();
         let decision = AuthorityDecision::denied(
             capability,
             AuthorityMode::Governed,
             AuthorityDenialReason::OutsideCeiling,
             AuthorityGrantContext {
                 requested_scope: Vec::new(),
-                ceiling_applied: true,
+                effective_grants: Vec::new(),
+                ceiling: Some(vec![ceiling]),
             },
             provenance,
         );
@@ -1004,7 +1120,8 @@ mod tests {
             AuthorityDenialReason::NotGranted,
             AuthorityGrantContext {
                 requested_scope: Vec::new(),
-                ceiling_applied: false,
+                effective_grants: Vec::new(),
+                ceiling: None,
             },
             provenance,
         );
@@ -1090,6 +1207,10 @@ mod tests {
         assert_eq!(
             CompilerNodeId::expression_span("pkg::module", 7, 11).to_string(),
             "expr:pkg::module#7..11"
+        );
+        assert_eq!(
+            CompilerNodeId::declaration_binding_span("pkg::module", 3, 17, 1).to_string(),
+            "decl:pkg::module#decl.3..17.binding.1"
         );
         assert_eq!(
             CompilerNodeId::statement_span("pkg::module", 11, 19).to_string(),
@@ -1206,6 +1327,12 @@ mod tests {
     fn semantic_fact_store_extracts_typed_payloads() {
         let expr = CompilerNodeId::expression_span("pkg::main", 3, 8);
         let target = SemanticSourceTarget::from_kind_str(vec!["pkg".to_string()], "build", "function");
+        let identity = CanonicalSymbolId::module_declaration(
+            vec!["pkg".to_string()],
+            "build",
+            SemanticSourceTargetKind::Function,
+            crate::HirSourceSpan::new(10, 25),
+        );
         let mut store = SemanticFactStore::new();
 
         store.insert(SemanticFact::new(
@@ -1223,12 +1350,20 @@ mod tests {
             SemanticFactKind::SymbolTarget,
             SemanticFactValue::source_target(target.clone()),
         ));
+        store.insert(SemanticFact::new(
+            expr.clone(),
+            SemanticFactKind::SymbolIdentity,
+            SemanticFactValue::canonical_identity(identity.clone()),
+        ));
 
         let type_facts = store.type_facts_for(&expr).cloned().collect::<Vec<_>>();
         assert_eq!(type_facts, vec![IncanType::Primitive(crate::IncanPrimitiveType::Int)]);
 
         let source_targets = store.source_targets_for(&expr).cloned().collect::<Vec<_>>();
         assert_eq!(source_targets, vec![target]);
+
+        let identities = store.symbol_identities_for(&expr).cloned().collect::<Vec<_>>();
+        assert_eq!(identities, vec![identity]);
     }
 
     #[test]

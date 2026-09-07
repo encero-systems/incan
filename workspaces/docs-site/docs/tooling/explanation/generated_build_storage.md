@@ -33,7 +33,7 @@ If a build process exits before releasing its lease, the next acquisition of tha
 
 ## Historical repository CI ownership
 
-Before Oven Alpha, repository CI supplied `INCAN_GENERATED_CARGO_TARGET_DIR`, transferred Nextest archives, and split the suite into Cargo-backed shards. The measurements below explain why that topology was selected at the time; they are not the current #1005 CI architecture. Pull-request CI now runs focused Oven regressions plus Cargo-guarded `build`, `run`, and `test` smoke checks against the release Loafs on stable Linux, stable macOS, and Rust 1.93. The separate **Oven Release Evidence** workflow runs the complete prepared suite through the Cargo-guarded Oven runner on those three lanes for release branches or an explicit maintainer dispatch. This keeps the expensive cold publication proof out of every commit without returning repository execution to Cargo or Nextest.
+Before Oven Alpha, repository CI supplied `INCAN_GENERATED_CARGO_TARGET_DIR`, transferred Nextest archives, and split the suite into Cargo-backed shards. The measurements below explain why that topology was selected at the time; they are not the current #1005 CI architecture. Pull-request CI now runs focused Oven regressions plus Cargo-guarded `build`, `run`, and `test` smoke checks with Rust 1.98.0 on Linux and macOS. The separate **Oven Release Evidence** workflow runs the complete prepared suite through the Cargo-guarded Oven runner on those two platform lanes for release branches or an explicit maintainer dispatch. This keeps the expensive cold publication proof out of every commit without returning repository execution to Cargo or Nextest.
 
 ## Reproducing the audit
 

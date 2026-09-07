@@ -1,0 +1,21 @@
+from pub::styleforge import styleforge_name
+
+def card_theme() -> None:
+    """Demonstrate the `Style` submode: a selector list, a custom property, and a `var()` reference."""
+    style:
+        .card:hover, #title {
+            --accent-color: #1166ff;
+            color: var(--accent-color);
+            padding: 16px;
+        }
+
+def gutter() -> None:
+    """Demonstrate the `SelectorDeclarationValue` submode: a bare dimension outside a full style block."""
+    spacing:
+        2rem
+
+def main() -> None:
+    let name = styleforge_name()
+    print(name)
+    card_theme()
+    gutter()

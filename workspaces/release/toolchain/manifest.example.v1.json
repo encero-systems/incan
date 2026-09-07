@@ -6,8 +6,8 @@
   "generated_at": "2026-06-06T00:00:00Z",
   "manifest_url": "https://github.com/encero-systems/incan/releases/download/v0.4.0/manifest.json",
   "rust_toolchain": {
-    "channel": "1.92.0",
-    "min_rust": "1.92",
+    "channel": "1.98.0",
+    "min_rust": "1.98",
     "targets": ["wasm32-wasip1"],
     "policy": "The toolchain installer provisions this exact Rust release into an Incan-owned rustup home, leaving your own default toolchain untouched, and ensures the wasm32-wasip1 target for packages that ship vocab companions."
   },
