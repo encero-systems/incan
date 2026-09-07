@@ -766,8 +766,12 @@ pub struct NativeTestProgressReporter {
     /// unattributable. `println!` holds the stdout lock for one invocation, so lines cannot tear; only the question
     /// of which root produced one is open, and a label answers it without coordinating the workers.
     label: Option<String>,
-    /// Cases libtest has started and not yet reported a terminal event for.
-    outstanding: BTreeSet<String>,
+    /// Cases libtest has started and not yet reported a terminal event for, and when each of them started.
+    ///
+    /// The start times are what let a slow or stalled case be reported with a duration while it is still running.
+    /// libtest's own events carry an elapsed time only once a case is over, which is exactly too late to be useful
+    /// for the case that never gets there.
+    outstanding: BTreeMap<String, Instant>,
     /// Terminal events seen so far, used only to render a running count against the suite total.
     completed: usize,
     /// Total the suite announced up front, absent until its `started` event arrives.
@@ -782,7 +786,7 @@ impl NativeTestProgressReporter {
     pub fn new(label: Option<&str>) -> Self {
         Self {
             label: label.map(str::to_string),
-            outstanding: BTreeSet::new(),
+            outstanding: BTreeMap::new(),
             completed: 0,
             total: None,
         }
@@ -845,13 +849,44 @@ impl NativeTestProgressReporter {
             }
             ("test", "started") => {
                 if let Some(name) = event.get("name").and_then(serde_json::Value::as_str) {
-                    self.outstanding.insert(name.to_string());
+                    self.outstanding.insert(name.to_string(), Instant::now());
                 }
             }
+            // libtest emits this once, at its sixty-second threshold, for a case that is *still running*. It is a
+            // warning, not a result: the case goes on to report `ok` or `failed` afterwards. Treating it as terminal
+            // would print a passing case as TIMEOUT, count it twice against the suite total, and — worst — drop the
+            // one case a hung root most needs named from the unfinished list this reporter prints at the end.
+            //
+            // Only libtest's concurrent runner watches for this, so a root the scheduler gave a single thread emits
+            // no such warning however long its cases take. Verified against a real 63-second case: it appears under
+            // `--test-threads 4` and not under `--test-threads 1`. Naming a stalled *root* therefore cannot be built
+            // on this event; that needs a supervisor above the per-root reporter.
+            ("test", "timeout") => return self.render_slow_notice(&event),
             ("test", _) if !outcome.is_empty() => return self.render_terminal_event(&event, outcome),
             _ => {}
         }
         Vec::new()
+    }
+
+    /// Render libtest's slow-case warning without retiring the case it names.
+    ///
+    /// The case stays outstanding and uncounted, because it has not finished. Its elapsed time is measured from when
+    /// this reporter saw the case start rather than taken from the event, which carries none.
+    fn render_slow_notice(&mut self, event: &serde_json::Value) -> Vec<String> {
+        let Some(name) = event.get("name").and_then(serde_json::Value::as_str) else {
+            return Vec::new();
+        };
+        let running_for = self
+            .outstanding
+            .get(name)
+            .map(|started| format!("still running after {:.0}s", started.elapsed().as_secs_f64()))
+            .unwrap_or_else(|| "still running".to_string());
+        let root = self.label.as_deref().unwrap_or_default();
+        let separator = if root.is_empty() { "" } else { " " };
+        vec![format!(
+            "{:>7} {:<11} {:>5}  {root}{separator}{name} ({running_for})",
+            "SLOW", "", ""
+        )]
     }
 
     /// Render one case's terminal event, and drop it from the outstanding set.
@@ -894,8 +929,8 @@ impl NativeTestProgressReporter {
             "{} case(s) started and never reported a result:",
             self.outstanding.len()
         ));
-        for name in &self.outstanding {
-            self.emit(&format!("  {name}"));
+        for (name, started) in &self.outstanding {
+            self.emit(&format!("  {name} (ran for {:.0}s)", started.elapsed().as_secs_f64()));
         }
     }
 }
@@ -909,7 +944,6 @@ fn libtest_outcome_label(outcome: &str) -> &str {
         "ok" => "PASS",
         "failed" => "FAIL",
         "ignored" => "SKIP",
-        "timeout" => "TIMEOUT",
         other => other,
     }
 }
@@ -1255,6 +1289,60 @@ mod tests {
             !rendered[0].contains("0.000s"),
             "libtest reported no time for this case, so none may be shown: {}",
             rendered[0]
+        );
+    }
+
+    #[test]
+    fn a_slow_case_is_reported_as_still_running_and_stays_outstanding() {
+        // Captured from a real libtest binary: at its sixty-second threshold libtest warns about a case that is
+        // still running, and that case goes on to report its own result afterwards.
+        const CASE_TIMEOUT: &str = r#"{ "type": "test", "event": "timeout", "name": "slow_but_fine" }"#;
+        const SLOW_CASE_OK: &str =
+            r#"{ "type": "test", "name": "slow_but_fine", "event": "ok", "exec_time": 63.000179081 }"#;
+
+        let mut reporter = NativeTestProgressReporter::new(None);
+        reporter.render(SUITE_STARTED);
+        reporter.render(r#"{ "type": "test", "event": "started", "name": "slow_but_fine" }"#);
+
+        let notice = reporter.render(CASE_TIMEOUT);
+        assert_eq!(notice.len(), 1, "the warning is worth one line: {notice:?}");
+        assert!(
+            notice[0].contains("SLOW") && notice[0].contains("still running"),
+            "a case that has not finished must not be reported as one that has: {}",
+            notice[0]
+        );
+        assert!(
+            reporter.outstanding.contains_key("slow_but_fine"),
+            "the warning says the case is still running, so it must stay outstanding"
+        );
+        assert_eq!(
+            reporter.completed, 0,
+            "a warning is not a result and must not count against the suite total"
+        );
+
+        let result = reporter.render(SLOW_CASE_OK);
+        assert_eq!(result.len(), 1);
+        assert!(
+            result[0].contains("PASS") && !result[0].contains("SLOW"),
+            "the case passed, so its result is a pass: {}",
+            result[0]
+        );
+        assert_eq!(reporter.completed, 1, "the case is counted once, when it finishes");
+        assert!(reporter.outstanding.is_empty());
+    }
+
+    #[test]
+    fn a_case_warned_about_and_never_finished_is_still_named_at_the_end() {
+        // This is the case a hung root most needs named. Retiring it on the warning would drop it from the list.
+        let mut reporter = NativeTestProgressReporter::new(None);
+        reporter.render(SUITE_STARTED);
+        reporter.render(r#"{ "type": "test", "event": "started", "name": "hangs" }"#);
+        reporter.render(r#"{ "type": "test", "event": "timeout", "name": "hangs" }"#);
+
+        assert_eq!(
+            reporter.outstanding.keys().collect::<Vec<_>>(),
+            vec!["hangs"],
+            "the one case that never reported a result must survive to the unfinished list"
         );
     }
 
