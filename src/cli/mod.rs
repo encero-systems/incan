@@ -327,7 +327,7 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
@@ -339,7 +339,7 @@ pub enum Command {
         /// Disable INCAN_OFFLINE for this invocation
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
@@ -445,7 +445,7 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
@@ -457,7 +457,7 @@ pub enum Command {
         /// Disable INCAN_OFFLINE for this invocation
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
@@ -634,7 +634,7 @@ pub enum Command {
         /// Run xfail tests as ordinary tests
         #[arg(long = "run-xfail")]
         run_xfail: bool,
-        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
@@ -646,7 +646,7 @@ pub enum Command {
         /// Disable INCAN_OFFLINE for this invocation
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
@@ -731,7 +731,7 @@ pub enum Command {
         yes: bool,
     },
 
-    /// Generate or update incan.lock for a project
+    /// Generate or update oven.lock for a project
     Lock {
         /// Entry file used to resolve inline dependencies
         #[arg(value_name = "FILE")]
@@ -1240,7 +1240,7 @@ pub enum OvenInteropCommand {
     },
     /// Atomically stage a baked interop plan's bundled runtime files without starting a platform build tool
     Stage {
-        /// Package root containing incan.toml, incan.lock, and the selected interop receipt
+        /// Package root containing incan.toml, oven.lock, and the selected interop receipt
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Exact locked target triple whose already baked plan will be staged

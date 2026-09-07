@@ -313,7 +313,7 @@ For a typical application:
 1. Create the scaffold with `incan new` or `incan init`.
 2. Fill in `[project]` metadata before sharing the repo.
 3. Keep `[project.scripts].main` pointed at the default entry point.
-4. Commit `incan.toml` and `incan.lock`.
+4. Commit `incan.toml` and `oven.lock`.
 5. Use `incan version --dry-run` before bumping releases.
 6. Put repeatable local and CI commands under `incan env`, then inspect them with `incan env show` or `--dry-run`.
 

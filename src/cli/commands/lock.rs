@@ -1,6 +1,6 @@
 //! Lock file generation and resolution for Incan projects.
 //!
-//! Handles creating and validating `incan.lock` files that pin dependency versions for reproducible builds.
+//! Handles creating and validating `oven.lock` files that pin dependency versions for reproducible builds.
 //! Used by both `incan lock` and the build pipeline.
 
 #[cfg(test)]
@@ -190,7 +190,7 @@ pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
     pub cargo_policy: &'a CargoPolicy,
     /// Cargo target directory shared with the real generated library build.
     pub target_dir: &'a Path,
-    /// Embedded Cargo.lock payload from `incan.lock`.
+    /// Embedded Cargo.lock payload from `oven.lock`.
     pub cargo_lock_payload: &'a str,
     /// Exact canonical root authorizing Cargo-owned projection for the generated dependency workspace.
     pub cargo_lock_projection_root: Option<&'a str>,
@@ -207,7 +207,7 @@ struct DependencyPreheatContext<'a> {
     cargo_policy_flags: &'a [String],
 }
 
-/// Generate or update incan.lock for a project.
+/// Generate or update oven.lock for a project.
 pub fn lock_project(
     entry_file: Option<&PathBuf>,
     package_features: &FeatureSelection,
@@ -1444,7 +1444,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         if lock.deps_fingerprint != fingerprint {
             if strict {
                 return Err(CliError::failure(format!(
-                    "incan.lock is out of date\n\n\
+                    "oven.lock is out of date\n\n\
                      \x20 expected deps-fingerprint: {fingerprint}\n\
                      \x20   actual deps-fingerprint: {actual}\n\n\
                      This usually means your dependency inputs changed since the lock was generated:\n\n\
@@ -1461,7 +1461,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
                 )));
             }
             eprintln!(
-                "warning: incan.lock is out of date; continuing without using it as Oven lock authority or \
+                "warning: oven.lock is out of date; continuing without using it as Oven lock authority or \
                  rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
@@ -1473,7 +1473,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         }
         return Ok(LockResolution {
             // Normal Oven execution must not materialize a generated Cargo.lock from the compatibility payload
-            // retained in incan.lock. The payload is inert for this route; the semantic fingerprint above is the
+            // retained in oven.lock. The payload is inert for this route; the semantic fingerprint above is the
             // authority that was just verified.
             cargo_lock_authority: CargoLockAuthority::None,
             cargo_package_name: project_name.to_string(),
@@ -1483,7 +1483,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     }
 
     if strict {
-        return Err(CliError::failure("incan.lock is missing; run `incan lock`".to_string()));
+        return Err(CliError::failure("oven.lock is missing; run `incan lock`".to_string()));
     }
 
     generate_oven_lockfile(
@@ -1597,8 +1597,8 @@ fn validate_oven_lock_policy_impl(
         return validate_oven_existing_lock(
             &workspace.root().join(LOCK_FILENAME),
             &fingerprint,
-            "workspace incan.lock is missing; run `incan lock` from any workspace member or the workspace root",
-            "workspace incan.lock",
+            "workspace oven.lock is missing; run `incan lock` from any workspace member or the workspace root",
+            "workspace oven.lock",
         );
     }
 
@@ -1628,8 +1628,8 @@ fn validate_oven_lock_policy_impl(
     validate_oven_existing_lock(
         &project_root.join(LOCK_FILENAME),
         &fingerprint,
-        "incan.lock is missing; run `incan lock`",
-        "incan.lock",
+        "oven.lock is missing; run `incan lock`",
+        "oven.lock",
     )
 }
 
@@ -1718,7 +1718,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         if lock.deps_fingerprint != fingerprint {
             if strict {
                 return Err(CliError::failure(format!(
-                    "workspace incan.lock is out of date\n\n\
+                    "workspace oven.lock is out of date\n\n\
                      \x20 expected deps-fingerprint: {fingerprint}\n\
                      \x20   actual deps-fingerprint: {}\n\n\
                      Run `incan lock` from any workspace member or the workspace root to refresh the canonical lock.",
@@ -1726,7 +1726,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                 )));
             }
             eprintln!(
-                "warning: workspace incan.lock is out of date; continuing without using it as Oven lock authority \
+                "warning: workspace oven.lock is out of date; continuing without using it as Oven lock authority \
                  or rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
@@ -1746,7 +1746,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
 
     if strict {
         return Err(CliError::failure(
-            "workspace incan.lock is missing; run `incan lock` from any workspace member or the workspace root",
+            "workspace oven.lock is missing; run `incan lock` from any workspace member or the workspace root",
         ));
     }
 
@@ -1777,7 +1777,7 @@ struct ProjectLockContext {
 
 /// Canonical lock publication retained by one explicit project bake.
 ///
-/// The dependency surface is the exact normal and test closure used to publish `incan.lock`. Keeping it behind this
+/// The dependency surface is the exact normal and test closure used to publish `oven.lock`. Keeping it behind this
 /// immutable projection prevents source-authority publication from rediscovering the same project graph.
 pub(crate) struct PublishedOvenProjectLock {
     dependency_surface: ResolvedDependencies,
@@ -2577,12 +2577,12 @@ fn materialize_dependency_preheat_workspace(
 
 /// Cargo projection text held in an Oven-native lock.
 ///
-/// `incan.lock` retains this structurally valid inert payload for compatibility with the existing lockfile format,
+/// `oven.lock` retains this structurally valid inert payload for compatibility with the existing lockfile format,
 /// but normal command execution neither materializes nor consumes it. The explicit `legacy_cargo` publisher owns
 /// the historical exact Cargo projection below.
 const INERT_CARGO_LOCK_PAYLOAD: &str = "version = 4\n";
 
-/// Generate an Oven-native `incan.lock` without constructing a generated Cargo project.
+/// Generate an Oven-native `oven.lock` without constructing a generated Cargo project.
 ///
 /// The semantic provider graph and dependency fingerprint are the normal-command lock authority. A project that
 /// needs an actual Cargo resolution is outside this path and must enter the named `legacy_cargo` publisher.
@@ -2622,7 +2622,7 @@ fn generate_oven_lockfile(
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
     lock.write_while_locked(&lock_path, publication_lock)
-        .map_err(|error| CliError::failure(format!("failed to write incan.lock: {error}")))?;
+        .map_err(|error| CliError::failure(format!("failed to write oven.lock: {error}")))?;
     Ok(lock)
 }
 
@@ -3009,7 +3009,7 @@ mod tests {
         )?;
 
         assert_eq!(lock.cargo_lock_payload, INERT_CARGO_LOCK_PAYLOAD);
-        assert!(temp_dir.path().join("incan.lock").is_file());
+        assert!(temp_dir.path().join("oven.lock").is_file());
         let state_dir = crate::lockfile::compiler_lock_state_dir(temp_dir.path());
         assert!(
             !state_dir.join("Cargo.toml").exists() && !state_dir.join("target").exists(),
@@ -3091,7 +3091,7 @@ regex = "1"
             "serde_json",
         ])));
         assert_eq!(dev_dependencies, BTreeSet::from(["regex"]));
-        let lock = IncanLock::load(&project_root.join("incan.lock"))?;
+        let lock = IncanLock::load(&project_root.join("oven.lock"))?;
         assert!(!lock.deps_fingerprint.is_empty());
         assert_eq!(lock.cargo_lock_payload, INERT_CARGO_LOCK_PAYLOAD);
         Ok(())
@@ -3130,7 +3130,7 @@ regex = "1"
 
         assert!(matches!(resolution.cargo_lock_authority, CargoLockAuthority::None));
         assert_eq!(
-            IncanLock::load(&project_root.join("incan.lock"))?.cargo_lock_payload,
+            IncanLock::load(&project_root.join("oven.lock"))?.cargo_lock_payload,
             INERT_CARGO_LOCK_PAYLOAD
         );
         let state_dir = crate::lockfile::compiler_lock_state_dir(project_root);

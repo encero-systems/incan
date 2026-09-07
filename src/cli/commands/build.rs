@@ -68,7 +68,9 @@ use crate::library_manifest::{
     ProviderImplementationFacet, ProviderModuleClaim, ProviderOperationMetadata,
     digest_cargo_path_source_tree_with_cache, digest_provider_artifact, digest_provider_source_inputs,
 };
-use crate::lockfile::{CargoFeatureSelection, IncanLock, provider_semantic_identities, semantic_lock_state};
+use crate::lockfile::{
+    CargoFeatureSelection, IncanLock, LOCK_FILENAME, provider_semantic_identities, semantic_lock_state,
+};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, MANIFEST_FILENAME, ProjectManifest};
 use crate::oven::interop::{
     OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, default_interop_execution_receipt_path, interop_execution_build_unit_inputs,
@@ -9530,7 +9532,7 @@ fn select_default_project_output(
 
 /// Validate strict lock promises before a completed-output fast path can return a stale-output diagnostic.
 ///
-/// `--locked` and `--frozen` are user-visible assertions about canonical `incan.lock`. They remain read-only and
+/// `--locked` and `--frozen` are user-visible assertions about canonical `oven.lock`. They remain read-only and
 /// Cargo-free here, but must retain their canonical diagnostic precedence even when a project has a previous completed
 /// Loaf.
 fn validate_completed_output_lock_policy(
@@ -9587,11 +9589,11 @@ fn warn_for_completed_output_lock_fingerprint_drift<'a>(
         .map_err(|error| CliError::failure(format!("failed to resolve Oven project workspace: {error}")))?;
     if workspace.is_some() {
         eprintln!(
-            "warning: workspace incan.lock is out of date; continuing without using it as Oven lock authority or rewriting it. Run `incan lock` to refresh it."
+            "warning: workspace oven.lock is out of date; continuing without using it as Oven lock authority or rewriting it. Run `incan lock` to refresh it."
         );
     } else {
         eprintln!(
-            "warning: incan.lock is out of date; continuing without using it as Oven lock authority or rewriting it. Run `incan lock` to refresh it."
+            "warning: oven.lock is out of date; continuing without using it as Oven lock authority or rewriting it. Run `incan lock` to refresh it."
         );
     }
     Ok(())
@@ -12472,8 +12474,8 @@ fn canonical_baked_project_lock_path(project_root: &Path) -> CliResult<PathBuf> 
     let workspace = crate::workspace::WorkspaceGraph::discover(project_root)
         .map_err(|error| CliError::failure(format!("failed to resolve Oven project workspace: {error}")))?;
     Ok(workspace
-        .map(|workspace| workspace.root().join("incan.lock"))
-        .unwrap_or_else(|| project_root.join("incan.lock")))
+        .map(|workspace| workspace.root().join(LOCK_FILENAME))
+        .unwrap_or_else(|| project_root.join(LOCK_FILENAME)))
 }
 
 /// Load the derived dependency fingerprint from the canonical project or workspace lock, when present.
@@ -12626,7 +12628,7 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
     let lockfile = canonical_baked_project_lock_path(project_root)?;
     if lockfile.is_file() {
         records.insert(
-            "incan.lock".to_string(),
+            LOCK_FILENAME.to_string(),
             digest_baked_project_lock_authority(&lockfile)?,
         );
         already_recorded.insert(lockfile);
@@ -14806,7 +14808,7 @@ pub fn run_inline_source(
 
 /// Reject controls that only have meaning for the retired Cargo execution backend.
 ///
-/// Lock strictness is deliberately not rejected: it validates compiler-owned `incan.lock` consistency before Oven
+/// Lock strictness is deliberately not rejected: it validates compiler-owned `oven.lock` consistency before Oven
 /// selection without launching Cargo. Offline is already satisfied because this normal path starts neither Cargo nor
 /// a networked dependency resolver.
 fn reject_normal_cargo_controls(cargo_policy: &CargoPolicy, target_dir: Option<&PathBuf>) -> CliResult<()> {
@@ -15747,11 +15749,11 @@ headers = ["interop/include/bridge.h"]
             CargoFeatureSelection::default(),
             "version = 4\n".to_string(),
         )
-        .write(&workspace.path().join("incan.lock"))?;
-        fs::write(member.join("incan.lock"), "obsolete-member-lock-one\n")?;
+        .write(&workspace.path().join("oven.lock"))?;
+        fs::write(member.join("oven.lock"), "obsolete-member-lock-one\n")?;
 
         let initial = digest_baked_project_source_authority(&member)?;
-        fs::write(member.join("incan.lock"), "obsolete-member-lock-two\n")?;
+        fs::write(member.join("oven.lock"), "obsolete-member-lock-two\n")?;
         assert_eq!(
             initial,
             digest_baked_project_source_authority(&member)?,
@@ -15763,7 +15765,7 @@ headers = ["interop/include/bridge.h"]
             CargoFeatureSelection::default(),
             "version = 4\n".to_string(),
         )
-        .write(&workspace.path().join("incan.lock"))?;
+        .write(&workspace.path().join("oven.lock"))?;
         assert_eq!(
             initial,
             digest_baked_project_source_authority(&member)?,
@@ -15775,7 +15777,7 @@ headers = ["interop/include/bridge.h"]
             CargoFeatureSelection::default(),
             "version = 4\n\n[[package]]\nname = \"changed\"\nversion = \"1.0.0\"\n".to_string(),
         )
-        .write(&workspace.path().join("incan.lock"))?;
+        .write(&workspace.path().join("oven.lock"))?;
         assert_ne!(
             initial,
             digest_baked_project_source_authority(&member)?,
@@ -15809,7 +15811,7 @@ headers = ["interop/include/bridge.h"]
             "[project]\nname = \"lock_migration_fixture\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
         let mut lock = IncanLock::new(
             "sha256:lock-migration".to_string(),
             CargoFeatureSelection::default(),
@@ -15839,7 +15841,7 @@ headers = ["interop/include/bridge.h"]
             "[project]\nname = \"sdk_cohort_fixture\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
         let mut lock = IncanLock::new_with_semantic(
             "sha256:sdk-cohort".to_string(),
             CargoFeatureSelection::default(),
@@ -17083,7 +17085,7 @@ headers = ["interop/include/bridge.h"]
             },
             String::new(),
         )
-        .write(&project.path().join("incan.lock"))?;
+        .write(&project.path().join("oven.lock"))?;
         let receipt = receipt_interop_execution(
             &locked[0],
             Some(OvenInteropCapabilitySelection {
@@ -18118,7 +18120,7 @@ headers = ["interop/include/bridge.h"]
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
-        incan_lock.write(&project_root.join("incan.lock"))?;
+        incan_lock.write(&project_root.join("oven.lock"))?;
 
         let entry_path = scripts_dir.join("check.incn");
         let output_dir = project_root.join("target").join("incan").join("check");
@@ -18904,7 +18906,7 @@ impl ChildId {
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
-        incan_lock.write(&project_root.join("incan.lock"))?;
+        incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
         let lib_path_str = lib_path
@@ -18982,7 +18984,7 @@ pub def answer() -> int:
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
-        incan_lock.write(&project_root.join("incan.lock"))?;
+        incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
         let lib_path_str = lib_path
@@ -19103,7 +19105,7 @@ pub def normalize(value: str) -> str:
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
-        incan_lock.write(&project_root.join("incan.lock"))?;
+        incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
         let lib_path_str = lib_path
