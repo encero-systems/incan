@@ -445,9 +445,24 @@ fn validate_export_identity_binding(
         }
     };
     if authoritative_path.is_empty() || !canonical_identity_matches_path(siblings, identity, authoritative_path) {
+        // Name the two records this compares. The path may legitimately end on a hop rather than the declaration, so
+        // a bare rejection leaves no way to tell a missing hop from a hop published under a different identity.
+        let carriers = siblings
+            .iter()
+            .filter(|sibling| sibling.canonical.as_ref() == Some(identity))
+            .map(|sibling| sibling.public_path.join("."))
+            .collect::<Vec<_>>();
         return Err(LibraryManifestError::Invalid(format!(
-            "identity graph entry `{}` canonical identity disagrees with its authoritative source/projection path",
-            entry.public_name
+            "identity graph entry `{}` canonical identity disagrees with its authoritative source/projection path: \
+             the path is `{}` while the identity names `{}`, and this package publishes that identity at {}",
+            entry.public_name,
+            authoritative_path.join("."),
+            identity.declaration_name,
+            if carriers.is_empty() {
+                "no other public path".to_string()
+            } else {
+                format!("`{}`", carriers.join("`, `"))
+            }
         )));
     }
 
@@ -964,6 +979,13 @@ fn canonical_identity_matches_path(
     identity: &CanonicalIdentityExport,
     path: &[String],
 ) -> bool {
+    // `pub from crate.public_api import PublicVault as ExportedVault` writes the package root explicitly, so the
+    // projection path it records carries a leading `crate` segment. A public path is rooted at the package name and
+    // never has one, so compare the module tail the two records actually share.
+    let path = match path.split_first() {
+        Some((root, rest)) if root == "crate" => rest,
+        _ => path,
+    };
     if path.last() == Some(&identity.declaration_name) {
         return true;
     }
