@@ -2910,6 +2910,27 @@ pub root = math.sqrt
     }
 
     #[test]
+    fn std_prelude_module_import_does_not_reimport_sdk_facade_root() {
+        let code = generate_with_sdk_provider_modules(
+            "import std.prelude\n\ndef main() -> None:\n  pass\n",
+            vec![vec!["prelude".to_string()]],
+        );
+        assert!(!compact_rust(&code).contains("usecrate::__incan_std;"), "{code}");
+    }
+
+    #[test]
+    fn aliased_std_prelude_module_import_retains_requested_binding() {
+        let code = generate_with_sdk_provider_modules(
+            "import std.prelude as foundation\n\ndef main() -> None:\n  pass\n",
+            vec![vec!["prelude".to_string()]],
+        );
+        assert!(
+            compact_rust(&code).contains("pubusecrate::__incan_stdasfoundation;"),
+            "{code}"
+        );
+    }
+
+    #[test]
     fn std_root_module_import_uses_sdk_facade() {
         for (import, binding) in [("math", "math"), ("math as arithmetic", "arithmetic")] {
             let source = format!(
