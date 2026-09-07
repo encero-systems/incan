@@ -665,16 +665,15 @@ impl Formatter {
             self.format_decorator(&dec.node);
         }
 
-        self.write_visibility(en.visibility);
-        self.writer.write("enum ");
-        self.writer.write(&en.name);
-        self.format_type_params(&en.type_params);
-        if let Some(value_type) = &en.value_type {
-            self.writer.write("(");
-            self.format_value_enum_type(value_type.node);
-            self.writer.write(")");
+        let checkpoint = self.writer.checkpoint();
+        self.write_enum_header(en, false);
+        self.writer.write(":");
+        if !en.traits.is_empty() && self.writer.line_length_exceeded() {
+            self.writer.restore(checkpoint);
+            self.write_enum_header(en, true);
+            self.writer.write(":");
         }
-        self.writer.writeln(":");
+        self.writer.newline();
         self.writer.indent();
 
         if let Some(docstring) = &en.docstring {
@@ -705,6 +704,31 @@ impl Formatter {
     }
 
     /// Format one enum variant with optional payload fields and raw value assignment.
+    /// Write an enum's header line: visibility, name, type parameters, value-enum carrier, and adopted traits.
+    ///
+    /// The adoption clause is part of the declaration's meaning, not decoration: `enum Level with Display` and
+    /// `enum Level` are different types. Omitting it here silently rewrote the first into the second, so this mirrors
+    /// `write_class_header` rather than inventing a second shape (#1401).
+    fn write_enum_header(&mut self, en: &EnumDecl, multiline_traits: bool) {
+        self.write_visibility(en.visibility);
+        self.writer.write("enum ");
+        self.writer.write(&en.name);
+        self.format_type_params(&en.type_params);
+        if let Some(value_type) = &en.value_type {
+            self.writer.write("(");
+            self.format_value_enum_type(value_type.node);
+            self.writer.write(")");
+        }
+        if !en.traits.is_empty() {
+            self.writer.write(" with ");
+            if multiline_traits {
+                self.format_trait_bounds_multiline(&en.traits);
+            } else {
+                self.format_trait_bounds_inline(&en.traits);
+            }
+        }
+    }
+
     fn format_enum_variant(&mut self, variant: &VariantDecl) {
         self.writer.write(&variant.name);
         if !variant.fields.is_empty() {

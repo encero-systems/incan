@@ -58,7 +58,52 @@ const SOURCE_SHAPED_BASELINE: usize = 56;
 /// Moved 25 -> 28 by `examples/intermediate/order_pipeline.incn`, covering exact numeric types, generators, and
 /// first-class functions. Deliberately model-free: a `model` cannot currently be verified end to end in a local
 /// build, so an example that must be proven locally is written without one.
-const COVERED_BASELINE: usize = 28;
+///
+/// Moved 28 -> 30 by `examples/intermediate/playlist.incn`, covering protocol hooks and computed properties. One
+/// story carries both: a type that answers `len`, `for`, and `in` like the builtin it stands in for, whose tracks
+/// derive their display label on read rather than storing it twice.
+///
+/// Moved 30 -> 32 by `examples/intermediate/route_walker.incn`, covering enum methods with trait adoption and
+/// pattern alternation. A delivery robot needs a heading that can reverse itself and a leg status whose "not
+/// finished yet" cases share one arm, so both closed sets own their behavior in the same program.
+///
+/// Moved 32 -> 35 by `examples/intermediate/api_client.incn`, covering module `static` storage, user-defined
+/// decorators, and callable presets. These co-occur in real client code: the client counts its own calls, takes the
+/// names of its operations from the declarations themselves, and gives the common cases their own names.
+///
+/// Moved 35 -> 38 by `examples/intermediate/wire_records.incn`, covering model field metadata, `std.encoding`, and
+/// `std.checksum`. Putting one record on the wire raises all three questions at once: what the fields are called out
+/// there, how the bytes travel as text, and whether they arrived intact.
+///
+/// Moved 38 -> 40 by `examples/intermediate/binary_frames.incn`, covering `std.io` and fallible iteration. The
+/// pairing is the point rather than a convenience: a byte stream is exactly the source that can fail while being
+/// asked for its next item, which is what the `?` in the loop header exists for.
+///
+/// Moved 40 -> 43 by `examples/intermediate/run_report.incn`, covering `std.logging`, `std.telemetry.core`, and
+/// `std.datetime`. A job that reports on itself needs a level policy, fields that keep their shape instead of being
+/// flattened to text, and a retention window computed on the calendar rather than in seconds.
+///
+/// Moved 43 -> 46 by `examples/intermediate/artifact_staging.incn`, covering `std.uuid`, `std.compression`, and
+/// `std.tempfile`. Staging an artifact is one pipeline with three failure modes, so the example also shows the
+/// `map_err` boundaries that let `?` compose across three unrelated error types.
+///
+/// Moved 46 -> 51 by `examples/intermediate/decode_rows.incn`, covering call-site generics, type-token reflection,
+/// `std.math`, the inline test module, and testing assertions. The type argument is load-bearing rather than
+/// decorative: `T` appears in neither the arguments nor the result, so only the call site can pin it. The tests sit
+/// in the same file because demonstrating `module tests:` means putting them where it puts them.
+///
+/// Moved 51 -> 52 by `examples/advanced/async_race.incn`, covering async race composition, and 52 -> 53 by the
+/// `session` facade added to `examples/advanced/library_package`, covering Incan libraries: a root facade
+/// re-exporting a module that the consumer then imports through `pub::`.
+///
+/// Three source-shaped capabilities remain undemonstrated, each for a stated reason rather than for want of an
+/// example. `ToolchainInstallerManifest` publishes only shell install commands, which no example file can contain
+/// honestly. `CompiledProvidersSdkComponentsPackageFeatures` needs a feature-selecting dependency edge, and a
+/// provider carrying one could not be baked: the provider's own workspace bake then demands a published package Loaf
+/// for itself before it is able to produce one. `RustAllow` acknowledges an unavoidable generated-Rust warning, and
+/// no program in the corpus currently emits one; a file existing only to carry the decorator would be the
+/// conformance dump this suite is meant to avoid.
+const COVERED_BASELINE: usize = 53;
 
 /// One capability entry read from the v0.5 catalogue.
 struct Capability {

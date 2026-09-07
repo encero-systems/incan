@@ -1,0 +1,88 @@
+"""
+A tiny HTTP-shaped client, showing three things that keep client code from repeating itself.
+
+`static` is live module storage, so the call count survives between calls without being threaded through every
+signature. A decorator is an ordinary function applied to a declaration, so the client can record its own operations
+by name without each one repeating that name in a string. `partial` gives the common cases their own names without
+writing a second function body for each.
+
+Nothing here talks to a network: the point is the shape of the client, not the transport.
+
+Python equivalent:
+```python
+from functools import partial
+
+hits = 0
+known_calls = []
+
+def capture(func):
+    known_calls.append(func.__name__)
+    return func
+
+def instrumented():
+    return capture
+
+@instrumented()
+def request(path, method="GET", timeout=5.0):
+    global hits
+    hits += 1
+    return f"{method} {path} (timeout {timeout}s)"
+
+get = partial(request, method="GET")
+post = partial(request, method="POST")
+```
+"""
+
+
+static hits: int = 0
+static known_calls: list[str] = []
+
+
+def capture[F](func: F) -> F:
+    """
+    Record one client operation under its own source name and hand it back untouched.
+
+    `func.__name__` is what makes this possible: the operation does not have to repeat its own name as a string
+    argument that can drift from the `def` above it.
+    """
+    known_calls.append(func.__name__)
+    return func
+
+
+def instrumented[F]() -> ((F) -> F):
+    """
+    Build the decorator that catalogues whichever operation it is applied to.
+
+    A decorator is applied as a callable *value*, and a generic function cannot be passed by name, so `capture`
+    is reached through this factory: calling it fixes `F` and hands back an ordinary callable to apply.
+    """
+    return (func) => capture[F](func)
+
+
+@instrumented()
+pub def request(path: str, method: str = "GET", timeout: float = 5.0) -> str:
+    """Perform one call and count it. The count lives in module storage, not in a parameter nobody passes."""
+    hits += 1
+    return f"{method} {path} (timeout {timeout}s)"
+
+
+@instrumented()
+def health(path: str = "/healthz") -> str:
+    """Perform the liveness call, which is a request with everything already decided."""
+    return request(path, timeout=1.0)
+
+
+# `get` and `post` are the same callable with one argument already answered. Presets stay overrideable: a caller
+# that needs a longer deadline still passes `timeout`.
+pub get = partial request(method="GET")
+pub post = partial request(method="POST")
+
+
+def main() -> None:
+    println(get("/orders"))
+    println(post("/orders"))
+    println(get("/orders/17", timeout=30.0))
+    println(health())
+
+    println(f"calls made: {hits}")
+    println(f"operations declared: {", ".join(known_calls)}")

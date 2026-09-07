@@ -2982,6 +2982,101 @@ def handle(opt: Option[int]) -> int:
         Ok(())
     }
 
+    /// Return the arms of the sole match expression in a single-function program.
+    fn sole_match_arms(program: &Program) -> Result<&Vec<Spanned<MatchArm>>, String> {
+        let Declaration::Function(func) = &program.declarations[0].node else {
+            return Err("expected a function declaration".to_string());
+        };
+        let statement = &func.body[0].node;
+        let expr = match statement {
+            Statement::Expr(expr) => expr,
+            Statement::Return(Some(expr)) => expr,
+            other => return Err(format!("expected a match-bearing statement, got {other:?}")),
+        };
+        match &expr.node {
+            Expr::Match(_, arms) => Ok(arms),
+            other => Err(format!("expected a match expression, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn both_arm_spellings_accept_the_same_guard() -> Result<(), String> {
+        // `case Pattern:` and `Pattern =>` are two spellings of one arm grammar. The arrow form used to reject a
+        // guard the `case` form accepted -- `Expected '=>' after pattern` -- which is a divergence the language
+        // states nowhere. Parsing the guard once for both is what keeps them from drifting again (#1401).
+        let case_form = r#"
+def classify(n: int) -> int:
+  match n:
+    case x if x < 0:
+      return 0
+    case _:
+      return 1
+"#;
+        let arrow_form = r#"
+def classify(n: int) -> int:
+  match n:
+    x if x < 0 => return 0
+    _ => return 1
+"#;
+        let case_program = parse_str(case_form).map_err(|errors| format!("case form: {errors:?}"))?;
+        let arrow_program = parse_str(arrow_form).map_err(|errors| format!("arrow form: {errors:?}"))?;
+
+        let case_arms = sole_match_arms(&case_program)?;
+        let arrow_arms = sole_match_arms(&arrow_program)?;
+
+        let case_guard = case_arms[0]
+            .node
+            .guard
+            .as_ref()
+            .ok_or_else(|| "the case form lost its guard".to_string())?;
+        let arrow_guard = arrow_arms[0]
+            .node
+            .guard
+            .as_ref()
+            .ok_or_else(|| "the arrow form did not record a guard".to_string())?;
+
+        // Compared by source text rather than by AST: every node carries its own span, and the two spellings put
+        // the same guard at different offsets, so a structural comparison would only be asserting that the two
+        // fixtures are the same length.
+        assert_eq!(
+            &case_form[case_guard.span.start..case_guard.span.end],
+            &arrow_form[arrow_guard.span.start..arrow_guard.span.end],
+            "the two spellings parsed different guard expressions"
+        );
+        let case_pattern = &case_arms[0].node.pattern.span;
+        let arrow_pattern = &arrow_arms[0].node.pattern.span;
+        assert_eq!(
+            &case_form[case_pattern.start..case_pattern.end],
+            &arrow_form[arrow_pattern.start..arrow_pattern.end],
+            "the two spellings parsed different patterns"
+        );
+        assert!(
+            arrow_arms[1].node.guard.is_none(),
+            "an unguarded arrow arm must not acquire a guard"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_arrow_arm_guard_stops_at_the_arrow() -> Result<(), String> {
+        // The guard is parsed with the ordinary expression grammar, so the risk is that it swallows the `=>` that
+        // terminates the arm. A comparison guard is the shape most likely to expose that.
+        let source = r#"
+def pick(n: int) -> str:
+  return match n:
+    x if x >= 10 => "big"
+    _ => "small"
+"#;
+        let program = parse_str(source).map_err(|errors| format!("{errors:?}"))?;
+        let arms = sole_match_arms(&program)?;
+        assert_eq!(arms.len(), 2, "the guard swallowed the arm separator");
+        assert!(arms[0].node.guard.is_some(), "the guarded arm lost its guard");
+        match &arms[0].node.body {
+            MatchBody::Expr(_) => Ok(()),
+            other => Err(format!("expected an expression body after `=>`, got {other:?}")),
+        }
+    }
+
     #[test]
     fn test_parse_match_fat_arrow_inline_return() -> Result<(), Vec<CompileError>> {
         let source = r#"

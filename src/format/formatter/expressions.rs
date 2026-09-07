@@ -565,10 +565,15 @@ impl Formatter {
             Literal::Bytes(b) => {
                 self.writer.write("b\"");
                 for byte in b {
-                    if *byte >= 32 && *byte < 127 {
-                        self.writer.write(&(*byte as char).to_string());
-                    } else {
-                        self.writer.write(&format!("\\x{:02x}", byte));
+                    // A quote or backslash byte is printable, so writing it raw closed the literal early or began a
+                    // bogus escape: `b"a\\"b"` came back as `b"a"b"`, which no longer parses. Both need escaping
+                    // before the printable-range shortcut, exactly as the string arm escapes through
+                    // `escape_string` (#1401).
+                    match byte {
+                        b'"' => self.writer.write("\\\""),
+                        b'\\' => self.writer.write("\\\\"),
+                        _ if *byte >= 32 && *byte < 127 => self.writer.write(&(*byte as char).to_string()),
+                        _ => self.writer.write(&format!("\\x{:02x}", byte)),
                     }
                 }
                 self.writer.write("\"");
@@ -662,7 +667,12 @@ impl Formatter {
     fn format_match_arm(&mut self, arm: &Spanned<MatchArm>) {
         self.writer.blank_lines(arm.leading_blank_lines as usize);
         let arm = &arm.node;
+
         self.format_pattern(&arm.pattern.node);
+        // A guard belongs to the arm, not to one of its two spellings, so it is written the same way before a `:`
+        // and before a `=>`. Writing it only in `case` form used to be a workaround for the arrow form's parser
+        // rejecting `<pattern> if <cond> =>`; that grammar gap is closed, so the arm keeps the shape it was
+        // written in (#1401).
         if let Some(guard) = &arm.guard {
             self.writer.write(" if ");
             self.format_expr(&guard.node);

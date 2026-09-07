@@ -1,0 +1,64 @@
+"""
+What a nightly job says about itself: structured events, values that keep their shape, and dates it can do
+arithmetic on.
+
+The three pieces answer three different questions. `std.logging` decides what is emitted and at which level, so the
+entrypoint owns policy and the rest of the program only emits. `std.telemetry.core` is what a field is made of once
+it stops being a single scalar: a list of dataset names stays a list instead of being joined into a string that a
+consumer then has to split apart again. `std.datetime` gives the retention window real calendar arithmetic rather
+than a multiplication by 86400.
+
+Python equivalent:
+```python
+import datetime, logging
+
+logging.basicConfig(level=logging.INFO)
+
+today = datetime.date.today()
+cutoff = today - datetime.timedelta(days=30)
+logging.info("retention window", extra={"today": today.isoformat(), "cutoff": cutoff.isoformat()})
+```
+"""
+
+from std.datetime import Date, TimeDelta
+from std.logging import Level, LogFormat, basic_config
+from std.telemetry.core import TelemetryValue
+
+
+def cutoff(today: Date, keep_days: int) -> Date:
+    """
+    Return the oldest date a snapshot may carry and still be kept.
+
+    Adding a negative interval rather than subtracting a positive one keeps the result a `Date`; `Date - interval`
+    is the spelling that also has to cover date-minus-date, so it widens to a union the caller would have to narrow.
+    """
+    return today + TimeDelta.days(-keep_days)
+
+
+def dataset_names(names: list[str]) -> TelemetryValue:
+    """Carry a list of dataset names as one structured field, so a consumer does not have to re-split a string."""
+    return TelemetryValue.array([TelemetryValue.string(name) for name in names])
+
+
+def main() -> None:
+    # The entrypoint owns logging policy; everything below simply emits. JSON on stdout because the next thing in
+    # the pipeline is a log collector, not a person: it keeps each field's type instead of flattening to text.
+    basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
+
+    keep_days = 30
+    today = Date.utc_today()
+    horizon = cutoff(today, keep_days)
+
+    log.info(
+        "retention window computed",
+        fields={"today": today.isoformat(), "cutoff": horizon.isoformat(), "keep_days": keep_days},
+    )
+
+    pruned = ["orders", "users", "sessions"]
+    log.info(
+        "snapshots pruned",
+        fields={"datasets": dataset_names(pruned), "reclaimed_mb": 812, "dry_run": false},
+    )
+
+    # A run that only warns still says which threshold it crossed, in a field rather than in the message text.
+    log.warning("upstream slower than budget", fields={"budget_ms": 500, "observed_ms": 1340})
