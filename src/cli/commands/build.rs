@@ -12188,16 +12188,6 @@ fn provider_declaration_is_registry_entry(declaration: &Declaration) -> bool {
     decorators.iter().any(|decorator| decorator.node.name == "describe")
 }
 
-/// Directory beside a library's `.incnlib` that holds its executable representation.
-///
-/// Named for the slot RFC 034 reserves in a `.incanpkg`, so that when packaging exists this directory maps into the
-/// archive rather than needing to be relocated. No packaging code exists in this repository yet, so today it is a
-/// sibling of the manifest.
-const EXECUTABLE_SURFACE_DIRECTORY: &str = "semantic";
-
-/// File extension for one module's executable representation.
-const EXECUTABLE_SURFACE_EXTENSION: &str = "incnsem";
-
 /// Build one module's executable representation from the compilation that declared its symbols.
 ///
 /// Returns `None` rather than an error, and deliberately so. RFC 123 permits coverage to be partial, and Body IR
@@ -12212,20 +12202,6 @@ fn build_module_executable_surface(
     incan_semantics_core::executable_representation::build_surface(&lowered).ok()
 }
 
-/// Path holding one module's executable representation, derived from the module path a consumer already resolved.
-///
-/// A consumer reaches this file from the canonical identity's own module path rather than from a manifest listing,
-/// which is what keeps identity the only currency between producer and consumer.
-fn executable_surface_path(manifest_path: &Path, module_path: &[String]) -> Option<PathBuf> {
-    let directory = manifest_path.parent()?.join(EXECUTABLE_SURFACE_DIRECTORY);
-    let stem = if module_path.is_empty() {
-        "root".to_string()
-    } else {
-        module_path.join(".")
-    };
-    Some(directory.join(format!("{stem}.{EXECUTABLE_SURFACE_EXTENSION}")))
-}
-
 /// Write every built executable representation beside the manifest it belongs to.
 ///
 /// A write failure is a real failure: the surfaces were built successfully, so being unable to publish them means
@@ -12233,7 +12209,9 @@ fn executable_surface_path(manifest_path: &Path, module_path: &[String]) -> Opti
 fn write_library_executable_surfaces(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
     let mut written = Vec::new();
     for (module_path, surface) in &prepared.executable_surfaces {
-        let Some(path) = executable_surface_path(&prepared.manifest_path, module_path) else {
+        let Some(path) =
+            crate::library_manifest::published_layout::executable_surface_path(&prepared.manifest_path, module_path)
+        else {
             continue;
         };
         if let Some(parent) = path.parent() {
@@ -19090,8 +19068,9 @@ impl ChildId {
             .next()
             .ok_or("the manifest must publish a canonical identity for the exported function")?;
 
-        let surface_path = executable_surface_path(&manifest_path, &["lib".to_string()])
-            .ok_or("the surface path must be derivable from the manifest path")?;
+        let surface_path =
+            crate::library_manifest::published_layout::executable_surface_path(&manifest_path, &["lib".to_string()])
+                .ok_or("the surface path must be derivable from the manifest path")?;
         assert!(
             surface_path.is_file(),
             "a library build must publish its executable representation at {}",

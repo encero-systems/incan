@@ -5,6 +5,7 @@
 
 mod artifact;
 mod model;
+pub mod published_layout;
 #[cfg(test)]
 mod tests;
 mod type_refs;
