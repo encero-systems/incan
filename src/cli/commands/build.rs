@@ -309,6 +309,11 @@ struct PreparedLibraryProject {
     out_dir: PathBuf,
     manifest_path: PathBuf,
     library_manifest: LibraryManifest,
+    /// Executable representation of each module's public surface, keyed by module path (RFC 123).
+    ///
+    /// Built where the checked type information is still live, because that is the compilation that declares these
+    /// symbols and RFC 123 requires the representation to be produced by it rather than reconstructed later.
+    executable_surfaces: Vec<(Vec<String>, Vec<u8>)>,
     timings_ms: BTreeMap<String, u64>,
     report: BuildReportDraft,
     oven: Option<OvenPreparedLibrary>,
@@ -10639,6 +10644,7 @@ fn prepare_library_project(
     let module_idx_by_key = module_key_index(&modules);
     let mut stdlib_cache = StdlibAstCache::new();
     let mut checked_type_info_by_path = BTreeMap::new();
+    let mut executable_surfaces = Vec::new();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module =
@@ -10683,6 +10689,9 @@ fn prepare_library_project(
                     checked_exports_by_name(module_exports),
                 );
                 checked_type_info_by_path.insert(module.file_path.clone(), checker.type_info().clone());
+                if let Some(surface) = build_module_executable_surface(module, checker.type_info()) {
+                    executable_surfaces.push((module.path_segments.clone(), surface));
+                }
                 stdlib_cache = checker.stdlib_cache.clone();
             }
             Err(errs) => {
@@ -11336,6 +11345,7 @@ fn prepare_library_project(
     record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
 
     Ok(PreparedLibraryProject {
+        executable_surfaces,
         generator,
         project_root,
         entrypoint: lib_entry,
@@ -12178,6 +12188,75 @@ fn provider_declaration_is_registry_entry(declaration: &Declaration) -> bool {
     decorators.iter().any(|decorator| decorator.node.name == "describe")
 }
 
+/// Directory beside a library's `.incnlib` that holds its executable representation.
+///
+/// Named for the slot RFC 034 reserves in a `.incanpkg`, so that when packaging exists this directory maps into the
+/// archive rather than needing to be relocated. No packaging code exists in this repository yet, so today it is a
+/// sibling of the manifest.
+const EXECUTABLE_SURFACE_DIRECTORY: &str = "semantic";
+
+/// File extension for one module's executable representation.
+const EXECUTABLE_SURFACE_EXTENSION: &str = "incnsem";
+
+/// Build one module's executable representation from the compilation that declared its symbols.
+///
+/// Returns `None` rather than an error, and deliberately so. RFC 123 permits coverage to be partial, and Body IR
+/// lowers a documented subset of the language: a module it cannot represent is a package that publishes less, not a
+/// build that should fail. Producing the representation is additive, so nothing here may turn a library that builds
+/// into one that does not.
+fn build_module_executable_surface(
+    module: &ParsedModule,
+    type_info: &crate::frontend::typechecker::TypeCheckInfo,
+) -> Option<Vec<u8>> {
+    let lowered = crate::frontend::body_ir::build_body_ir_module_v0(&module.ast, &module.path_segments, type_info);
+    incan_semantics_core::executable_representation::build_surface(&lowered).ok()
+}
+
+/// Path holding one module's executable representation, derived from the module path a consumer already resolved.
+///
+/// A consumer reaches this file from the canonical identity's own module path rather than from a manifest listing,
+/// which is what keeps identity the only currency between producer and consumer.
+fn executable_surface_path(manifest_path: &Path, module_path: &[String]) -> Option<PathBuf> {
+    let directory = manifest_path.parent()?.join(EXECUTABLE_SURFACE_DIRECTORY);
+    let stem = if module_path.is_empty() {
+        "root".to_string()
+    } else {
+        module_path.join(".")
+    };
+    Some(directory.join(format!("{stem}.{EXECUTABLE_SURFACE_EXTENSION}")))
+}
+
+/// Write every built executable representation beside the manifest it belongs to.
+///
+/// A write failure is a real failure: the surfaces were built successfully, so being unable to publish them means
+/// the package on disk does not match what this build produced.
+fn write_library_executable_surfaces(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
+    let mut written = Vec::new();
+    for (module_path, surface) in &prepared.executable_surfaces {
+        let Some(path) = executable_surface_path(&prepared.manifest_path, module_path) else {
+            continue;
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                CliError::failure(format!(
+                    "failed to create executable representation directory {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        fs::write(&path, surface)
+            .map_err(|error| CliError::failure(format!("failed to write {}: {error}", path.display())))?;
+        written.push(path);
+    }
+    for path in written {
+        prepared
+            .report
+            .artifacts
+            .push(artifact_report("incan_executable_representation", &path));
+    }
+    Ok(())
+}
+
 /// Write the `.incnlib` manifest and build-report artifact paths for a prepared library project.
 fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
     prepared
@@ -12193,6 +12272,7 @@ fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> Cl
         "generated_cargo_manifest",
         &prepared.generator.cargo_manifest_path(),
     ));
+    write_library_executable_surfaces(prepared)?;
     Ok(())
 }
 
@@ -18957,6 +19037,79 @@ impl ChildId {
             "stale flat dataset.rs should not exist after nested library build"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn build_library_publishes_an_executable_surface_joined_to_the_manifest_by_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // RFC 123's core claim is that the manifest and the representation are joined by the identity space rather
+        // than by file naming or ordering. This proves exactly that: the identity is taken from the manifest the
+        // build published, hydrated, and looked up in the surface. Nothing here reconstructs an identity or matches
+        // on a spelling, because a consumer is forbidden from doing either.
+        use incan_semantics_core::executable_representation::SurfaceReader;
+
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            project_root.join("loaf.toml"),
+            "[project]\nname = \"surfacelib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            "pub def doubled(value: int) -> int:\n    return value * 2\n",
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload)
+            .write(&project_root.join("oven.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path.to_str().ok_or("lib path should be valid utf-8")?;
+        assert_eq!(
+            build_library(
+                Some(lib_path_str),
+                None,
+                BuildCommandOptions::default(),
+                BuildReportOptions::default(),
+            )?,
+            ExitCode::SUCCESS
+        );
+
+        let manifest_path = project_root.join("target").join("lib").join("surfacelib.incnlib");
+        let manifest = LibraryManifest::read_from_path(&manifest_path)?;
+        let published = manifest
+            .contract_metadata
+            .identity_graph
+            .function_identities_for_public_name("doubled")
+            .into_iter()
+            .flatten()
+            .next()
+            .ok_or("the manifest must publish a canonical identity for the exported function")?;
+
+        let surface_path = executable_surface_path(&manifest_path, &["lib".to_string()])
+            .ok_or("the surface path must be derivable from the manifest path")?;
+        assert!(
+            surface_path.is_file(),
+            "a library build must publish its executable representation at {}",
+            surface_path.display()
+        );
+
+        let bytes = std::fs::read(&surface_path)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(
+            reader.covers(&published),
+            "the surface must cover the identity the manifest published; it covers {:?}",
+            reader.covered_identities().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            reader.declaration(&published)?.name,
+            "doubled",
+            "resolving the manifest's identity must reach the declaration it names"
+        );
         Ok(())
     }
 
