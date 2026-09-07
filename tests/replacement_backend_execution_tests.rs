@@ -3049,7 +3049,7 @@ fn replacement_cli_executes_a_facade_chain_whose_bindings_share_one_declaration(
     let source_dir = temporary.path().join("src");
     fs::create_dir_all(&source_dir)?;
     fs::write(
-        temporary.path().join("incan.toml"),
+        temporary.path().join("loaf.toml"),
         "[project]\nname = \"facade_chain\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -3351,7 +3351,7 @@ fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_
     fs::create_dir_all(&source_root)?;
     let entrypoint = source_root.join("main.incn");
     fs::write(
-        temporary.path().join("incan.toml"),
+        temporary.path().join("loaf.toml"),
         "[project]\nname = \"replacement_session_projection\"\n\n[project.features]\nbeta = []\n",
     )?;
     fs::write(

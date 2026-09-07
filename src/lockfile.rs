@@ -1,4 +1,4 @@
-//! `incan.lock` parsing, validation, and fingerprinting.
+//! `oven.lock` parsing, validation, and fingerprinting.
 //!
 //! The lockfile embeds a Cargo.lock payload and records a dependency fingerprint for strict `--locked` / `--frozen`
 //! builds.
@@ -17,11 +17,21 @@ use crate::library_manifest::{
     digest_toolchain_source_tree_with_cache,
 };
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
-use crate::oven_interop::{LockedInteropTarget, OvenInteropSection, locked_oven_interop_targets_from_section};
+use crate::oven_interop::{InteropCSection, LockedInteropTarget, locked_interop_targets_from_section};
 use crate::provider::{
     BackendImplementationRequirement, ComponentSelectionReason, PackageFeaturePlan, ProviderParticipation,
     ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
 };
+
+/// The generated project lockfile's filename, resolved relative to a project or workspace root.
+///
+/// This names the *project* lock that records the resolved dependency, provider, and interop graph. RFC 117 makes
+/// `oven.lock` that file and states plainly that `incan.lock` is not read afterwards, so there is no compatibility
+/// path: a lock left behind by an older toolchain is inert state, not an input.
+///
+/// It is distinct from the artifact-store coordination lock and from the publication sibling this module derives from
+/// a lock's own filename; renaming this constant must not be taken to rename either of those.
+pub const LOCK_FILENAME: &str = "oven.lock";
 
 const LOCKFILE_FORMAT_VERSION: u32 = 2;
 const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
@@ -252,14 +262,14 @@ impl IncanLock {
 /// Snapshot the shared provider, SDK-component, and package-feature plans into portable canonical lock state.
 pub fn semantic_lock_state(
     project_root: &Path,
-    interop: Option<&OvenInteropSection>,
+    interop: Option<&InteropCSection>,
     sdk_inventory: Option<&SdkInventory>,
     sdk_components: Option<&ResolvedSdkComponents>,
     package_features: Option<&PackageFeaturePlan>,
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<SemanticLockState, String> {
-    let interop = locked_oven_interop_targets_from_section(project_root, interop)?;
+    let interop = locked_interop_targets_from_section(project_root, interop)?;
     let oven = (!interop.is_empty()).then_some(LockedOvenState { interop });
     let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
     let provider_semantic_identities = provider_plan
@@ -758,10 +768,13 @@ pub(crate) fn compiler_lock_state_dir(project_root: &Path) -> PathBuf {
 /// Retain the compiler-owned lock descriptor for the entire publication critical section.
 ///
 /// The persistent advisory-lock file lives below `target/incan_lock`, which is already compiler-owned ignored state,
-/// rather than beside `incan.lock` in the project root. When an older compiler has already created the legacy sibling,
-/// new compilers acquire that inode first and retain it alongside the active guard. This preserves mixed-version
-/// exclusion without creating or unlinking legacy project-root state on clean projects. A project with no legacy inode
-/// is an intentional protocol cutover: an older compiler started later cannot discover the new hidden guard.
+/// rather than beside `oven.lock` in the project root. When an older compiler has already created the legacy sibling
+/// for this lock, new compilers acquire that inode first and retain it alongside the active guard, preserving
+/// mixed-version exclusion without creating or unlinking legacy project-root state on clean projects.
+///
+/// Since the project lock's rename that sibling cannot exist for an `oven.lock` target — see
+/// [`legacy_publication_lock_path`] — so the acquisition is a no-op there and mixed-version exclusion is instead
+/// provided by the rename itself: a compiler from before it publishes `incan.lock` and never contends for this file.
 pub(crate) fn acquire_publication_lock(path: &Path) -> io::Result<PublicationLock> {
     let legacy = acquire_legacy_publication_lock_if_present(path)?;
     let lock_path = publication_lock_path(path)?;
@@ -810,6 +823,13 @@ fn acquire_legacy_publication_lock_if_present(path: &Path) -> io::Result<Option<
 }
 
 /// Resolve the sibling advisory-lock path used by compilers predating issue #912.
+///
+/// The `.incan.lock` suffix is the toolchain's generic advisory-lock sidecar convention — `std.fs` derives the same
+/// `.<name>.incan.lock` identity for any protected path — and not a spelling of the project lock, so it does not
+/// follow the project lock's rename. The prefix does, because it comes from the caller's own file name. That is what
+/// keeps the guard correct rather than merely inherited: for `oven.lock` it resolves to a path no compiler predating
+/// this guard can have created, so the guard is inert exactly where mixed-version exclusion no longer has anything to
+/// exclude — a compiler from before the rename publishes `incan.lock` and never contends for this target.
 fn legacy_publication_lock_path(path: &Path) -> io::Result<PathBuf> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path.file_name().ok_or_else(|| {
@@ -1444,7 +1464,7 @@ mod tests {
         create_legacy_identity: bool,
     ) -> TestResult {
         let project = tempfile::tempdir()?;
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
         if create_legacy_identity {
             fs::write(legacy_publication_lock_path(&lock_path)?, [])?;
         }
@@ -1740,8 +1760,8 @@ mod tests {
             semantic.clone(),
             "version = 4\n".to_string(),
         );
-        let first_lock_path = temp.path().join("first/incan.lock");
-        let second_lock_path = temp.path().join("second/incan.lock");
+        let first_lock_path = temp.path().join("first/oven.lock");
+        let second_lock_path = temp.path().join("second/oven.lock");
         fs::create_dir_all(first_lock_path.parent().ok_or("first lock path has no parent")?)?;
         fs::create_dir_all(second_lock_path.parent().ok_or("second lock path has no parent")?)?;
         first_lock.write(&first_lock_path)?;
@@ -2176,9 +2196,9 @@ mod tests {
             "int bridge(void) { return 7; }\n",
         )?;
         fs::write(project.path().join("interop/lib/libfixture.a"), b"fixture archive")?;
-        let mut interop = OvenInteropSection {
-            schema: crate::oven_interop::OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![crate::oven_interop::OvenInteropTarget {
+        let mut interop = InteropCSection {
+            schema: crate::oven_interop::INTEROP_C_SCHEMA_VERSION,
+            targets: vec![crate::oven_interop::InteropCTarget {
                 target: "aarch64-apple-ios".to_string(),
                 toolchain: Some(crate::oven_interop::ToolchainRequirement {
                     capability: "apple-clang".to_string(),
@@ -2307,7 +2327,7 @@ mod tests {
         );
 
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
         lock.write(&path)?;
 
         let content = std::fs::read_to_string(&path)?;
@@ -2325,7 +2345,7 @@ mod tests {
     #[test]
     fn publication_lock_lives_in_compiler_owned_target_state() -> TestResult {
         let project = tempfile::tempdir()?;
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
 
         drop(acquire_publication_lock(&lock_path)?);
         drop(acquire_publication_lock(&lock_path)?);
@@ -2333,11 +2353,11 @@ mod tests {
         assert!(
             project
                 .path()
-                .join("target/incan_lock/.incan.lock.publication.lock")
+                .join("target/incan_lock/.oven.lock.publication.lock")
                 .is_file()
         );
         assert!(
-            !project.path().join(".incan.lock.incan.lock").exists(),
+            !project.path().join(".oven.lock.incan.lock").exists(),
             "lock publication must not create a persistent project-root sidecar"
         );
         Ok(())
@@ -2346,8 +2366,8 @@ mod tests {
     #[test]
     fn publication_lock_does_not_unlink_a_legacy_lock_inode() -> TestResult {
         let project = tempfile::tempdir()?;
-        let lock_path = project.path().join("incan.lock");
-        let legacy_lock_path = project.path().join(".incan.lock.incan.lock");
+        let lock_path = project.path().join("oven.lock");
+        let legacy_lock_path = project.path().join(".oven.lock.incan.lock");
         fs::write(&legacy_lock_path, [])?;
 
         drop(acquire_publication_lock(&lock_path)?);
@@ -2370,7 +2390,7 @@ mod tests {
         );
 
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
         lock.write(&path)?;
 
         let loaded = IncanLock::load(&path)?;
@@ -2424,7 +2444,7 @@ mod tests {
     #[test]
     fn legacy_generated_timestamp_is_accepted_on_load() -> TestResult {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
         let legacy_toml = r#"
 [incan]
 format = 1
@@ -2526,7 +2546,7 @@ lock = "payload"
     #[test]
     fn lockfile_format_version_checked() -> TestResult {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
 
         // Write a lockfile with an incompatible format version
         let bad_toml = r#"

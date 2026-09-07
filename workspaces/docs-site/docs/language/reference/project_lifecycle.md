@@ -1,14 +1,14 @@
 # Project lifecycle reference
 
-This page is the language-facing reference for Incan project lifecycle concepts: project roots, `incan.toml` metadata, version bumps, and named environments. For the CLI flag reference, see [CLI reference](../../tooling/reference/cli_reference.md).
+This page is the language-facing reference for Incan project lifecycle concepts: project roots, `loaf.toml` metadata, version bumps, and named environments. For the CLI flag reference, see [CLI reference](../../tooling/reference/cli_reference.md).
 
 ## Project root
 
-An Incan project root is the nearest ancestor directory containing `incan.toml`.
+An Incan project root is the nearest ancestor directory containing `loaf.toml`.
 
 ```text
 greeter/
-|-- incan.toml
+|-- loaf.toml
 |-- src/
 |   |-- main.incn
 |   `-- greet.incn
@@ -16,7 +16,7 @@ greeter/
     `-- test_main.incn
 ```
 
-Project-aware commands use the project root for metadata, dependencies, source-root resolution, lock files, and lifecycle configuration. Nested projects are allowed; the nearest `incan.toml` wins.
+Project-aware commands use the project root for metadata, dependencies, source-root resolution, lock files, and lifecycle configuration. Nested projects are allowed; the nearest `loaf.toml` wins.
 
 Single-file commands can still run without a project:
 
@@ -25,15 +25,15 @@ incan run hello.incn
 incan run -c "import this"
 ```
 
-Project-level features such as manifest dependencies, version management, and named environments require `incan.toml`.
+Project-level features such as manifest dependencies, version management, and named environments require `loaf.toml`.
 
 ## Workspaces
 
-An Incan workspace is a bounded collection of ordinary Incan projects. It coordinates which projects are members, their effective shared dependencies, and one root-owned `incan.lock`; it does not turn the repository into one package or make member versions and publication lockstep.
+An Incan workspace is a bounded collection of ordinary Incan projects. It coordinates which projects are members, their effective shared dependencies, and one root-owned `oven.lock`; it does not turn the repository into one package or make member versions and publication lockstep.
 
 A root that has both `[project]` and `[workspace]` is a **rooted workspace**: the root project is a member without listing `"."`. A root that has only `[workspace]` is **virtual** and must list at least one project member.
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [workspace]
 members = ["packages/*"]
 default-members = ["api", "worker"]
@@ -46,9 +46,9 @@ serde = { version = "1", default-features = false }
 env-vars = { CI = "true" }
 ```
 
-Each non-root member has its own `incan.toml` and opts into a shared declaration explicitly:
+Each non-root member has its own `loaf.toml` and opts into a shared declaration explicitly:
 
-```toml title="packages/api/incan.toml"
+```toml title="packages/api/loaf.toml"
 [project]
 name = "api"
 version = "0.1.0"
@@ -60,7 +60,7 @@ serde = { workspace = true, features = ["derive"] }
 extends = ["workspace:ci"]
 ```
 
-The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own `optional` use. Shared declarations are inactive until a member declares `{ workspace = true }`; a member-local `incan.lock` is never authoritative.
+The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own `optional` use. Shared declarations are inactive until a member declares `{ workspace = true }`; a member-local `oven.lock` is never authoritative.
 
 ### Selecting members
 
@@ -94,11 +94,11 @@ incan workspace inspect --member packages/api --format json
 
 The JSON projection includes members, selection origin, inherited dependency provenance, explicit workspace environment extensions, lock state, stale member-local locks, and currently-unused shared declarations. Workspace capability application remains member-local in this release: cross-member mutation needs a scoped plan and policy evaluation, neither of which is approximated by this foundation.
 
-Workspace lock publication uses the same crash-safe staging, synchronization, atomic replacement, and parent-directory synchronization sequence documented by `std.fs`. Publishers coordinate through a stable compiler-private guard under ignored `target/incan_lock` state rather than creating a new sidecar in the project root. If a legacy `.incan.lock.incan.lock` sidecar already exists, the compiler acquires that identity before its active guard so an older compiler using the existing inode remains serialized. Whenever the legacy sidecar is absent—whether it never existed or was removed—old and new compilers must not publish concurrently because an older compiler cannot discover the hidden guard. This preserves a prior complete root lock or a new complete root lock for cooperative readers; it is not a multi-file workspace transaction.
+Workspace lock publication uses the same crash-safe staging, synchronization, atomic replacement, and parent-directory synchronization sequence documented by `std.fs`. Publishers coordinate through a stable compiler-private guard under ignored `target/incan_lock` state rather than creating a new sidecar in the project root. The sidecar identity it checks is derived from the published lock's own filename, so an `oven.lock` project resolves it to `.oven.lock.incan.lock`, which no compiler predating that guard ever wrote. Compilers from before the rename publish `incan.lock` instead and never contend for the same target, so concurrent publication across that boundary cannot interleave on one file. This preserves a prior complete root lock or a new complete root lock for cooperative readers; it is not a multi-file workspace transaction.
 
-## `incan.toml`
+## `loaf.toml`
 
-`incan.toml` is the project manifest. It is intended to be edited and committed.
+`loaf.toml` is the project manifest. It is intended to be edited and committed.
 
 Common sections:
 
@@ -116,7 +116,7 @@ Common sections:
 
 Minimal application manifest:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [project]
 name = "greeter"
 version = "0.1.0"
@@ -192,7 +192,7 @@ version = "0.1.0"
 requires-incan = ">=0.5.0-0,<0.6.0"
 ```
 
-If the active compiler is outside the range, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered `incan.toml` remain manifest-free and do not infer a requirement.
+If the active compiler is outside the range, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered `loaf.toml` remain manifest-free and do not infer a requirement.
 
 Development compilers identify themselves with prerelease versions such as `0.5.0-dev.N`. Generated 0.5 projects therefore use a prerelease-aware lower bound (`>=0.5.0-0,<0.6.0`) so local development builds and final 0.5 releases both satisfy the starter constraint.
 
@@ -227,7 +227,7 @@ Tests resolve imports against the same source root as production code, so `tests
 
 ## `incan version`
 
-`incan version` updates the project version in `incan.toml`.
+`incan version` updates the project version in `loaf.toml`.
 
 ```bash
 incan version patch
@@ -264,7 +264,7 @@ This command changes the project version only. It does not update the compiler, 
 Mental model:
 
 - An env is a named command context, not a Python-style virtualenv.
-- Env scripts are explicit argv lists stored in `incan.toml`.
+- Env scripts are explicit argv lists stored in `loaf.toml`.
 - `incan env` is for repeatable workflows such as local test commands, CI commands, docs builds, or release checks.
 - Plain `incan run`, `incan test`, and `incan build` remain valid direct commands; envs are an overlay for named workflows, not a replacement for the base CLI.
 
@@ -278,7 +278,7 @@ Subcommands:
 
 Example configuration:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [tool.incan.envs.default]
 env-vars = { INCAN_NO_BANNER = "1" }
 
@@ -386,6 +386,6 @@ Practical implications:
 ## See also
 
 - [Project lifecycle](../how-to/project_lifecycle.md)
-- [Project configuration (`incan.toml`)](../../tooling/reference/project_configuration.md)
+- [Project configuration (`loaf.toml`)](../../tooling/reference/project_configuration.md)
 - [Managing dependencies](../../tooling/how-to/dependencies.md)
 - [CLI reference](../../tooling/reference/cli_reference.md)

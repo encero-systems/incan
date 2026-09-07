@@ -89,8 +89,8 @@ fn write_producer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let producer = root.join("facade_lib");
     write_fixture_file(
         &producer,
-        "incan.toml",
-        include_str!("fixtures/package_boundary_facade/producer/incan.toml"),
+        "loaf.toml",
+        include_str!("fixtures/package_boundary_facade/producer/loaf.toml"),
     )?;
     write_fixture_file(
         &producer,
@@ -110,7 +110,7 @@ fn write_consumer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let consumer = root.join("consumer");
     write_fixture_file(
         &consumer,
-        "incan.toml",
+        "loaf.toml",
         "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nfacade = { path = \"../facade_lib\" }\n",
     )?;
     write_fixture_file(

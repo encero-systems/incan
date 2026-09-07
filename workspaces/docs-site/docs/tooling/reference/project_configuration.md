@@ -1,10 +1,10 @@
-# Project configuration (`incan.toml`)
+# Project configuration (`loaf.toml`)
 
-This is the reference for the `incan.toml` project manifest format. For a practical guide to managing dependencies, see: [Managing dependencies](../how-to/dependencies.md).
+This is the reference for the `loaf.toml` project manifest format. For a practical guide to managing dependencies, see: [Managing dependencies](../how-to/dependencies.md).
 
 ## Overview
 
-`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, optional Oven interop requirements, and optional vocab companion crate settings. Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.
+`loaf.toml` is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, optional Oven interop requirements, and optional vocab companion crate settings. Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.
 
 ```text
 my_project/
@@ -12,8 +12,8 @@ my_project/
 │   └── main.incn
 ├── tests/
 │   └── test_main.incn
-├── incan.toml            # Project manifest
-└── incan.lock            # Generated lock file (commit to VCS)
+├── loaf.toml            # Project manifest
+└── oven.lock            # Generated lock file (commit to VCS)
 ```
 
 You can scaffold a full new project (manifest, entry point, starter test, README, and `.gitignore`) with `incan new`. Use `incan init` when you already have a directory and want to add Incan project files there.
@@ -127,33 +127,35 @@ The directory where the compiler and test runner look for user modules. Resoluti
 
 Most projects use the conventional `src/` layout and don't need to set this field. It exists for projects that keep their source in a different directory (e.g. `lib/`).
 
-## `[oven.interop]`
+## `[interop.c]`
 
-The Oven interop section declares package-owned build inputs and compatibility requirements for checked bindings. It describes what the package requires; it does not claim that Oven has already selected a compiler, SDK, sysroot, or installed library.
+The interop section declares package-owned build inputs and compatibility requirements for checked bindings. It describes what the package requires; it does not claim that Oven has already selected a compiler, SDK, sysroot, or installed library.
+
+Each binding kind names itself, so C declarations live under `[interop.c]`. This table was spelled `[oven.interop]` before RFC 117; that spelling is not read, and a manifest still using it is rejected with a message naming the replacement. Renaming the tables is the whole migration — their contents are unchanged.
 
 ```toml
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-ios"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "iphoneos", version = ">=18, <19" }
 headers = ["interop/include/bridge.h"]
 definitions = ["FEATURE_ENABLED=1"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "bridge"
 kind = "static"
 path = "interop/lib/libbridge.a"
 origin = { source = "https://example.invalid/bridge", revision = "v1.2.3", license = "MIT" }
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["bridge"]
 name = "Bridge"
 artifacts = ["bridge"]
 
-[[oven.interop.targets.shims]]
+[[interop.c.targets.shims]]
 name = "bridge_shim"
 language = "cxx"
 sources = ["interop/src/bridge.cpp"]
@@ -167,7 +169,7 @@ The section currently has one field:
 | --- | --- | --- |
 | `schema` | integer | Oven interop declaration schema. The current value is `1`. |
 
-Each `[[oven.interop.targets]]` entry accepts:
+Each `[[interop.c.targets]]` entry accepts:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -185,7 +187,7 @@ toolchain = { capability = "clang", version = ">=18, <19" }
 
 `incan oven interop bake` records explicitly selected concrete compiler, executable, SDK, and sysroot evidence in a receipt-bound direct-`rustc` plan. Those resolved machine and tool identities are not package-authored manifest facts and are never inferred from ambient search paths.
 
-Each `[[oven.interop.targets.artifacts]]` entry has a package-local `name`, a `kind`, and optional `dependencies` naming other artifacts in the same target. The remaining fields depend on `kind`:
+Each `[[interop.c.targets.artifacts]]` entry has a package-local `name`, a `kind`, and optional `dependencies` naming other artifacts in the same target. The remaining fields depend on `kind`:
 
 | Kind | Required fields | Meaning |
 | --- | --- | --- |
@@ -195,7 +197,7 @@ Each `[[oven.interop.targets.artifacts]]` entry has a package-local `name`, a `k
 
 `origin` describes the upstream provenance of a package-owned copy; it is not a download instruction or an admission decision. Its `source` is an HTTPS URL, and its non-empty `revision` and `license` values are locked and retained alongside the artifact digest. A `system` artifact has no package file and therefore cannot declare `origin`.
 
-Each `[[oven.interop.targets.bindings]]` entry is an explicit, target-specific correspondence between one checked C binding and one or more declared artifacts:
+Each `[[interop.c.targets.bindings]]` entry is an explicit, target-specific correspondence between one checked C binding and one or more declared artifacts:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -205,7 +207,7 @@ Each `[[oven.interop.targets.bindings]]` entry is an explicit, target-specific c
 
 Oven never infers this association from a header spelling, system-library name, generated Rust, artifact filename, or search result. `incan lock` freezes the authored relation with the target contract. `incan inspect bindings --format receipt --target <triple>` refuses a relation whose exact module/name pair was not produced by the compiler, and otherwise retains only the logical artifact names beside the checked descriptor identity.
 
-Each `[[oven.interop.targets.shims]]` entry accepts:
+Each `[[interop.c.targets.shims]]` entry accepts:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -217,7 +219,7 @@ Each `[[oven.interop.targets.shims]]` entry accepts:
 
 All declared paths must be normalized relative paths to regular package files. Absolute paths, parent traversal, symlinks, directories, backslashes, and ambient search paths are rejected.
 
-`incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. Locking itself does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The separate explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
+`incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. The lock keeps its own key there because it records Oven's *resolved* facts rather than echoing the authored table; the two names are independent, and the lock's is versioned by the lockfile format. Locking itself does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The separate explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
 
 For an end-to-end binding example, see [Checked C bindings](../../language/how-to/checked_c_bindings.md#freeze-oven-interop-requirements-for-a-target).
 
@@ -325,7 +327,7 @@ Incan dependency table fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `path` | string | Local library project path, relative to `incan.toml`. |
+| `path` | string | Local library project path, relative to `loaf.toml`. |
 | `optional` | bool | Keep the dependency edge inactive until a package feature selects `dep:<name>`. |
 | `default-features` | bool | Select the dependency's `default` feature; defaults to `true`. |
 | `features` | list of strings | Public Incan features requested from the dependency. |
@@ -369,7 +371,7 @@ serde = { version = "1.0", features = ["derive"], default-features = true }
 | `branch`           | string | Git branch (requires `git`)                              |
 | `tag`              | string | Git tag (requires `git`)                                 |
 | `rev`              | string | Git commit hash (requires `git`)                         |
-| `path`             | string | Local path, relative to `incan.toml` location            |
+| `path`             | string | Local path, relative to `loaf.toml` location            |
 
 ## `[rust-dev-dependencies]`
 
@@ -442,7 +444,7 @@ pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 
 ### Path
 
-Local path dependencies, relative to the `incan.toml` location:
+Local path dependencies, relative to the `loaf.toml` location:
 
 ```toml
 [rust-dependencies]

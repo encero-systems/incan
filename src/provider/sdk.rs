@@ -74,7 +74,7 @@ pub struct SdkInventory {
 pub struct SdkSourceComponent {
     /// Stable component id.
     pub id: String,
-    /// Project root containing the component's `incan.toml`.
+    /// Project root containing the component's `loaf.toml`.
     pub project_root: PathBuf,
     /// Whether this component is mandatory in every profile.
     pub mandatory: bool,
@@ -1239,7 +1239,7 @@ profile = "default"
 components = ["stdlib-web"]
 exclude-components = ["stdlib-data"]
 "#,
-            Path::new("/project/incan.toml"),
+            Path::new("/project/loaf.toml"),
         )?;
 
         let selection = SdkComponentSelection::from_manifest_with_profile_override(Some(&manifest), Some("minimal"));

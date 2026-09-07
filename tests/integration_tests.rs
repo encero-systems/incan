@@ -96,7 +96,7 @@ fn write_runtime_error_project(source: &str) -> Result<(tempfile::TempDir, PathB
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
     )?;
     let main_path = src_dir.join("main.incn");
@@ -161,7 +161,7 @@ fn bare_incan_run_uses_project_main_script() -> Result<(), Box<dyn std::error::E
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "bare_run_project"
 version = "0.1.0"
@@ -207,7 +207,7 @@ fn builtin_function_shadowing_is_lexical_and_runtime_visible_issue1116() -> Resu
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
     )?;
     fs::write(
@@ -295,7 +295,7 @@ fn build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path()
     let oven_home = tmp.path().join("oven-home");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!(
             r#"[project]
 name = "{project_name}"
@@ -372,7 +372,7 @@ fn decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi()
     let oven_home = tmp.path().join("oven-home");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!(
             r#"[project]
 name = "{project_name}"
@@ -475,7 +475,7 @@ fn build_rejects_unbound_type_annotation_before_generated_rust_issue902() -> Res
         let src_dir = project_root.join("src");
         fs::create_dir_all(&src_dir)?;
         fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
         )?;
         let main_path = src_dir.join("main.incn");
@@ -528,7 +528,7 @@ fn std_logging_runtime_surfaces_share_one_generated_run() -> Result<(), Box<dyn 
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
     )?;
     fs::write(
@@ -1057,7 +1057,7 @@ fn rfc028_user_defined_operators_run_end_to_end() -> Result<(), Box<dyn std::err
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "rfc028_user_defined_operators"
 version = "0.1.0"
@@ -1199,7 +1199,7 @@ fn binary_read_result_context_crosses_boundaries_issue955() -> Result<(), Box<dy
     fs::create_dir_all(&src_dir)?;
     fs::create_dir_all(&tests_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
     )?;
     fs::write(
@@ -1388,7 +1388,7 @@ fn write_cycle_explicit_call_site_generics_project(dir: &Path) -> Result<PathBuf
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir)?;
     std::fs::write(
-        dir.join("incan.toml"),
+        dir.join("loaf.toml"),
         r#"[project]
 name = "cycle_explicit_call_site_generics"
 version = "0.1.0"
@@ -1894,7 +1894,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         String::from_utf8_lossy(&new_output.stderr)
     );
 
-    let manifest_path = project_dir.join("incan.toml");
+    let manifest_path = project_dir.join("loaf.toml");
     let initial_manifest = fs::read_to_string(&manifest_path)?;
     assert!(initial_manifest.contains(r#"name = "greeter""#));
     assert!(initial_manifest.contains(r#"description = "A generated greeting app""#));
@@ -1951,7 +1951,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert_eq!(
         fs::read_to_string(&manifest_path)?,
         initial_manifest,
-        "dry-run must not modify incan.toml"
+        "dry-run must not modify loaf.toml"
     );
 
     let version_output = incan_command()
@@ -2254,7 +2254,7 @@ fn env_run_nested_incan_run_uses_dependency_overlay_override() -> Result<(), Box
     let project_root = tmp.path();
     fs::create_dir_all(project_root.join("src"))?;
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         format!(
             r#"[project]
 name = "env_overlay_exec"
@@ -2325,7 +2325,7 @@ fn env_run_nested_incan_env_show_prefers_parent_project_override() -> Result<(),
     let project_root = tmp.path();
     fs::create_dir_all(project_root.join("child"))?;
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         format!(
             r#"[project]
 name = "parent_project"
@@ -2342,7 +2342,7 @@ inspect = ["{}", "env", "show", "unit", "--format", "json"]
         ),
     )?;
     fs::write(
-        project_root.join("child/incan.toml"),
+        project_root.join("child/loaf.toml"),
         r#"[project]
 name = "child_project"
 version = "0.1.0"
@@ -2579,7 +2579,7 @@ fn exact_f32_arithmetic_and_mixed_f64_operands_compile_and_run() -> Result<(), B
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
     )?;
     let source = r#"
@@ -2703,7 +2703,7 @@ fn runtime_error_canonicalization_cases() -> Result<(), Box<dyn std::error::Erro
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
     )?;
     let main_path = src_dir.join("main.incn");
@@ -3037,7 +3037,7 @@ fn test_imported_static_initializer_does_not_deadlock_issue680() -> Result<(), B
     let dir = make_temp_test_dir();
     let project_name = unique_test_project_name("imported_static_deadlock");
     std::fs::write(
-        dir.join("incan.toml"),
+        dir.join("loaf.toml"),
         format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
     )?;
     let src_dir = dir.join("src");
@@ -3867,7 +3867,7 @@ def main() -> None:
         let src_dir = tmp.path().join("src");
         fs::create_dir_all(&src_dir)?;
         fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
         )?;
         let main_path = src_dir.join("main.incn");
@@ -4066,7 +4066,7 @@ def main() -> None:
         let root = tmp.path();
         fs::create_dir_all(root.join("src"))?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             "[project]\nname = \"decorated_rest_lib\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(
@@ -5267,7 +5267,7 @@ def main() -> None:
         let package = root.join("src").join("pkg");
         fs::create_dir_all(&package)?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             "[project]\nname = \"imported_private_class_constructor\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(
@@ -6236,7 +6236,7 @@ def main() -> None:
         let project_root = tmp.path().join("union_list_cross_module_alias_repro");
         fs::create_dir_all(project_root.join("src"))?;
         fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"union_list_cross_module_alias_repro\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(
@@ -7464,7 +7464,7 @@ async def main() -> Result[None, str]:
         let src_dir = project_dir.join("src");
         std::fs::create_dir_all(src_dir.join("api"))?;
         std::fs::write(
-            project_dir.join("incan.toml"),
+            project_dir.join("loaf.toml"),
             "[project]\nname = \"keyword_module_paths\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -7572,7 +7572,7 @@ def main() -> None:
         let nested_dir = src_dir.join("substrait");
         std::fs::create_dir_all(&nested_dir)?;
         std::fs::write(
-            project_dir.join("incan.toml"),
+            project_dir.join("loaf.toml"),
             "[project]\nname = \"explicit_root_import\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -7634,7 +7634,7 @@ pub def selected_value() -> str:
         let nested_dir = src_dir.join("substrait");
         std::fs::create_dir_all(&nested_dir)?;
         std::fs::write(
-            project_dir.join("incan.toml"),
+            project_dir.join("loaf.toml"),
             "[project]\nname = \"same_leaf_self_import\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -8609,7 +8609,7 @@ async def main() -> None:
         let project = tmp.path().join("provider_backed_library");
         fs::create_dir_all(project.join("src"))?;
         fs::write(
-            project.join("incan.toml"),
+            project.join("loaf.toml"),
             "[project]\nname = \"provider_backed_library\"\nversion = \"0.1.0\"\n\n[project.scripts]\nlibrary = \"src/lib.incn\"\n",
         )?;
         fs::write(project.join("src/lib.incn"), "pub def answer() -> int:\n  return 42\n")?;
@@ -9739,7 +9739,7 @@ def test_prints() -> None:
     fn e2e_generated_harness_success_reports_the_incan_test_identity_issue996() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             "[project]\nname = \"test_runner_repro\"\nversion = \"0.1.0\"\n",
         );
         std::fs::create_dir_all(dir.join("src"))?;
@@ -9923,7 +9923,7 @@ def test_b() -> None:
     fn e2e_imported_default_expression_expands_with_required_scope_issue395() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "default_expr_import_test_repro"
 version = "0.1.0"
@@ -10098,7 +10098,7 @@ def test_xpass() -> None:
     #[test]
     fn e2e_conftest_nearest_fixture_override_project() {
         let override_dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "nested_conftest_precedence"
 version = "0.1.0"
@@ -10407,7 +10407,7 @@ def test_b_slow() -> None:
     #[test]
     fn e2e_sequential_single_file_runs_do_not_cross_wire_paths() {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "session_isolation_relative"
 version = "0.1.0"
@@ -10545,7 +10545,7 @@ def test_beta_abs_only() -> None:
     #[test]
     fn e2e_nested_package_modules_in_tests_succeed() {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "nested_test"
 version = "0.1.0"
@@ -10607,7 +10607,7 @@ def test_nested_dataset_modules() -> None:
     #[test]
     fn e2e_test_runner_preserves_fixture_cwd_for_file_and_batch_runs() {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "fixture_cwd_parity"
 version = "0.1.0"
@@ -10717,7 +10717,7 @@ def test_cwd__fixture_path_is_repo_relative() -> None:
     #[test]
     fn e2e_inline_and_imported_surfaces_share_one_project() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "inline_and_imported_surface_batch"
 version = "0.1.0"
@@ -10962,7 +10962,7 @@ module tests:
     fn e2e_imported_generic_decorator_factory_preserves_function_signatures() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "generic_decorator_factory"
 version = "0.1.0"
@@ -11025,7 +11025,7 @@ def test_inferred_generic_decorator_factory_signature() -> None:
     #[test]
     fn e2e_inline_decorated_sum_shadows_builtin_sum_issue677() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "decorated_sum_inline"
 version = "0.1.0"
@@ -11087,7 +11087,7 @@ module tests:
     fn e2e_conventional_test_batches_split_import_declaration_collisions_issue676()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "import_collision_batch"
 version = "0.1.0"
@@ -11145,7 +11145,7 @@ def test_local_col() -> None:
     #[test]
     fn e2e_method_call_decorator_factories_use_checked_receiver_lowering() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "method_call_decorator_factories"
 version = "0.1.0"
@@ -11246,7 +11246,7 @@ def main() -> None:
     fn build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "imported_static_decorator_receiver"
 version = "0.1.0"
@@ -11369,7 +11369,7 @@ def main() -> None:
     #[test]
     fn e2e_directory_run_preserves_per_file_inline_test_modules_issue676() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "inline_directory_batch"
 version = "0.1.0"
@@ -11534,7 +11534,7 @@ module tests:
     #[test]
     fn e2e_inline_module_parametrize_markers_strict_and_timeout() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "inline_parametrize_markers"
 version = "0.1.0"
@@ -11595,7 +11595,7 @@ module tests:
     #[test]
     fn e2e_fixture_lifetime_success_scenarios_share_one_project() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "fixture_lifetime_success_batch"
 version = "0.1.0"
@@ -11884,7 +11884,7 @@ def test_2_observes_async_teardown() -> None:
     #[test]
     fn e2e_inline_module_missing_fixture_is_collection_error() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "inline_missing_fixture"
 version = "0.1.0"
@@ -11927,7 +11927,7 @@ module tests:
     #[test]
     fn e2e_conftest_does_not_apply_to_inline_src_tests() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "incan.toml",
+            "loaf.toml",
             r#"[project]
 name = "inline_conftest_boundary"
 version = "0.1.0"
@@ -12468,7 +12468,7 @@ mod rfc031_pub_import_integration_tests {
         main_source: &str,
     ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(root.join("src"))?;
-        std::fs::write(root.join("incan.toml"), manifest_content)?;
+        std::fs::write(root.join("loaf.toml"), manifest_content)?;
         let main_path = root.join("src").join("main.incn");
         std::fs::write(&main_path, main_source)?;
         Ok(main_path)
@@ -12696,7 +12696,7 @@ def test_generic_json_result_infers_from_parameter_context() -> None:
         let provider_root = tmp.path().join("receiver_factory_api");
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
-            provider_root.join("incan.toml"),
+            provider_root.join("loaf.toml"),
             "[project]\nname = \"receiver_factory_api\"\nversion = \"0.1.0\"\n\n[rust-dependencies.receiver_factory]\npath = \"../receiver_factory\"\n",
         )?;
         std::fs::write(
@@ -13197,7 +13197,7 @@ def main() -> None:
             String::from_utf8_lossy(&lock_output.stdout),
             String::from_utf8_lossy(&lock_output.stderr)
         );
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
         let mut lock = incan::lockfile::IncanLock::load(&lock_path)?;
         lock.format = 1;
         lock.write(&lock_path)?;
@@ -13253,7 +13253,7 @@ def main() -> None:
         let provider_root = root.join("deps").join(dependency_key);
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
-            provider_root.join("incan.toml"),
+            provider_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n"
             ),
@@ -13282,7 +13282,7 @@ def main() -> None:
         let provider_root = fixture.path().join("source-vocab-provider");
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
-            provider_root.join("incan.toml"),
+            provider_root.join("loaf.toml"),
             "[project]\nname = \"source_vocab_provider\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -13645,7 +13645,7 @@ incan_vocab::export_wasm_desugarer!(QuerykitHelperDesugarer);
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::create_dir_all(project_root.join("tests"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"absolute_crate_public_types\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -13737,7 +13737,7 @@ def test_absolute_crate_public_types() -> None:
         let provider_root = tmp.path().join("batch_provider");
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
-            provider_root.join("incan.toml"),
+            provider_root.join("loaf.toml"),
             "[project]\nname = \"batch_provider\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -13765,7 +13765,7 @@ pub def marker() -> int:
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::create_dir_all(consumer_root.join("tests"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"batch_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nbatch_provider = { path = \"../batch_provider\" }\n",
         )?;
         std::fs::write(
@@ -13860,7 +13860,7 @@ def test_direct_import() -> None:
         let producer_root = tmp.path().join("boundarykit_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"boundarykit\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -13963,8 +13963,8 @@ def main() -> None:
 
         for (relative_path, contents) in [
             (
-                "incan.toml",
-                include_str!("fixtures/pub_union_consumer_issue1198/provider/incan.toml"),
+                "loaf.toml",
+                include_str!("fixtures/pub_union_consumer_issue1198/provider/loaf.toml"),
             ),
             (
                 "src/projection_builders.incn",
@@ -13989,7 +13989,7 @@ def main() -> None:
         // byte-identical generated Rust. This module-docstring revision changes source authority without changing
         // the provider closure, reproducing the reusable-plan collision without relying on shared test state.
         for relative_path in [
-            "incan.toml",
+            "loaf.toml",
             "src/projection_builders.incn",
             "src/functions/literals/always_true.incn",
             "src/dataset.incn",
@@ -14015,8 +14015,8 @@ def main() -> None:
         );
         for (relative_path, contents) in [
             (
-                "incan.toml",
-                include_str!("fixtures/pub_union_consumer_issue1198/consumer/incan.toml"),
+                "loaf.toml",
+                include_str!("fixtures/pub_union_consumer_issue1198/consumer/loaf.toml"),
             ),
             (
                 "src/main.incn",
@@ -14058,7 +14058,7 @@ def main() -> None:
         let producer_root = tmp.path().join("callkit_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"callkit\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -14235,7 +14235,7 @@ def main() -> None:
         let producer_root = tmp.path().join("enumkit_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"enumkit\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -14298,7 +14298,7 @@ def main() -> None:
         let provider_root = tmp.path().join("deps/widgets");
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
-            provider_root.join("incan.toml"),
+            provider_root.join("loaf.toml"),
             "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -14318,7 +14318,7 @@ def main() -> None:
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::create_dir_all(consumer_root.join("tests"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../deps/widgets\" }\n",
         )?;
         let main_path = consumer_root.join("src/main.incn");
@@ -14380,7 +14380,7 @@ def test_external_vocab_assert_keyword() -> None:
         let producer_root = tmp.path().join("widgets_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         write_vocab_companion_crate_with_assert_keyword(&producer_root, "vocab_companion", "widgets_vocab_companion")?;
@@ -14394,7 +14394,7 @@ def test_external_vocab_assert_keyword() -> None:
         let consumer_root = tmp.path().join("consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../widgets_provider\" }\n",
         )?;
         std::fs::write(
@@ -14436,7 +14436,7 @@ def main() -> None:
         let project_root = tmp.path().join("widgets_provider");
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -14476,7 +14476,7 @@ pub def marker(value: int) -> Marker:
         let serializer_root = original.join("serializer");
         std::fs::create_dir_all(serializer_root.join("src"))?;
         std::fs::write(
-            serializer_root.join("incan.toml"),
+            serializer_root.join("loaf.toml"),
             r#"[project]
 name = "serializer_core"
 version = "0.5.0"
@@ -14502,7 +14502,7 @@ json = []
         let reporting_root = original.join("reporting");
         std::fs::create_dir_all(reporting_root.join("src"))?;
         std::fs::write(
-            reporting_root.join("incan.toml"),
+            reporting_root.join("loaf.toml"),
             r#"[project]
 name = "reporting_core"
 version = "0.5.0"
@@ -14541,15 +14541,15 @@ serializer = { path = "../serializer", optional = true, default-features = false
         let consumer_root = original.join("consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"artifact_consumer\"\n\n[dependencies]\nreporting = { path = \"../reporting\" }\n",
         )?;
         std::fs::write(consumer_root.join("src/main.incn"), "def main() -> None:\n    pass\n")?;
 
         let relocated = tmp.path().join("relocated");
         std::fs::rename(&original, &relocated)?;
-        std::fs::remove_file(relocated.join("serializer/incan.toml"))?;
-        std::fs::remove_file(relocated.join("reporting/incan.toml"))?;
+        std::fs::remove_file(relocated.join("serializer/loaf.toml"))?;
+        std::fs::remove_file(relocated.join("reporting/loaf.toml"))?;
         std::fs::remove_dir_all(relocated.join("serializer/src"))?;
         std::fs::remove_dir_all(relocated.join("reporting/src"))?;
 
@@ -14593,7 +14593,7 @@ serializer = { path = "../serializer", optional = true, default-features = false
         let project_root = tmp.path().join("return_context_union_arg");
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"return_context_union_arg\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -14865,7 +14865,7 @@ def main() -> None:
         let producer_root = root.join("pub_boundary_library");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"pub_boundary_core\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -15498,7 +15498,7 @@ pub def display[T](data: DataSet[T]) -> None:
         // ---- Context: source-backed helper library ----
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             if with_vocab {
                 "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n"
             } else {
@@ -15603,7 +15603,7 @@ pub def aggregate_default(expr: ColumnExpr, output_name: str = DEFAULT_LABEL) ->
         let provider_root = root.join("deps/widgets");
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
-            provider_root.join("incan.toml"),
+            provider_root.join("loaf.toml"),
             "[project]\nname = \"requirements_widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -15903,7 +15903,7 @@ pub fn library_vocab() -> VocabRegistration {
         let producer_root = tmp.path().join("widgets_core_project");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -15934,7 +15934,7 @@ pub fn library_vocab() -> VocabRegistration {
         let consumer_root = tmp.path().join("consumer_app");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../widgets_core_project\" }\n",
         )?;
         let consumer_main = consumer_root.join("src/main.incn");
@@ -15963,7 +15963,7 @@ pub fn library_vocab() -> VocabRegistration {
         let producer_root = tmp.path().join("computed_property_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"computed_property_provider\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -15989,7 +15989,7 @@ pub fn library_vocab() -> VocabRegistration {
         let consumer_root = tmp.path().join("consumer_app");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\ncomputed_property_provider = { path = \"../computed_property_provider\" }\n",
         )?;
         let consumer_main = consumer_root.join("src/main.incn");
@@ -16021,7 +16021,7 @@ pub fn library_vocab() -> VocabRegistration {
         let producer_root = tmp.path().join("modulelib");
         std::fs::create_dir_all(producer_root.join("src/hyperquant"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"modulelib\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -16109,7 +16109,7 @@ pub def search(index: HyperquantIndex) -> int:
         let consumer_root = tmp.path().join("consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"modulelib_consumer\"\n\n[dependencies]\nmodulelib = { path = \"../modulelib\" }\n",
         )?;
         let main_path = consumer_root.join("src/main.incn");
@@ -16242,7 +16242,7 @@ def test_same_statement_pub_import_alias() -> None:
         let producer_root = tmp.path().join("sealed_class_lib");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"sealed_class_lib\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -16346,7 +16346,7 @@ pub def make_vault(secret: str) -> Vault:
         let decoy_root = tmp.path().join("decoy_class_lib");
         std::fs::create_dir_all(decoy_root.join("src"))?;
         std::fs::write(
-            decoy_root.join("incan.toml"),
+            decoy_root.join("loaf.toml"),
             "[project]\nname = \"decoy_class_lib\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -16430,7 +16430,7 @@ def main() -> None:
         let producer_root = tmp.path().join("sealed_model_lib");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"sealed_model_lib\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -16625,7 +16625,7 @@ def unpack(value: ConsumerVault) -> str:
         let provider_root = tmp.path().join("compiled_parent");
         std::fs::create_dir_all(provider_root.join("src"))?;
         std::fs::write(
-            provider_root.join("incan.toml"),
+            provider_root.join("loaf.toml"),
             "[project]\nname = \"compiled_parent\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -16729,7 +16729,7 @@ def main() -> None:
         let project_root = tmp.path().join("pub_import_regression_batch_project");
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"pub_import_regression_batch\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -17049,7 +17049,7 @@ def main() -> None:\n  xs = [1, 2, 3, 4, 5]\n  ys = xs.iter().filter(is_even).ma
         let producer_root = tmp.path().join("widgets_vocab_project");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"widgets_vocab_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -17103,7 +17103,7 @@ def main() -> None:\n  xs = [1, 2, 3, 4, 5]\n  ys = xs.iter().filter(is_even).ma
         let producer_root = tmp.path().join("guarded_widgets_vocab_project");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"guarded_widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -17143,7 +17143,7 @@ def main() -> None:\n  xs = [1, 2, 3, 4, 5]\n  ys = xs.iter().filter(is_even).ma
         let producer_root = tmp.path().join("ordinal_keys_lib");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"ordinal_keys_core\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -17256,7 +17256,7 @@ pub def small_key_map_bytes() -> bytes:
         let consumer_name = unique_test_project_name("ordinal_keys_consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{consumer_name}\"\n\n[dependencies]\nordinal_keys = {{ path = \"../ordinal_keys_lib\" }}\n"
             ),
@@ -17283,7 +17283,7 @@ pub def small_key_map_bytes() -> bytes:
         let producer_root = tmp.path().join("environ_types_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"environ_types_core\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -17421,7 +17421,7 @@ pub type StrictPort = newtype int
         let consumer_root = tmp.path().join("environ_types_consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"environ_types_consumer\"\n\n[dependencies]\nenviron_types = { path = \"../environ_types_provider\" }\n",
         )?;
         let consumer_main = consumer_root.join("src/main.incn");
@@ -17557,7 +17557,7 @@ def main() -> None:
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::create_dir_all(project_root.join("tests"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
         )?;
         std::fs::write(
@@ -17637,7 +17637,7 @@ def test_defaulted_port_through_facade() -> None:
         let project_name = unique_test_project_name("environ_module_qualified");
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
         )?;
         let main_path = project_root.join("src/main.incn");
@@ -17684,7 +17684,7 @@ def main() -> None:
         let project_name = unique_test_project_name("environ_function_facade");
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
         )?;
         std::fs::write(
@@ -17804,7 +17804,7 @@ def main() -> Result[None, SessionError]:
         let producer_root = tmp.path().join("invalid_helper_vocab_project");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -17840,7 +17840,7 @@ def main() -> Result[None, SessionError]:
         let producer_root = tmp.path().join("widgets_assert_vocab_project");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"widgets_assert_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -17860,7 +17860,7 @@ def main() -> Result[None, SessionError]:
         let consumer_root = tmp.path().join("consumer_with_vocab_keyword");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../widgets_assert_vocab_project\" }\n",
         )?;
         let consumer_main = consumer_root.join("src/main.incn");
@@ -17948,13 +17948,13 @@ def main() -> Result[None, SessionError]:
         std::fs::write(&header, "int fixture_abs(int value);\n")?;
         let main_path = write_project_files(
             tmp.path(),
-            "[project]\nname = \"package_relative_c_header\"\n\n[sdk]\nprofile = \"minimal\"\n\n[oven.interop]\nschema = 1\n\n[[oven.interop.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/fixture.h\"]\n",
+            "[project]\nname = \"package_relative_c_header\"\n\n[sdk]\nprofile = \"minimal\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/fixture.h\"]\n",
             "from std.interop import c\n\nbinding Fixture:\n    header = \"interop/include/fixture.h\"\n    link = c.system_library(\"c\")\n\n    symbol absolute(value: c.i32) -> c.i32:\n        native = \"fixture_abs\"\n\ndef main() -> None:\n    pass\n",
         )?;
         let output = run_check_against_checkout_sdk(&main_path, &tmp.path().join("generated-cargo-target"))?;
         assert!(
             output.status.success(),
-            "expected a package-relative checked C header to resolve through [oven.interop].\nstdout:\n{}\nstderr:\n{}",
+            "expected a package-relative checked C header to resolve through [interop.c].\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -20083,7 +20083,7 @@ def test_quality_expression_vocab_result() -> None:
         let producer_root = tmp.path().join("deps").join("querykit");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         std::fs::write(
@@ -20115,7 +20115,7 @@ pub fn library_vocab() -> VocabRegistration {
         let consumer_root = tmp.path().join("consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nquerykit = { path = \"../deps/querykit\" }\n",
         )?;
         let main_path = consumer_root.join("src/main.incn");
@@ -20141,7 +20141,7 @@ def main() -> None:
         let fmt_output = super::incan_command()
             .args(["fmt", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
-            .env(INTERNAL_MANIFEST_OVERRIDE_ENV, consumer_root.join("incan.toml"))
+            .env(INTERNAL_MANIFEST_OVERRIDE_ENV, consumer_root.join("loaf.toml"))
             .env(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, &consumer_root)
             .output()?;
         assert!(
@@ -20178,7 +20178,7 @@ def main() -> None:
         write_and_bake_source_provider_with_requirements_and_assert_keyword(project_root, "0.8")?;
 
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"provider_requirements_consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
         )?;
         let main_path = project_root.join("src/main.incn");
@@ -20195,7 +20195,7 @@ def main() -> None:
             String::from_utf8_lossy(&consumer_bake.stdout),
             String::from_utf8_lossy(&consumer_bake.stderr)
         );
-        let lock_path = project_root.join("incan.lock");
+        let lock_path = project_root.join("oven.lock");
         let baked_lock_bytes = std::fs::read(&lock_path)?;
 
         let build_out_dir = project_root.join("out");
@@ -20317,7 +20317,7 @@ def main() -> None:
         )?;
 
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\nanalytics = { path = \"deps/analytics\" }\n",
         )?;
         let main_path = project_root.join("src/main.incn");

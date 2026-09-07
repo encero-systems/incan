@@ -29,15 +29,15 @@ The complete producer and consumer live at `examples/advanced/library_package`.
 Create this workspace layout:
 
 ```text
-incan.toml
+loaf.toml
 producer/
-├── incan.toml
+├── loaf.toml
 └── src/
     ├── lib.incn
     └── pricing.incn
 ```
 
-The root `incan.toml` defines both projects as workspace members:
+The root `loaf.toml` defines both projects as workspace members:
 
 ```toml
 [workspace]
@@ -45,7 +45,7 @@ members = ["producer", "consumer"]
 default-members = ["pricing_app"]
 ```
 
-`producer/incan.toml` identifies the package:
+`producer/loaf.toml` identifies the package:
 
 ```toml
 [project]
@@ -102,12 +102,12 @@ Create a sibling project:
 
 ```text
 consumer/
-├── incan.toml
+├── loaf.toml
 └── src/
     └── main.incn
 ```
 
-Declare the local dependency in `consumer/incan.toml`:
+Declare the local dependency in `consumer/loaf.toml`:
 
 ```toml
 [project]
@@ -145,7 +145,7 @@ incan oven bake --project . --format json
 incan run --member pricing_app --locked
 ```
 
-The workspace bake discovers the producer and consumer, publishes the required project extensions and completed outputs, and names their exact full-standard-library base. The normal run then reuses those checked artifacts without invoking Cargo. Commit the generated root `incan.lock`; member-local lockfiles are not workspace authorities. When the producer changes its public API, bake and build it again rather than copying source files between projects.
+The workspace bake discovers the producer and consumer, publishes the required project extensions and completed outputs, and names their exact full-standard-library base. The normal run then reuses those checked artifacts without invoking Cargo. Commit the generated root `oven.lock`; member-local lockfiles are not workspace authorities. When the producer changes its public API, bake and build it again rather than copying source files between projects.
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 

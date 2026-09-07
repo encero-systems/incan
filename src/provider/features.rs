@@ -14,7 +14,7 @@ use crate::library_manifest::{
     LibraryManifest, ProviderDependencyKind, ProviderDependencyMetadata, ProviderFeatureMetadata,
     digest_provider_artifact,
 };
-use crate::manifest::{ExpandedProjectFeature, MANIFEST_FILENAME, ProjectFeatureDefinition, ProjectManifest};
+use crate::manifest::{ExpandedProjectFeature, LOAF_MANIFEST_FILENAME, ProjectFeatureDefinition, ProjectManifest};
 
 use super::SdkInventory;
 
@@ -318,7 +318,7 @@ impl PackageFeaturePlan {
 
             let manifest = match manifests.get(&project_root) {
                 Some(manifest) => Some(manifest.clone()),
-                None if project_root.join(MANIFEST_FILENAME).is_file() => {
+                None if project_root.join(LOAF_MANIFEST_FILENAME).is_file() => {
                     let loaded = read_exact_project_manifest(&project_root)?;
                     manifests.insert(project_root.clone(), loaded.clone());
                     Some(loaded)
@@ -579,7 +579,7 @@ impl PackageFeaturePlan {
                 }
                 dependency_request.enable_default |= dependency.default_features;
                 if dependency_request != &previous || !processed.contains_key(&dependency_root) {
-                    if !dependency_root.join(MANIFEST_FILENAME).is_file() {
+                    if !dependency_root.join(LOAF_MANIFEST_FILENAME).is_file() {
                         let index = LibraryManifestIndex::from_project_manifest_dependencies(
                             &manifest,
                             std::iter::once(dependency_key.as_str()),
@@ -754,9 +754,9 @@ fn render_features(features: &BTreeSet<String>) -> String {
     features.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
-/// Read exactly `<dependency-root>/incan.toml` without walking into an unrelated ancestor project.
+/// Read exactly `<dependency-root>/loaf.toml` without walking into an unrelated ancestor project.
 fn read_exact_project_manifest(project_root: &Path) -> Result<ProjectManifest, PackageFeaturePlanError> {
-    let path = project_root.join(MANIFEST_FILENAME);
+    let path = project_root.join(LOAF_MANIFEST_FILENAME);
     let content = fs::read_to_string(&path).map_err(|source| PackageFeaturePlanError::ManifestRead {
         path: path.clone(),
         source,
@@ -1227,7 +1227,7 @@ mod tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn manifest(content: &str) -> Result<ProjectManifest, crate::manifest::ManifestError> {
-        ProjectManifest::from_str(content, Path::new("/workspace/incan.toml"))
+        ProjectManifest::from_str(content, Path::new("/workspace/loaf.toml"))
     }
 
     #[test]
@@ -1372,7 +1372,7 @@ serializer = { path = "../serializer", optional = true }
     #[test]
     fn package_feature_errors_point_to_the_exact_manifest_array_item() -> TestResult {
         let workspace = tempfile::tempdir()?;
-        let manifest_path = workspace.path().join("incan.toml");
+        let manifest_path = workspace.path().join("loaf.toml");
         fs::write(
             &manifest_path,
             "[project]\nname = \"demo\"\n\n[project.features]\ndefault = [\n    \"missing\",\n]\n",
@@ -1383,7 +1383,7 @@ serializer = { path = "../serializer", optional = true }
             .ok_or("expected unknown feature")?;
 
         assert!(
-            error.to_string().contains("incan.toml:6:5"),
+            error.to_string().contains("loaf.toml:6:5"),
             "expected exact feature member location, got: {error}"
         );
         Ok(())
@@ -1397,7 +1397,7 @@ serializer = { path = "../serializer", optional = true }
         fs::create_dir_all(&serializer)?;
         fs::create_dir_all(&reporting)?;
         fs::write(
-            serializer.join("incan.toml"),
+            serializer.join("loaf.toml"),
             r#"
 [project]
 name = "serializer"
@@ -1408,7 +1408,7 @@ json = []
 "#,
         )?;
         fs::write(
-            reporting.join("incan.toml"),
+            reporting.join("loaf.toml"),
             r#"
 [project]
 name = "reporting"
@@ -1523,7 +1523,7 @@ serializer = { path = "../serializer", optional = true, default-features = false
         let consumer_root = original.join("consumer");
         fs::create_dir_all(&consumer_root)?;
         fs::write(
-            consumer_root.join(MANIFEST_FILENAME),
+            consumer_root.join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nreporting = { path = \"../reporting\" }\n",
         )?;
 
@@ -1596,7 +1596,7 @@ serializer = { path = "../serializer", optional = true, default-features = false
         let consumer_root = workspace.path().join("consumer");
         fs::create_dir_all(&consumer_root)?;
         fs::write(
-            consumer_root.join(MANIFEST_FILENAME),
+            consumer_root.join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nreporting = { path = \"../reporting\" }\n",
         )?;
         let inventory = SdkInventory {

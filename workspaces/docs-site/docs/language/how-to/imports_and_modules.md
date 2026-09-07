@@ -51,7 +51,7 @@ Create the library with its public declarations in ordinary source modules:
 
 ```text
 hyperquant-lib/
-├── incan.toml
+├── loaf.toml
 └── src/
     ├── lib.incn
     └── hyperquant/

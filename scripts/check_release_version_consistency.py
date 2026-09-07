@@ -11,7 +11,7 @@ uses. It deliberately ignores version literals in tests and fixtures: several ex
 handling itself (PEP 440 normalization of ``0.4.0-rc1``, for instance), and demanding they track the workspace
 would make this check something people switch off.
 
-Example ``incan.lock`` files record the compiler that last wrote them and update when the examples are rebuilt, so
+Example ``oven.lock`` files record the compiler that last wrote them and update when the examples are rebuilt, so
 they are reported for awareness but never fail the check.
 """
 
@@ -103,7 +103,7 @@ def workspace_lock_version() -> str | None:
 def example_lock_versions() -> list[tuple[Path, str]]:
     """Compiler versions recorded in tracked example lockfiles, which follow whenever examples are rebuilt."""
     listing = subprocess.run(
-        ["git", "ls-files", "-z", "*incan.lock"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+        ["git", "ls-files", "-z", "*oven.lock"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
     )
     recorded: list[tuple[Path, str]] = []
     for name in listing.stdout.split("\0"):

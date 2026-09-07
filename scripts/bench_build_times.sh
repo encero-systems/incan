@@ -130,7 +130,7 @@ for index in "${!labels[@]}"; do
             || fail "$label could not create a starter project"
         build_root="$build_root/bench"
     fi
-    rm -rf "$build_root/.incan" "$build_root/target" "$build_root/incan.lock"
+    rm -rf "$build_root/.incan" "$build_root/target" "$build_root/oven.lock" "$build_root/incan.lock"
 
     # ---- Cold: empty home, clean project. Timed once; repeating it would measure a warm build. ----
     printf 'cold... '

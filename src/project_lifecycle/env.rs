@@ -82,7 +82,7 @@ pub struct EnvRunPreview {
 /// Configuration and resolution failures for `incan env`.
 #[derive(Debug, Clone, Error, PartialEq)]
 pub enum EnvConfigError {
-    /// The `incan.toml` document could not be decoded into the environment schema.
+    /// The `loaf.toml` document could not be decoded into the environment schema.
     #[error("failed to parse incan environment configuration: {message}")]
     Parse { message: String },
     /// A requested or inherited environment name is not configured.
@@ -390,7 +390,7 @@ mod tests {
     use toml::Value;
 
     fn parse_config(source: &str) -> Result<EnvConfigSet, Box<dyn std::error::Error>> {
-        let manifest = ProjectManifest::from_str(source, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(source, Path::new("loaf.toml"))?;
         Ok(EnvConfigSet::from_manifest(&manifest))
     }
 
@@ -450,7 +450,7 @@ mod tests {
 extends = ["workspace:ci"]
 env-vars = { MEMBER = "1", SHARED = "member" }
 "#,
-            Path::new("packages/member/incan.toml"),
+            Path::new("packages/member/loaf.toml"),
         )?;
         let root = ProjectManifest::from_str(
             r#"
@@ -463,7 +463,7 @@ env-vars = { SHARED = "workspace", ROOT = "1" }
 [workspace.envs.ci.scripts]
 test = ["incan", "test"]
 "#,
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         )?;
         let workspace_envs = root
             .workspace()
@@ -723,7 +723,7 @@ test = ["incan", "test"]
             [tool.incan.envs.unit.rust-dependencies.serde]
             version = "1"
             "#,
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         ) {
             Ok(manifest) => return Err(format!("expected parse error, parsed {manifest:?}").into()),
             Err(error) => error,
@@ -811,7 +811,7 @@ test = ["incan", "test"]
             [project]
             requires-incan = "not semver"
             "#,
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         ) {
             Ok(manifest) => return Err(format!("expected manifest error, parsed {manifest:?}").into()),
             Err(error) => error,
@@ -840,7 +840,7 @@ test = ["incan", "test"]
             [tool.incan.envs.unit]
             env-varz = {}
             "#,
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         ) {
             Ok(manifest) => return Err(format!("expected parse error, parsed {manifest:?}").into()),
             Err(error) => error,

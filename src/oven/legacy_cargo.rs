@@ -5512,7 +5512,7 @@ pub fn legacy_cargo_inspection_sources(
 
 /// Resolve inspection sources for one explicit user-requested project bake.
 ///
-/// Unlike compiler-owned Loaf publication, a conventional Incan project may have only the semantic `incan.lock` and
+/// Unlike compiler-owned Loaf publication, a conventional Incan project may have only the semantic `oven.lock` and
 /// no pre-existing Cargo.lock. This function therefore permits Cargo to create its first lock while remaining offline
 /// and inside the named `incan oven bake` transaction. Its caller immediately seals the copied, digested sources and
 /// the final direct-Rustc publisher records its independently generated lock. Normal build, run, and test cannot

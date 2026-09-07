@@ -346,7 +346,7 @@ fn write_minimal_project(root: &Path, name: &str, extra_manifest: &str) -> Resul
     let src_dir = root.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        root.join("incan.toml"),
+        root.join("loaf.toml"),
         format!(
             r#"[project]
 name = "{name}"
@@ -384,7 +384,7 @@ fn write_locked_oven_interop_plan(root: &Path) -> Result<(), Box<dyn std::error:
         },
         String::new(),
     );
-    lock.write(&root.join("incan.lock"))?;
+    lock.write(&root.join("oven.lock"))?;
     Ok(())
 }
 
@@ -416,7 +416,7 @@ fn write_locked_workspace_oven_interop_plan(
         },
         String::new(),
     );
-    lock.write(&workspace_root.join("incan.lock"))?;
+    lock.write(&workspace_root.join("oven.lock"))?;
     Ok(())
 }
 
@@ -1175,7 +1175,7 @@ fn fallible_iterator_defaults_cross_compiled_package_boundary() -> Result<(), Bo
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         "[project]\nname = \"fallible_streams\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -1279,7 +1279,7 @@ fn set_constructor_survives_facade_package_and_test_batch_issue951() -> Result<(
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         "[project]\nname = \"set_library\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -1618,7 +1618,7 @@ def main() -> None:
 fn workspace_inspect_reports_deterministic_scope_and_stale_member_locks() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"
 [project]
 name = "root"
@@ -1631,12 +1631,9 @@ default-members = ["zebra", "alpha"]
     for name in ["alpha", "zebra"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
-        fs::write(
-            member_root.join("incan.toml"),
-            format!("[project]\nname = \"{name}\"\n"),
-        )?;
+        fs::write(member_root.join("loaf.toml"), format!("[project]\nname = \"{name}\"\n"))?;
     }
-    fs::write(root.path().join("packages/zebra/incan.lock"), "obsolete member lock")?;
+    fs::write(root.path().join("packages/zebra/oven.lock"), "obsolete member lock")?;
 
     let default_output = run_incan(root.path(), &["workspace", "inspect", "--format", "json"])?;
     assert_success(&default_output, "workspace inspect from root");
@@ -1679,7 +1676,7 @@ default-members = ["zebra", "alpha"]
 fn workspace_lock_is_published_once_at_the_root_from_any_member() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"
 [workspace]
 members = ["packages/*"]
@@ -1692,7 +1689,7 @@ itoa = "1"
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{name}\"\nversion = \"{version}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[project.features]\ndefault = [\"{name}\"]\n{name} = []\n{}",
                 if name == "alpha" {
@@ -1719,7 +1716,7 @@ itoa = "1"
 
     let output = run_incan(&root.path().join("packages/alpha"), &["lock"])?;
     assert_success(&output, "incan lock from workspace member");
-    let root_lock = root.path().join("incan.lock");
+    let root_lock = root.path().join("oven.lock");
     assert!(root_lock.is_file(), "workspace root lock was not written");
     let lock = incan::lockfile::IncanLock::load(&root_lock)?;
     assert_eq!(
@@ -1765,8 +1762,8 @@ itoa = "1"
         Some(2)
     );
     assert!(
-        !root.path().join("packages/alpha/incan.lock").exists()
-            && !root.path().join("packages/zebra/incan.lock").exists(),
+        !root.path().join("packages/alpha/oven.lock").exists()
+            && !root.path().join("packages/zebra/oven.lock").exists(),
         "workspace members must not receive authoritative lockfiles"
     );
     for (name, _) in [("alpha", "1.2.3"), ("zebra", "4.5.6")] {
@@ -1842,7 +1839,7 @@ fn workspace_root_library_without_a_script_publishes_the_canonical_lock_issue997
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root-library"
 version = "0.1.0"
@@ -1859,7 +1856,7 @@ members = ["packages/member"]
     let member = root.path().join("packages/member");
     fs::create_dir_all(member.join("src"))?;
     fs::write(
-        member.join("incan.toml"),
+        member.join("loaf.toml"),
         "[project]\nname = \"member-library\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -1870,7 +1867,7 @@ members = ["packages/member"]
     let output = run_incan(root.path(), &["lock"])?;
     assert_success(&output, "rooted workspace lock without scripts");
 
-    let root_lock = root.path().join("incan.lock");
+    let root_lock = root.path().join("oven.lock");
     assert!(root_lock.is_file(), "rooted workspace lock was not written");
     let lock = incan::lockfile::IncanLock::load(&root_lock)?;
     let roots = lock
@@ -1881,7 +1878,7 @@ members = ["packages/member"]
         .collect::<Vec<_>>();
     assert_eq!(roots, vec!["", "packages/member"]);
     assert!(
-        !member.join("incan.lock").exists(),
+        !member.join("oven.lock").exists(),
         "a workspace member must not receive a second authoritative lock"
     );
     Ok(())
@@ -1895,7 +1892,7 @@ fn rooted_workspace_semantic_lock_is_relocation_stable_issue906() -> Result<(), 
     ) -> Result<incan::lockfile::IncanLock, Box<dyn std::error::Error>> {
         fs::create_dir_all(root.join("src"))?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -1918,7 +1915,7 @@ root_lib = { path = "." }
         let consumer = root.join("consumer");
         fs::create_dir_all(consumer.join("src"))?;
         fs::write(
-            consumer.join("incan.toml"),
+            consumer.join("loaf.toml"),
             r#"[project]
 name = "consumer"
 version = "0.1.0"
@@ -1937,14 +1934,14 @@ root_lib = { workspace = true }
 
         let lock_output = run_incan(root, &["lock"])?;
         assert_success(&lock_output, "rooted workspace lock generation");
-        Ok(incan::lockfile::IncanLock::load(&root.join("incan.lock"))?)
+        Ok(incan::lockfile::IncanLock::load(&root.join("oven.lock"))?)
     }
 
     let temp = tempfile::tempdir()?;
     let producer = temp.path().join("prebuilt/root_lib");
     fs::create_dir_all(producer.join("src"))?;
     fs::write(
-        producer.join("incan.toml"),
+        producer.join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -1998,7 +1995,7 @@ fn rooted_workspace_member_build_uses_direct_rust_dependencies_issue907() -> Res
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -2016,7 +2013,7 @@ default-members = ["consumer"]
     let consumer = root.path().join("consumer");
     fs::create_dir_all(consumer.join("src"))?;
     fs::write(
-        consumer.join("incan.toml"),
+        consumer.join("loaf.toml"),
         r#"[project]
 name = "consumer"
 version = "0.1.0"
@@ -2059,7 +2056,7 @@ fn rooted_workspace_cold_lock_and_selected_member_preserve_identity_issues908_90
     )?;
 
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -2081,7 +2078,7 @@ itoa = "1"
     let consumer = root.path().join("consumer");
     fs::create_dir_all(consumer.join("src"))?;
     fs::write(
-        consumer.join("incan.toml"),
+        consumer.join("loaf.toml"),
         r#"[project]
 name = "consumer"
 version = "0.1.0"
@@ -2151,7 +2148,7 @@ def test_workspace_rust_dependency_is_available() -> None:
 
     assert!(!root.path().join("target").exists());
     assert!(!incan_home.exists());
-    assert!(!root.path().join("incan.lock").exists());
+    assert!(!root.path().join("oven.lock").exists());
 
     // The same cold fixture covers both #908/#909's selected-root artifact and #931's bounded Oven
     // admission/fixed-point contract. The explicit package bake is the only permitted provider publication step.
@@ -2180,7 +2177,7 @@ def test_workspace_rust_dependency_is_available() -> None:
     );
     assert_success(&provider_bake_output, "cold rooted workspace provider publication");
 
-    let lock_path = root.path().join("incan.lock");
+    let lock_path = root.path().join("oven.lock");
     assert!(
         lock_path.is_file(),
         "the explicit project bake must publish the canonical workspace lock before sealing its completed Loaf"
@@ -2401,7 +2398,7 @@ def test_workspace_rust_dependency_is_available() -> None:
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(
-            diagnostic.contains("workspace incan.lock is out of date"),
+            diagnostic.contains("workspace oven.lock is out of date"),
             "{description} did not preserve strict-lock diagnostic precedence:\n{diagnostic}"
         );
         assert!(
@@ -2427,7 +2424,7 @@ def test_workspace_rust_dependency_is_available() -> None:
         String::from_utf8_lossy(&non_strict.stderr)
     );
     assert!(
-        non_strict_diagnostic.contains("workspace incan.lock is out of date; continuing without using it"),
+        non_strict_diagnostic.contains("workspace oven.lock is out of date; continuing without using it"),
         "non-strict stale-lock build did not expose its tolerated-stale authority decision:\n{non_strict_diagnostic}"
     );
     assert_eq!(fs::read_to_string(&lock_path)?, stale_lock);
@@ -2441,7 +2438,7 @@ fn locked_build_synthesizes_unreferenced_selected_workspace_member_cargo_root() 
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -2480,7 +2477,7 @@ default-members = ["root_lib", "leaf", "sibling"]
     let leaf = root.path().join("leaf");
     fs::create_dir_all(leaf.join("src"))?;
     fs::write(
-        leaf.join("incan.toml"),
+        leaf.join("loaf.toml"),
         r#"[project]
 name = "leaf"
 version = "0.2.0"
@@ -2506,7 +2503,7 @@ path = "../vendor/foo-v1"
     let sibling = root.path().join("sibling");
     fs::create_dir_all(sibling.join("src"))?;
     fs::write(
-        sibling.join("incan.toml"),
+        sibling.join("loaf.toml"),
         r#"[project]
 name = "sibling"
 version = "0.3.0"
@@ -2530,7 +2527,7 @@ path = "../vendor/foo-v2"
         &bake_output,
         "explicit Oven bake for the selected unreferenced workspace member",
     );
-    let canonical = incan::lockfile::IncanLock::load(&root.path().join("incan.lock"))?;
+    let canonical = incan::lockfile::IncanLock::load(&root.path().join("oven.lock"))?;
     let member_roots = canonical
         .semantic
         .workspace_members
@@ -2574,14 +2571,14 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     let root = tempfile::tempdir()?;
     fs::write(root.path().join(".gitignore"), "target/\n.incan-home/\n")?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for name in ["alpha", "zebra"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
             ),
@@ -2639,17 +2636,17 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     assert_success(&left_output, "first concurrent workspace lock publisher");
     assert_success(&right_output, "second concurrent workspace lock publisher");
 
-    let lock_path = root.path().join("incan.lock");
+    let lock_path = root.path().join("oven.lock");
     let lock = incan::lockfile::IncanLock::load(&lock_path)?;
     assert!(!lock.deps_fingerprint.is_empty());
     assert!(
         root.path()
-            .join("target/incan_lock/.incan.lock.publication.lock")
+            .join("target/incan_lock/.oven.lock.publication.lock")
             .is_file(),
         "concurrent publishers must share one stable compiler-owned publication lock"
     );
     assert!(
-        !root.path().join(".incan.lock.incan.lock").exists(),
+        !root.path().join(".oven.lock.incan.lock").exists(),
         "concurrent lock publication must not leave a persistent project-root sidecar"
     );
     assert!(
@@ -2673,16 +2670,13 @@ fn workspace_fmt_fans_out_in_member_order_without_changing_single_project_semant
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for name in ["zebra", "alpha"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
-        fs::write(
-            member_root.join("incan.toml"),
-            format!("[project]\nname = \"{name}\"\n"),
-        )?;
+        fs::write(member_root.join("loaf.toml"), format!("[project]\nname = \"{name}\"\n"))?;
         fs::write(
             member_root.join("src/main.incn"),
             "def main() -> None:\n  println(\"formatted\")\n",
@@ -2709,7 +2703,7 @@ fn workspace_fmt_fans_out_in_member_order_without_changing_single_project_semant
 fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for (name, source) in [
@@ -2719,7 +2713,7 @@ fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), B
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!("[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"),
         )?;
         fs::write(member_root.join("src/main.incn"), source)?;
@@ -2752,14 +2746,14 @@ fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), B
 fn workspace_run_and_version_require_one_explicit_member() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for name in ["zebra", "alpha"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
             ),
@@ -2786,8 +2780,8 @@ fn workspace_run_and_version_require_one_explicit_member() -> Result<(), Box<dyn
 
     let version_output = run_incan(root.path(), &["version", "patch", "--member", "alpha"])?;
     assert_success(&version_output, "workspace version --member alpha");
-    let alpha_manifest = fs::read_to_string(root.path().join("packages/alpha/incan.toml"))?;
-    let zebra_manifest = fs::read_to_string(root.path().join("packages/zebra/incan.toml"))?;
+    let alpha_manifest = fs::read_to_string(root.path().join("packages/alpha/loaf.toml"))?;
+    let zebra_manifest = fs::read_to_string(root.path().join("packages/zebra/loaf.toml"))?;
     assert!(alpha_manifest.contains("version = \"0.1.1\""));
     assert!(zebra_manifest.contains("version = \"0.1.0\""));
     Ok(())
@@ -2798,7 +2792,7 @@ fn workspace_env_fragments_are_inherited_only_through_explicit_member_extends() 
 {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"
 [workspace]
 members = ["packages/member"]
@@ -2813,7 +2807,7 @@ test = ["incan", "test"]
     let member_root = root.path().join("packages/member");
     fs::create_dir_all(member_root.join("src"))?;
     fs::write(
-        member_root.join("incan.toml"),
+        member_root.join("loaf.toml"),
         r#"
 [project]
 name = "member"
@@ -3365,7 +3359,7 @@ fn semantic_inspection_surfaces_share_project_identity() -> Result<(), Box<dyn s
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "semantic_probe"
 version = "0.1.0"
@@ -3487,7 +3481,7 @@ fn inspect_bindings_projects_checked_declaration_facts() -> Result<(), Box<dyn s
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "binding_inspection"
 version = "0.1.0"
@@ -3495,19 +3489,19 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-darwin"
 headers = ["fixture.h"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "system"
 capability = "system.fixture"
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["fixture"]
 name = "Fixture"
 artifacts = ["fixture"]
@@ -3779,8 +3773,8 @@ def main() -> None:
     let relocated_root = relocated_temp.path().join("binding-inspection-relocated");
     fs::create_dir_all(relocated_root.join("src"))?;
     for relative_path in [
-        "incan.toml",
-        "incan.lock",
+        "loaf.toml",
+        "oven.lock",
         "fixture.h",
         "src/fixture.incn",
         "src/main.incn",
@@ -3809,7 +3803,7 @@ def main() -> None:
         "a relocated locked package changed its redacted binding receipt"
     );
 
-    let manifest_path = tmp.path().join("incan.toml");
+    let manifest_path = tmp.path().join("loaf.toml");
     let manifest = fs::read_to_string(&manifest_path)?;
     let dangling_manifest = manifest.replacen(
         "module = [\"fixture\"]\nname = \"Fixture\"",
@@ -4317,7 +4311,7 @@ fn rust_std_result_and_contextual_f32_interop_compile_together_issues801_802() -
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "result_interop_probe"
 version = "0.1.0"
@@ -4341,7 +4335,7 @@ def accepts_f32(value: f32) -> None:
   print("ok")
 
 def main() -> None:
-  result = file_len("incan.toml")
+  result = file_len("loaf.toml")
   zero: f32 = 0.0
   accepts_f32(1.5)
   print("checked")
@@ -4400,7 +4394,7 @@ fn check_json_reports_import_diagnostics() -> Result<(), Box<dyn std::error::Err
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "diag_import"
 version = "0.1.0"
@@ -4548,7 +4542,7 @@ fn build_report_output_file_describes_library_build() -> Result<(), Box<dyn std:
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "report_lib"
 version = "0.1.0"
@@ -4635,7 +4629,7 @@ fn hyphenated_library_package_preserves_identity_and_emits_a_valid_rust_target_i
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[project]\nname = \"hyphenated-library\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -4691,7 +4685,7 @@ fn inspect_rust_reports_current_generated_rust_files() -> Result<(), Box<dyn std
     let src_dir = project.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project.path().join("incan.toml"),
+        project.path().join("loaf.toml"),
         r#"[project]
 name = "inspect_lib"
 version = "0.1.0"
@@ -4763,7 +4757,7 @@ fn inspect_codegraph_exports_multifile_imports_and_public_symbols() -> Result<()
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "graph_demo"
 version = "0.1.0"
@@ -4992,7 +4986,7 @@ fn inspect_codegraph_keeps_one_identity_through_alias_reexport_and_without_a_loc
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "identity_graph"
 version = "0.1.0"
@@ -5131,7 +5125,7 @@ fn inspect_codegraph_exports_checked_registry_facts() -> Result<(), Box<dyn std:
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "registry_graph"
 version = "0.1.0"
@@ -5192,7 +5186,7 @@ fn inspect_codegraph_attaches_facade_paths_to_checked_registry_facts() -> Result
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         "[project]\nname = \"registry_graph_facade\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -5505,7 +5499,7 @@ beta = []
         ],
     )?;
     assert_success(&lock, "semantic lock generation with transient selections");
-    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("oven.lock"))?)?;
     assert_eq!(lock["semantic"]["sdk"]["profile"].as_str(), Some("minimal"));
     let locked_package = lock["semantic"]["packages"]
         .as_array()
@@ -5568,7 +5562,7 @@ beta = []
         );
         let stderr = String::from_utf8_lossy(&build.stderr);
         assert!(
-            stderr.contains("incan.lock") && stderr.contains("out of date") && stderr.contains("Run `incan lock`"),
+            stderr.contains("oven.lock") && stderr.contains("out of date") && stderr.contains("Run `incan lock`"),
             "locked projection drift should fail as stale lock state:\n{stderr}"
         );
     }
@@ -5582,7 +5576,7 @@ fn codegraph_importer_example_consumes_compiler_jsonl_issue776() -> Result<(), B
     let source_dir = tmp.path().join("source");
     fs::create_dir_all(&source_dir)?;
     fs::write(
-        source_dir.join("incan.toml"),
+        source_dir.join("loaf.toml"),
         r#"[project]
 name = "codegraph_importer_source"
 version = "0.1.0"
@@ -5631,8 +5625,8 @@ def main() -> None:
     let importer_src = importer_dir.join("src");
     fs::create_dir_all(&importer_src)?;
     fs::write(
-        importer_dir.join("incan.toml"),
-        include_str!("../examples/pro/codegraph_importer/incan.toml"),
+        importer_dir.join("loaf.toml"),
+        include_str!("../examples/pro/codegraph_importer/loaf.toml"),
     )?;
     fs::write(
         importer_src.join("importer.incn"),
@@ -5829,7 +5823,7 @@ fn requires_incan_allows_compatible_project_commands() -> Result<(), Box<dyn std
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "compatible_toolchain_guard"
 version = "0.1.0"
@@ -5865,7 +5859,7 @@ fn requires_incan_rejects_project_aware_commands() -> Result<(), Box<dyn std::er
     fs::create_dir_all(&src_dir)?;
     fs::create_dir_all(&tests_dir)?;
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "toolchain_guard"
 version = "0.1.0"
@@ -5920,7 +5914,7 @@ fn env_requires_incan_is_reported_and_enforced_for_env_run() -> Result<(), Box<d
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path();
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "env_toolchain_guard"
 version = "0.1.0"
@@ -5993,7 +5987,7 @@ fn init_creates_project_scaffold_with_expected_content() -> Result<(), Box<dyn s
         "init summary should name the created project, got:\n{stdout}"
     );
 
-    let manifest = fs::read_to_string(project_dir.join("incan.toml"))?;
+    let manifest = fs::read_to_string(project_dir.join("loaf.toml"))?;
     assert!(
         manifest.contains(r#"name = "cli_init_app""#),
         "manifest should include explicit project name"
@@ -6041,16 +6035,16 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     )?;
 
     assert_success(&output, "incan lock");
-    let lock = fs::read_to_string(tmp.path().join("incan.lock"))?;
+    let lock = fs::read_to_string(tmp.path().join("oven.lock"))?;
     assert!(lock.contains("# Auto-generated by Incan - do not edit manually"));
     assert!(lock.contains("[incan]"));
     assert!(
         !lock.contains("generated ="),
-        "incan.lock must not include volatile generation timestamps"
+        "oven.lock must not include volatile generation timestamps"
     );
     assert!(lock.contains("deps-fingerprint = \"sha256:"));
     assert!(lock.contains("[cargo]"));
-    let parsed = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let parsed = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(
         parsed.cargo_lock_payload, "version = 4\n",
         "normal `incan lock` records semantic Incan state, not a generated Cargo resolution"
@@ -6061,7 +6055,7 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
         &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
     assert_success(&second_output, "second incan lock");
-    let second_lock = fs::read_to_string(tmp.path().join("incan.lock"))?;
+    let second_lock = fs::read_to_string(tmp.path().join("oven.lock"))?;
     assert_eq!(lock, second_lock, "relocking unchanged inputs must be deterministic");
     Ok(())
 }
@@ -6086,7 +6080,7 @@ fn lock_generates_semantic_state_without_starting_cargo() -> Result<(), Box<dyn 
         "normal incan lock must not launch Cargo; stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let lock = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let lock = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(lock.cargo_lock_payload, "version = 4\n");
     Ok(())
 }
@@ -6099,21 +6093,21 @@ fn lock_records_oven_interop_requirements_and_detects_input_drift() -> Result<()
         "oven_interop_lock",
         r#"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "x86_64-unknown-linux-gnu"
 toolchain = { capability = "clang", version = ">=18, <19" }
 headers = ["interop/include/bridge.h"]
 definitions = ["FIXTURE=1"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "static"
 path = "interop/lib/libfixture.a"
 
-[[oven.interop.targets.shims]]
+[[interop.c.targets.shims]]
 name = "fixture_bridge"
 language = "c"
 sources = ["interop/src/bridge.c"]
@@ -6136,7 +6130,7 @@ output = "fixture_bridge"
 
     let lock_output = run_incan_with_env(tmp.path(), &["lock", main_arg], &[("INCAN_HOME", incan_home)])?;
     assert_success(&lock_output, "incan lock with declared Oven interop requirements");
-    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("oven.lock"))?)?;
     let target = lock["semantic"]["oven"]["interop"]
         .as_array()
         .and_then(|targets| targets.first())
@@ -6172,7 +6166,7 @@ output = "fixture_bridge"
     )?;
     assert_failure(&stale, "locked build after declared interop input drift");
     assert!(
-        String::from_utf8_lossy(&stale.stderr).contains("incan.lock is out of date"),
+        String::from_utf8_lossy(&stale.stderr).contains("oven.lock is out of date"),
         "declared interop input drift should invalidate the lock:\n{}",
         String::from_utf8_lossy(&stale.stderr)
     );
@@ -6188,15 +6182,15 @@ fn lock_records_android_platform_requirements_without_selecting_a_local_sdk() ->
         "oven_android_platform_lock",
         r#"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-linux-android"
 toolchain = { capability = "android-ndk", version = ">=29, <30" }
 sdk = { capability = "android", version = ">=36, <37" }
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "android"
 api-level = 34
 "#,
@@ -6205,7 +6199,7 @@ api-level = 34
 
     let lock_output = run_incan(tmp.path(), &["lock", main_arg])?;
     assert_success(&lock_output, "incan lock with Android platform requirements");
-    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("oven.lock"))?)?;
     let target = lock["semantic"]["oven"]["interop"]
         .as_array()
         .and_then(|targets| targets.first())
@@ -6231,27 +6225,27 @@ fn inspect_interop_plan_is_locked_complete_and_relocatable() -> Result<(), Box<d
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-linux-android"
 toolchain = { capability = "android-ndk", version = ">=29, <30" }
 sdk = { capability = "android", version = ">=36, <37" }
 headers = ["interop/include/runtime.h"]
 definitions = ["TFLITE_STATIC_MEMORY=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "android"
 api-level = 34
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "llama"
 kind = "static"
 path = "interop/lib/libllama.a"
 dependencies = ["tflite"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "tflite"
 kind = "bundled"
 path = "interop/lib/libtensorflowlite_c.so"
@@ -6260,17 +6254,17 @@ placement = "jniLibs/arm64-v8a"
 minimum-platform = "21"
 dependencies = ["log"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "log"
 kind = "system"
 capability = "android.library.log"
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["runtime"]
 name = "Runtime"
 artifacts = ["llama", "tflite", "log"]
 
-[[oven.interop.targets.shims]]
+[[interop.c.targets.shims]]
 name = "llama_bridge"
 language = "cxx"
 sources = ["interop/src/llama_bridge.cc"]
@@ -6388,7 +6382,7 @@ output = "llama_bridge"
     )?;
     assert_failure(&stale, "stale interop plan inspection");
     assert!(
-        String::from_utf8_lossy(&stale.stderr).contains("incan.lock Oven interop requirements are out of date"),
+        String::from_utf8_lossy(&stale.stderr).contains("oven.lock Oven interop requirements are out of date"),
         "unexpected stale interop-plan diagnostic:\n{}",
         String::from_utf8_lossy(&stale.stderr)
     );
@@ -6400,7 +6394,7 @@ fn inspect_interop_plan_uses_the_selected_workspace_member_lock_projection() -> 
     // ---- Declare one Oven interop workspace member ----
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/mobile\"]\n",
     )?;
     let member = root.path().join("packages/mobile");
@@ -6412,20 +6406,20 @@ fn inspect_interop_plan_uses_the_selected_workspace_member_lock_projection() -> 
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-ios"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "iphoneos", version = ">=18, <19" }
 headers = ["interop/include/accelerate_bridge.h"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "ios"
 deployment-target = "13.0"
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "accelerate"
 kind = "system"
 capability = "apple.framework.Accelerate"
@@ -6439,7 +6433,7 @@ capability = "apple.framework.Accelerate"
     // ---- Publish the one canonical workspace lock ----
     write_locked_workspace_oven_interop_plan(root.path(), &member)?;
     assert!(
-        root.path().join("incan.lock").is_file() && !member.join("incan.lock").exists(),
+        root.path().join("oven.lock").is_file() && !member.join("oven.lock").exists(),
         "interop workspace fixture did not publish exactly one canonical root lock"
     );
 
@@ -6482,16 +6476,16 @@ fn check_verifies_c_bindings_against_a_declared_android_interop_target() -> Resu
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-linux-android"
 toolchain = { capability = "android-ndk", version = ">=29, <30" }
 sdk = { capability = "android", version = ">=36, <37" }
 definitions = ["INCAN_ANDROID_FIXTURE=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "android"
 api-level = 34
 "#,
@@ -6531,7 +6525,7 @@ fn check_rejects_an_undeclared_interop_target() -> Result<(), Box<dyn std::error
     )?;
     assert_failure(&output, "undeclared Oven interop target selection");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("requires an [oven.interop] declaration in incan.toml"),
+        String::from_utf8_lossy(&output.stderr).contains("requires an [interop.c] declaration in loaf.toml"),
         "unexpected undeclared-target diagnostic:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -6553,19 +6547,19 @@ fn oven_interop_bake_bootstraps_direct_c_then_locked_run_uses_the_sealed_plan() 
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-darwin"
 headers = ["interop/include/fixture.h"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "static"
 path = "interop/lib/libfixture.a"
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["fixture"]
 name = "Fixture"
 artifacts = ["fixture"]
@@ -6690,16 +6684,16 @@ fn check_verifies_c_bindings_against_a_declared_ios_interop_target() -> Result<(
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-ios"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "iphoneos", version = ">=18, <19" }
 definitions = ["INCAN_IOS_FIXTURE=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "ios"
 deployment-target = "13.0"
 "#,
@@ -6746,20 +6740,20 @@ bitflags = "=1.3.2"
 
     let first_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
     assert_success(&first_output, "canonical lock with bitflags 1.3.2");
-    let first_bytes = fs::read(tmp.path().join("incan.lock"))?;
-    let first = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let first_bytes = fs::read(tmp.path().join("oven.lock"))?;
+    let first = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(
         first.cargo_lock_payload, "version = 4\n",
         "normal lock generation must not resolve a Cargo package graph"
     );
 
-    let manifest_path = tmp.path().join("incan.toml");
+    let manifest_path = tmp.path().join("loaf.toml");
     let first_manifest = fs::read_to_string(&manifest_path)?;
     fs::write(&manifest_path, first_manifest.replace("=1.3.2", "=2.11.0"))?;
     let second_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
     assert_success(&second_output, "canonical lock with bitflags 2.11.0");
-    let second_bytes = fs::read(tmp.path().join("incan.lock"))?;
-    let second = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let second_bytes = fs::read(tmp.path().join("oven.lock"))?;
+    let second = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(second.cargo_lock_payload, "version = 4\n");
     assert_ne!(
         first.deps_fingerprint, second.deps_fingerprint,
@@ -6815,7 +6809,7 @@ pub def exported_value() -> int:
         "explicit Oven bake must materialize a caller-owned direct-rustc release artifact"
     );
     assert!(
-        tmp.path().join("incan.lock").is_file(),
+        tmp.path().join("oven.lock").is_file(),
         "explicit Oven bake must publish the canonical project lock"
     );
     assert!(
@@ -6949,7 +6943,7 @@ pub def join_ranges(text: str, start: int, middle: int, end: int) -> str:
 }
 
 fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let lock_path = root.join("incan.lock");
+    let lock_path = root.join("oven.lock");
     let original = fs::read_to_string(&lock_path)?;
     let stale = original.replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale");
     fs::write(lock_path, &stale)?;
@@ -6985,17 +6979,17 @@ def test_smoke() -> None:
 
     assert_success(&build_output, "incan build with stale lockfile by default");
     assert_eq!(
-        fs::read_to_string(tmp.path().join("incan.lock"))?,
+        fs::read_to_string(tmp.path().join("oven.lock"))?,
         stale_lock,
-        "default build must not rewrite an existing stale incan.lock"
+        "default build must not rewrite an existing stale oven.lock"
     );
 
     let test_output = run_incan(tmp.path(), &["test"])?;
     assert_success(&test_output, "incan test with stale lockfile by default");
     assert_eq!(
-        fs::read_to_string(tmp.path().join("incan.lock"))?,
+        fs::read_to_string(tmp.path().join("oven.lock"))?,
         stale_lock,
-        "default test must not rewrite an existing stale incan.lock"
+        "default test must not rewrite an existing stale oven.lock"
     );
     Ok(())
 }
@@ -7006,7 +7000,7 @@ fn build_assert_string_inequality_in_list_loop_issue739() -> Result<(), Box<dyn 
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "list_str_loop_assert_compare"
 version = "0.1.0"
@@ -7040,7 +7034,7 @@ fn build_union_widening_converts_generated_wrappers_issue741() -> Result<(), Box
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "union_widening_conversion"
 version = "0.1.0"
@@ -7171,7 +7165,7 @@ pub def main() -> None:
     let imported_src = imported_root.join("src");
     fs::create_dir_all(&imported_src)?;
     fs::write(
-        imported_root.join("incan.toml"),
+        imported_root.join("loaf.toml"),
         r#"[project]
 name = "union_imported_alias"
 version = "0.1.0"
@@ -7238,7 +7232,7 @@ pub def main() -> None:
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "union_lib"
 version = "0.1.0"
@@ -7328,7 +7322,7 @@ fn build_pub_helper_wraps_union_call_result_as_option_payload_issue745() -> Resu
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "querykit"
 version = "0.1.0"
@@ -7431,7 +7425,7 @@ fn build_pub_method_accepts_dependency_owned_union_alias_payload_issue755() -> R
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "union_provider"
 version = "0.1.0"
@@ -7687,8 +7681,8 @@ edition = "2021"
     let assert_no_stale_warning = |output: &Output, context: &str| {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            !stderr.contains("incan.lock is out of date"),
-            "{context} should not warn that incan.lock is stale, got:\n{stderr}"
+            !stderr.contains("oven.lock is out of date"),
+            "{context} should not warn that oven.lock is stale, got:\n{stderr}"
         );
     };
 
@@ -8437,7 +8431,7 @@ fn test_runner_prefers_project_sibling_import_over_unimported_stdlib_stub_type()
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path();
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "stdhash_sibling_collision"
 version = "0.1.0"
@@ -8527,7 +8521,7 @@ fn test_runner_resolves_imported_stdlib_enum_patterns_from_enum_metadata() -> Re
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path();
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "stdlib_enum_pattern_metadata"
 version = "0.1.0"
@@ -8606,7 +8600,7 @@ fn build_locked_rejects_stale_lockfile() -> Result<(), Box<dyn std::error::Error
     assert_success(&lock_output, "incan lock before locked build");
 
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "cli_locked_project"
 version = "0.1.0"
@@ -8639,7 +8633,7 @@ def main() -> None:
     assert_failure(&build_output, "incan build --locked with stale lockfile");
     let stderr = String::from_utf8_lossy(&build_output.stderr);
     assert!(
-        stderr.contains("incan.lock is out of date"),
+        stderr.contains("oven.lock is out of date"),
         "locked build should report stale lockfile, got:\n{stderr}"
     );
     assert!(
@@ -8666,12 +8660,86 @@ fn build_frozen_rejects_missing_lockfile() -> Result<(), Box<dyn std::error::Err
     assert_failure(&build_output, "incan build --frozen without lockfile");
     let stderr = String::from_utf8_lossy(&build_output.stderr);
     assert!(
-        stderr.contains("incan.lock is missing; run `incan lock`"),
+        stderr.contains("oven.lock is missing; run `incan lock`"),
         "frozen build should report missing lockfile, got:\n{stderr}"
     );
     assert!(
-        !tmp.path().join("incan.lock").exists(),
-        "frozen build must not create incan.lock after rejecting a missing lockfile"
+        !tmp.path().join("oven.lock").exists(),
+        "frozen build must not create oven.lock after rejecting a missing lockfile"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cargo_manifest_beside_a_loaf_manifest_warns_without_stopping_the_build() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "cli_ignored_cargo_project", "")?;
+    // Deliberately a Cargo manifest that would fail if anything tried to use it: rule 11 requires Oven to ignore the
+    // file, not to parse it and find it acceptable.
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"not-a-real-crate\"\nversion = \"0.0.0\"\n\n[dependencies]\nthis-crate-does-not-exist = \"9999\"\n",
+    )?;
+
+    // Rule 11's subject is Oven, so the warning is emitted where Oven takes authority over the project rather than at
+    // manifest discovery. `incan check` never reaches that point and stays silent, which is why this drives a build.
+    let assert_rule_11 = |output: &Output, context: &str| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Cargo.toml"),
+            "{context}: rule 11 requires the diagnostic to name the ignored file, got:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("Cargo-compatibility mode"),
+            "{context}: rule 11 requires the diagnostic to explain explicit Cargo-compatibility selection, got:\n{stderr}"
+        );
+        assert_eq!(
+            stderr.matches("Cargo files here do not contribute").count(),
+            1,
+            "{context}: one command must warn once, got:\n{stderr}"
+        );
+    };
+
+    let bake_output = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake_output, "incan oven bake with an ignored Cargo.toml");
+    assert_rule_11(&bake_output, "oven bake");
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&build_output, "incan build with an ignored Cargo.toml");
+    assert_rule_11(&build_output, "build");
+
+    Ok(())
+}
+
+#[test]
+fn build_frozen_does_not_read_a_pre_rename_lock() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "cli_pre_rename_lock_project", "")?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    // Generate a genuinely current lock, then give it the pre-rename name. RFC 117 makes `oven.lock` the sole
+    // generated resolution state and says `incan.lock` is not read afterwards, so the planted file must be invisible
+    // rather than read and rejected. Planting a hand-written file could not tell those two outcomes apart: a frozen
+    // build would fail either way, and for the wrong reason.
+    let lock_output = run_incan(tmp.path(), &["lock", main_arg])?;
+    assert_success(&lock_output, "incan lock before renaming the generated lock");
+    fs::rename(tmp.path().join("oven.lock"), tmp.path().join("incan.lock"))?;
+
+    let build_output = run_incan(tmp.path(), &["build", "--frozen", main_arg])?;
+
+    assert_failure(&build_output, "incan build --frozen with only a pre-rename lock");
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
+    assert!(
+        stderr.contains("oven.lock is missing; run `incan lock`"),
+        "a project holding only the pre-rename lock must report the canonical lock missing, got:\n{stderr}"
+    );
+    assert!(
+        tmp.path().join("incan.lock").is_file(),
+        "the pre-rename lock is inert state, not something the compiler consumes or removes"
     );
     Ok(())
 }
@@ -8871,7 +8939,7 @@ fn tools_metadata_api_reports_docstring_drift() -> Result<(), Box<dyn std::error
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "metadata_docstring_drift_app"
 version = "0.1.0"
@@ -8946,7 +9014,7 @@ fn tools_metadata_api_reports_public_import_aliases() -> Result<(), Box<dyn std:
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "metadata_alias_app"
 version = "0.1.0"
@@ -9162,7 +9230,7 @@ fn tools_metadata_model_reads_built_library_artifact() -> Result<(), Box<dyn std
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "contract_model_lib"
 version = "0.1.0"
@@ -9215,7 +9283,7 @@ fn tools_metadata_model_reports_non_introspectable_artifact() -> Result<(), Box<
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "contract_model_lib_without_models"
 version = "0.1.0"
@@ -9697,7 +9765,7 @@ fn run_pub_type_token_contracts_issue750() -> Result<(), Box<dyn std::error::Err
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "type_token_provider"
 version = "0.1.0"
@@ -10246,7 +10314,7 @@ fn build_pub_consumer_imports_public_alias_of_imported_item_issue617() -> Result
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "alias_lib"
 version = "0.1.0"
@@ -10319,7 +10387,7 @@ fn build_lib_materializes_facade_decorator_metadata_projection_issue695() -> Res
     let operators = src.join("functions").join("operators");
     fs::create_dir_all(&operators)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "metadata_registry"
 version = "0.1.0"
@@ -10893,7 +10961,7 @@ fn test_qualified_partial_constructor_presets_cross_package_const_metadata_issue
     let provider_root = tmp.path().join("partialkit_provider");
     fs::create_dir_all(provider_root.join("src"))?;
     fs::write(
-        provider_root.join("incan.toml"),
+        provider_root.join("loaf.toml"),
         "[project]\nname = \"partialkit\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -10923,7 +10991,7 @@ pub policy = partial models.Policy(family="cross-package", enabled=true)
     let consumer_root = tmp.path().join("consumer");
     fs::create_dir_all(consumer_root.join("src"))?;
     fs::write(
-        consumer_root.join("incan.toml"),
+        consumer_root.join("loaf.toml"),
         "[project]\nname = \"consumer\"\n\n[dependencies]\npartialkit = { path = \"../partialkit_provider\" }\n",
     )?;
     let main_path = consumer_root.join("src/main.incn");
@@ -10963,7 +11031,7 @@ fn oven_baked_public_direct_rust_provider_composes_into_consumer_issue1053() -> 
     let provider_root = tmp.path().join("uuid_provider");
     fs::create_dir_all(provider_root.join("src"))?;
     fs::write(
-        provider_root.join("incan.toml"),
+        provider_root.join("loaf.toml"),
         r#"[project]
 name = "uuid_provider"
 version = "0.1.0"
@@ -10991,7 +11059,7 @@ pub def provider_token() -> str:
     let consumer_root = tmp.path().join("consumer");
     fs::create_dir_all(consumer_root.join("src"))?;
     fs::write(
-        consumer_root.join("incan.toml"),
+        consumer_root.join("loaf.toml"),
         "[project]\nname = \"consumer\"\n\n[dependencies]\nuuid_provider = { path = \"../uuid_provider\" }\n",
     )?;
     fs::write(
@@ -11026,7 +11094,7 @@ fn oven_baked_provider_and_direct_registry_consumer_bake_issue1054() -> Result<(
     let provider_root = tmp.path().join("provider");
     fs::create_dir_all(provider_root.join("src"))?;
     fs::write(
-        provider_root.join("incan.toml"),
+        provider_root.join("loaf.toml"),
         "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(

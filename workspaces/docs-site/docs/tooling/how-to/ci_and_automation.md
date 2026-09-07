@@ -46,10 +46,10 @@ incan run path/to/main.incn
 
 ## Reproducible builds with locked dependencies
 
-If your project uses `incan.toml` and has an `incan.lock` committed to version control, use `--locked` or `--frozen` in CI to ensure builds use exactly the locked dependency versions:
+If your project uses `loaf.toml` and has an `oven.lock` committed to version control, use `--locked` or `--frozen` in CI to ensure builds use exactly the locked dependency versions:
 
 ```bash
-# Require incan.lock to exist and be up to date
+# Require oven.lock to exist and be up to date
 incan build src/main.incn --locked
 incan test --locked
 
@@ -62,7 +62,7 @@ If the lock file is missing or stale, the command fails immediately — no silen
 **Recommended workflow**:
 
 1. Developers run `incan lock` after changing dependencies (locally).
-2. Commit both `incan.toml` and `incan.lock` to version control.
+2. Commit both `loaf.toml` and `oven.lock` to version control.
 3. CI uses `--locked` to catch stale lock files.
 
 See: [Managing dependencies](dependencies.md) for more details.

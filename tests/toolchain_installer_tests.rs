@@ -913,7 +913,7 @@ fn packaged_stdlib_source_bundle_supports_metadata_imports() -> Result<(), Box<d
     let source_dir = project.join("src");
     fs::create_dir_all(&source_dir)?;
     fs::write(
-        project.join("incan.toml"),
+        project.join("loaf.toml"),
         "[project]\nname = \"metadata_import\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(

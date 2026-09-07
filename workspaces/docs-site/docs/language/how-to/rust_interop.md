@@ -167,7 +167,7 @@ The inline form assumes `device`, `config`, and `report_stream_error` were prepa
 When you use `import rust::crate_name`, Incan records a Rust compatibility requirement. The requirement source uses
 this three-tier precedence system:
 
-1. **`incan.toml`** (highest priority): If the crate is configured in your project manifest, that spec is used.
+1. **`loaf.toml`** (highest priority): If the crate is configured in your project manifest, that spec is used.
 2. **Inline annotations**: If you write `import rust::foo @ "1.0"`, that version is used.
 3. **Known-good defaults**: For common crates (see table below), the compiler provides tested defaults.
 
@@ -207,9 +207,9 @@ Version strings use [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/refere
 - Version strings must match exactly across all sites (mismatch is an error).
 - Features are unioned automatically.
 
-### Project-level dependencies (`incan.toml`)
+### Project-level dependencies (`loaf.toml`)
 
-For projects with multiple dependencies, use an `incan.toml` manifest instead of inline annotations. This is the recommended approach for anything beyond single-file scripts:
+For projects with multiple dependencies, use an `loaf.toml` manifest instead of inline annotations. This is the recommended approach for anything beyond single-file scripts:
 
 ```toml
 [project]
@@ -222,13 +222,13 @@ serde = { version = "1.0", features = ["derive"] }
 my_crate = "2.0"  # assuming this is a rust crate you are referencing
 ```
 
-When a crate is configured in `incan.toml`, inline version annotations for that crate are **not allowed** — the manifest is the single source of truth. Bare imports (without `@`) are fine.
+When a crate is configured in `loaf.toml`, inline version annotations for that crate are **not allowed** — the manifest is the single source of truth. Bare imports (without `@`) are fine.
 
 For the full manifest format, see: [Project configuration reference](../../tooling/reference/project_configuration.md). For a practical guide, see: [Managing dependencies](../../tooling/how-to/dependencies.md).
 
 ### Known-good defaults
 
-The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you import a crate without a version annotation and without an `incan.toml` entry:
+The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you import a crate without a version annotation and without an `loaf.toml` entry:
 
 | Crate      | Version | Features                            |
 | ---------- | ------- | ----------------------------------- |
@@ -252,7 +252,7 @@ The following crates have pre-configured versions with appropriate features. The
 | bytes      | 1.0     | -                                   |
 | itertools  | 0.12    | -                                   |
 
-You can override any of these requirements via `incan.toml` or inline `@ "version"` annotations. The installed
+You can override any of these requirements via `loaf.toml` or inline `@ "version"` annotations. The installed
 Oven-enabled toolchain must still contain a Loaf that authorizes the chosen closure.
 
 ### Using unknown crates
@@ -264,10 +264,10 @@ error: unknown Rust crate `my_crate`: no version specified
   --> src/main.incn:5
     import rust::my_crate
 
-hint: Add a version annotation: `import rust::my_crate @ "1.0"` or add it to incan.toml.
+hint: Add a version annotation: `import rust::my_crate @ "1.0"` or add it to loaf.toml.
 ```
 
-**Fix**: add an inline version annotation, or add the crate to your `incan.toml`.
+**Fix**: add an inline version annotation, or add the crate to your `loaf.toml`.
 
 ## Rust-backed types with `rusttype`
 
@@ -734,7 +734,7 @@ If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias),
 ## See Also
 
 - [Managing dependencies](../../tooling/how-to/dependencies.md) - Adding crates, locking, CI
-- [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `incan.toml` format
+- [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `loaf.toml` format
 - [Targeted generated-Rust lint suppression](#targeted-generated-rust-lint-suppression) - `@rust.allow(...)` for narrow generated-code lint allowances
 - [Rust types for Python developers](rust_types_for_python_devs.md) - `rusttype`, interop declarations, and type mapping concepts
 - [Error Handling](../explanation/error_handling.md) - Working with `Result` types

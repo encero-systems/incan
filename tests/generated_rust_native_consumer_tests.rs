@@ -259,8 +259,8 @@ fn write_producer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let producer = root.join("native_items");
     write_fixture_file(
         &producer,
-        "incan.toml",
-        include_str!("fixtures/generated_rust_native_consumer/producer/incan.toml"),
+        "loaf.toml",
+        include_str!("fixtures/generated_rust_native_consumer/producer/loaf.toml"),
     )?;
     write_fixture_file(
         &producer,

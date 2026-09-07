@@ -1339,6 +1339,10 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
 
     let path = Path::new(path);
     enforce_test_path_toolchain_constraint(path)?;
+    // `incan test` builds and runs under Oven authority like `build` and `run`, so RFC 117 rule 11 applies here too.
+    crate::cli::commands::common::warn_once_about_ignored_cargo_manifest(
+        &crate::cli::commands::common::resolve_project_root(path),
+    );
     let stable_id_root = stable_id_root(path);
     let candidates = discover_test_file_candidates(path);
     if candidates.is_empty() {
@@ -1767,7 +1771,7 @@ mod tests {
         let tests = project.path().join("tests");
         std::fs::create_dir_all(&tests)?;
         std::fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"one_test_session\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -1814,9 +1818,9 @@ mod tests {
             &package_features,
             None,
         ) else {
-            return Err("strict test validation accepted a missing incan.lock".into());
+            return Err("strict test validation accepted a missing oven.lock".into());
         };
-        assert!(lock_error.message.contains("incan.lock is missing"));
+        assert!(lock_error.message.contains("oven.lock is missing"));
         assert_eq!(
             crate::cli::commands::lock::project_lock_collection_counts(),
             (1, 0),
@@ -1837,7 +1841,7 @@ mod tests {
         std::fs::create_dir_all(&src)?;
         std::fs::create_dir_all(&tests)?;
         std::fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"list_without_bake\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(src.join("main.incn"), "def main() -> None:\n    pass\n")?;
@@ -1868,7 +1872,7 @@ mod tests {
             let tests = project.join("tests");
             std::fs::create_dir_all(&tests)?;
             std::fs::write(
-                project.join("incan.toml"),
+                project.join("loaf.toml"),
                 format!("[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n"),
             )?;
             std::fs::write(

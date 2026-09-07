@@ -1,7 +1,7 @@
 //! Project scaffolding for `incan init` and `incan new`.
 //!
 //! This module owns the filesystem side of RFC 015 project creation. It writes explicit starter files only: an
-//! `incan.toml`, a `src/main.incn` entry point, a starter test, and lightweight repository metadata. Manifest shape is
+//! `loaf.toml`, a `src/main.incn` entry point, a starter test, and lightweight repository metadata. Manifest shape is
 //! delegated to [`WritableManifest`] so generated projects use the same schema model that the rest of the compiler
 //! parses.
 
@@ -11,7 +11,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::manifest::{MANIFEST_FILENAME, ProjectSection, WritableManifest};
+use crate::manifest::{LOAF_MANIFEST_FILENAME, ProjectSection, WritableManifest};
 
 /// Options shared by `incan init` and the `incan new` implementation path.
 #[derive(Debug, Clone, Default)]
@@ -76,11 +76,11 @@ struct MetadataDefaults<'a> {
 
 /// Initialize a new Incan project with a full scaffold.
 ///
-/// Creates the project directory (if needed), `incan.toml`, `src/main.incn`, and `tests/test_main.incn` so that
+/// Creates the project directory (if needed), `loaf.toml`, `src/main.incn`, and `tests/test_main.incn` so that
 /// `incan run` and `incan test` work immediately after init. Existing generated files are preserved unless
 /// [`InitOptions::force`] is set.
 pub fn init_project(path: &Path, options: InitOptions<'_>) -> CliResult<ExitCode> {
-    let manifest_path = path.join(MANIFEST_FILENAME);
+    let manifest_path = path.join(LOAF_MANIFEST_FILENAME);
     if manifest_path.exists() && !options.force {
         return Err(CliError::failure(format!(
             "Manifest already exists at '{}'",
@@ -114,7 +114,7 @@ pub fn init_project(path: &Path, options: InitOptions<'_>) -> CliResult<ExitCode
             .map_err(|e| CliError::failure(format!("Failed to create directory '{}': {}", dir.display(), e)))?;
     }
 
-    // ---- Write incan.toml ----
+    // ---- Write loaf.toml ----
     let manifest = WritableManifest {
         project: Some(ProjectSection {
             name: Some(metadata.name.clone()),
@@ -182,7 +182,7 @@ def test_greeting() -> None:
     println!();
     println!("  src/main.incn          Entry point");
     println!("  tests/test_main.incn   Starter test");
-    println!("  incan.toml             Project manifest");
+    println!("  loaf.toml             Project manifest");
     println!();
     println!("Run it:     incan run");
     println!("Test it:    incan test");
@@ -194,7 +194,7 @@ def test_greeting() -> None:
 /// Create a new Incan project directory.
 ///
 /// The directory must be absent, empty, or explicitly reusable with [`NewOptions::force`]. The generated project is
-/// binary-style today: it has a `main` script in `incan.toml` pointing at `src/main.incn`.
+/// binary-style today: it has a `main` script in `loaf.toml` pointing at `src/main.incn`.
 pub fn new_project(options: NewOptions<'_>) -> CliResult<ExitCode> {
     let prompt = should_prompt(options.yes);
     let default_name = default_new_project_name(options.name, options.dir, prompt)?;
@@ -482,7 +482,7 @@ mod tests {
             },
         )?;
 
-        let manifest_content = fs::read_to_string(project_dir.join("incan.toml"))?;
+        let manifest_content = fs::read_to_string(project_dir.join("loaf.toml"))?;
         assert!(
             manifest_content.contains(r#"name = "my_greeter""#),
             "Expected project name 'my_greeter' in manifest, got:\n{}",
@@ -507,7 +507,7 @@ mod tests {
             },
         )?;
 
-        let manifest_content = fs::read_to_string(project_dir.join("incan.toml"))?;
+        let manifest_content = fs::read_to_string(project_dir.join("loaf.toml"))?;
         assert!(
             manifest_content.contains(r#"name = "custom_name""#),
             "Expected explicit name 'custom_name' in manifest, got:\n{}",
@@ -521,7 +521,7 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let project_dir = tmp.path().join("existing");
         fs::create_dir_all(&project_dir)?;
-        fs::write(project_dir.join("incan.toml"), "")?;
+        fs::write(project_dir.join("loaf.toml"), "")?;
 
         let result = init_project(
             &project_dir,
@@ -550,7 +550,7 @@ mod tests {
             },
         )?;
 
-        assert!(project_dir.join("incan.toml").exists(), "incan.toml should exist");
+        assert!(project_dir.join("loaf.toml").exists(), "loaf.toml should exist");
         assert!(project_dir.join("src/main.incn").exists(), "src/main.incn should exist");
         assert!(
             project_dir.join("tests/test_main.incn").exists(),
@@ -607,7 +607,7 @@ mod tests {
             },
         )?;
 
-        let manifest_content = fs::read_to_string(project_dir.join("incan.toml"))?;
+        let manifest_content = fs::read_to_string(project_dir.join("loaf.toml"))?;
         assert!(manifest_content.contains(r#"description = "A metadata-rich project""#));
         assert!(manifest_content.contains(r#"authors = ["Danny <danny@example.com>"]"#));
         assert!(manifest_content.contains(r#"license = "MIT""#));
@@ -637,7 +637,7 @@ mod tests {
             yes: true,
         })?;
 
-        let manifest_content = fs::read_to_string(project_dir.join("incan.toml"))?;
+        let manifest_content = fs::read_to_string(project_dir.join("loaf.toml"))?;
         assert!(manifest_content.contains(r#"name = "dir_named""#));
         assert!(manifest_content.contains(r#"description = "Created from --dir""#));
         Ok(())
@@ -672,7 +672,7 @@ mod tests {
         let project_dir = tmp.path().join("forced");
         fs::create_dir_all(&project_dir)?;
         fs::write(
-            project_dir.join("incan.toml"),
+            project_dir.join("loaf.toml"),
             "[project]\nname = \"old\"\nversion = \"0.0.1\"\n",
         )?;
 
@@ -688,7 +688,7 @@ mod tests {
             },
         )?;
 
-        let manifest_content = fs::read_to_string(project_dir.join("incan.toml"))?;
+        let manifest_content = fs::read_to_string(project_dir.join("loaf.toml"))?;
         assert!(manifest_content.contains(r#"name = "new_name""#));
         assert!(manifest_content.contains(r#"version = "0.2.0""#));
         Ok(())
@@ -745,7 +745,7 @@ mod tests {
             },
         )?;
 
-        let manifest_content = fs::read_to_string(project_dir.join("incan.toml"))?;
+        let manifest_content = fs::read_to_string(project_dir.join("loaf.toml"))?;
         assert!(manifest_content.contains(r#"name = "detected""#));
         let main_content = fs::read_to_string(project_dir.join("src/main.incn"))?;
         assert!(main_content.contains("Hello from existing app"));
