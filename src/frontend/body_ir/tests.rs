@@ -48,6 +48,55 @@ fn build_with_imports(
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
 }
 
+#[test]
+fn a_real_lowered_module_survives_the_published_round_trip_exactly() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::executable_representation::{decode_module, encode_module};
+
+    // RFC 123's feasibility rests on this claim and no weaker one: what a consumer decodes is the module the
+    // declaring compilation encoded, not an equivalent reconstruction of it. A hand-built fixture cannot show that,
+    // because it exercises only the shapes whoever wrote it remembered. This lowers real source through the real
+    // typechecker and compares the whole module.
+    let module = build(
+        "model Point:\n\
+        \x20   x: int\n\
+        \x20   y: int\n\
+         \n\
+         enum Status:\n\
+        \x20   Active\n\
+        \x20   Retired\n\
+         \n\
+         def distance_squared(p: Point) -> int:\n\
+        \x20   return p.x * p.x + p.y * p.y\n\
+         \n\
+         def classify(value: int) -> str:\n\
+        \x20   if value > 10:\n\
+        \x20       return \"large\"\n\
+        \x20   elif value > 0:\n\
+        \x20       return \"small\"\n\
+        \x20   return \"none\"\n\
+         \n\
+         def accumulate(limit: int) -> int:\n\
+        \x20   mut total = 0\n\
+        \x20   for value in 0..limit:\n\
+        \x20       total += value\n\
+        \x20   return total\n",
+        &["probe"],
+    )?;
+    assert!(
+        !module.bodies.is_empty() && !module.nominal_declarations.is_empty(),
+        "the probe must actually lower something for the round trip to mean anything: {module:#?}"
+    );
+
+    let encoded = encode_module(&module)?;
+    let decoded = decode_module(&encoded)?;
+
+    assert_eq!(
+        decoded, module,
+        "a decoded representation must equal the module that was encoded, field for field"
+    );
+    Ok(())
+}
+
 /// Collect the named-callable targets called directly in one lowered body, in statement order.
 fn named_targets<'module>(
     module: &'module bir::BodyIrModule,

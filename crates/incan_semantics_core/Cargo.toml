@@ -12,6 +12,10 @@ authors.workspace = true
 [dependencies]
 incan_core = { path = "../incan_core" }
 serde = { version = "1.0", features = ["derive"] }
+# The wire encoding for the checked representation RFC 123 publishes. Already in the workspace graph through
+# wasmtime and rust-analyzer, so making it direct adds no third-party code, licence surface, or build cost.
+postcard = { version = "1.1", features = ["use-std"] }
+thiserror = "2.0"
 
 [dev-dependencies]
 serde_json = "1.0"
