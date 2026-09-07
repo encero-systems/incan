@@ -769,7 +769,7 @@ pub struct NativeTestProgressReporter {
     /// Root this reporter speaks for, prefixed to every line it writes.
     ///
     /// The compiler suite runs roots on a bounded worker pool, so without a label their lines are correct but
-    /// unattributable. `println!` holds the stdout lock for one invocation, so lines cannot tear; only the question
+    /// unattributable. `eprintln!` holds the stderr lock for one invocation, so lines cannot tear; only the question
     /// of which root produced one is open, and a label answers it without coordinating the workers.
     label: Option<String>,
     /// Cases libtest has started and not yet reported a terminal event for, and when each of them started.
@@ -799,10 +799,14 @@ impl NativeTestProgressReporter {
     }
 
     /// Render one already-formatted progress line, attributed when this reporter speaks for a named root.
+    ///
+    /// Progress goes to stderr because stdout is where the caller's machine-readable report goes. A run asked for
+    /// `--format json` must still be able to say what it is doing without interleaving prose into the document a
+    /// caller is parsing.
     fn emit(&self, line: &str) {
         match self.label.as_deref() {
-            Some(label) => println!("[{label}] {line}"),
-            None => println!("{line}"),
+            Some(label) => eprintln!("[{label}] {line}"),
+            None => eprintln!("{line}"),
         }
     }
 
@@ -813,7 +817,7 @@ impl NativeTestProgressReporter {
     fn observe(&mut self, line: &str) {
         for rendered in self.render(line) {
             match self.renders_its_own_attribution(line) {
-                true => println!("{rendered}"),
+                true => eprintln!("{rendered}"),
                 false => self.emit(&rendered),
             }
         }
@@ -929,8 +933,8 @@ impl NativeTestProgressReporter {
         }
         // Held across the whole block so a stalled root's outstanding list stays contiguous rather than
         // interleaving with another worker's progress between its heading and its entries.
-        let stdout = io::stdout();
-        let _lock = stdout.lock();
+        let stderr = io::stderr();
+        let _lock = stderr.lock();
         self.emit(&format!(
             "{} case(s) started and never reported a result:",
             self.outstanding.len()
@@ -1295,6 +1299,21 @@ mod tests {
             !rendered[0].contains("0.000s"),
             "libtest reported no time for this case, so none may be shown: {}",
             rendered[0]
+        );
+    }
+
+    #[test]
+    fn progress_never_reaches_the_stream_a_json_report_is_written_to() {
+        // stdout carries the caller's machine-readable report. A `--format json` run must still be able to say what
+        // it is doing, so progress goes to stderr; anything printed to stdout here would corrupt that document.
+        let mut reporter = NativeTestProgressReporter::new(Some("crates/incan_syntax/src/lib.rs"));
+        reporter.render(SUITE_STARTED);
+
+        let rendered = reporter.render(CASE_OK);
+        assert_eq!(rendered.len(), 1, "the case still renders: {rendered:?}");
+        assert!(
+            !rendered[0].is_empty(),
+            "rendering returns the line rather than printing it, which is what lets the caller choose the stream"
         );
     }
 

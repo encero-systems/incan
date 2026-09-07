@@ -1060,6 +1060,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // A cold first bake cannot consume a Loaf that does not exist yet. Resolve its Rust inspection sources once at
     // this already explicit Cargo boundary, then hand the typed locked authority to every no-Cargo fixture child.
     let inspection_authority_started = Instant::now();
+    announce_oven_progress("RESOLVE", "Rust inspection authority", None);
     let authority_dir = scratch.path().join("rust-inspect-authority");
     fs::create_dir_all(&authority_dir).map_err(|error| {
         CliError::failure(format!(
@@ -1104,6 +1105,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         })?
     };
     phase_timing.inspection_authority_elapsed_ms = inspection_authority_started.elapsed().as_millis();
+    announce_oven_progress(
+        "RESOLVED",
+        "Rust inspection authority",
+        Some(&elapsed_detail(inspection_authority_started)),
+    );
     let cargo_process_started = true;
     let mut transient_peak_physical_bytes = 0_u64;
     let compiler_support_target = scratch.path().join("compiler-support-target");
@@ -1115,7 +1121,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     })?;
     let compiler_lock = loaf_compiler_lock_path(&options.compiler_root)?;
     let fixture_preparation_started = Instant::now();
-    for specification in loaf_envelope_specifications(envelope) {
+    let specifications = loaf_envelope_specifications(envelope);
+    let specification_count = specifications.len();
+    for (position, specification) in specifications.iter().enumerate() {
+        let fixture_started = Instant::now();
+        let fixture_subject = format!("{}/{}", specification.label, specification.profile);
+        announce_oven_progress(
+            "BAKE",
+            &fixture_subject,
+            Some(&format!("{}/{specification_count}", position + 1)),
+        );
         let inspection_packages = if specification.role.provides_source_authority() {
             specification.inspection_packages().map_err(CliError::failure)?
         } else {
@@ -1254,6 +1269,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 specification.label, result.physical_bytes, max_domain_physical_bytes
             )));
         }
+        announce_oven_progress(
+            "BAKED",
+            &fixture_subject,
+            Some(&format!(
+                "{}/{specification_count}, {}, {}",
+                position + 1,
+                human_bytes(result.physical_bytes),
+                elapsed_detail(fixture_started)
+            )),
+        );
         pending.push(OvenLoafBakeEntryReport {
             label: specification.label.to_string(),
             profile: specification.profile.to_string(),
@@ -1278,6 +1303,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
 
     let prepared_count = pending.len();
     let envelope_publication_started = Instant::now();
+    announce_oven_progress("PUBLISH", "Loaf envelope", Some(&format!("{prepared_count} Loaf(s)")));
     let manifest = OvenLoafEnvelopeManifest {
         schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
         envelope: loaf_envelope_name(envelope).to_string(),
@@ -1344,6 +1370,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         )));
     }
     phase_timing.envelope_publication_elapsed_ms = envelope_publication_started.elapsed().as_millis();
+    announce_oven_progress(
+        "PUBLISHED",
+        "Loaf envelope",
+        Some(&elapsed_detail(envelope_publication_started)),
+    );
     let reused_count = 0;
     let report = OvenLoafBakeReport {
         action: "prepared".to_string(),
@@ -1401,6 +1432,9 @@ fn finish_loaf_bake(
         return Ok(report);
     }
     let compiler_suite_preparation_started = Instant::now();
+    // The longest single phase of a cold prewarm: it stages the third-party foundation, which is where the
+    // transitional Cargo path still compiles the heavy dependency graph.
+    announce_oven_progress("PREPARE", "compiler-suite standard-library family", None);
     let suite_store = compiler_suite_store_path(options)?;
     let default_limits = loaf_envelope_default_limits(envelope);
     let max_physical_bytes = options.max_physical_bytes.unwrap_or(default_limits.max_physical_bytes);
@@ -1492,6 +1526,11 @@ fn finish_loaf_bake(
     report.elapsed_ms = started.elapsed().as_millis();
     report.phase_timing.compiler_suite_preparation_elapsed_ms =
         compiler_suite_preparation_started.elapsed().as_millis();
+    announce_oven_progress(
+        "PREPARED",
+        "compiler-suite standard-library family",
+        Some(&elapsed_detail(compiler_suite_preparation_started)),
+    );
     report.compiler_suite = Some(OvenCompilerSuiteBakeReport {
         receipt: receipt_path,
         prepare,
@@ -3107,15 +3146,26 @@ fn run_prepared_compiler_suite_children(
     Ok(report)
 }
 
-/// Report one root's progress through the suite on a single line.
+/// Format a measured phase duration for a progress line.
 ///
-/// The suite runs its roots on a bounded worker pool, and until each one's cases start streaming there was nothing
-/// on the console to say which of forty-odd roots was compiling or how far the run had got. One line per state
-/// change is enough to answer that, and it stays legible interleaved because every line names its root.
-fn announce_compiler_suite_root(state: &str, source_relative_path: &str, detail: Option<&str>) {
+/// Seconds with one decimal, because these phases run from seconds to tens of minutes and a reader comparing two
+/// of them cares about the magnitude rather than the millisecond.
+fn elapsed_detail(started: Instant) -> String {
+    format!("{:.1}s", started.elapsed().as_secs_f64())
+}
+
+/// Report one unit of Oven progress on a single line, in the shape every long-running Oven command uses.
+///
+/// A run that goes quiet for forty minutes cannot be told from one that has hung. One line per state change fixes
+/// that, and keeping every command on the same shape — a fixed-width state, the subject, then an optional detail —
+/// means a reader learns to scan it once rather than per command.
+///
+/// It goes to stderr because stdout carries the caller's machine-readable report. A `--format json` run must still
+/// be able to say what it is doing without interleaving prose into the document a caller is parsing.
+fn announce_oven_progress(state: &str, subject: &str, detail: Option<&str>) {
     match detail {
-        Some(detail) => println!("{state:<10} {source_relative_path} ({detail})"),
-        None => println!("{state:<10} {source_relative_path}"),
+        Some(detail) => eprintln!("{state:<10} {subject} ({detail})"),
+        None => eprintln!("{state:<10} {subject}"),
     }
 }
 
@@ -3162,7 +3212,7 @@ fn run_prepared_compiler_suite_child(
     )?;
     match child.target.runner.as_str() {
         "rustc-test" => {
-            announce_compiler_suite_root("COMPILE", &child.target.source_relative_path, None);
+            announce_oven_progress("COMPILE", &child.target.source_relative_path, None);
             let bake_started = Instant::now();
             let bake = bake_trusted_direct_rustc_test(&OvenTrustedDirectRustcTargetRequest {
                 receipt,
@@ -3201,7 +3251,7 @@ fn run_prepared_compiler_suite_child(
                 }),
             }
             .map_err(oven_error)?;
-            announce_compiler_suite_root(
+            announce_oven_progress(
                 if report.success { "ROOT OK" } else { "ROOT FAIL" },
                 &child.target.source_relative_path,
                 Some(&compiler_suite_root_outcome_detail(&report)),
@@ -3248,7 +3298,7 @@ fn run_prepared_compiler_suite_child(
             })
         }
         "rustdoc-test" => {
-            announce_compiler_suite_root("DOCTEST", &child.target.source_relative_path, None);
+            announce_oven_progress("DOCTEST", &child.target.source_relative_path, None);
             let temporary_directory = child.output.with_extension("rustdoc-tmp");
             let rustdoc_started = Instant::now();
             run_trusted_rustdoc_test(&OvenTrustedRustdocTestRequest {
@@ -3268,7 +3318,7 @@ fn run_prepared_compiler_suite_child(
                 timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
             })
             .map_err(oven_error)?;
-            announce_compiler_suite_root(
+            announce_oven_progress(
                 "DOCTEST OK",
                 &child.target.source_relative_path,
                 Some(&format!("{:.1}s", rustdoc_started.elapsed().as_secs_f64())),
