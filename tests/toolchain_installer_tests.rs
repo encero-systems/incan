@@ -625,7 +625,7 @@ fn assert_packaged_support_workspace_without_cargo(extracted: &Path) -> Result<(
         .get("package")
         .and_then(toml::Value::as_table)
         .ok_or("packaged support workspace has no [workspace.package] table")?;
-    for (field, expected) in [("edition", "2024"), ("rust-version", "1.93"), ("license", "Apache-2.0")] {
+    for (field, expected) in [("edition", "2024"), ("rust-version", "1.98"), ("license", "Apache-2.0")] {
         assert_eq!(
             package.get(field).and_then(toml::Value::as_str),
             Some(expected),
@@ -672,8 +672,8 @@ fn write_manifest(root: &Path, archive: &Path, checksum: &str) -> Result<PathBuf
   "release": "v0.4.0-test",
   "channel": "dev",
   "rust_toolchain": {{
-    "channel": "1.93.0",
-    "min_rust": "1.93",
+    "channel": "1.98.0",
+    "min_rust": "1.98",
     "targets": ["wasm32-wasip1"],
     "policy": "fixture"
   }},
@@ -1147,7 +1147,9 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         makefile.contains("INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24")
             && makefile.contains("INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)")
-            && makefile.contains("INCAN_TEST_SUITE_TOOLCHAIN ?= stable")
+            && makefile.contains("INCAN_TEST_PREWARM_TOOLCHAIN ?= 1.98.0")
+            && makefile.contains("INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0")
+            && makefile.contains("INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0")
             && makefile
                 .contains("--cargo \"$$(rustup which --toolchain \"$(INCAN_TEST_PUBLISHER_TOOLCHAIN)\" cargo)\"")
             && makefile.contains("--rustc \"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
@@ -1190,13 +1192,13 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .find("- uses: ./.github/actions/restore-sdk-provider-store")
         .ok_or("pull-request CI is missing SDK provider cache restore")?;
     let complete_suite = linux_prewarm_workflow
-        .find("- name: Prewarm the complete Linux stable Oven suite")
-        .ok_or("pull-request CI is missing complete Linux stable Oven suite")?;
+        .find("- name: Prewarm the complete Linux Rust 1.98.0 Oven suite")
+        .ok_or("pull-request CI is missing the complete pinned Linux Oven suite")?;
     assert!(
         compiler_build < linux_tools_workflow.len()
             && provider_restore < complete_suite
             && linux_prewarm_workflow.contains("needs:\n      - changes\n      - linux-tool-handoff")
-            && linux_prewarm_job.contains("- name: Save prepared Linux stable Oven suite")
+            && linux_prewarm_job.contains("- name: Save prepared Linux Rust 1.98.0 Oven suite")
             && linux_prewarm_job.contains("target/incan_test_sdk_provider_store"),
         "pull-request CI must build the identity-bearing compiler once, reuse its persistent provider input cache in the single Linux prewarm, and capture that provider store in the immutable prepared-suite handoff"
     );
@@ -1210,7 +1212,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && workflow.contains("INCAN_TEST_COMMAND_TIMINGS")
             && workflow.contains("INCAN_TEST_OVEN_COMPILER_SUITE_REPORT")
             && workflow.contains("oven-pr-linux-partition-${{ matrix.partition }}"),
-        "the first stable Linux partition must retain case and nested-command timing evidence needed to investigate remaining native test costs"
+        "the first pinned Linux partition must retain case and nested-command timing evidence needed to investigate remaining native test costs"
     );
     let provider_cache_action =
         fs::read_to_string(repo_root().join(".github/actions/restore-sdk-provider-store/action.yml"))?;
@@ -1232,7 +1234,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     );
     let evidence_workflow = fs::read_to_string(repo_root().join(".github/workflows/oven_evidence.yml"))?;
     for required in [
-        "toolchain: 1.93.0",
+        "toolchain: 1.98.0",
         "consumer_toolchain: ${{ matrix.toolchain }}",
         "INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}",
         "INCAN_TEST_SUITE_TOOLCHAIN=${{ matrix.toolchain }}",
@@ -1245,6 +1247,27 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             "release evidence CI must retain `{required}`"
         );
     }
+    assert_eq!(
+        evidence_workflow.matches("toolchain: 1.98.0").count(),
+        2,
+        "release evidence must run once per supported platform on the one pinned Rust release"
+    );
+    assert!(
+        !evidence_workflow.contains("MSRV")
+            && !evidence_workflow.contains("toolchain: stable")
+            && !evidence_workflow.contains("linux-msrv"),
+        "release evidence must not advertise a second Rust-version support lane"
+    );
+    let release_workflow = fs::read_to_string(repo_root().join(".github/workflows/toolchain_release.yml"))?;
+    assert_eq!(
+        release_workflow.matches("toolchain: 1.98.0").count(),
+        2,
+        "both release build stages must select the exact supported Rust release"
+    );
+    assert!(
+        !release_workflow.contains("dtolnay/rust-toolchain@stable"),
+        "a release rebuild must not drift with Rust's floating stable channel"
+    );
     let platform_gate = workflow
         .find("oven-platform-smoke:")
         .and_then(|start| {
@@ -1255,6 +1278,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .ok_or("pull-request CI is missing the bounded platform C-ABI gate")?;
     assert!(
         workflow.contains("cancel-in-progress: true")
+            && workflow.contains("INCAN_RUST_TOOLCHAIN: 1.98.0")
             && workflow.contains("make -s test-prewarm-oven-loafs")
             && workflow.contains("make -s test-oven-partition")
             && workflow.contains("make test-oven-pr-regressions")
@@ -1270,9 +1294,12 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && workflow.contains("{ partition: 2, display: 3 }")
             && workflow.contains("{ partition: 3, display: 4 }")
             && !workflow.contains("timeout-minutes:")
+            && !workflow.contains("MSRV")
+            && !workflow.contains("--toolchain stable")
+            && !workflow.contains("dtolnay/rust-toolchain@stable")
             && workflow.matches("Install WASI target for vocab desugarers").count() == 7
             && !workflow.contains("make test-oven-focused"),
-        "pull-request CI must cancel superseded runs, prewarm the complete stable Linux suite once, replay its four receipt partitions without rebaking, retain independent process-containment coverage, and carry no explicit per-job budgets: a version bump cold-starts every completion-gated cache, and any budget below a cold build means the job can never re-warm, so the runner-level 6-hour ceiling is the only bound"
+        "pull-request CI must cancel superseded runs, prewarm the complete pinned Linux suite once, replay its four receipt partitions without rebaking, retain independent process-containment coverage, and carry no explicit per-job budgets: a version bump cold-starts every completion-gated cache, and any budget below a cold build means the job can never re-warm, so the runner-level 6-hour ceiling is the only bound"
     );
     let replay_gate = workflow
         .find("oven-linux-replay:")
@@ -1312,7 +1339,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && platform_gate.contains("check_verifies_c_bindings_against_a_declared_ios_interop_target")
             && !platform_gate.contains("test-one")
             && !platform_gate.contains("test-oven-release-smoke"),
-        "reduced macOS and MSRV gates must retain their platform-specific C-ABI assertions after one SDK prewarm, without repeating the Linux Oven suite bake"
+        "the pinned macOS and Android-targeted Linux gates must retain their platform-specific C-ABI assertions after one SDK prewarm, without repeating the Linux Oven suite bake"
     );
     assert!(
         evidence_workflow.contains("uses: ./.github/actions/run-oven-compiler-suite"),
@@ -1456,6 +1483,7 @@ fn toolchain_release_assets_are_prepared_by_central_manifest_program() -> Result
     assert_eq!(manifest["schema_version"], 1);
     assert_eq!(manifest["generated_at"], "2026-06-06T00:00:00Z");
     assert_eq!(manifest["rust_toolchain"]["targets"][0], "wasm32-wasip1");
+    assert_eq!(manifest["rust_toolchain"]["min_rust"], "1.98");
     assert!(
         manifest["rust_toolchain"]["policy"]
             .as_str()
@@ -1471,6 +1499,10 @@ fn toolchain_release_assets_are_prepared_by_central_manifest_program() -> Result
         parts.clone().count() == 3
             && parts.all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())),
         "manifest must pin a concrete Rust release, got {channel:?}"
+    );
+    assert_eq!(
+        channel, "1.98.0",
+        "release assets must use the one supported Rust release"
     );
     assert!(
         manifest["hosts"]["x86_64-unknown-linux-gnu"]["archive_url"]
@@ -1908,12 +1940,12 @@ fn toolchain_installer_provisions_rust_backend_targets() -> Result<(), Box<dyn s
     assert!(
         rustup_log
             .lines()
-            .any(|line| line.starts_with("target add --toolchain 1.93.0 wasm32-wasip1\t")),
+            .any(|line| line.starts_with("target add --toolchain 1.98.0 wasm32-wasip1\t")),
         "expected installer to add the manifest Rust target to the pinned toolchain, got:\n{rustup_log}"
     );
     assert_eq!(
         fs::read_to_string(incan_rustup_home.join("incan-channel.txt"))?.trim(),
-        "1.93.0",
+        "1.98.0",
         "installer must record which channel it provisioned so the compiler can resolve it exactly"
     );
     assert_toolchain_install(&incan_home, &bin_dir);
@@ -1983,12 +2015,12 @@ chmod +x "$HOME/.cargo/bin/rustup" "$HOME/.cargo/bin/cargo" "$HOME/.cargo/bin/ru
     assert!(
         rustup_log
             .lines()
-            .any(|line| line.starts_with("target add --toolchain 1.93.0 wasm32-wasip1\t")),
+            .any(|line| line.starts_with("target add --toolchain 1.98.0 wasm32-wasip1\t")),
         "expected bootstrapped rustup to add the manifest Rust target to the pinned toolchain, got:\n{rustup_log}"
     );
     assert_eq!(
         fs::read_to_string(incan_home.join("rust").join("incan-channel.txt"))?.trim(),
-        "1.93.0",
+        "1.98.0",
         "installer must record which channel it provisioned even when it bootstrapped rustup itself"
     );
     assert_toolchain_install(&incan_home, &bin_dir);

@@ -3,6 +3,7 @@
 use super::args::*;
 use super::primitives::*;
 use super::*;
+use incan_core::lang::builtins::BuiltinFnId;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower planned call arguments in written source order, then place them into declaration-slot order.
@@ -63,39 +64,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
-    /// Build the RFC 120 identity of a declaration *this* module owns, from the declaration the call selected.
-    ///
-    /// The span is the one the caller already resolved to build [`DirectCallDeclaration::direct_call_id`], so the two
-    /// facts on a `NamedCallableTarget` are derived from one decision and cannot name different declarations. That
-    /// matters because locality must not be inferred from the recorded source target: an import binding of the same
-    /// spelling wins in `TypeChecker::source_target_for_symbol` regardless of what the call actually bound, so a local
-    /// declaration shadowed by a same-name import would otherwise be given the *import's* identity.
-    pub(super) fn local_callable_identity(
-        &self,
-        declared_name: &str,
-        declaration_span: ast::Span,
-    ) -> CanonicalSymbolId {
-        CanonicalSymbolId::module_declaration(
-            self.module_path.to_vec(),
-            declared_name,
-            SemanticSourceTargetKind::Function,
-            HirSourceSpan::new(declaration_span.start, declaration_span.end),
-        )
-    }
-
-    /// Return the RFC 120 identity of an imported callable, when import resolution proved one.
-    ///
-    /// Only reached when this module declares no function of that spelling, so there is no local declaration for an
-    /// import to be confused with. The proven identity carries its own declaration kind, so a binding that resolved to
-    /// something other than a function yields nothing rather than a function identity.
-    ///
-    /// An overloaded import is refused upstream, in `TypeChecker::dependency_member_identity`: an overloaded symbol
-    /// keeps only the first candidate's span, so an identity minted from it would name an arbitrary overload.
-    pub(super) fn imported_callable_identity(&self, call_site_name: &str) -> Option<CanonicalSymbolId> {
-        let identity = self.type_info.resolved_import_identity(call_site_name)?;
-        (identity.kind == SemanticSourceTargetKind::Function).then(|| identity.clone())
-    }
-
     /// Resolve the declaration surface and exact local identity for a direct named call.
     ///
     /// A direct executable target must be physically represented by this Body-IR module. Imports and unresolved
@@ -113,43 +81,48 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     pub(super) fn declared_slots_for_direct_call(
         &self,
         name: &str,
-        span: ast::Span,
+        callee_span: ast::Span,
+        call_span: ast::Span,
     ) -> Result<DirectCallDeclaration, String> {
         let declarations = &self.type_info.declarations;
         let local_declarations = self.local_function_declarations.get(name);
         let Some(local_declarations) = local_declarations else {
+            let canonical = self.type_info.resolved_identity(callee_span).cloned();
+            let builtin = self.type_info.resolved_builtin_call(call_span);
+            let canonical_builtin_id = canonical.as_ref().and_then(canonical_builtin);
+            if builtin != canonical_builtin_id && (builtin.is_some() || canonical_builtin_id.is_some()) {
+                return Err(format!(
+                    "checked builtin call `{name}` does not retain its canonical builtin identity"
+                ));
+            }
             return Ok(DirectCallDeclaration {
                 slots: declarations
                     .function_bindings
                     .get(name)
                     .map(|binding| binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
                 direct_call_id: None,
-                builtin: resolved_builtin(
-                    name,
-                    self.type_info.source_target(span).is_none()
-                        && !declarations.function_bindings.contains_key(name)
-                        && !declarations.function_overloads.contains_key(name),
-                ),
-                canonical: self.imported_callable_identity(name),
+                builtin,
+                canonical,
             });
         };
         let is_overloaded = local_declarations.len() > 1;
 
         if is_overloaded {
-            let Some(selected) = self.type_info.selected_function_emitted_name(span) else {
+            let Some(selected) = self.type_info.resolved_identity(callee_span) else {
                 return Err(format!(
-                    "call to overloaded function `{name}` whose selected declaration was not resolved"
+                    "call to overloaded function `{name}` without a resolved canonical declaration"
                 ));
             };
             let selected_span = local_declarations.iter().find(|candidate_span| {
                 declarations
-                    .function_emitted_names
+                    .function_bindings_by_span
                     .get(&(candidate_span.start, candidate_span.end))
-                    .is_some_and(|emitted| emitted == selected)
+                    .and_then(|binding| binding.identity.as_ref())
+                    .is_some_and(|identity| identity == selected)
             });
             let Some(selected_span) = selected_span else {
                 return Err(format!(
-                    "call to overloaded function `{name}` whose selected declaration could not be located"
+                    "call to overloaded function `{name}` whose canonical declaration is not present in this module"
                 ));
             };
             let Some(binding) = declarations
@@ -170,7 +143,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 builtin: None,
                 // The identity anchors to the declaration span, so the selected overload is as nameable as any other
                 // declaration; it is the *spelling* that cannot separate them, and the spelling is not the identity.
-                canonical: Some(self.local_callable_identity(name, *selected_span)),
+                // Consumed from the declaration's checked binding — minted once by the typechecker at the
+                // declaration site, never re-derived here from module path plus spelling.
+                canonical: binding.identity.clone(),
             });
         }
 
@@ -187,6 +162,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 "same-module declaration `{name}` has no checked callable signature"
             ));
         };
+        let canonical = self.type_info.resolved_identity(callee_span).cloned();
+        if canonical.as_ref() != binding.identity.as_ref() {
+            return Err(format!(
+                "direct call to `{name}` does not retain the selected canonical declaration"
+            ));
+        }
         Ok(DirectCallDeclaration {
             slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
             direct_call_id: Some(CompilerNodeId::declaration_span(
@@ -195,7 +176,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 declaration_span.end,
             )),
             builtin: None,
-            canonical: Some(self.local_callable_identity(name, *declaration_span)),
+            // Consumed from the declaration's checked binding — minted once by the typechecker at the declaration
+            // site, never re-derived here from module path plus spelling.
+            canonical,
         })
     }
 
@@ -280,6 +263,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         name: &str,
         args: &[ast::CallArg],
         span: ast::Span,
+        callee_span: ast::Span,
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
@@ -346,19 +330,33 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let ty = self.resolve_ty(span);
         // A constructor field binding proves argument slots, but not that this constructor names one of the plain
-        // source-local models this Body-IR module retained. Preserve an identity only from that local registry;
-        // imports, aliases, classes, generic models, and absent/malformed names remain represented with `None` so
-        // a direct executor can refuse at this construction span rather than guessing from `name`.
-        let direct_declaration_id = self.local_nominal_declarations.get(name).and_then(|declaration| {
-            (declaration.fields.len() == field_binding.field_count).then(|| declaration.direct_declaration_id.clone())
-        });
+        // source-local models this Body-IR module retained. Preserve the selected declaration's identity and layout
+        // together; imports, aliases, classes, generic models, and absent/malformed names retain neither fact, so a
+        // direct executor can refuse at this construction span rather than guessing from `name`.
+        let canonical = self.type_info.resolved_identity(callee_span).cloned();
+        let (direct_declaration_id, canonical_field_layout) = self
+            .local_nominal_declarations
+            .get(name)
+            .filter(|declaration| {
+                declaration.fields.len() == field_binding.field_count
+                    && canonical.as_ref() == Some(&declaration.canonical)
+            })
+            .map(|declaration| {
+                (
+                    Some(declaration.direct_declaration_id.clone()),
+                    Some(declaration.fields.clone()),
+                )
+            })
+            .unwrap_or((None, None));
         self.push_assign_temp(
             bir::Rvalue::Aggregate(
-                bir::AggregateKind::Constructor(bir::ConstructorTarget {
+                bir::AggregateKind::Constructor(Box::new(bir::ConstructorTarget {
                     name: name.to_string(),
+                    canonical,
                     direct_declaration_id,
+                    canonical_field_layout,
                     binding,
-                }),
+                })),
                 fixed_elements(operands),
             ),
             ty,
@@ -396,7 +394,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::CallArg::Named(name, expr) => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     elements.push(bir::ArgumentElement::Named {
-                        name: name.clone(),
+                        name: name.node.clone(),
                         operand,
                     });
                 }
@@ -414,6 +412,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         &self,
         base: &ast::Spanned<ast::Expr>,
         variant_name: &str,
+        access_span: ast::Span,
     ) -> Option<bir::FieldlessEnumVariantTarget> {
         let ast::Expr::Ident(enum_name) = &base.node else {
             return None;
@@ -424,13 +423,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         }
         let declaration = self.local_fieldless_enum_declarations.get(enum_name)?;
+        if self.type_info.resolved_identity(base.span) != Some(&declaration.canonical) {
+            return None;
+        }
         let variant = declaration
             .variants
             .iter()
             .find(|variant| variant.name == variant_name)?;
+        if self.type_info.resolved_identity(access_span) != Some(&variant.canonical) {
+            return None;
+        }
         Some(bir::FieldlessEnumVariantTarget {
             enum_declaration_id: declaration.direct_declaration_id.clone(),
+            enum_canonical: declaration.canonical.clone(),
             variant_declaration_id: variant.direct_declaration_id.clone(),
+            variant_canonical: variant.canonical.clone(),
             enum_name: declaration.name.clone(),
             variant_name: variant.name.clone(),
         })
@@ -447,6 +454,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         &self,
         base: &ast::Spanned<ast::Expr>,
         variant_name: &str,
+        access_span: ast::Span,
     ) -> Option<bir::ValueEnumVariantTarget> {
         let ast::Expr::Ident(enum_name) = &base.node else {
             return None;
@@ -458,16 +466,84 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         }
         let declaration = self.local_value_enum_declarations.get(enum_name)?;
+        if self.type_info.resolved_identity(base.span) != Some(&declaration.canonical) {
+            return None;
+        }
         let variant = declaration
             .variants
             .iter()
             .find(|variant| variant.name == variant_name)?;
+        if self.type_info.resolved_identity(access_span) != Some(&variant.canonical) {
+            return None;
+        }
         Some(bir::ValueEnumVariantTarget {
             enum_declaration_id: declaration.direct_declaration_id.clone(),
+            enum_canonical: declaration.canonical.clone(),
             variant_declaration_id: variant.direct_declaration_id.clone(),
+            variant_canonical: variant.canonical.clone(),
             enum_name: declaration.name.clone(),
             variant_name: variant.name.clone(),
         })
+    }
+
+    /// Lower one compiler-owned `isinstance` call from the typechecker's retained builtin and target facts.
+    fn lower_checked_isinstance_call(
+        &mut self,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let call_span = hir_span(span);
+        let [ast::CallArg::Positional(value), ast::CallArg::Positional(target_expr)] = args else {
+            return self.unsupported_operand(
+                "isinstance outside the positional checked-target profile".to_string(),
+                scope,
+                call_span,
+                out,
+            );
+        };
+        if !type_args.is_empty() {
+            return self.unsupported_operand(
+                "isinstance with explicit call-site type arguments".to_string(),
+                scope,
+                call_span,
+                out,
+            );
+        }
+        let Some(target) = self.type_info.isinstance_target(span) else {
+            return self.unsupported_operand(
+                "isinstance without checked target evidence".to_string(),
+                scope,
+                hir_span(target_expr.span),
+                out,
+            );
+        };
+        let target_span = hir_span(target.span);
+        let target_span = if target_span.start >= call_span.start && target_span.end <= call_span.end {
+            target_span
+        } else {
+            call_span
+        };
+        let value_ty = self.resolve_ty(value.span);
+        let value = self.lower_expr_to_operand(value, scope, out);
+        let ty = self.resolve_ty(span);
+        self.push_assign_temp(
+            bir::Rvalue::IsInstance {
+                value,
+                value_ty,
+                target: bir::IsInstanceTarget {
+                    ty: semantic_type_from_resolved(&target.ty),
+                    canonical: target.canonical.clone(),
+                    span: target_span,
+                },
+            },
+            ty,
+            scope,
+            call_span,
+            out,
+        )
     }
 
     /// Lower a call to a locally held callable value, a nominal construction, or a direct named function.
@@ -499,10 +575,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
+            return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
+        }
         let ast::Expr::Ident(name) = &callee.node else {
             return self.unsupported_operand("indirect call target".to_string(), scope, hir_span_value, out);
         };
         let name = name.clone();
+
+        // A retained zero-argument constructor fact distinguishes builtin construction from a same-spelled source
+        // callable. Only empty Set/Dict construction is admitted here; iterable conversions stay on their existing
+        // path.
+        if args.is_empty()
+            && type_args.is_empty()
+            && let Some(constructor) = self.type_info.resolved_collection_constructor(span)
+        {
+            match constructor {
+                CollectionTypeId::Set => {
+                    return self.lower_aggregate(bir::AggregateKind::Set, &[], span, scope, out);
+                }
+                CollectionTypeId::Dict => return self.lower_dict(&[], span, scope, out),
+                _ => {}
+            }
+        }
 
         // A recorded constructor field binding is the typechecker's own statement that this spelling constructs a
         // nominal value, which is what distinguishes `P(x=1)` from a call to a function that happens to be named
@@ -511,7 +606,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // arguments -- so this deliberately does not duplicate them on the constructor target rather than claiming
         // construction cannot be generic.
         if self.type_info.constructor_field_binding(span).is_some() {
-            return self.lower_nominal_construction(&name, args, span, scope, out);
+            return self.lower_nominal_construction(&name, args, span, callee.span, scope, out);
         }
 
         // `Ok` and `Err` are intrinsic Result constructors, not ordinary direct calls. Retain that checked
@@ -614,7 +709,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
-        let declaration = match self.declared_slots_for_direct_call(&name, span) {
+        let declaration = match self.declared_slots_for_direct_call(&name, callee.span, span) {
             Ok(declaration) => declaration,
             Err(description) => {
                 return self.unsupported_operand(description, scope, hir_span_value, out);
@@ -668,6 +763,142 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
+    /// Lower a method-shaped explicit builtin call from the typechecker's retained builtin selection.
+    ///
+    /// `std.builtins.len(value)` reaches the AST as a method call, but the namespace is not a runtime receiver. The
+    /// typechecker records the selected [`BuiltinFnId`] at the full call span. Consuming that closed fact here keeps
+    /// the call distinct from a user-defined function or method with the same spelling and avoids evaluating the
+    /// namespace as a value.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_checked_builtin_method_call(
+        &mut self,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let builtin = self.type_info.resolved_builtin_call(span)?;
+        if builtin == BuiltinFnId::IsInstance {
+            return None;
+        }
+        let call_span = hir_span(span);
+        let Some(canonical) = crate::frontend::symbols::canonical_builtin_function_identity(builtin) else {
+            return Some(self.unsupported_operand(
+                "checked builtin call has no canonical registry identity".to_string(),
+                scope,
+                call_span,
+                out,
+            ));
+        };
+        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+            Ok(resolved_type_args) => resolved_type_args,
+            Err(description) => return Some(self.unsupported_operand(description, scope, call_span, out)),
+        };
+        let declared = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let display_name = canonical.declaration_name.clone();
+        let (operands, binding) =
+            match self.bind_declared_args(&format!("builtin `{display_name}`"), declared, args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => return Some(self.unsupported_operand(description, scope, call_span, out)),
+            };
+        let ty = self.resolve_ty(span);
+        Some(self.push_call_temp(
+            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                name: display_name,
+                direct_call_id: None,
+                canonical: Some(canonical),
+                builtin: Some(builtin),
+                type_args: resolved_type_args,
+                binding,
+            })),
+            operands,
+            ty,
+            scope,
+            call_span,
+            false,
+            out,
+        ))
+    }
+
+    /// Lower `module.function(args)` as a direct call to the declaration its receiver qualifies.
+    ///
+    /// A module binding is a namespace, not a value. `identity_provider.imported_path(17)` reaches the AST as a
+    /// method call, but there is no receiver to read, and treating the qualifier as a place refuses at a name that
+    /// never named one. The typechecker has already resolved this call to exactly one declaration; consuming that
+    /// identity keeps the call on the direct path instead of re-deriving a target from the two spellings the source
+    /// happens to join with a dot. The receiver's own identity decides whether this applies, so a local variable
+    /// that happens to share a module's name still lowers as an ordinary method call.
+    ///
+    /// Returns `None` when the receiver is not a module, leaving every other receiver shape untouched.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_module_qualified_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        if !self
+            .type_info
+            .resolved_identity(recv.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+        {
+            return None;
+        }
+        let hir_span_value = hir_span(span);
+
+        // Without the call's own resolved identity there is no target: the module qualifier names where to look,
+        // not what was found. Refusing here rather than falling through to the method path reports the construct
+        // the source actually wrote.
+        let Some(canonical) = self.type_info.resolved_identity(span).cloned() else {
+            return Some(self.unsupported_operand(
+                format!("module-qualified call `{name}` without a resolved canonical declaration"),
+                scope,
+                hir_span_value,
+                out,
+            ));
+        };
+        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+            Ok(resolved_type_args) => resolved_type_args,
+            Err(description) => return Some(self.unsupported_operand(description, scope, hir_span_value, out)),
+        };
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let (operands, binding) =
+            match self.bind_declared_args(&format!("function `{name}`"), declared, args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => return Some(self.unsupported_operand(description, scope, hir_span_value, out)),
+            };
+        let ty = self.resolve_ty(span);
+        Some(self.push_call_temp(
+            // The declaration lives in another module, so it has no span identity in this one. `canonical` is the
+            // fact that survives the boundary, and it is the only one a consumer may dispatch on here.
+            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                name: name.to_string(),
+                direct_call_id: None,
+                canonical: Some(canonical),
+                builtin: None,
+                type_args: resolved_type_args,
+                binding,
+            })),
+            operands,
+            ty,
+            scope,
+            hir_span_value,
+            false,
+            out,
+        ))
+    }
+
     /// Lower a method call `recv.name(args)` to a [`bir::Callee::Method`] call, with the receiver prepended to
     /// `args[0]` as a [`bir::OwnershipFact::Borrow`] operand (see the inline comment on the receiver-borrow decision
     /// below).
@@ -692,6 +923,39 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
+            return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
+        }
+        if let Some(lowered) = self.lower_checked_builtin_method_call(type_args, args, span, scope, out) {
+            return lowered;
+        }
+        if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
+            return lowered;
+        }
+        if self.type_info.resolved_identity(recv.span).is_some_and(|identity| {
+            identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
+                && matches!(
+                    &identity.kind,
+                    SemanticSourceTargetKind::Model
+                        | SemanticSourceTargetKind::Class
+                        | SemanticSourceTargetKind::Newtype
+                        | SemanticSourceTargetKind::Rusttype
+                        | SemanticSourceTargetKind::Enum
+                        | SemanticSourceTargetKind::TypeAlias
+                        | SemanticSourceTargetKind::Trait
+                )
+        }) {
+            return self.unsupported_operand(
+                format!("static member `{name}` on a type has no Body IR value representation"),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+        let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
+            Ok(helper) => helper,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
             Err(_) => {
@@ -714,7 +978,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // existing Rust-emission backend's ownership planner treats most method receivers
         // (`src/backend/ir/ownership.rs`) -- see this module's rustdoc for the full precedent discussion.
         let receiver_operand = if let ast::Expr::Field(base, member) = &recv.node
-            && self.local_value_enum_variant_target(base, member).is_some()
+            && self.local_value_enum_variant_target(base, member, recv.span).is_some()
         {
             self.lower_expr_to_operand(recv, scope, out)
         } else {
@@ -735,9 +999,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         call_args.push(bir::ArgumentElement::One(receiver_operand));
         call_args.append(&mut arg_operands);
         let ty = self.resolve_ty(span);
+        if let Some(helper) = helper {
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+            return self.push_call_temp(
+                bir::Callee::Helper(helper),
+                call_args,
+                ty,
+                scope,
+                hir_span_value,
+                false,
+                out,
+            );
+        }
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
+                canonical: self.type_info.resolved_identity(span).cloned(),
                 type_args: resolved_type_args,
                 binding,
             }),
@@ -749,19 +1027,60 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             out,
         )
     }
+
+    /// Return the helper operation selected by a checked string-method call, or a source-span-preserving refusal.
+    ///
+    /// Body IR only maps the retained [`StringMethodId`](incan_core::lang::surface::string_methods::StringMethodId)
+    /// to a [`bir::HelperOp`]. The source registry is consulted solely to validate that an admitted spelling still
+    /// agrees with the checked identity, so a missing or corrupted fact cannot turn a raw method name into runtime
+    /// dispatch.
+    fn checked_string_helper_for_method_call(
+        &self,
+        receiver: &ast::Spanned<ast::Expr>,
+        name: &str,
+        span: ast::Span,
+    ) -> Result<Option<bir::HelperOp>, String> {
+        let checked = self.type_info.resolved_string_helper_call(span);
+        let runtime_string_receiver = matches!(
+            self.resolve_ty(receiver.span),
+            IncanType::Primitive(IncanPrimitiveType::Str)
+        );
+        if !runtime_string_receiver {
+            return match checked {
+                Some(_) => Err("checked string helper identity has a non-string receiver".to_string()),
+                None => Ok(None),
+            };
+        }
+        let source = incan_core::lang::surface::string_methods::from_str(name);
+        match checked {
+            Some(method) => {
+                let Some(helper) = bir::HelperOp::for_selected_string_method(method) else {
+                    return Err(format!("unadmitted checked string helper identity `{method:?}`"));
+                };
+                if source != Some(method) {
+                    return Err("checked string helper identity does not match the source method".to_string());
+                }
+                Ok(Some(helper))
+            }
+            None if source.and_then(bir::HelperOp::for_selected_string_method).is_some() => {
+                Err("selected string helper call is missing its checked string helper identity".to_string())
+            }
+            None => Ok(None),
+        }
+    }
 }
 
-/// Resolve a called name to the canonical builtin it names, when nothing in source has taken that spelling.
+/// Project a compiler-owned builtin id only from its retained RFC 120 identity.
 ///
-/// The spelling comes from `incan_core`'s builtin registry rather than a literal, so a builtin added there is
-/// recognized here without a second edit — the same single-source rule the collection and constructor registries
-/// already carry. Body IR previously recognized exactly one builtin, `range`, by comparing the name against the
-/// string `"range"`. That both duplicated the registry and left every other builtin arriving as an ordinary named
-/// call, indistinguishable to a consumer from a user-declared function of the same name.
-///
-/// `unshadowed` carries the caller's proof that the name is not a declared, imported, or overloaded function. A
-/// module that declares its own `print` means that declaration, and resolving the builtin there would silently
-/// redirect the call to something the source never named.
-fn resolved_builtin(name: &str, unshadowed: bool) -> Option<incan_core::lang::builtins::BuiltinFnId> {
-    unshadowed.then(|| incan_core::lang::builtins::from_str(name)).flatten()
+/// The call-site spelling is deliberately absent from this function. A same-spelled source declaration, import, or
+/// alias cannot become a builtin by textual resemblance, while a canonical builtin alias retains the registry's
+/// declaration name and therefore still projects to the same [`BuiltinFnId`].
+fn canonical_builtin(identity: &CanonicalSymbolId) -> Option<incan_core::lang::builtins::BuiltinFnId> {
+    (identity.origin == incan_semantics_core::SymbolOrigin::Builtin
+        && identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
+        && identity.kind == SemanticSourceTargetKind::Builtin
+        && identity.scope_discriminant.is_none()
+        && identity.declaration_span == HirSourceSpan::new(0, 0))
+    .then(|| incan_core::lang::builtins::from_str(&identity.declaration_name))
+    .flatten()
 }

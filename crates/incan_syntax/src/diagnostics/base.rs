@@ -5,6 +5,7 @@
 //! plain-text rendering helpers.
 
 use crate::ast::Span;
+use incan_semantics_core::CanonicalSymbolId;
 
 /// A secondary source location that explains one compiler diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +13,18 @@ pub struct RelatedSpan {
     /// Source range associated with the diagnostic.
     pub span: Span,
     /// Compiler-owned explanation of why this location is related.
+    pub label: String,
+}
+
+/// A declaration related to a diagnostic, identified in its own source coordinate system.
+///
+/// Unlike [`RelatedSpan`], this never implies that the declaration's byte offsets belong to the diagnostic's
+/// primary file. Tooling may project it to another file only after resolving [`CanonicalSymbolId::origin`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelatedDeclaration {
+    /// Canonical identity carrying the declaration origin and provider-local source span.
+    pub identity: CanonicalSymbolId,
+    /// Compiler-owned explanation of why this declaration is related.
     pub label: String,
 }
 
@@ -24,6 +37,7 @@ pub struct RelatedSpan {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct StructuredDiagnosticDetails {
     related_spans: Vec<RelatedSpan>,
+    related_declarations: Vec<RelatedDeclaration>,
     expected: Option<String>,
     actual: Option<String>,
     stable_code: Option<&'static str>,
@@ -136,6 +150,17 @@ impl CompileError {
         self
     }
 
+    /// Attach a declaration whose source offsets belong to its canonical origin rather than the primary file.
+    pub fn with_related_declaration(mut self, identity: CanonicalSymbolId, label: impl Into<String>) -> Self {
+        self.structured_details_mut()
+            .related_declarations
+            .push(RelatedDeclaration {
+                identity,
+                label: label.into(),
+            });
+        self
+    }
+
     /// Attach structured expected and actual values without requiring tooling to parse prose.
     pub fn with_expected_actual(mut self, expected: impl Into<String>, actual: impl Into<String>) -> Self {
         let details = self.structured_details_mut();
@@ -155,6 +180,13 @@ impl CompileError {
         self.details
             .as_deref()
             .map_or(&[], |details| details.related_spans.as_slice())
+    }
+
+    /// Return compiler-owned declarations whose offsets belong to their canonical source origins.
+    pub fn related_declarations(&self) -> &[RelatedDeclaration] {
+        self.details
+            .as_deref()
+            .map_or(&[], |details| details.related_declarations.as_slice())
     }
 
     /// Return the structured expected value or type, when the diagnostic provides one.
@@ -276,6 +308,14 @@ pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> Stri
     // Notes
     for note in &error.notes {
         out.push_str(&format!("  {cyan}= note:{reset} {}\n", note));
+    }
+
+    for related in error.related_declarations() {
+        out.push_str(&format!(
+            "  {cyan}= note:{reset} {}: {}\n",
+            related.label,
+            related.identity.render_compact()
+        ));
     }
 
     // Hints

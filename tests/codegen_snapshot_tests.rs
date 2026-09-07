@@ -8,7 +8,15 @@
 
 use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
+use incan_semantics_core::{
+    CanonicalSymbolId, SemanticSourceTargetKind, decode_incan_symbol_identity, encode_incan_symbol_identity,
+};
+use quote::ToTokens;
+use std::collections::HashSet;
+use std::error::Error;
 use std::fs;
+
+type TestResult = Result<(), Box<dyn Error>>;
 
 #[path = "support/builtin_stdlib.rs"]
 mod builtin_stdlib_support;
@@ -21,35 +29,52 @@ fn codegen_with_builtin_stdlib_inventory() -> IrCodegen<'static> {
 
 /// Generate Rust code from Incan source
 fn generate_rust(source: &str) -> String {
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lexer failed");
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parser failed");
-    };
-    let code = match codegen_with_builtin_stdlib_inventory().try_generate(&ast) {
-        Ok(code) => code,
-        Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
-    };
-    normalize_codegen_output(&code)
+    normalize_projected_symbols_for_readable_codegen(&generate_projected_rust(source))
+}
+
+/// Generate Rust while retaining RFC 120's exact physical symbol projections.
+fn generate_projected_rust(source: &str) -> String {
+    let source = source.to_string();
+    incan::compiler_stack::run_on_compiler_stack(move || {
+        let Ok(tokens) = lexer::lex(&source) else {
+            panic!("lexer failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parser failed");
+        };
+        let code = match codegen_with_builtin_stdlib_inventory().try_generate(&ast) {
+            Ok(code) => code,
+            Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
+        };
+        normalize_projected_codegen_output(&code)
+    })
 }
 
 /// Generate Rust with the same source-module and package identity context that the CLI supplies for registry code.
 fn generate_registry_rust(source: &str, module_name: &str) -> String {
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lexer failed");
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parser failed");
-    };
-    let mut codegen = IrCodegen::new();
-    codegen.set_root_source_module_name(Some(module_name.to_string()));
-    codegen.set_registry_package_identity(Some(module_name.to_string()));
-    let code = match codegen.try_generate(&ast) {
-        Ok(code) => code,
-        Err(error) => panic!("registry codegen snapshot inputs must typecheck: {error:?}"),
-    };
-    normalize_codegen_output(&code)
+    normalize_projected_symbols_for_readable_codegen(&generate_projected_registry_rust(source, module_name))
+}
+
+/// Generate registry Rust while retaining RFC 120's exact physical symbol projections.
+fn generate_projected_registry_rust(source: &str, module_name: &str) -> String {
+    let source = source.to_string();
+    let module_name = module_name.to_string();
+    incan::compiler_stack::run_on_compiler_stack(move || {
+        let Ok(tokens) = lexer::lex(&source) else {
+            panic!("lexer failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parser failed");
+        };
+        let mut codegen = IrCodegen::new();
+        codegen.set_root_source_module_name(Some(module_name.clone()));
+        codegen.set_registry_package_identity(Some(module_name));
+        let code = match codegen.try_generate(&ast) {
+            Ok(code) => code,
+            Err(error) => panic!("registry codegen snapshot inputs must typecheck: {error:?}"),
+        };
+        normalize_projected_codegen_output(&code)
+    })
 }
 
 fn parse_incan_program(source: &str, context: &str) -> incan::frontend::ast::Program {
@@ -63,7 +88,9 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use incan::library_manifest::{
-        ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, ParamKindExport, StaticExport, TypeRef,
+        CanonicalIdentityExport, ConstExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
+        FunctionExport, LibraryIdentityGraph, LibraryManifest, ModelExport, ParamExport, ParamKindExport, StaticExport,
+        TypeRef,
     };
     use std::collections::HashMap;
 
@@ -129,6 +156,52 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
             }],
         },
     });
+    let identity_entry = |name: &str, kind: ExportIdentityKind, canonical_kind: SemanticSourceTargetKind, start| {
+        let canonical = CanonicalSymbolId::module_declaration(
+            Vec::new(),
+            name,
+            canonical_kind,
+            incan_semantics_core::HirSourceSpan::new(start, start + name.len()),
+        );
+        ExportIdentity {
+            public_name: name.to_string(),
+            public_path: vec!["widgets_core".to_string(), name.to_string()],
+            source_path: vec![name.to_string()],
+            kind,
+            projection: ExportIdentityProjection::Direct,
+            canonical: CanonicalIdentityExport::from_canonical("widgets_core", &canonical),
+        }
+    };
+    manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
+        exports: vec![
+            identity_entry("Widget", ExportIdentityKind::Model, SemanticSourceTargetKind::Model, 0),
+            identity_entry(
+                "make_widget",
+                ExportIdentityKind::Function,
+                SemanticSourceTargetKind::Function,
+                10,
+            ),
+            identity_entry(
+                "DEFAULT_NAME",
+                ExportIdentityKind::Const,
+                SemanticSourceTargetKind::Const,
+                30,
+            ),
+            identity_entry(
+                "SHARED_COUNT",
+                ExportIdentityKind::Static,
+                SemanticSourceTargetKind::Static,
+                50,
+            ),
+            identity_entry(
+                "SHARED_ITEMS",
+                ExportIdentityKind::Static,
+                SemanticSourceTargetKind::Static,
+                70,
+            ),
+        ],
+        ..LibraryIdentityGraph::default()
+    };
 
     let index = LibraryManifestIndex::from_entries(HashMap::from([(
         "widgets".to_string(),
@@ -611,8 +684,8 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str, keyword_
     normalize_codegen_output(&code)
 }
 
-/// Normalize generated output so snapshots don't churn on version bumps.
-fn normalize_codegen_output(code: &str) -> String {
+/// Normalize generated output so tests don't churn on version bumps while retaining physical symbol projections.
+fn normalize_projected_codegen_output(code: &str) -> String {
     let from = format!(
         "// Generated by the Incan compiler v{}\n\n",
         incan::version::INCAN_VERSION
@@ -631,6 +704,166 @@ fn normalize_codegen_output(code: &str) -> String {
         .join("\n")
 }
 
+/// Normalize generated output for source-readable assertions and broad snapshots.
+fn normalize_codegen_output(code: &str) -> String {
+    normalize_projected_symbols_for_readable_codegen(&normalize_projected_codegen_output(code))
+}
+
+fn recover_incan_identities_from_generated_rust(code: &str) -> HashSet<CanonicalSymbolId> {
+    code.split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .filter(|token| token.starts_with("__incan_v"))
+        .filter_map(|token| decode_incan_symbol_identity(token).ok().flatten())
+        .collect()
+}
+
+/// Keep broad codegen snapshots readable while RFC 120's dedicated tests assert the exact physical projections.
+///
+/// Canonical identities include declaration spans, so snapshotting their encoded Rust spellings would turn an
+/// unrelated source-line move into hundreds of opaque golden-file changes. Decode only for snapshot presentation;
+/// every generated string returned by the helpers above retains the real projection for focused assertions.
+fn normalize_projected_symbols_for_readable_codegen(code: &str) -> String {
+    let presentation_code = strip_rust_facing_projection_shims(code).unwrap_or_else(|| code.to_string());
+    let mut normalized = String::with_capacity(presentation_code.len());
+    let mut token = String::new();
+    let flush = |token: &mut String, normalized: &mut String| {
+        if token.starts_with("__incan_v")
+            && let Ok(Some(identity)) = decode_incan_symbol_identity(token)
+        {
+            normalized.push_str(&identity.declaration_name);
+        } else {
+            normalized.push_str(token);
+        }
+        token.clear();
+    };
+
+    for character in presentation_code.chars() {
+        if character.is_ascii_alphanumeric() || character == '_' {
+            token.push(character);
+        } else {
+            flush(&mut token, &mut normalized);
+            normalized.push(character);
+        }
+    }
+    flush(&mut token, &mut normalized);
+
+    // The physical projection is intentionally long and therefore changes prettyplease's wrapping decisions before
+    // this presentation-only decode runs. Format the decoded syntax once more so the historical snapshots continue
+    // to show the source-level shape rather than projection-induced whitespace churn.
+    let Ok(syntax) = syn::parse_file(&normalized) else {
+        return normalized;
+    };
+    format!(
+        "// Generated by the Incan compiler v<INCAN_VERSION>\n\n// __INCAN_INSERT_MODS__\n\n{}",
+        prettyplease::unparse(&syntax)
+    )
+}
+
+/// Remove separately tested native-Rust compatibility shims before rendering broad source-readable snapshots.
+///
+/// Decoding a canonical target back to its source spelling makes an intentional forwarding method appear recursive
+/// and makes `use canonical as source` appear self-referential. Artifact tests inspect those physical declarations;
+/// broad snapshots should continue to present only the authored implementation and its generated Incan call sites.
+fn strip_rust_facing_projection_shims(code: &str) -> Option<String> {
+    fn is_projection_alias(tree: &syn::UseTree) -> bool {
+        match tree {
+            syn::UseTree::Path(path) => is_projection_alias(&path.tree),
+            syn::UseTree::Rename(rename) => decode_incan_symbol_identity(&rename.ident.to_string())
+                .ok()
+                .flatten()
+                .is_some_and(|identity| {
+                    let alias = rename.rename.to_string();
+                    let static_alias = identity
+                        .declaration_name
+                        .chars()
+                        .map(|character| {
+                            if character.is_ascii_alphanumeric() {
+                                character.to_ascii_uppercase()
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect::<String>();
+                    alias == identity.declaration_name || alias == static_alias
+                }),
+            syn::UseTree::Group(group) => group.items.iter().any(is_projection_alias),
+            syn::UseTree::Name(_) | syn::UseTree::Glob(_) => false,
+        }
+    }
+
+    fn is_projection_method(method: &syn::ImplItemFn) -> bool {
+        if method.sig.ident.to_string().starts_with("__incan_v")
+            || !method.attrs.iter().any(|attribute| attribute.path().is_ident("inline"))
+        {
+            return false;
+        }
+        let source_name = method.sig.ident.to_string();
+        method
+            .block
+            .to_token_stream()
+            .to_string()
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|token| token.starts_with("__incan_v"))
+            .filter_map(|token| decode_incan_symbol_identity(token).ok().flatten())
+            .any(|identity| identity.declaration_name == source_name)
+    }
+
+    /// Report whether a free function is only a source-facing forwarder onto its own projection.
+    ///
+    /// Emission publishes a projected declaration twice: the implementation under its encoded name, and a thin
+    /// function under the source spelling whose entire body calls that projection. Decoding both for presentation
+    /// turns the pair into two same-named functions, the second calling itself, so a reader of the golden sees Rust
+    /// that could not compile. Only the forwarder is dropped; the implementation keeps the snapshot honest.
+    fn is_projection_forwarder(function: &syn::ItemFn) -> bool {
+        let source_name = function.sig.ident.to_string();
+        if source_name.starts_with("__incan_v") || function.block.stmts.len() != 1 {
+            return false;
+        }
+        function
+            .block
+            .to_token_stream()
+            .to_string()
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|token| token.starts_with("__incan_v"))
+            .filter_map(|token| decode_incan_symbol_identity(token).ok().flatten())
+            .any(|identity| identity.declaration_name == source_name)
+    }
+
+    fn strip_items(items: &mut Vec<syn::Item>) {
+        items.retain_mut(|item| match item {
+            syn::Item::Use(item_use) => !is_projection_alias(&item_use.tree),
+            syn::Item::Impl(item_impl) => {
+                let original_len = item_impl.items.len();
+                item_impl
+                    .items
+                    .retain(|item| !matches!(item, syn::ImplItem::Fn(method) if is_projection_method(method)));
+                original_len == item_impl.items.len() || !item_impl.items.is_empty()
+            }
+            syn::Item::Fn(item_fn) => !is_projection_forwarder(item_fn),
+            syn::Item::Mod(item_mod) => {
+                if let Some((_, nested)) = &mut item_mod.content {
+                    strip_items(nested);
+                }
+                true
+            }
+            _ => true,
+        });
+    }
+
+    let mut syntax = syn::parse_file(code).ok()?;
+    strip_items(&mut syntax.items);
+    Some(prettyplease::unparse(&syntax))
+}
+
+macro_rules! assert_codegen_snapshot {
+    ($name:expr, $code:expr $(,)?) => {
+        insta::assert_snapshot!($name, normalize_projected_symbols_for_readable_codegen(&$code));
+    };
+}
+
+fn compact_rust(code: &str) -> String {
+    code.chars().filter(|character| !character.is_whitespace()).collect()
+}
+
 /// Load a test file from the codegen_snapshots directory
 fn load_test_file(name: &str) -> String {
     let path = format!("tests/codegen_snapshots/{}.incn", name);
@@ -644,28 +877,32 @@ fn load_test_file(name: &str) -> String {
 fn test_pub_import_expressions_codegen() {
     let source = load_test_file("pub_import_expressions");
     let rust_code = generate_rust_with_widgets_manifest(&source);
-    insta::assert_snapshot!("pub_import_expressions", rust_code);
+    assert!(
+        rust_code.contains("widgets::make_widget") && !rust_code.contains("widgets_core::make_widget"),
+        "canonical package identity must not replace the consumer's linked dependency name:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("pub_import_expressions", rust_code);
 }
 
 #[test]
 fn test_pub_import_module_alias_codegen() {
     let source = load_test_file("pub_import_module_alias");
     let rust_code = generate_rust_with_widgets_manifest(&source);
-    insta::assert_snapshot!("pub_import_module_alias", rust_code);
+    assert_codegen_snapshot!("pub_import_module_alias", rust_code);
 }
 
 #[test]
 fn test_vocab_block_desugaring_codegen() {
     let source = load_test_file("vocab_block_desugaring");
     let rust_code = generate_rust_with_vocab_wasm_desugaring(&source);
-    insta::assert_snapshot!("vocab_block_desugaring", rust_code);
+    assert_codegen_snapshot!("vocab_block_desugaring", rust_code);
 }
 
 #[test]
 fn test_vocab_helper_backed_desugaring_codegen() {
     let source = "import pub::query\n\ndef main() -> None:\n  where true:\n    pass\n";
     let rust_code = generate_rust_with_helper_backed_vocab_wasm_desugaring(source, &["where"]);
-    insta::assert_snapshot!("vocab_helper_backed_desugaring", rust_code);
+    assert_codegen_snapshot!("vocab_helper_backed_desugaring", rust_code);
 }
 
 #[test]
@@ -685,42 +922,1011 @@ fn test_equivalent_helper_backed_keywords_codegen_identically() {
 fn test_basic_function_codegen() {
     let source = load_test_file("basic_function");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("basic_function", rust_code);
+    assert_codegen_snapshot!("basic_function", rust_code);
 }
 
 #[test]
 fn test_function_references_codegen() {
     let source = load_test_file("function_references");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("function_references", rust_code);
+    assert_codegen_snapshot!("function_references", rust_code);
 }
 
 #[test]
 fn test_user_defined_decorators_codegen() {
     let source = load_test_file("user_defined_decorators");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("user_defined_decorators", rust_code);
+    assert_codegen_snapshot!("user_defined_decorators", rust_code);
+}
+
+#[deny(clippy::expect_used, clippy::unwrap_used)]
+mod emitted_symbol_projection_tests {
+    use super::*;
+
+    fn generate_rust(source: &str) -> String {
+        generate_projected_rust(source)
+    }
+
+    fn generate_registry_rust(source: &str, module_name: &str) -> String {
+        generate_projected_registry_rust(source, module_name)
+    }
+
+    #[test]
+    fn decorated_function_emits_one_source_projection_and_distinct_generated_helpers() -> TestResult {
+        let source = load_test_file("user_defined_decorators");
+        let rust_code = generate_rust(&source);
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "label"
+            })
+            .ok_or_else(|| "decorated source wrapper must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert_eq!(
+            rust_code.matches(&format!("fn {projection}")).count(),
+            1,
+            "one source declaration must emit exactly one projected function definition:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("fn __incan_original_label"),
+            "decorator original must retain its separate compiler-helper name:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decorator_factory_calls_use_the_resolved_projection_for_free_and_method_wrappers() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+@preserve()
+def decorated_total(first: int, second: int) -> int:
+  return first + second
+
+class Box:
+  base: int
+
+  @preserve()
+  def total(self, extra: int) -> int:
+    return self.base + extra
+
+def main() -> None:
+  box = Box(base=5)
+  _ = decorated_total(1, 2) + box.total(6)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let preserve = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "preserve"
+            })
+            .ok_or_else(|| "decorator factory must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(preserve);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert_eq!(
+            compact.matches(&format!("{projection}()")).count(),
+            2,
+            "both decorator initializers must call the exact compiler-derived factory projection:\n{rust_code}"
+        );
+        assert!(
+            !compact.contains("preserve()"),
+            "decorator lowering must not fall back to the raw source name:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_function_declaration_and_call_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def calculate(value: int) -> int:
+  return value + 1
+
+def main() -> None:
+  _ = calculate(41)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "calculate"
+            })
+            .ok_or_else(|| "ordinary source function must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(compact.contains(&format!("{projection}(41,)")), "{rust_code}");
+        Ok(())
+    }
+
+    #[test]
+    fn same_module_function_alias_calls_the_target_projection_without_a_second_definition() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def calculate(value: int) -> int:
+  return value + 1
+
+compute = calculate
+
+def main() -> None:
+  _ = compute(41)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| identity.declaration_name == "calculate")
+            .ok_or_else(|| "alias target identity must survive codegen".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(compact.contains(&format!("{projection}(41,)")), "{rust_code}");
+        assert!(
+            !rust_code.contains("fn compute"),
+            "a binding alias must not create another declaration:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_wrapper_declaration_and_call_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+def route(method: str, path: str) -> str:
+  return method + path
+
+get = partial route(method="GET")
+
+def main() -> None:
+  _ = get(path="/")
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let get = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Partial && identity.declaration_name == "get")
+            .ok_or_else(|| "source partial wrapper must retain its own canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(get);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact.contains(&format!("{projection}(\"GET\".to_string(),\"/\".to_string(),)")),
+            "{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cross_module_function_alias_imports_and_calls_the_provider_projection() -> TestResult {
+        let root_source = r#"
+from helpers import calculate as compute
+
+def main() -> None:
+  _ = compute(41)
+"#;
+        let helper_source = r#"
+pub def calculate(value: int) -> int:
+  return value + 1
+"#;
+        let root_ast = parse_incan_program(root_source, "root alias fixture");
+        let helper_ast = parse_incan_program(helper_source, "helper alias fixture");
+        let helper_path = vec!["helpers".to_string()];
+        let mut codegen = codegen_with_builtin_stdlib_inventory();
+        codegen.add_module_with_path_segments("helpers", &helper_ast, helper_path.clone());
+        let (root_code, modules) = codegen
+            .try_generate_multi_file_nested(&root_ast, std::slice::from_ref(&helper_path))
+            .map_err(|error| format!("cross-module alias fixture must typecheck and lower: {error:?}"))?;
+        let helper_code = modules
+            .get(&helper_path)
+            .ok_or_else(|| "helper module must be emitted".to_string())?;
+        let identities = recover_incan_identities_from_generated_rust(helper_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| identity.declaration_name == "calculate")
+            .ok_or_else(|| "provider function must carry a projection".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact_root = compact_rust(&root_code);
+
+        assert!(helper_code.contains(&format!("fn {projection}")), "{helper_code}");
+        assert!(
+            compact_root.contains(&format!("usecrate::helpers::{projection};")),
+            "{root_code}"
+        );
+        assert!(
+            !compact_root.contains(&format!("{projection}as{projection}")),
+            "{root_code}"
+        );
+        assert!(compact_root.contains(&format!("{projection}(41,)")), "{root_code}");
+        Ok(())
+    }
+
+    #[test]
+    fn decorated_method_declaration_and_call_share_one_projection() -> TestResult {
+        let source = load_test_file("user_defined_method_decorators");
+        let rust_code = generate_rust(&source);
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "decorated source method must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            rust_code.matches(&format!(".{projection}")).count() >= 1,
+            "method call must use the compiler-derived declaration projection:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("fn __incan_original_label"),
+            "decorator method helper must remain non-Incan and distinct:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_method_declaration_and_call_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+class Counter:
+  value: int
+
+  def next(self) -> int:
+    return self.value + 1
+
+def main() -> None:
+  counter: Counter = Counter(value=41)
+  _ = counter.next()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let next = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "next")
+            .ok_or_else(|| "ordinary source method must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(next);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "concrete method call must use the compiler-derived declaration projection:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn public_inherent_methods_keep_source_spelled_rust_forwarders() -> TestResult {
+        let rust_code = generate_projected_registry_rust(
+            r#"
+pub model Counter:
+  value: int
+
+  @staticmethod
+  def make(value: int) -> Counter:
+    return Counter(value=value)
+
+  def next(self) -> int:
+    return self.value + 1
+
+  pub property current -> int:
+    return self.value
+
+def main() -> None:
+  counter = Counter.make(41)
+  println(counter.next())
+  println(counter.current)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let compact = compact_rust(&rust_code);
+
+        let mut projections = std::collections::HashMap::new();
+        for (source_name, kind) in [
+            ("make", SemanticSourceTargetKind::Method),
+            ("next", SemanticSourceTargetKind::Method),
+            ("current", SemanticSourceTargetKind::Property),
+        ] {
+            let identity = identities
+                .iter()
+                .find(|identity| identity.kind == kind && identity.declaration_name == source_name)
+                .ok_or_else(|| format!("missing canonical identity for Counter.{source_name}"))?;
+            let projection = encode_incan_symbol_identity(identity);
+            assert_eq!(
+                rust_code.matches(&format!("fn {projection}")).count(),
+                1,
+                "the canonical method must remain the sole authored implementation:\n{rust_code}"
+            );
+            assert_eq!(
+                rust_code.matches(&format!("fn {source_name}")).count(),
+                1,
+                "the native Rust surface must retain one source-spelled forwarding entry point:\n{rust_code}"
+            );
+            projections.insert(source_name, projection);
+        }
+        assert!(
+            compact.contains(&format!(
+                "pubfnmake(value:i64)->Counter{{Self::{}(value,)}}",
+                projections["make"]
+            )),
+            "the static source entry point must forward to its canonical target:\n{rust_code}"
+        );
+        for source_name in ["next", "current"] {
+            assert!(
+                compact.contains(&format!(
+                    "pubfn{source_name}(&self)->i64{{self.{}()}}",
+                    projections[source_name]
+                )),
+                "the instance source entry point must forward to its canonical target:\n{rust_code}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classmethod_and_staticmethod_declarations_and_calls_share_their_projections() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+class Factory:
+  @classmethod
+  def answer(cls) -> int:
+    return 42
+
+  @staticmethod
+  def twice(value: int) -> int:
+    return value * 2
+
+def main() -> None:
+  answer = Factory.answer()
+  twice = Factory.twice(21)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let answer = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "answer")
+            .ok_or_else(|| "classmethod must retain its canonical identity".to_string())?;
+        let twice = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "twice")
+            .ok_or_else(|| "staticmethod must retain its canonical identity".to_string())?;
+        let answer_projection = encode_incan_symbol_identity(answer);
+        let twice_projection = encode_incan_symbol_identity(twice);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(
+            rust_code.matches(&format!("fn {answer_projection}")).count(),
+            1,
+            "{rust_code}"
+        );
+        assert_eq!(
+            rust_code.matches(&format!("fn {twice_projection}")).count(),
+            1,
+            "{rust_code}"
+        );
+        assert!(
+            compact.contains(&format!("Factory::{answer_projection}()")),
+            "{rust_code}"
+        );
+        assert!(
+            compact.contains(&format!("Factory::{twice_projection}(21,)")),
+            "{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn static_factory_projection_coexists_with_same_named_instance_field() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+type Days = newtype int
+
+model TimeDelta:
+  pub days: Days
+
+  @staticmethod
+  def days(value: Days) -> TimeDelta:
+    return TimeDelta(days=value)
+
+def main() -> None:
+  delta = TimeDelta.days(-7)
+  println(f"{delta.days.0}")
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let factory = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "days")
+            .ok_or_else(|| "same-named static factory must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(factory);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact.contains("pubdays:Days"),
+            "the instance field must remain ordinary stored data:\n{rust_code}"
+        );
+        assert!(
+            compact.contains(&format!("TimeDelta::{projection}(Days(-7),)")),
+            "the type-owned call must select the factory and preserve implicit newtype construction:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn type_owned_and_instance_owned_methods_with_one_spelling_project_separately() -> TestResult {
+        let rust_code = generate_projected_registry_rust(
+            r#"
+model Counter:
+  value: int
+
+  @staticmethod
+  def next(value: int) -> Counter:
+    return Counter(value=value)
+
+  def next(self) -> int:
+    return self.value + 1
+
+def main() -> None:
+  counter = Counter.next(4)
+  println(counter.next())
+"#,
+            "app.main",
+        );
+        let projections = recover_incan_identities_from_generated_rust(&rust_code)
+            .into_iter()
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "next")
+            .map(|identity| encode_incan_symbol_identity(&identity))
+            .collect::<Vec<_>>();
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(
+            projections.len(),
+            2,
+            "both method declarations must retain identities:\n{rust_code}"
+        );
+        assert!(
+            projections
+                .iter()
+                .any(|projection| compact.contains(&format!("Counter::{projection}(4"))),
+            "the type receiver must select the static declaration:\n{rust_code}"
+        );
+        assert!(
+            projections
+                .iter()
+                .any(|projection| compact.contains(&format!("counter.{projection}()"))),
+            "the instance receiver must select the receiver-bearing declaration:\n{rust_code}"
+        );
+        assert_eq!(
+            rust_code.matches("fn next").count(),
+            0,
+            "Rust cannot expose one raw inherent name for distinct type-owned and instance-owned declarations:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn field_factory_and_accumulator_with_one_spelling_codegen_as_a_fluent_chain() -> TestResult {
+        let rust_code = generate_projected_registry_rust(
+            r#"
+model TimeDelta:
+  days: int
+
+  @staticmethod
+  def days(value: int) -> TimeDelta:
+    return TimeDelta(days=value)
+
+  def days(self, value: int) -> TimeDelta:
+    return TimeDelta(days=self.days + value)
+
+def main() -> None:
+  delta = TimeDelta.days(-7).days(2)
+  println(delta.days)
+"#,
+            "app.main",
+        );
+        let projections = recover_incan_identities_from_generated_rust(&rust_code)
+            .into_iter()
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "days")
+            .map(|identity| encode_incan_symbol_identity(&identity))
+            .collect::<Vec<_>>();
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(
+            projections.len(),
+            2,
+            "the type-owned factory and instance accumulator must retain distinct identities:\n{rust_code}"
+        );
+        assert!(
+            projections
+                .iter()
+                .any(|projection| compact.contains(&format!("TimeDelta::{projection}(-7"))),
+            "the first call in the chain must select the type-owned factory:\n{rust_code}"
+        );
+        assert!(
+            projections
+                .iter()
+                .any(|projection| compact.contains(&format!(".{projection}(2"))),
+            "the second call in the chain must select the instance accumulator:\n{rust_code}"
+        );
+        assert!(
+            compact.contains("println!(\"{}\",delta.days)"),
+            "the terminal field access must select stored data rather than either callable member:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn newtype_associated_declaration_and_call_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+type Positive = newtype int:
+  def from_underlying(value: int) -> Result[Self, ValidationError]:
+    if value <= 0:
+      return Err(ValidationError("value must be positive"))
+    return Ok(Positive(value))
+
+def main() -> None:
+  _ = Positive.from_underlying(1)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let from_underlying = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "from_underlying"
+            })
+            .ok_or_else(|| "newtype associated method must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(from_underlying);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact.contains(&format!("Positive::{projection}(1,)")),
+            "newtype associated call must use the compiler-derived declaration projection:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validated_newtype_implicit_coercion_calls_the_hook_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+type Positive = newtype int:
+  def from_underlying(value: int) -> Result[Self, ValidationError]:
+    if value <= 0:
+      return Err(ValidationError("value must be positive"))
+    return Ok(Positive(value))
+
+def accept(value: Positive) -> None:
+  return
+
+def main() -> None:
+  accept(1)
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let from_underlying = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "from_underlying"
+            })
+            .ok_or_else(|| "validated-newtype hook must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(from_underlying);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact.contains(&format!("Positive::{projection}(1,)")),
+            "implicit coercion must call the exact checked-hook projection:\n{rust_code}"
+        );
+        assert!(
+            !compact.contains("Positive::from_underlying("),
+            "implicit coercion must not bypass the projected declaration:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn method_alias_calls_the_target_projection_without_a_second_definition() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+model User:
+  name: str
+  short = label
+
+  def label(self) -> str:
+    return self.name
+
+def main() -> None:
+  user = User(name="Ada")
+  _ = user.short()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "method alias target must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(compact.contains(&format!(".{projection}()")), "{rust_code}");
+        assert!(
+            !rust_code.contains("fn short"),
+            "binding alias must not create a method declaration:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn method_partial_uses_an_explicit_generated_wrapper_and_preserves_the_target_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+model User:
+  name: str
+  short = partial label(prefix=1)
+
+  def label(self, prefix: int) -> str:
+    return self.name
+
+def main() -> None:
+  user = User(name="Ada")
+  _ = user.short()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| format!("method partial target must retain its canonical identity:\n{rust_code}"))?;
+        let projection = encode_incan_symbol_identity(label);
+        let compact = compact_rust(&rust_code);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            rust_code.contains("fn short"),
+            "method partial must emit its generated forwarding helper:\n{rust_code}"
+        );
+        assert!(
+            compact.contains(".short(1)"),
+            "method partial call must target its forwarding helper:\n{rust_code}"
+        );
+        assert!(compact.contains(&format!(".{projection}(prefix,)")), "{rust_code}");
+        assert!(
+            identities.iter().all(|identity| identity.declaration_name != "short"),
+            "a method-partial binding must not mint a second source declaration identity: {identities:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn computed_property_getter_and_access_share_one_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def main() -> None:
+  account: Account = Account(cents=100)
+  _ = account.dollars
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let dollars = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Property && identity.declaration_name == "dollars"
+            })
+            .ok_or_else(|| "computed property getter must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(dollars);
+
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "computed property access must call the compiler-derived projection:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn trait_method_keeps_abi_slot_and_exposes_one_recoverable_concrete_projection() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+trait Labelled:
+  def label(self) -> str
+
+class Item with Labelled:
+  value: str
+
+  def label(self) -> str:
+    return self.value
+
+def main() -> None:
+  item: Item = Item(value="ready")
+  _ = item.label()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "concrete trait implementation method must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert!(
+            rust_code.contains("fn label(&self)"),
+            "Rust trait ABI slot must retain its declared name:\n{rust_code}"
+        );
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "concrete method call must use the recoverable projection rather than guess the trait slot name:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn trait_targeted_method_overloads_keep_distinct_recoverable_projections() {
+        let rust_code = generate_rust(&load_test_file("rfc043_newtype_trait_targets"));
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let convert_identities = identities
+            .iter()
+            .filter(|identity| {
+                identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "convert"
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            convert_identities.len(),
+            2,
+            "each targeted source method needs its own canonical projection"
+        );
+        for identity in convert_identities {
+            let projection = encode_incan_symbol_identity(identity);
+            assert_eq!(
+                rust_code.matches(&format!("fn {projection}")).count(),
+                1,
+                "each targeted method declaration must materialize once:\n{rust_code}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_type_owned_call_with_explicit_type_arguments_projects_like_its_declaration() -> TestResult {
+        // `FactoryBox[int].make(1)` and `FactoryBox.make(1)` call the same declaration; the subscript only supplies
+        // type arguments. The subscripted receiver used to resolve to `Unknown`, so method resolution matched no
+        // declaration and recorded no identity, and lowering emitted the source spelling against a declaration that
+        // was emitted under its projection.
+        let rust_code = generate_registry_rust(
+            r#"
+@derive(Clone)
+class FactoryBox[T with Clone]:
+  pub value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+
+def main() -> None:
+  boxed = FactoryBox[int].make(1)
+  println(f"{boxed.value}")
+"#,
+            "app.main",
+        );
+
+        assert!(
+            rust_code.contains("FactoryBox::__incan_v1_"),
+            "an explicitly instantiated type-owned call must name its declaration's projection:\n{rust_code}"
+        );
+        assert!(
+            !rust_code.contains("FactoryBox::make("),
+            "the pre-projection source spelling names no emitted function:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_derived_method_keeps_its_source_spelling_instead_of_a_wrapper_that_does_not_exist() -> TestResult {
+        // `@derive(Default)` produces a Rust `Default` impl, not an Incan wrapper, so `Point.default()` has no
+        // recoverable slot on `Point`. Projecting it named `std.derives.copying.default` -- a real declaration with
+        // nothing emitted for it here -- and the generated Rust did not compile. This is the shape that broke the
+        // RFC 023 parity fixture, minimized to run without Oven.
+        let rust_code = generate_registry_rust(
+            r#"
+@derive(Default)
+model Point:
+  x: int = 0
+
+def main() -> None:
+  p = Point.default()
+  println(f"{p.x}")
+"#,
+            "app.main",
+        );
+
+        assert!(
+            rust_code.contains("Point::default()"),
+            "a derived associated function must keep its source spelling:\n{rust_code}"
+        );
+        assert!(
+            !rust_code.contains("Point::__incan_v1_"),
+            "a derived associated function has no recoverable wrapper, so none may be named:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn adopted_default_method_exposes_a_recoverable_projection_beside_the_trait_slot() -> TestResult {
+        let rust_code = generate_registry_rust(
+            r#"
+trait Labelled:
+  def label(self) -> str:
+    return "default"
+
+class Item with Labelled:
+  value: str
+
+def main() -> None:
+  item: Item = Item(value="ready")
+  _ = item.label()
+"#,
+            "app.main",
+        );
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let label = identities
+            .iter()
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "label")
+            .ok_or_else(|| "an adopted Incan default method must retain its declaration identity".to_string())?;
+        let projection = encode_incan_symbol_identity(label);
+
+        assert!(
+            rust_code.contains("fn label(&self)"),
+            "Rust trait ABI slot must retain its declared name:\n{rust_code}"
+        );
+        assert_eq!(rust_code.matches(&format!("fn {projection}")).count(), 1, "{rust_code}");
+        assert!(
+            compact_rust(&rust_code).contains(&format!(".{projection}()")),
+            "concrete calls to an adopted default must use the recoverable projection:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rust_extern_wrapper_is_projected_but_delegated_rust_symbol_is_not() -> TestResult {
+        let source = load_test_file("rust_extern_delegation");
+        let rust_code = generate_rust(&source);
+        let identities = recover_incan_identities_from_generated_rust(&rust_code);
+        let fail_t = identities
+            .iter()
+            .find(|identity| {
+                identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "fail_t"
+            })
+            .ok_or_else(|| "Incan extern wrapper must retain its canonical identity".to_string())?;
+        let projection = encode_incan_symbol_identity(fail_t);
+
+        assert!(rust_code.contains(&format!("fn {projection}")), "{rust_code}");
+        assert!(rust_code.contains("incan_stdlib::testing::fail_t"), "{rust_code}");
+        assert!(
+            !rust_code.contains(&format!("incan_stdlib::testing::{projection}")),
+            "{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_chain_preserves_the_provider_projection_without_alias_guessing() -> TestResult {
+        let provider_ast = parse_incan_program(
+            "pub def calculate(value: int) -> int:\n  return value + 1\n",
+            "function reexport provider",
+        );
+        let facade_ast = parse_incan_program(
+            "pub from provider import calculate as facade_calculate\n",
+            "function reexport facade",
+        );
+        let public_api_ast = parse_incan_program(
+            "pub from facade import facade_calculate as exported_calculate\n",
+            "function reexport public API",
+        );
+        let consumer_ast = parse_incan_program(
+            "from crate.public_api import exported_calculate as compute\n\ndef main() -> None:\n  _ = compute(41)\n",
+            "function reexport consumer",
+        );
+        let provider_path = vec!["provider".to_string()];
+        let facade_path = vec!["facade".to_string()];
+        let public_api_path = vec!["public_api".to_string()];
+        let dependency_paths = vec![provider_path.clone(), facade_path.clone(), public_api_path.clone()];
+        let mut codegen = codegen_with_builtin_stdlib_inventory();
+        codegen.add_module_with_path_segments("provider", &provider_ast, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade_ast, facade_path.clone());
+        codegen.add_module_with_path_segments("public_api", &public_api_ast, public_api_path.clone());
+        let (consumer_code, modules) = codegen
+            .try_generate_multi_file_nested(&consumer_ast, &dependency_paths)
+            .map_err(|error| format!("function reexport chain must typecheck and lower: {error:?}"))?;
+        let provider_code = modules
+            .get(&provider_path)
+            .ok_or_else(|| "provider module must be emitted".to_string())?;
+        let facade_code = modules
+            .get(&facade_path)
+            .ok_or_else(|| "facade module must be emitted".to_string())?;
+        let public_api_code = modules
+            .get(&public_api_path)
+            .ok_or_else(|| "public API module must be emitted".to_string())?;
+        let identities = recover_incan_identities_from_generated_rust(provider_code);
+        let calculate = identities
+            .iter()
+            .find(|identity| identity.declaration_name == "calculate")
+            .ok_or_else(|| "provider declaration must carry a projection".to_string())?;
+        let projection = encode_incan_symbol_identity(calculate);
+        let compact_facade = compact_rust(facade_code);
+        let compact_public_api = compact_rust(public_api_code);
+        let compact_consumer = compact_rust(&consumer_code);
+
+        assert!(provider_code.contains(&format!("fn {projection}")), "{provider_code}");
+        assert!(compact_facade.contains(&projection), "{facade_code}");
+        assert!(compact_public_api.contains(&projection), "{public_api_code}");
+        assert!(
+            compact_consumer.contains(&format!("{projection}(41,)")),
+            "{consumer_code}"
+        );
+        assert!(
+            !compact_facade.contains(&format!("{projection}as{projection}")),
+            "{facade_code}"
+        );
+        assert!(
+            !compact_public_api.contains(&format!("{projection}as{projection}")),
+            "{public_api_code}"
+        );
+        Ok(())
+    }
 }
 
 #[test]
 fn test_decorated_variadic_function_codegen() {
     let source = load_test_file("decorated_variadic_function");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("decorated_variadic_function", rust_code);
+    assert_codegen_snapshot!("decorated_variadic_function", rust_code);
 }
 
 #[test]
 fn test_user_defined_method_decorators_codegen() {
     let source = load_test_file("user_defined_method_decorators");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("user_defined_method_decorators", rust_code);
+    assert_codegen_snapshot!("user_defined_method_decorators", rust_code);
 }
 
 #[test]
 fn test_user_defined_mutable_method_decorators_codegen() {
     let source = load_test_file("user_defined_mutable_method_decorators");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("user_defined_mutable_method_decorators", rust_code);
+    assert_codegen_snapshot!("user_defined_mutable_method_decorators", rust_code);
 }
 
 #[test]
@@ -800,7 +2006,7 @@ pub def direct(result: Result[int, PlainError]) -> int:
 }
 
 #[test]
-fn test_rfc070_result_inspect_non_copy_observer_borrows_payload() {
+fn test_rfc070_result_inspect_non_copy_observer_borrows_payload() -> TestResult {
     let source = r#"
 model Payload:
   name: str
@@ -822,13 +2028,20 @@ pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload,
   return result.inspect(observer)
 "#;
     let rust_code = generate_rust(source);
+    let borrowed_adapter = rust_code
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .find(|token| token.starts_with("__incan_borrow_adapter_"))
+        .ok_or_else(|| {
+            std::io::Error::other(
+                "non-Copy named observer callbacks should retain one generated borrowed function adapter",
+            )
+        })?;
     assert!(
-        rust_code.contains("fn __incan_borrow_adapter_observe_payload_0(_: &Payload)"),
+        rust_code.contains(&format!("fn {borrowed_adapter}(\n    _: &Payload")),
         "non-Copy named observer callbacks should get a generated borrowed function adapter:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("crate::__incan_std::result::inspect(")
-            && rust_code.contains("__incan_borrow_adapter_observe_payload_0"),
+        rust_code.contains("crate::__incan_std::result::inspect(") && rust_code.matches(borrowed_adapter).count() == 2,
         "inspect should pass the borrowed adapter into the Incan-authored std.result helper:\n{rust_code}"
     );
     assert!(
@@ -852,41 +2065,42 @@ pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload,
         !rust_code.contains("__incan_result_value).clone()"),
         "non-Copy inspect observers must not clone the payload:\n{rust_code}"
     );
+    Ok(())
 }
 
 #[test]
 fn test_dict_operations_codegen() {
     let source = load_test_file("dict_operations");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("dict_operations", rust_code);
+    assert_codegen_snapshot!("dict_operations", rust_code);
 }
 
 #[test]
 fn test_model_struct_codegen() {
     let source = load_test_file("model_struct");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("model_struct", rust_code);
+    assert_codegen_snapshot!("model_struct", rust_code);
 }
 
 #[test]
 fn test_uppercase_var_field_access_codegen() {
     let source = load_test_file("uppercase_var_field_access");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("uppercase_var_field_access", rust_code);
+    assert_codegen_snapshot!("uppercase_var_field_access", rust_code);
 }
 
 #[test]
 fn test_model_with_alias_codegen() {
     let source = load_test_file("model_with_alias");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("model_with_alias", rust_code);
+    assert_codegen_snapshot!("model_with_alias", rust_code);
 }
 
 #[test]
 fn test_model_with_serde_alias_codegen() {
     let source = load_test_file("model_with_serde_alias");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("model_with_serde_alias", rust_code);
+    assert_codegen_snapshot!("model_with_serde_alias", rust_code);
 }
 
 #[test]
@@ -894,7 +2108,7 @@ fn test_model_alias_expressions_codegen() {
     // RFC 021: Test alias-aware expression lowering (constructor, field access, patterns)
     let source = load_test_file("model_alias_expressions");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("model_alias_expressions", rust_code);
+    assert_codegen_snapshot!("model_alias_expressions", rust_code);
 }
 
 #[test]
@@ -902,14 +2116,14 @@ fn test_model_alias_self_access_codegen() {
     // RFC 021: Ensure `self.<alias>` field access lowers to canonical field name
     let source = load_test_file("model_alias_self_access");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("model_alias_self_access", rust_code);
+    assert_codegen_snapshot!("model_alias_self_access", rust_code);
 }
 
 #[test]
 fn test_web_route_extractors_codegen() {
     let source = load_test_file("web_route_extractors");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("web_route_extractors", rust_code);
+    assert_codegen_snapshot!("web_route_extractors", rust_code);
 }
 
 #[test]
@@ -927,7 +2141,7 @@ fn test_std_web_routing_compiled_codegen() {
         !rust_code.contains("panic!(\"decorator marker"),
         "proc-macro decorator runtime misuse must not emit raw panic!:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_web_routing_compiled", rust_code);
+    assert_codegen_snapshot!("std_web_routing_compiled", rust_code);
 }
 
 #[test]
@@ -947,7 +2161,7 @@ def main() -> None:
 }
 
 #[test]
-fn imported_stdlib_associated_function_defaults_expand_in_generated_rust() {
+fn imported_stdlib_associated_function_defaults_expand_in_generated_rust() -> TestResult {
     let source = r#"
 from std.collections import OrdinalMapError
 
@@ -955,21 +2169,33 @@ def main() -> None:
   error = OrdinalMapError.invalid_key_record("bad key")
   print(error.message())
 "#;
-    let tokens = lexer::lex(source).expect("fixture should lex");
-    let ast = parser::parse(&tokens).expect("fixture should parse");
+    let tokens =
+        lexer::lex(source).map_err(|errors| std::io::Error::other(format!("fixture should lex: {errors:?}")))?;
+    let ast =
+        parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("fixture should parse: {errors:?}")))?;
     let plan = incan::provider::ProviderPlan::default().with_bootstrap_sdk_namespace_roots(["collections".to_string()]);
     let mut codegen = IrCodegen::new();
     codegen.set_provider_plan(std::sync::Arc::new(plan));
-    let rust_code = normalize_codegen_output(
-        &codegen
-            .try_generate(&ast)
-            .expect("provider-bootstrap fixture should typecheck and lower"),
-    );
+    let generated = codegen.try_generate(&ast).map_err(|error| {
+        std::io::Error::other(format!(
+            "provider-bootstrap fixture should typecheck and lower: {error:?}"
+        ))
+    })?;
+    let rust_code = normalize_projected_codegen_output(&generated);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    let identities = recover_incan_identities_from_generated_rust(&rust_code);
+    let invalid_key_record = identities
+        .iter()
+        .find(|identity| {
+            identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "invalid_key_record"
+        })
+        .ok_or_else(|| std::io::Error::other("the imported associated function must retain its canonical identity"))?;
+    let projection = encode_incan_symbol_identity(invalid_key_record);
     assert!(
-        compact.contains("OrdinalMapError::invalid_key_record(\"badkey\".to_string(),-1)"),
+        compact.contains(&format!("OrdinalMapError::{projection}(\"badkey\".to_string(),-1,)")),
         "imported stdlib associated-function calls must expand omitted defaults:\n{rust_code}"
     );
+    Ok(())
 }
 
 #[test]
@@ -1015,7 +2241,7 @@ async def search(id: int) -> int:
         panic!("codegen must succeed");
     };
     let rust_code = normalize_codegen_output(&main_code);
-    insta::assert_snapshot!("web_route_extractors_nested_module", rust_code);
+    assert_codegen_snapshot!("web_route_extractors_nested_module", rust_code);
 }
 
 #[test]
@@ -1106,7 +2332,7 @@ async def main() -> None:
   println("hello")
 "#;
     let rust_code = generate_rust(source);
-    insta::assert_snapshot!("async_main_runtime_bootstrap", rust_code);
+    assert_codegen_snapshot!("async_main_runtime_bootstrap", rust_code);
 }
 
 // ============================================================================
@@ -1149,21 +2375,21 @@ fn test_web_route_codegen_no_framework_crate_leakage() {
 fn test_literals_codegen() {
     let source = load_test_file("literals");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("literals", rust_code);
+    assert_codegen_snapshot!("literals", rust_code);
 }
 
 #[test]
 fn test_operators_codegen() {
     let source = load_test_file("operators");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("operators", rust_code);
+    assert_codegen_snapshot!("operators", rust_code);
 }
 
 #[test]
 fn test_user_defined_operators_codegen() {
     let source = load_test_file("user_defined_operators");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("user_defined_operators", rust_code);
+    assert_codegen_snapshot!("user_defined_operators", rust_code);
 }
 
 #[test]
@@ -1218,7 +2444,7 @@ def main() -> None:
         "bag.__len__()",
         "bag.__contains__(3)",
         "callable.__call__(5)",
-        "Counter{}.__iter__()",
+        "(Counter{}).__iter__()",
         ".__next__()",
     ] {
         assert!(
@@ -1310,7 +2536,8 @@ def main() -> str:
         "source Callable1 bounds must remain nominal in generated Rust:\n{rust_code}"
     );
     assert!(
-        compact.contains("mapper.__call__(value)") && !compact.contains("Mapper:Clone+Fn(i64)->String"),
+        compact.contains("Callable1::<i64,String,>::__call__(&mapper,value)")
+            && !compact.contains("Mapper:Clone+Fn(i64)->String"),
         "generic source callables must dispatch through their nominal hook:\n{rust_code}"
     );
     assert!(
@@ -1343,6 +2570,129 @@ def main() -> Result[None, str]:
             "stdlib fallible-loop hook {method} must retain qualified trait dispatch; generated:\n{rust_code}"
         );
     }
+}
+
+#[test]
+fn generic_fallible_iterator_consumer_inherits_implementation_bounds_issue1280() {
+    let source = r#"
+from std.derives.collection import FallibleIterator
+
+model Stream[R] with FallibleIterator[int, str]:
+    value: R
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        return Ok(None)
+
+pub def drain[R](value: R) -> Result[int, str]:
+    mut count = 0
+    for _item in Stream[R](value=value)?:
+        count += 1
+    return Ok(count)
+
+pub def relay[R](value: R) -> Result[int, str]:
+    return drain(value)
+
+def main() -> None:
+    return
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains("impl<R:Clone>FallibleIterator<i64,String>forStream<R>"),
+        "the generic trait implementation must retain its backend-inferred Clone requirement:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("pubfndrain<R:Clone>(value:R)->Result<i64,String>"),
+        "a generic caller consuming that implementation must inherit the same Clone requirement:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("pubfnrelay<R:Clone>(value:R)->Result<i64,String>"),
+        "ordinary transitive callers must inherit the implementation requirement at the same fixed point:\n{rust_code}"
+    );
+}
+
+#[test]
+fn compiled_provider_consumer_inherits_manifest_implementation_bounds_issue1280()
+-> Result<(), Box<dyn std::error::Error>> {
+    use incan::frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
+    use incan::library_manifest::{
+        ImplementationTraitBoundExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport,
+        LibraryManifest, ModelExport, TypeBoundExport, TypeParamExport, TypeRef,
+    };
+    use std::collections::HashMap;
+
+    let source = r#"
+from pub::streams import Stream
+
+pub def drain[R](stream: Stream[R]) -> Result[int, str]:
+    mut count = 0
+    for _item in stream?:
+        count += 1
+    return Ok(count)
+
+def main() -> None:
+    return
+"#;
+    let ast = parse_incan_program(source, "compiled provider implementation-bound consumer");
+    let mut manifest = LibraryManifest::new("streams_core", "0.1.0");
+    manifest.exports.models.push(ModelExport {
+        name: "Stream".to_string(),
+        type_params: vec![TypeParamExport {
+            name: "R".to_string(),
+            bounds: Vec::new(),
+        }],
+        traits: vec!["FallibleIterator".to_string()],
+        trait_adoptions: vec![TypeBoundExport {
+            name: "FallibleIterator".to_string(),
+            source_name: Some("FallibleIterator".to_string()),
+            module_path: Some(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]),
+            type_args: vec![
+                TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                TypeRef::Named {
+                    name: "str".to_string(),
+                },
+            ],
+            implementation_type_params: vec![ImplementationTypeParamExport {
+                name: "R".to_string(),
+                bounds: vec![ImplementationTraitBoundExport {
+                    trait_path: "Clone".to_string(),
+                    type_args: Vec::new(),
+                    associated_types: Vec::new(),
+                    origin: ImplementationTraitBoundOriginExport::Standard,
+                }],
+            }],
+        }],
+        derives: Vec::new(),
+        fields: Vec::new(),
+        properties: Vec::new(),
+        methods: Vec::new(),
+    });
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "streams".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "streams",
+                "streams_core",
+                std::env::temp_dir().join("incan_test_streams_artifacts"),
+            ),
+        },
+    )]));
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
+    codegen.set_library_manifest_index(index);
+    let rust_code = normalize_projected_symbols_for_readable_codegen(&codegen.try_generate(&ast)?);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains("pubfndrain<R:Clone>(stream:Stream<R>)->Result<i64,String>"),
+        "a manifest-only consumer must inherit the exact implementation requirement:\n{rust_code}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1479,13 +2829,13 @@ def main() -> None:
         "opaque adapter returns must exclude the receiver lifetime through precise captures; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("fnmap<U:Clone>(&self,f:fn(i64)->U)->implFallibleStream<U,String>"),
-        "expected trait default types to specialize to the adopter arguments; generated:\n{rust_code}"
+        compact.contains("pubfnmap<U:Clone>(&self,f:fn(i64)->U,)->implFallibleStream<U,String>+use<U>"),
+        "expected the projected trait adapter to specialize adopter arguments and exclude the receiver lifetime; generated:\n{rust_code}"
     );
 }
 
 #[test]
-fn test_qualified_fallible_terminal_uses_mutable_ufcs_receiver() {
+fn test_projected_fallible_terminal_uses_mutable_receiver() {
     let source = r#"
 from std.derives.collection import FallibleIterator
 
@@ -1509,8 +2859,9 @@ def main() -> None:
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
 
     assert!(
-        compact.contains("FallibleIterator::<i64,String,>::collect(&mut"),
-        "a qualified mut-self trait terminal must receive a mutable UFCS borrow; generated:\n{rust_code}"
+        compact.contains("pubfncollect(&mutself)->Result<Vec<i64>,String>")
+            && compact.contains("(NumberStream{items:vec![1],index:0,}).collect()"),
+        "a projected mut-self trait terminal must preserve a mutable receiver contract; generated:\n{rust_code}"
     );
 }
 
@@ -1518,14 +2869,14 @@ def main() -> None:
 fn test_mixed_numeric_codegen() {
     let source = load_test_file("mixed_numeric");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("mixed_numeric", rust_code);
+    assert_codegen_snapshot!("mixed_numeric", rust_code);
 }
 
 #[test]
 fn test_std_math_codegen() {
     let source = load_test_file("std_math");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_math", rust_code);
+    assert_codegen_snapshot!("std_math", rust_code);
 }
 
 #[test]
@@ -1540,7 +2891,7 @@ fn test_std_fs_import_codegen() {
         !rust_code.contains("__incan_std::web::Path"),
         "std.fs Path must not reuse the std.web Path extractor path; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_fs_import", rust_code);
+    assert_codegen_snapshot!("std_fs_import", rust_code);
 }
 
 #[test]
@@ -1567,28 +2918,28 @@ fn test_std_tempfile_import_codegen() {
         !rust_code.contains("__incan_std::web::Path"),
         "std.tempfile must not reuse the std.web Path extractor path; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_tempfile_import", rust_code);
+    assert_codegen_snapshot!("std_tempfile_import", rust_code);
 }
 
 #[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("function_calls", rust_code);
+    assert_codegen_snapshot!("function_calls", rust_code);
 }
 
 #[test]
 fn test_variadic_calls_codegen() {
     let source = load_test_file("variadic_calls");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("variadic_calls", rust_code);
+    assert_codegen_snapshot!("variadic_calls", rust_code);
 }
 
 #[test]
 fn test_collections_codegen() {
     let source = load_test_file("collections");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("collections", rust_code);
+    assert_codegen_snapshot!("collections", rust_code);
     assert!(
         rust_code.contains("(1, \"one\".to_string())"),
         "expected tuple[str] literal elements to materialize owned String values"
@@ -1635,35 +2986,35 @@ def main() -> None:
 fn test_list_repeat_codegen() {
     let source = load_test_file("list_repeat");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("list_repeat", rust_code);
+    assert_codegen_snapshot!("list_repeat", rust_code);
 }
 
 #[test]
 fn test_rfc088_iterator_adapters_codegen() {
     let source = load_test_file("rfc088_iterator_adapters");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc088_iterator_adapters", rust_code);
+    assert_codegen_snapshot!("rfc088_iterator_adapters", rust_code);
 }
 
 #[test]
 fn test_issue950_953_iterator_adapter_sources_codegen() {
     let source = load_test_file("issue950_953_iterator_adapter_sources");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue950_953_iterator_adapter_sources", rust_code);
+    assert_codegen_snapshot!("issue950_953_iterator_adapter_sources", rust_code);
 }
 
 #[test]
 fn test_issue951_set_constructor_codegen() {
     let source = load_test_file("issue951_set_constructor");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue951_set_constructor", rust_code);
+    assert_codegen_snapshot!("issue951_set_constructor", rust_code);
 }
 
 #[test]
 fn test_issue963_set_add_codegen() {
     let source = load_test_file("issue963_set_add");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue963_set_add", rust_code);
+    assert_codegen_snapshot!("issue963_set_add", rust_code);
 }
 
 /// Assert that a public SHA-256 handle can be stored and mutated through a model field.
@@ -1671,14 +3022,14 @@ fn test_issue963_set_add_codegen() {
 fn test_issue969_storable_sha256_hasher_codegen() {
     let source = load_test_file("issue969_storable_sha256_hasher");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue969_storable_sha256_hasher", rust_code);
+    assert_codegen_snapshot!("issue969_storable_sha256_hasher", rust_code);
 }
 
 #[test]
 fn test_issue951_set_shadowing_codegen() {
     let source = load_test_file("issue951_set_shadowing");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue951_set_shadowing", rust_code);
+    assert_codegen_snapshot!("issue951_set_shadowing", rust_code);
 }
 
 /// Issue #1116: generated Rust must retain a module `len` call while lowering `std.builtins.len` as the core builtin.
@@ -1699,35 +3050,93 @@ fn test_issue1116_builtin_len_shadowing_codegen() {
         compact.contains("vec![10,20,30].len()asi64"),
         "expected `std.builtins.len` to select the core builtin; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue1116_builtin_len_shadowing", rust_code);
+    assert_codegen_snapshot!("issue1116_builtin_len_shadowing", rust_code);
+}
+
+#[test]
+fn builtin_json_stringify_evaluates_its_operand_once() {
+    for call in [
+        "json_stringify(next_value())",
+        "std.builtins.json_stringify(next_value())",
+    ] {
+        let source = format!(
+            r#"
+def next_value() -> str:
+  println("evaluated")
+  return "line\né"
+
+def main() -> str:
+  return {call}
+"#
+        );
+        let rust_code = generate_rust(&source);
+        let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+        assert!(
+            compact.contains("let__incan_json_value=&(next_value());"),
+            "the emitted {call} must bind its operand before serialization; generated:\n{rust_code}"
+        );
+        assert_eq!(
+            compact.matches("next_value()").count(),
+            2,
+            "the declaration and one {call} operand evaluation must be the only occurrences; generated:\n{rust_code}"
+        );
+    }
+}
+
+#[test]
+fn builtin_json_stringify_gives_untyped_none_a_concrete_rust_type() {
+    let source = r#"
+def main() -> str:
+  return json_stringify(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("let__incan_json_value=&(None::<()>);"),
+        "an untyped Incan None must have a concrete serializable Rust type; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn builtin_json_stringify_preserves_the_incan_int_width() {
+    let source = r#"
+def main() -> str:
+  return json_stringify(9223372036854775807)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("let__incan_json_value:&i64=&(9223372036854775807);"),
+        "an Incan int operand must retain its i64 width at the JSON boundary; generated:\n{rust_code}"
+    );
 }
 
 #[test]
 fn test_issue950_builtin_zip_only_codegen() {
     let source = load_test_file("issue950_builtin_zip_only");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue950_builtin_zip_only", rust_code);
+    assert_codegen_snapshot!("issue950_builtin_zip_only", rust_code);
 }
 
 #[test]
 fn test_empty_list_string_arg_codegen() {
     let source = load_test_file("empty_list_string_arg");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("empty_list_string_arg", rust_code);
+    assert_codegen_snapshot!("empty_list_string_arg", rust_code);
 }
 
 #[test]
 fn test_generic_model_field_access_codegen() {
     let source = load_test_file("generic_model_field_access");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("generic_model_field_access", rust_code);
+    assert_codegen_snapshot!("generic_model_field_access", rust_code);
 }
 
 #[test]
 fn test_lowercase_types_codegen() {
     let source = load_test_file("lowercase_types");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("lowercase_types", rust_code);
+    assert_codegen_snapshot!("lowercase_types", rust_code);
 }
 
 // ============================================================================
@@ -1738,49 +3147,49 @@ fn test_lowercase_types_codegen() {
 fn test_assignments_codegen() {
     let source = load_test_file("assignments");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("assignments", rust_code);
+    assert_codegen_snapshot!("assignments", rust_code);
 }
 
 #[test]
 fn test_control_flow_codegen() {
     let source = load_test_file("control_flow");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("control_flow", rust_code);
+    assert_codegen_snapshot!("control_flow", rust_code);
 }
 
 #[test]
 fn test_pattern_alternation_codegen() {
     let source = load_test_file("pattern_alternation");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("pattern_alternation", rust_code);
+    assert_codegen_snapshot!("pattern_alternation", rust_code);
 }
 
 #[test]
 fn test_rfc049_if_let_while_let_codegen() {
     let source = load_test_file("rfc049_if_let_while_let");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc049_if_let_while_let", rust_code);
+    assert_codegen_snapshot!("rfc049_if_let_while_let", rust_code);
 }
 
 #[test]
 fn test_returns_codegen() {
     let source = load_test_file("returns");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("returns", rust_code);
+    assert_codegen_snapshot!("returns", rust_code);
 }
 
 #[test]
 fn test_loops_codegen() {
     let source = load_test_file("loops");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("loops", rust_code);
+    assert_codegen_snapshot!("loops", rust_code);
 }
 
 #[test]
 fn test_match_statements_codegen() {
     let source = load_test_file("match_statements");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("match_statements", rust_code);
+    assert_codegen_snapshot!("match_statements", rust_code);
 }
 
 #[test]
@@ -1811,7 +3220,7 @@ def main() -> None:
 fn test_type_annotations_codegen() {
     let source = load_test_file("type_annotations");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("type_annotations", rust_code);
+    assert_codegen_snapshot!("type_annotations", rust_code);
 }
 
 #[test]
@@ -1822,7 +3231,121 @@ fn test_rfc029_union_types_codegen() {
         !rust_code.contains("isinstance("),
         "union isinstance chains must fully lower before Rust emission:\n{rust_code}"
     );
-    insta::assert_snapshot!("rfc029_union_types", rust_code);
+    assert_codegen_snapshot!("rfc029_union_types", rust_code);
+}
+
+#[test]
+fn isinstance_alias_target_uses_the_typecheckers_resolved_target_in_native_lowering()
+-> Result<(), Box<dyn std::error::Error>> {
+    let rust_code = generate_rust(
+        r#"
+type Whole = int
+
+const STATIC_TEXT: str = "static text"
+
+def isinstance(value: int, target: int) -> bool:
+  return false
+
+pub def probe(value: int | str) -> bool:
+  return std.builtins.isinstance(value, Whole)
+
+pub def narrow_union(value: int | str) -> str:
+  if std.builtins.isinstance(value, str):
+    return value.upper()
+  return "number"
+
+pub def narrow_option(value: int | str | None) -> str:
+  if std.builtins.isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
+
+pub def static_text_is_str() -> bool:
+  return std.builtins.isinstance(STATIC_TEXT, str)
+
+pub def frozen_union_kind(value: FrozenStr | int) -> str:
+  if std.builtins.isinstance(value, str):
+    return str(value)
+  return "number"
+
+pub def frozen_option_kind(value: FrozenStr | None) -> str:
+  if std.builtins.isinstance(value, str):
+    return str(value)
+  return "missing"
+
+pub def frozen_option_union_kind(value: Option[FrozenStr | int]) -> str:
+  if std.builtins.isinstance(value, str):
+    return str(value)
+  return "other"
+
+pub def mixed_string_union_kind(value: FrozenStr | str | int) -> str:
+  if std.builtins.isinstance(value, str):
+    return str(value)
+  return "number"
+
+pub def mixed_string_option_union_kind(value: Option[FrozenStr | str | int]) -> str:
+  if std.builtins.isinstance(value, str):
+    return str(value)
+  return "other"
+"#,
+    );
+    assert!(
+        !rust_code.contains("isinstance("),
+        "the native expression route must consume the retained alias-expanded target rather than emit a raw call:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("matches!(value"),
+        "the checked explicit builtin expression must lower to native union dispatch:\n{rust_code}"
+    );
+    let compact = rust_code
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert!(
+        compact.contains("let_=STATIC_TEXT;true"),
+        "semantic str matching must normalize the native const/static-string storage form:\n{rust_code}"
+    );
+    let (_, frozen_shapes) = compact
+        .split_once("pubfnfrozen_union_kind")
+        .ok_or("missing frozen-union isinstance regression function")?;
+    let (frozen_union, frozen_options) = frozen_shapes
+        .split_once("pubfnfrozen_option_kind")
+        .ok_or("missing frozen-option isinstance regression function")?;
+    assert!(
+        frozen_union.contains("matchvalue") && frozen_union.contains("::V0(value)=>"),
+        "frozen-string union statement lowering must select and bind its semantic str variant:\n{rust_code}"
+    );
+    let (frozen_option, frozen_option_union) = frozen_options
+        .split_once("pubfnfrozen_option_union_kind")
+        .ok_or("missing frozen option-union isinstance regression function")?;
+    assert!(
+        frozen_option.contains("matchvalue{Some(value)=>"),
+        "optional frozen string must select its semantic str payload:\n{rust_code}"
+    );
+    assert!(
+        frozen_option_union.contains("Some(__IncanUnion") && frozen_option_union.contains("::V0(value))=>"),
+        "optional frozen-string union statement lowering must select and bind its semantic str variant:\n{rust_code}"
+    );
+    let (_, mixed_string_shapes) = compact
+        .split_once("pubfnmixed_string_union_kind")
+        .ok_or("missing mixed string-storage union isinstance regression function")?;
+    let (mixed_string_union, mixed_string_option_union) = mixed_string_shapes
+        .split_once("pubfnmixed_string_option_union_kind")
+        .ok_or("missing optional mixed string-storage union isinstance regression function")?;
+    assert_eq!(
+        mixed_string_union.matches("returnvalue.to_string()").count(),
+        2,
+        "every matching string-storage union variant must execute the true branch:\n{rust_code}"
+    );
+    assert_eq!(
+        mixed_string_option_union.matches("returnvalue.to_string()").count(),
+        2,
+        "every matching optional string-storage union variant must execute the true branch:\n{rust_code}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1961,14 +3484,14 @@ pub def describe(value: int | str) -> str:
 fn test_string_operations_codegen() {
     let source = load_test_file("string_operations");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("string_operations", rust_code);
+    assert_codegen_snapshot!("string_operations", rust_code);
 }
 
 #[test]
 fn test_issue236_non_string_join_codegen() {
     let source = load_test_file("issue236_non_string_join");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue236_non_string_join", rust_code);
+    assert_codegen_snapshot!("issue236_non_string_join", rust_code);
 }
 
 /// Issue #244: recursive call with `mut` list args inside `while` must not emit `.clone()` for those args (snapshot is
@@ -1977,7 +3500,7 @@ fn test_issue236_non_string_join_codegen() {
 fn test_issue244_recursive_mut_list_codegen() {
     let source = load_test_file("issue244_recursive_mut_list");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue244_recursive_mut_list", rust_code);
+    assert_codegen_snapshot!("issue244_recursive_mut_list", rust_code);
 }
 
 /// Issue #244 regression: mutable `str` params are passed by `&mut` and keep string conversions.
@@ -1985,7 +3508,7 @@ fn test_issue244_recursive_mut_list_codegen() {
 fn test_issue244_mut_str_param_codegen() {
     let source = load_test_file("issue244_mut_str_param");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue244_mut_str_param", rust_code);
+    assert_codegen_snapshot!("issue244_mut_str_param", rust_code);
 }
 
 /// Issue #241: field-backed values passed to by-value methods must clone via the ownership planner.
@@ -2002,7 +3525,7 @@ fn test_issue241_field_backed_method_arg_clone_codegen() {
         !compact.contains("self._cursor.join(&other._cursor,true)"),
         "unexpected borrowed field-backed method arg for by-value call; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue241_field_backed_method_arg_clone", rust_code);
+    assert_codegen_snapshot!("issue241_field_backed_method_arg_clone", rust_code);
 }
 
 /// Issue #364: filtered list comprehensions over non-Copy values must not destructure `&item` in `filter(...)`.
@@ -2019,7 +3542,7 @@ fn test_issue364_filtered_list_comp_borrow_codegen() {
         !compact.contains(".filter(|&stored|"),
         "filtered list comprehension must not destructure `&stored`; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue364_filtered_list_comp_borrow", rust_code);
+    assert_codegen_snapshot!("issue364_filtered_list_comp_borrow", rust_code);
 }
 
 #[test]
@@ -2088,7 +3611,7 @@ fn test_issue366_clone_self_string_field_codegen() {
         !compact.contains("logical_name:self.logical_name,"),
         "unexpected raw move from borrowed self field in clone(self)->Self emission; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue366_clone_self_string_field", rust_code);
+    assert_codegen_snapshot!("issue366_clone_self_string_field", rust_code);
 }
 
 /// Filtered dict comprehensions over borrowed iterables must own the item before evaluating the predicate.
@@ -2111,7 +3634,7 @@ fn test_filtered_dict_comp_predicate_codegen() {
         !compact.contains("letx=(*x).clone()"),
         "filtered dict comprehension over Copy items should not call clone; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("filtered_dict_comp_predicate", rust_code);
+    assert_codegen_snapshot!("filtered_dict_comp_predicate", rust_code);
 }
 
 /// Issue #602: comprehensions over Copy item types should use copied values rather than `.clone()` hot paths.
@@ -2136,7 +3659,7 @@ fn test_issue602_comprehension_copy_hotpaths_codegen() {
         !compact.contains("(*x).clone()") && !compact.contains(".iter().cloned().map(|x|x*x)"),
         "Copy comprehension hot paths should not emit clone calls; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue602_comprehension_copy_hotpaths", rust_code);
+    assert_codegen_snapshot!("issue602_comprehension_copy_hotpaths", rust_code);
 }
 
 #[test]
@@ -2160,7 +3683,7 @@ fn test_issue602_owned_iterator_source_hotpaths_codegen() {
         compact.contains("(xs).clone().into_iter()"),
         "generator iterable variables remain cloned until lazy generator capture gets broader move analysis; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue602_owned_iterator_source_hotpaths", rust_code);
+    assert_codegen_snapshot!("issue602_owned_iterator_source_hotpaths", rust_code);
 }
 
 // ============================================================================
@@ -2171,49 +3694,49 @@ fn test_issue602_owned_iterator_source_hotpaths_codegen() {
 fn test_functions_codegen() {
     let source = load_test_file("functions");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("functions", rust_code);
+    assert_codegen_snapshot!("functions", rust_code);
 }
 
 #[test]
 fn test_classes_codegen() {
     let source = load_test_file("classes");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("classes", rust_code);
+    assert_codegen_snapshot!("classes", rust_code);
 }
 
 #[test]
 fn test_issue246_class_field_visibility_codegen() {
     let source = load_test_file("issue246_class_field_visibility");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue246_class_field_visibility", rust_code);
+    assert_codegen_snapshot!("issue246_class_field_visibility", rust_code);
 }
 
 #[test]
 fn test_generic_methods_codegen() {
     let source = load_test_file("generic_methods");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("generic_methods", rust_code);
+    assert_codegen_snapshot!("generic_methods", rust_code);
 }
 
 #[test]
 fn test_issue731_generic_method_defaults_codegen() {
     let source = load_test_file("issue731_generic_method_defaults");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue731_generic_method_defaults", rust_code);
+    assert_codegen_snapshot!("issue731_generic_method_defaults", rust_code);
 }
 
 #[test]
 fn test_explicit_call_site_generics_codegen() {
     let source = load_test_file("explicit_call_site_generics");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("explicit_call_site_generics", rust_code);
+    assert_codegen_snapshot!("explicit_call_site_generics", rust_code);
 }
 
 #[test]
 fn test_models_codegen() {
     let source = load_test_file("models");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("models", rust_code);
+    assert_codegen_snapshot!("models", rust_code);
 }
 
 /// Power lowers as a Rust method call, so its receiver must retain the source expression's grouping.
@@ -2245,6 +3768,212 @@ def main() -> None:
 }
 
 #[test]
+fn exact_float_boundaries_emit_finite_guards_without_changing_ordinary_float() {
+    let source = r#"
+pub def parsed_exact(value: str) -> f64:
+    return float(value)
+
+pub def widened_exact(value: f32) -> f64:
+    return value
+
+pub def exact_f32(value: f32) -> f32:
+    return value
+
+pub def ordinary(value: str) -> float:
+    return float(value)
+"#;
+    let rust_code = generate_rust(source);
+    assert_eq!(
+        rust_code.matches("incan_stdlib::num::require_finite_f64").count(),
+        2,
+        "ordinary float must remain unguarded while exact f64 returns and f32 widening are guarded:\n{rust_code}"
+    );
+    assert_eq!(
+        rust_code.matches("incan_stdlib::num::require_finite_f32").count(),
+        3,
+        "public exact f32 inputs and exact f32 returns must be guarded:\n{rust_code}"
+    );
+}
+
+#[test]
+fn exact_float_arithmetic_is_validated_before_every_observable_use() {
+    let source = r#"
+pub def returned_f32(left: f32, right: f32) -> f32:
+    return left * right
+
+pub def stored_f64(left: f64, right: f64) -> f64:
+    value: f64 = left * right
+    return value
+
+pub def compared_f32(left: f32, right: f32) -> bool:
+    return left * right > left
+
+pub def printed_f64(left: f64, right: f64) -> None:
+    println(left * right)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+
+    assert!(
+        compact.contains("require_finite_f32(left*right)"),
+        "exact f32 arithmetic must be checked before return or comparison:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("require_finite_f64(left*right)"),
+        "exact f64 arithmetic must be checked before storage or printing:\n{rust_code}"
+    );
+    assert!(
+        compact.contains(
+            "println!(\"{}\",incan_stdlib::num::require_finite_f64(incan_stdlib::num::require_finite_f64(left*right)))"
+        ),
+        "print must not observe a non-finite exact f64 arithmetic result:\n{rust_code}"
+    );
+    assert!(
+        compact.contains(">incan_stdlib::num::require_finite_f32(left)"),
+        "comparison must not observe a non-finite exact f32 arithmetic result:\n{rust_code}"
+    );
+}
+
+#[test]
+fn exact_float_public_and_rust_ingress_is_guarded_before_observation() {
+    let source = r#"
+rust.module("incan_stdlib::num")
+
+@rust.extern
+pub def require_finite_f32(value: f32) -> f32:
+    ...
+
+pub def observe_exact(left: f32, right: f64) -> bool:
+    println(left)
+    rendered = str(right)
+    formatted = f"{left}"
+    return left < right
+
+pub def observe_ieee(value: float) -> bool:
+    println(value)
+    return value < value
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+
+    for expected in [
+        "let_=incan_stdlib::num::require_finite_f32(value);",
+        "incan_stdlib::num::require_finite_f32(incan_stdlib::num::require_finite_f32(value))",
+        "let_=incan_stdlib::num::require_finite_f32(left);",
+        "let_=incan_stdlib::num::require_finite_f64(right);",
+        "println!(\"{}\",incan_stdlib::num::require_finite_f32(left))",
+        "incan_stdlib::num::require_finite_f64(right).to_string()",
+        "format!(\"{}\",incan_stdlib::num::require_finite_f32(left))",
+        "((incan_stdlib::num::require_finite_f32(left))asf64)<incan_stdlib::num::require_finite_f64(right)",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "exact public/Rust ingress and observation must be finite-checked ({expected}); generated:\n{rust_code}"
+        );
+    }
+    assert!(
+        compact.contains("pubfnobserve_ieee(value:f64)->bool{let_=println!(\"{}\",value);returnvalue<value;"),
+        "ordinary float must retain unguarded IEEE observation behavior:\n{rust_code}"
+    );
+}
+
+#[test]
+fn exact_float_scalars_extracted_from_aggregates_are_guarded_before_use() {
+    let source = r#"
+rust.module("incan_stdlib::num")
+
+@rust.extern
+def consume_exact(value: f32) -> f32:
+    ...
+
+pub model ExactSamples:
+    pub narrow: f32
+    pub wide: f64
+    pub maybe: Option[f32]
+
+pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
+    forwarded = consume_exact(samples.narrow)
+    return not samples.narrow.is_nan() and values[0].is_finite() and samples.wide.is_finite() and forwarded.is_finite()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+
+    for expected in [
+        "require_finite_f32(samples.narrow).is_nan()",
+        "require_finite_f64(*incan_stdlib::collections::list_get(&values,(0)asi64)",
+        "require_finite_f64(samples.wide).is_finite()",
+        "consume_exact(incan_stdlib::num::require_finite_f32",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "exact aggregate scalar use must retain its finite guard ({expected}); generated:\n{rust_code}"
+        );
+    }
+    assert_eq!(
+        compact.matches("require_finite_f32(self.narrow)").count(),
+        2,
+        "field value reflection and field-item reflection must guard exact f32 values:\n{rust_code}"
+    );
+    assert_eq!(
+        compact.matches("require_finite_f64(self.wide)").count(),
+        2,
+        "field value reflection and field-item reflection must guard exact f64 values:\n{rust_code}"
+    );
+    assert_eq!(
+        compact.matches("require_finite_f32(*value)").count(),
+        2,
+        "optional exact field reflection must guard each present value:\n{rust_code}"
+    );
+}
+
+#[test]
+fn mixed_f32_arithmetic_widens_operands_for_f64_codegen() {
+    let source = r#"
+pub def with_f64(left: f32, right: f64) -> float:
+    added = left + right
+    divided = left / right
+    floored = left // right
+    remainder = left % right
+    return left ** right
+
+pub def with_float(left: f32, right: float) -> float:
+    return left + right
+
+pub def with_int(left: f32, right: int) -> float:
+    return left + right
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+
+    for expected in [
+        "(left)asf64+right",
+        "incan_stdlib::num::py_div((left)asf64,right)",
+        "incan_stdlib::num::py_floor_div_f64((left)asf64,right)",
+        "incan_stdlib::num::py_mod_f64((left)asf64,right)",
+        "((left)asf64).powf(right)",
+        "return(left)asf64+right;",
+        "return(left)asf64+(right)asf64;",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "mixed exact/broad arithmetic must emit concrete f64 operands ({expected}); generated:\n{rust_code}"
+        );
+    }
+}
+
+#[test]
 fn test_rfc046_computed_properties_codegen() {
     let source = load_test_file("rfc046_computed_properties");
     let rust_code = generate_rust(&source);
@@ -2256,7 +3985,7 @@ fn test_rfc046_computed_properties_codegen() {
         rust_code.contains("value.dollars() + value.cents"),
         "computed property reads must emit getter calls, not field reads:\n{rust_code}"
     );
-    insta::assert_snapshot!("rfc046_computed_properties", rust_code);
+    assert_codegen_snapshot!("rfc046_computed_properties", rust_code);
 }
 
 #[test]
@@ -2272,7 +4001,7 @@ fn test_list_pop_clone_only_model_codegen() {
         !compact.contains(".pop().unwrap_or_else"),
         "list.pop() emission must not inline unwrap_or_else fallback logic; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("list_pop_clone_only_model", rust_code);
+    assert_codegen_snapshot!("list_pop_clone_only_model", rust_code);
 }
 
 #[test]
@@ -2284,7 +4013,7 @@ fn test_list_clone_model_codegen() {
         compact.contains("letcopy=nodes.clone();"),
         "expected list.clone() to emit a normal Vec clone; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("list_clone_model", rust_code);
+    assert_codegen_snapshot!("list_clone_model", rust_code);
 }
 
 /// Issue #380: `len(...)` must lower to a parse-safe expression so comparisons compile as Rust.
@@ -2300,7 +4029,7 @@ fn test_issue380_len_comparison_codegen() {
         rust_code.contains("if ::std::convert::identity(expr.arguments.len() as i64) < 2 {"),
         "expected recursive field len comparison to isolate the cast in a parse-safe expression; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue380_len_comparison", rust_code);
+    assert_codegen_snapshot!("issue380_len_comparison", rust_code);
 }
 
 /// Issue #383: shared `list[str]` loop args must not lower through consuming `into_iter()` inside repeated helper
@@ -2317,7 +4046,7 @@ fn test_issue383_loop_helper_shared_string_list_codegen() {
         !rust_code.contains("xs.into_iter().map(|s| s.to_string()).collect()"),
         "expected shared string-list helper calls to avoid consuming into_iter lowering; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue383_loop_helper_shared_string_list", rust_code);
+    assert_codegen_snapshot!("issue383_loop_helper_shared_string_list", rust_code);
 }
 
 /// Issue #383 follow-on: dict comprehensions must clone non-Copy keys before reading them in the value expression.
@@ -2326,10 +4055,10 @@ fn test_issue383_dict_comp_reuses_noncopy_key_codegen() {
     let source = load_test_file("issue383_dict_comp_reuses_noncopy_key");
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains(".map(|name| (name.clone(), ::std::convert::identity(name.len() as i64)))"),
+        rust_code.contains(".map(|name| (name.clone(), incan_stdlib::strings::str_len(&(name))))"),
         "expected dict comprehension to clone the non-Copy key before reading it again in the value expression; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue383_dict_comp_reuses_noncopy_key", rust_code);
+    assert_codegen_snapshot!("issue383_dict_comp_reuses_noncopy_key", rust_code);
 }
 
 /// Issue #195: `for x in list[E]` must iterate owned `E` (via `.iter().cloned()`) so `==` against `E` compiles.
@@ -2341,7 +4070,7 @@ fn test_for_in_list_enum_equality_codegen() {
         rust_code.contains("for expected in required.iter().cloned()"),
         "expected enum list for-loop to use .iter().cloned(); generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("for_in_list_enum_equality", rust_code);
+    assert_codegen_snapshot!("for_in_list_enum_equality", rust_code);
 }
 
 /// Issue #372: imported enums must still iterate as owned values in borrowed list loops.
@@ -2404,7 +4133,7 @@ pub enum ConformanceRel:
         "imported enum loop must not iterate borrowed enum refs; generated:\n{rust_code}"
     );
 
-    insta::assert_snapshot!("issue372_imported_enum_loop_ownership", rust_code);
+    assert_codegen_snapshot!("issue372_imported_enum_loop_ownership", rust_code);
 }
 
 #[test]
@@ -2449,7 +4178,7 @@ def main() -> None:
         compact.contains("PublicVault(None,\"visible\".to_string(),Some(9))"),
         "expected imported private class construction to use the provider bridge; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue886_imported_private_source_class_constructor", rust_code);
+    assert_codegen_snapshot!("issue886_imported_private_source_class_constructor", rust_code);
     Ok(())
 }
 
@@ -2495,7 +4224,7 @@ def main() -> None:
         compact.contains("PublicVault(\"visible\".to_string())"),
         "expected imported private model construction to use the public-field provider bridge; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("issue964_imported_private_source_model_constructor", rust_code);
+    assert_codegen_snapshot!("issue964_imported_private_source_model_constructor", rust_code);
     Ok(())
 }
 
@@ -2556,14 +4285,14 @@ pub def sum(expr: ColumnRef) -> AggregateMeasure:
         "expected imported helper call to avoid builtin sum lowering; generated:\n{rust_code}"
     );
 
-    insta::assert_snapshot!("issue377_imported_sum_shadows_builtin", rust_code);
+    assert_codegen_snapshot!("issue377_imported_sum_shadows_builtin", rust_code);
 }
 
 #[test]
 fn test_traits_codegen() {
     let source = load_test_file("traits");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("traits", rust_code);
+    assert_codegen_snapshot!("traits", rust_code);
 }
 
 #[test]
@@ -2591,21 +4320,21 @@ fn test_trait_supertraits_codegen() {
         compact.contains("returnself.clone();"),
         "expected trait-supertrait Self return to materialize ownership via clone; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("trait_supertraits", rust_code);
+    assert_codegen_snapshot!("trait_supertraits", rust_code);
 }
 
 #[test]
 fn test_trait_supertrait_assignability_codegen() {
     let source = load_test_file("trait_supertrait_assignability");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("trait_supertrait_assignability", rust_code);
+    assert_codegen_snapshot!("trait_supertrait_assignability", rust_code);
 }
 
 #[test]
 fn test_enums_codegen() {
     let source = load_test_file("enums");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("enums", rust_code);
+    assert_codegen_snapshot!("enums", rust_code);
 }
 
 #[test]
@@ -2625,7 +4354,7 @@ fn test_enum_methods_traits_codegen() {
         compact.contains("pubfnmessage(&self)->String{"),
         "expected existing enum message helper to remain emitted; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("enum_methods_traits", rust_code);
+    assert_codegen_snapshot!("enum_methods_traits", rust_code);
 }
 
 #[test]
@@ -2645,7 +4374,7 @@ fn test_rfc043_newtype_trait_targets_codegen() {
         !compact.contains("typeOutput="),
         "local Incan traits do not declare associated type items; generated impls must not emit one:\n{rust_code}"
     );
-    insta::assert_snapshot!("rfc043_newtype_trait_targets", rust_code);
+    assert_codegen_snapshot!("rfc043_newtype_trait_targets", rust_code);
 }
 
 #[test]
@@ -2657,7 +4386,7 @@ fn test_rfc043_imported_trait_associated_type_codegen() {
         compact.contains("implAssocforBoxed{typeItem=i64;}"),
         "expected imported Rust trait impl to include associated type item; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("rfc043_imported_trait_associated_type", rust_code);
+    assert_codegen_snapshot!("rfc043_imported_trait_associated_type", rust_code);
 }
 
 #[test]
@@ -2669,14 +4398,14 @@ fn test_rfc043_rust_derive_passthrough_codegen() {
         compact.contains("#[derive(serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
         "expected @rust.derive to emit imported and built-in Rust derives; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("rfc043_rust_derive_passthrough", rust_code);
+    assert_codegen_snapshot!("rfc043_rust_derive_passthrough", rust_code);
 }
 
 #[test]
 fn test_value_enums_codegen() {
     let source = load_test_file("value_enums");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("value_enums", rust_code);
+    assert_codegen_snapshot!("value_enums", rust_code);
 }
 
 // ============================================================================
@@ -2687,21 +4416,21 @@ fn test_value_enums_codegen() {
 fn test_patterns_codegen() {
     let source = load_test_file("patterns");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("patterns", rust_code);
+    assert_codegen_snapshot!("patterns", rust_code);
 }
 
 #[test]
 fn test_param_mut_unused_codegen() {
     let source = load_test_file("param_mut_unused");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("param_mut_unused", rust_code);
+    assert_codegen_snapshot!("param_mut_unused", rust_code);
 }
 
 #[test]
 fn test_imports_codegen() {
     let source = load_test_file("imports");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("imports", rust_code);
+    assert_codegen_snapshot!("imports", rust_code);
 }
 
 #[test]
@@ -2709,6 +4438,12 @@ fn test_builtins_codegen() {
     let source = load_test_file("builtins");
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    let min_max = rust_code
+        .split("fn test_min_max_builtins")
+        .nth(1)
+        .and_then(|remainder| remainder.split("fn test_abs_builtin").next())
+        .expect("builtins fixture must retain its min/max function before abs");
+    let compact_min_max = min_max.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
         compact.contains("incan_stdlib::collections::__private::list_min_copy")
             || compact.contains("incan_stdlib::collections::__private::list_min_clone")
@@ -2722,24 +4457,24 @@ fn test_builtins_codegen() {
         "expected max() emission to route through stdlib helpers; generated:\n{rust_code}"
     );
     assert!(
-        !compact.contains(".unwrap_or_else"),
+        !compact_min_max.contains(".unwrap_or_else"),
         "builtins codegen must not inline unwrap_or_else fallback paths for list min/max; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("builtins", rust_code);
+    assert_codegen_snapshot!("builtins", rust_code);
 }
 
 #[test]
 fn test_pub_const_codegen() {
     let source = load_test_file("pub_const");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("pub_const", rust_code);
+    assert_codegen_snapshot!("pub_const", rust_code);
 }
 
 #[test]
 fn test_consts_codegen() {
     let source = load_test_file("consts");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("consts", rust_code);
+    assert_codegen_snapshot!("consts", rust_code);
 }
 
 /// Issue #1001: an empty frozen descriptor field is const-safe even when its element model is not itself a Rust
@@ -2804,28 +4539,28 @@ def main() -> None:
 fn test_rfc052_module_static_storage_codegen() {
     let source = load_test_file("rfc052_module_static_storage");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc052_module_static_storage", rust_code);
+    assert_codegen_snapshot!("rfc052_module_static_storage", rust_code);
 }
 
 #[test]
 fn test_rfc052_pub_static_codegen() {
     let source = load_test_file("rfc052_pub_static");
     let rust_code = generate_rust_with_widgets_manifest(&source);
-    insta::assert_snapshot!("rfc052_pub_static", rust_code);
+    assert_codegen_snapshot!("rfc052_pub_static", rust_code);
 }
 
 #[test]
 fn test_const_str_chain_codegen() {
     let source = load_test_file("const_str_chain");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("const_str_chain", rust_code);
+    assert_codegen_snapshot!("const_str_chain", rust_code);
 }
 
 #[test]
 fn test_const_bytes_codegen() {
     let source = load_test_file("const_bytes");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("const_bytes", rust_code);
+    assert_codegen_snapshot!("const_bytes", rust_code);
 }
 
 #[test]
@@ -2833,35 +4568,35 @@ fn test_inferred_reassign_codegen() {
     // Snapshot test to keep style consistent with this file.
     let source = load_test_file("inferred_reassign");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("inferred_reassign", rust_code);
+    assert_codegen_snapshot!("inferred_reassign", rust_code);
 }
 
 #[test]
 fn test_rust_interop_associated_functions_codegen() {
     let source = load_test_file("rust_interop_associated_functions");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rust_interop_associated_functions", rust_code);
+    assert_codegen_snapshot!("rust_interop_associated_functions", rust_code);
 }
 
 #[test]
 fn test_issue806_rust_receiver_turbofish_codegen() {
     let source = load_test_file("issue_806");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue_806", rust_code);
+    assert_codegen_snapshot!("issue_806", rust_code);
 }
 
 #[test]
 fn test_rust_associated_call_in_elif_codegen() {
     let source = load_test_file("rust_associated_call_in_elif");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rust_associated_call_in_elif", rust_code);
+    assert_codegen_snapshot!("rust_associated_call_in_elif", rust_code);
 }
 
 #[test]
 fn test_issue367_result_ok_string_literal_codegen() {
     let source = load_test_file("issue367_result_ok_string_literal");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue367_result_ok_string_literal", rust_code);
+    assert_codegen_snapshot!("issue367_result_ok_string_literal", rust_code);
 }
 
 #[test]
@@ -2899,7 +4634,7 @@ fn test_issue367_result_ok_string_literal_emits_owned_strings() {
 fn test_issue880_map_err_string_literal_closure_codegen() {
     let source = load_test_file("issue880_map_err_string_literal_closure");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue880_map_err_string_literal_closure", rust_code);
+    assert_codegen_snapshot!("issue880_map_err_string_literal_closure", rust_code);
 }
 
 #[test]
@@ -2932,14 +4667,14 @@ fn test_issue880_map_err_string_literal_closure_emits_owned_error() {
 fn test_issue374_enum_constructor_match_codegen() {
     let source = load_test_file("issue374_enum_constructor_match");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue374_enum_constructor_match", rust_code);
+    assert_codegen_snapshot!("issue374_enum_constructor_match", rust_code);
 }
 
 #[test]
 fn test_issue389_for_tuple_unpack_enumerate_codegen() {
     let source = load_test_file("issue389_for_tuple_unpack_enumerate");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue389_for_tuple_unpack_enumerate", rust_code);
+    assert_codegen_snapshot!("issue389_for_tuple_unpack_enumerate", rust_code);
     let compact_code = rust_code.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         compact_code
@@ -2956,7 +4691,7 @@ fn test_issue389_for_tuple_unpack_enumerate_codegen() {
 fn test_issue483_list_comp_tuple_unpack_enumerate_codegen() {
     let source = load_test_file("issue483_list_comp_tuple_unpack_enumerate");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue483_list_comp_tuple_unpack_enumerate", rust_code);
+    assert_codegen_snapshot!("issue483_list_comp_tuple_unpack_enumerate", rust_code);
     assert!(
         rust_code.contains(".map(|(idx, name)| Binding"),
         "expected enumerate list comprehension to destructure tuple bindings in the map closure"
@@ -2967,7 +4702,7 @@ fn test_issue483_list_comp_tuple_unpack_enumerate_codegen() {
 fn test_fixed_call_unpack_codegen() {
     let source = load_test_file("fixed_call_unpack");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("fixed_call_unpack", rust_code);
+    assert_codegen_snapshot!("fixed_call_unpack", rust_code);
     assert!(
         rust_code.contains("combine(\n        1,\n        \"Ada\".to_string()"),
         "expected shaped positional unpack to emit ordinary fixed arguments"
@@ -2994,7 +4729,7 @@ fn test_fixed_call_unpack_codegen() {
 fn test_collection_literal_spread_codegen() {
     let source = load_test_file("collection_literal_spread");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("collection_literal_spread", rust_code);
+    assert_codegen_snapshot!("collection_literal_spread", rust_code);
     assert!(
         rust_code.contains("__incan_list.extend((vec![2, 3]).into_iter());"),
         "expected list literal spread to emit Vec::extend"
@@ -3017,7 +4752,7 @@ fn test_collection_literal_spread_codegen() {
 fn test_issue391_list_str_append_literal_codegen() {
     let source = load_test_file("issue391_list_str_append_literal");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue391_list_str_append_literal", rust_code);
+    assert_codegen_snapshot!("issue391_list_str_append_literal", rust_code);
     assert!(
         rust_code.contains("columns.push(\"count\".to_string())"),
         "expected list[str].append(\"...\") to materialize an owned String element"
@@ -3032,14 +4767,14 @@ fn test_issue391_list_str_append_literal_codegen() {
 fn test_rust_interop_field_access_codegen() {
     let source = load_test_file("rust_interop_field_access");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rust_interop_field_access", rust_code);
+    assert_codegen_snapshot!("rust_interop_field_access", rust_code);
 }
 
 #[test]
 fn test_issue217_rust_enum_match_bindings_codegen() {
     let source = load_test_file("issue217_rust_enum_match_bindings");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("issue217_rust_enum_match_bindings", rust_code);
+    assert_codegen_snapshot!("issue217_rust_enum_match_bindings", rust_code);
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -3047,7 +4782,7 @@ fn test_issue217_rust_enum_match_bindings_codegen() {
 fn test_issue459_rust_enum_pattern_import_codegen() {
     let source = load_test_file("issue459_rust_enum_pattern_import");
     let rust_code = generate_rust_with_substrait_probe(&source);
-    insta::assert_snapshot!("issue459_rust_enum_pattern_import", rust_code);
+    assert_codegen_snapshot!("issue459_rust_enum_pattern_import", rust_code);
     assert!(
         rust_code.contains("use ::substrait::proto::rel::RelType;"),
         "expected Rust enum import used only by a match pattern to be retained:\n{rust_code}"
@@ -3058,77 +4793,77 @@ fn test_issue459_rust_enum_pattern_import_codegen() {
 fn test_rfc041_std_rust_capability_bounds_codegen() {
     let source = load_test_file("rfc041_std_rust_capability_bounds");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_std_rust_capability_bounds", rust_code);
+    assert_codegen_snapshot!("rfc041_std_rust_capability_bounds", rust_code);
 }
 
 #[test]
 fn test_rfc041_rusttype_interop_codegen() {
     let source = load_test_file("rfc041_rusttype_interop");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_rusttype_interop", rust_code);
+    assert_codegen_snapshot!("rfc041_rusttype_interop", rust_code);
 }
 
 #[test]
 fn test_rfc041_rusttype_rebinding_codegen() {
     let source = load_test_file("rfc041_rusttype_rebinding");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_rusttype_rebinding", rust_code);
+    assert_codegen_snapshot!("rfc041_rusttype_rebinding", rust_code);
 }
 
 #[test]
 fn test_rfc041_interop_from_try_codegen() {
     let source = load_test_file("rfc041_interop_from_try");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_interop_from_try", rust_code);
+    assert_codegen_snapshot!("rfc041_interop_from_try", rust_code);
 }
 
 #[test]
 fn test_rfc041_interop_into_via_codegen() {
     let source = load_test_file("rfc041_interop_into_via");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_interop_into_via", rust_code);
+    assert_codegen_snapshot!("rfc041_interop_into_via", rust_code);
 }
 
 #[test]
 fn test_rfc041_capability_bounds_full_codegen() {
     let source = load_test_file("rfc041_capability_bounds_full");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_capability_bounds_full", rust_code);
+    assert_codegen_snapshot!("rfc041_capability_bounds_full", rust_code);
 }
 
 #[test]
 fn test_rfc041_structural_coercion_codegen() {
     let source = load_test_file("rfc041_structural_coercion");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_structural_coercion", rust_code);
+    assert_codegen_snapshot!("rfc041_structural_coercion", rust_code);
 }
 
 #[test]
 fn test_rfc041_rust_coercions_codegen() {
     let source = load_test_file("rfc041_rust_coercions");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_rust_coercions", rust_code);
+    assert_codegen_snapshot!("rfc041_rust_coercions", rust_code);
 }
 
 #[test]
 fn test_rfc041_emit_rust_path_type_codegen() {
     let source = load_test_file("rfc041_emit_rust_path_type");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_emit_rust_path_type", rust_code);
+    assert_codegen_snapshot!("rfc041_emit_rust_path_type", rust_code);
 }
 
 #[test]
 fn test_rfc041_emit_static_bound_codegen() {
     let source = load_test_file("rfc041_emit_static_bound");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rfc041_emit_static_bound", rust_code);
+    assert_codegen_snapshot!("rfc041_emit_static_bound", rust_code);
 }
 
 #[test]
 fn test_titlecase_var_not_type_codegen() {
     let source = load_test_file("titlecase_var_not_type");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("titlecase_var_not_type", rust_code);
+    assert_codegen_snapshot!("titlecase_var_not_type", rust_code);
 }
 
 // ============================================================================
@@ -3139,7 +4874,7 @@ fn test_titlecase_var_not_type_codegen() {
 fn test_constructor_field_defaults_codegen() {
     let source = load_test_file("constructor_field_defaults");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("constructor_field_defaults", rust_code);
+    assert_codegen_snapshot!("constructor_field_defaults", rust_code);
 }
 
 #[test]
@@ -3154,7 +4889,7 @@ fn test_newtype_checked_construction_codegen() {
         rust_code.contains("incan_stdlib::validation::raise_validation_error"),
         "checked newtype construction should route validation failures through the runtime helper:\n{rust_code}"
     );
-    insta::assert_snapshot!("newtype_checked_construction", rust_code);
+    assert_codegen_snapshot!("newtype_checked_construction", rust_code);
 }
 
 #[test]
@@ -3169,7 +4904,7 @@ fn test_newtype_implicit_coercion_codegen() {
         rust_code.contains("let retry: RetryAttempts = RetryAttempts("),
         "transitive coercion should wrap the checked Attempts value in RetryAttempts:\n{rust_code}"
     );
-    insta::assert_snapshot!("newtype_implicit_coercion", rust_code);
+    assert_codegen_snapshot!("newtype_implicit_coercion", rust_code);
 }
 
 #[test]
@@ -3230,56 +4965,56 @@ fn test_user_defined_panic_function_codegen() {
         !rust_code.contains("println!(\"{}\", panic!(\"not the macro\"));"),
         "user-defined panic function must not emit panic! macro:\n{rust_code}"
     );
-    insta::assert_snapshot!("panic_function_name", rust_code);
+    assert_codegen_snapshot!("panic_function_name", rust_code);
 }
 
 #[test]
 fn test_newtype_builder_methods_codegen() {
     let source = load_test_file("newtype_builder_methods");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("newtype_builder_methods", rust_code);
+    assert_codegen_snapshot!("newtype_builder_methods", rust_code);
 }
 
 #[test]
 fn test_newtype_with_override_codegen() {
     let source = load_test_file("newtype_with_override");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("newtype_with_override", rust_code);
+    assert_codegen_snapshot!("newtype_with_override", rust_code);
 }
 
 #[test]
 fn test_newtype_axum_response_codegen() {
     let source = load_test_file("newtype_axum_response");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("newtype_axum_response", rust_code);
+    assert_codegen_snapshot!("newtype_axum_response", rust_code);
 }
 
 #[test]
 fn test_newtype_generic_json_codegen() {
     let source = load_test_file("newtype_generic_json");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("newtype_generic_json", rust_code);
+    assert_codegen_snapshot!("newtype_generic_json", rust_code);
 }
 
 #[test]
 fn test_newtype_generic_simple_codegen() {
     let source = load_test_file("newtype_generic_simple");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("newtype_generic_simple", rust_code);
+    assert_codegen_snapshot!("newtype_generic_simple", rust_code);
 }
 
 #[test]
 fn test_newtype_generic_builder_methods_codegen() {
     let source = load_test_file("newtype_generic_builder_methods");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("newtype_generic_builder_methods", rust_code);
+    assert_codegen_snapshot!("newtype_generic_builder_methods", rust_code);
 }
 
 #[test]
 fn test_newtype_web_response_codegen() {
     let source = load_test_file("newtype_web_response");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("newtype_web_response", rust_code);
+    assert_codegen_snapshot!("newtype_web_response", rust_code);
 }
 
 // ============================================================================
@@ -3292,7 +5027,31 @@ fn test_newtype_web_response_codegen() {
 fn test_rust_extern_delegation_codegen() {
     let source = load_test_file("rust_extern_delegation");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rust_extern_delegation", rust_code);
+    assert_codegen_snapshot!("rust_extern_delegation", rust_code);
+}
+
+#[test]
+fn rust_extern_method_projection_preserves_rust_abi_symbol() {
+    let source = r#"
+rust.module("incan_stdlib::web")
+
+pub class App:
+    @staticmethod
+    @rust.extern
+    def run(host: str, port: int) -> None:
+        ...
+"#;
+    let rust_code = generate_projected_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains("pubfn__incan_v1_") && compact.contains("incan_stdlib::web::run(host,port)"),
+        "the Incan wrapper must be canonical while its Rust ABI target keeps the source-declared name:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("incan_stdlib::web::__incan_v1_"),
+        "canonical Incan identity must not be projected onto a host-owned Rust ABI symbol:\n{rust_code}"
+    );
 }
 
 /// RFC 023 Phase 5: compile the real `std.testing` module source.
@@ -3303,7 +5062,7 @@ fn test_std_testing_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_testing_compiled", rust_code);
+    assert_codegen_snapshot!("std_testing_compiled", rust_code);
 }
 
 /// RFC 041 / Phase E: compile `std.async.task` from `.incn` source.
@@ -3314,7 +5073,7 @@ fn test_std_async_task_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_async_task_compiled", rust_code);
+    assert_codegen_snapshot!("std_async_task_compiled", rust_code);
 }
 
 /// RFC 041 / Phase E: compile `std.async.time` from `.incn` source.
@@ -3325,7 +5084,7 @@ fn test_std_async_time_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_async_time_compiled", rust_code);
+    assert_codegen_snapshot!("std_async_time_compiled", rust_code);
 }
 
 /// Compile `std.async.channel` from `.incn` source.
@@ -3336,7 +5095,7 @@ fn test_std_async_channel_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_async_channel_compiled", rust_code);
+    assert_codegen_snapshot!("std_async_channel_compiled", rust_code);
 }
 
 /// Compile `std.async.sync` from `.incn` source.
@@ -3347,7 +5106,7 @@ fn test_std_async_sync_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_async_sync_compiled", rust_code);
+    assert_codegen_snapshot!("std_async_sync_compiled", rust_code);
 }
 
 /// Compile `std.async.race` from `.incn` source.
@@ -3358,7 +5117,7 @@ fn test_std_async_race_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_async_race_compiled", rust_code);
+    assert_codegen_snapshot!("std_async_race_compiled", rust_code);
 }
 
 /// Compile `race for value:` through the shared `std.async.race` runtime helper surface.
@@ -3379,7 +5138,7 @@ pub async def fastest() -> int:
     await slow() => value
 "#;
     let rust_code = generate_rust(source);
-    insta::assert_snapshot!("race_for_expression_codegen", rust_code);
+    assert_codegen_snapshot!("race_for_expression_codegen", rust_code);
 }
 
 /// Awaiting a declared wrapper must delegate to the proven awaitable field.
@@ -3417,7 +5176,7 @@ fn test_std_derives_comparison_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_derives_comparison_compiled", rust_code);
+    assert_codegen_snapshot!("std_derives_comparison_compiled", rust_code);
 }
 
 /// compile `std.derives.copying` (Clone, Copy, Default) from `.incn` source.
@@ -3428,7 +5187,7 @@ fn test_std_derives_copying_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_derives_copying_compiled", rust_code);
+    assert_codegen_snapshot!("std_derives_copying_compiled", rust_code);
 }
 
 /// compile `std.derives.string` (Debug, Display) from `.incn` source.
@@ -3439,7 +5198,7 @@ fn test_std_derives_string_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_derives_string_compiled", rust_code);
+    assert_codegen_snapshot!("std_derives_string_compiled", rust_code);
 }
 
 /// compile `std.derives.collection` (collection/iterator protocols and adapters) from `.incn` source.
@@ -3462,7 +5221,7 @@ fn test_std_derives_collection_compiled_codegen() {
         !rust_code.contains("list<"),
         "collection types inside callable bounds must use their canonical Rust representation:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_derives_collection_compiled", rust_code);
+    assert_codegen_snapshot!("std_derives_collection_compiled", rust_code);
 }
 
 /// RFC 023: compile `std.serde.json` (Serialize, Deserialize) from `.incn` source.
@@ -3476,7 +5235,7 @@ fn test_std_serde_json_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_serde_json_compiled", rust_code);
+    assert_codegen_snapshot!("std_serde_json_compiled", rust_code);
 }
 
 /// RFC 024: verify `@derive(json)` resolves through stdlib derive metadata and compiles.
@@ -3503,7 +5262,7 @@ fn test_std_serde_json_import_codegen() {
         !compact.contains("serde_json::from_str"),
         "generated JSON decode paths should no longer inline serde_json::from_str fallbacks; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_serde_json_import", rust_code);
+    assert_codegen_snapshot!("std_serde_json_import", rust_code);
 }
 
 /// RFC 113: typed declaration registries remain source-authored while the compiler records `@describe` facts.
@@ -3511,7 +5270,7 @@ fn test_std_serde_json_import_codegen() {
 fn test_std_registry_import_codegen() {
     let source = load_test_file("std_registry_import");
     let rust_code = generate_registry_rust(&source, "std_registry_import");
-    insta::assert_snapshot!("std_registry_import", rust_code);
+    assert_codegen_snapshot!("std_registry_import", rust_code);
 }
 
 /// RFC 113: method descriptions lower into source-owned registry runtime registration.
@@ -3519,7 +5278,7 @@ fn test_std_registry_import_codegen() {
 fn test_std_registry_methods_codegen() {
     let source = load_test_file("std_registry_methods");
     let rust_code = generate_registry_rust(&source, "std_registry_methods");
-    insta::assert_snapshot!("std_registry_methods", rust_code);
+    assert_codegen_snapshot!("std_registry_methods", rust_code);
 }
 
 /// RFC 113: explicit compilation-unit and package entries retain compiler-checked canonical subjects.
@@ -3527,7 +5286,7 @@ fn test_std_registry_methods_codegen() {
 fn test_std_registry_subjects_codegen() {
     let source = load_test_file("std_registry_subjects");
     let rust_code = generate_registry_rust(&source, "std_registry_subjects");
-    insta::assert_snapshot!("std_registry_subjects", rust_code);
+    assert_codegen_snapshot!("std_registry_subjects", rust_code);
 }
 
 /// RFC 113: a structural descriptor can retain a concrete Incan type token without changing registry lowering.
@@ -3535,7 +5294,7 @@ fn test_std_registry_subjects_codegen() {
 fn test_std_registry_type_token_codegen() {
     let source = load_test_file("std_registry_type_token");
     let rust_code = generate_registry_rust(&source, "std_registry_type_token");
-    insta::assert_snapshot!("std_registry_type_token", rust_code);
+    assert_codegen_snapshot!("std_registry_type_token", rust_code);
 }
 
 /// RFC 047: compile `std.graph` declarations from `.incn` source.
@@ -3546,7 +5305,7 @@ fn test_std_graph_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_graph_compiled", rust_code);
+    assert_codegen_snapshot!("std_graph_compiled", rust_code);
 }
 
 /// RFC 061: compile the `std.compression` source modules.
@@ -3599,7 +5358,7 @@ fn test_std_graph_import_codegen() {
         compact.contains("Result<EdgeId,GraphError>"),
         "expected multigraph add_edge to preserve EdgeId result; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_graph_import", rust_code);
+    assert_codegen_snapshot!("std_graph_import", rust_code);
 }
 
 /// RFC 060: compile `std.uuid` declarations from `.incn` source.
@@ -3617,7 +5376,7 @@ fn test_std_uuid_compiled_codegen() -> Result<(), Box<dyn std::error::Error>> {
         !rust_code.contains("uuid::Uuid::") && !rust_code.contains("uuid::Uuid;"),
         "std.uuid must not lower to a Rust uuid::Uuid-backed type; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_uuid_compiled", rust_code);
+    assert_codegen_snapshot!("std_uuid_compiled", rust_code);
     Ok(())
 }
 
@@ -3635,7 +5394,7 @@ fn test_std_uuid_import_codegen() {
         !rust_code.contains("uuid::Uuid::") && !rust_code.contains("uuid::Uuid;"),
         "std.uuid import path must not introduce a Rust uuid::Uuid-backed type; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("std_uuid_import", rust_code);
+    assert_codegen_snapshot!("std_uuid_import", rust_code);
 }
 
 /// RFC 059: direct imported constructors lower through the generic `__incan_new` hook.
@@ -3666,7 +5425,7 @@ def main() -> Result[None, RegexError]:
 fn test_std_serde_with_serialize_trait_codegen() {
     let source = load_test_file("std_serde_with_serialize_trait");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_serde_with_serialize_trait", rust_code);
+    assert_codegen_snapshot!("std_serde_with_serialize_trait", rust_code);
 }
 
 #[test]
@@ -3738,12 +5497,12 @@ def main() -> str:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("Serialize::to_json(self)"),
-        "expected qualified source-trait dispatch to reuse the method's borrowed self receiver; generated:\n{rust_code}"
+        compact.contains("json::Serialize::to_json(self)"),
+        "expected the Rust-native trait slot to reuse the method's borrowed self receiver; generated:\n{rust_code}"
     );
     assert!(
-        !compact.contains("Serialize::to_json(&self)"),
-        "qualified source-trait dispatch must not borrow an already borrowed self receiver; generated:\n{rust_code}"
+        !compact.contains("returnSerialize::to_json(&self)") && !compact.contains("returnself.to_json(&self)"),
+        "source projection dispatch must not borrow an already borrowed self receiver; generated:\n{rust_code}"
     );
 }
 
@@ -3784,7 +5543,7 @@ from crate.models import Item
 
     assert!(
         compact.contains("crate::__incan_std::serde::json::Serialize::to_json(&item)"),
-        "directly imported source traits must preserve their canonical owner in each generated module:\n{rust_code}"
+        "the encoder module must reach the trait through its canonical owner:\n{rust_code}"
     );
     assert!(
         !compact.contains("returnjson::Serialize::to_json(&item)"),
@@ -3806,7 +5565,7 @@ fn test_rfc024_module_derive_json_codegen() {
         compact.contains("impljson::SerializeforPayload{fnto_json(&self)->String"),
         "expected @derive(json) to emit the adopted json.Serialize trait impl with its serde adapter; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("rfc024_module_derive_json", rust_code);
+    assert_codegen_snapshot!("rfc024_module_derive_json", rust_code);
 }
 
 /// RFC 024: imported trait aliases should work as partial derives.
@@ -3819,7 +5578,7 @@ fn test_rfc024_partial_alias_derive_codegen() {
         compact.contains("implJsonSerializeforPayload{fnto_json(&self)->String"),
         "expected @derive(JsonSerialize) to emit the adopted aliased trait impl with its serde adapter; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("rfc024_partial_alias_derive", rust_code);
+    assert_codegen_snapshot!("rfc024_partial_alias_derive", rust_code);
 }
 
 /// RFC 024: user modules can define a second serde-backed format without compiler changes.
@@ -3979,13 +5738,11 @@ pub def by_index(data: JsonValue) -> Option[JsonValue]:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains(
-            "crate::__incan_std::traits::indexing::Index::<String,Option<JsonValue>,>::__getitem__(&data,\"name\".to_string())"
-        ),
+        compact.contains("data.__getitem__(\"name\".to_string())"),
         "expected object-style JsonValue indexing to use source-authored Index.__getitem__; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("crate::__incan_std::traits::indexing::Index::<i64,Option<JsonValue>,>::__getitem__(&data,0)"),
+        compact.contains("data.__getitem__(0)"),
         "expected array-style JsonValue indexing to use source-authored Index.__getitem__; generated:\n{rust_code}"
     );
 }
@@ -4013,9 +5770,7 @@ pub def indexed_label[T with Clone](box: GenericBox[T]) -> str:
         "generic Index adoption must emit a parameterized Rust trait impl; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains(
-            "crate::__incan_std::traits::indexing::Index::<String,String,>::__getitem__(&r#box,\"amount\".to_string())"
-        ),
+        compact.contains("r#box.__getitem__(\"amount\".to_string())"),
         "generic index access must dispatch through the adopted Index implementation; generated:\n{rust_code}"
     );
 }
@@ -4042,7 +5797,7 @@ pub def nested_box(box: PlainBox) -> PlainBox:
         "Self in an adopted Index target must emit as the owner type; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("Index::<Vec<String>,PlainBox,>::__getitem__(&r#box,vec![\"name\".to_string()])"),
+        compact.contains("r#box.__getitem__(vec![\"name\".to_string()])"),
         "Self-returning index access must use the concrete Index instantiation; generated:\n{rust_code}"
     );
 }
@@ -4097,7 +5852,7 @@ fn test_std_traits_ops_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_traits_ops_compiled", rust_code);
+    assert_codegen_snapshot!("std_traits_ops_compiled", rust_code);
 }
 
 #[test]
@@ -4107,7 +5862,7 @@ fn test_std_traits_error_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_traits_error_compiled", rust_code);
+    assert_codegen_snapshot!("std_traits_error_compiled", rust_code);
 }
 
 #[test]
@@ -4117,7 +5872,7 @@ fn test_std_traits_indexing_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_traits_indexing_compiled", rust_code);
+    assert_codegen_snapshot!("std_traits_indexing_compiled", rust_code);
 }
 
 #[test]
@@ -4127,7 +5882,7 @@ fn test_std_traits_callable_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_traits_callable_compiled", rust_code);
+    assert_codegen_snapshot!("std_traits_callable_compiled", rust_code);
 }
 
 #[test]
@@ -4137,7 +5892,7 @@ fn test_std_traits_prelude_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_traits_prelude_compiled", rust_code);
+    assert_codegen_snapshot!("std_traits_prelude_compiled", rust_code);
 }
 
 #[test]
@@ -4147,14 +5902,14 @@ fn test_std_traits_convert_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_traits_convert_compiled", rust_code);
+    assert_codegen_snapshot!("std_traits_convert_compiled", rust_code);
 }
 
 #[test]
 fn test_std_traits_convert_usage_codegen() {
     let source = load_test_file("std_traits_convert_usage");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_traits_convert_usage", rust_code);
+    assert_codegen_snapshot!("std_traits_convert_usage", rust_code);
 }
 
 // ============================================================================
@@ -4167,7 +5922,7 @@ fn test_std_traits_convert_usage_codegen() {
 fn test_assert_surface_codegen() {
     let source = load_test_file("assert_surface");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("assert_surface", rust_code);
+    assert_codegen_snapshot!("assert_surface", rust_code);
 }
 
 // ============================================================================
@@ -4177,7 +5932,7 @@ fn test_assert_surface_codegen() {
 fn test_rust_allow_codegen() {
     let source = load_test_file("rust_allow");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("rust_allow", rust_code);
+    assert_codegen_snapshot!("rust_allow", rust_code);
 }
 
 // ============================================================================
@@ -4189,7 +5944,7 @@ fn test_rust_allow_codegen() {
 fn test_trait_bound_inference_codegen() {
     let source = load_test_file("trait_bound_inference");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("trait_bound_inference", rust_code);
+    assert_codegen_snapshot!("trait_bound_inference", rust_code);
 }
 
 /// RFC 023: Explicit `with` bounds on type parameters.
@@ -4197,13 +5952,25 @@ fn test_trait_bound_inference_codegen() {
 fn test_trait_bound_explicit_codegen() {
     let source = load_test_file("trait_bound_explicit");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("trait_bound_explicit", rust_code);
+    assert_codegen_snapshot!("trait_bound_explicit", rust_code);
 }
 
 #[test]
-fn test_ordinal_key_builtin_impls_codegen() {
+fn test_ordinal_key_builtin_impls_codegen() -> TestResult {
     let source = load_test_file("ordinal_key_builtin_impls");
-    let rust_code = generate_rust(&source);
+    let collections_source = fs::read_to_string("crates/incan_stdlib/stdlib/collections.incn")?;
+    let collections_ast = parse_incan_program(&collections_source, "std.collections metadata");
+    let main_ast = parse_incan_program(&source, "ordinal key bridge fixture");
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
+    codegen.add_dependency_symbol_module_with_path_segments(
+        "__incan_std_collections",
+        &collections_ast,
+        vec!["__incan_std".to_string(), "collections".to_string()],
+    );
+    let generated = codegen
+        .try_generate(&main_ast)
+        .map_err(|error| std::io::Error::other(format!("ordinal key bridge fixture must generate: {error:?}")))?;
+    let rust_code = normalize_codegen_output(&generated);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
         compact.contains("pubusecrate::__incan_std::collections::OrdinalKey;"),
@@ -4225,7 +5992,8 @@ fn test_ordinal_key_builtin_impls_codegen() {
             && compact.contains("fnordinal_bytes_equal(&self,data:Vec<u8>)->bool{data.as_slice()==self.value().to_le_bytes().as_slice()}"),
         "expected generated OrdinalKey impl for integer value enum; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("ordinal_key_builtin_impls", rust_code);
+    assert_codegen_snapshot!("ordinal_key_builtin_impls", rust_code);
+    Ok(())
 }
 
 #[test]
@@ -4253,7 +6021,7 @@ fn test_ordinal_map_str_fast_lookup_codegen() {
         compact.contains("vec![(\"id\".to_string(),10),(\"status\".to_string(),20)]"),
         "expected direct string-pair construction to materialize owned strings; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("ordinal_map_str_fast_lookup", rust_code);
+    assert_codegen_snapshot!("ordinal_map_str_fast_lookup", rust_code);
 }
 
 #[test]
@@ -4269,7 +6037,7 @@ fn test_imported_stdlib_value_fragment_codegen() {
         !compact.contains("ordinal_key_append_byte"),
         "stale datetime ordinal append helper leaked into generated code; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("imported_stdlib_value_fragment", rust_code);
+    assert_codegen_snapshot!("imported_stdlib_value_fragment", rust_code);
 }
 
 /// RFC 023: Additional inference cases (Display, Dict key hashing, arithmetic, transitive propagation).
@@ -4277,14 +6045,14 @@ fn test_imported_stdlib_value_fragment_codegen() {
 fn test_trait_bound_inference_more_codegen() {
     let source = load_test_file("trait_bound_inference_more");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("trait_bound_inference_more", rust_code);
+    assert_codegen_snapshot!("trait_bound_inference_more", rust_code);
 }
 
 #[test]
 fn test_loop_expressions_codegen() {
     let source = load_test_file("loop_expressions");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("loop_expressions", rust_code);
+    assert_codegen_snapshot!("loop_expressions", rust_code);
 }
 
 /// RFC 023: Generic bounds in return types (issue #196).
@@ -4295,7 +6063,7 @@ fn test_loop_expressions_codegen() {
 fn test_generic_bounds_return_type_codegen() {
     let source = load_test_file("generic_bounds_return_type");
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("generic_bounds_return_type", rust_code);
+    assert_codegen_snapshot!("generic_bounds_return_type", rust_code);
 }
 
 // Glob-based test that auto-discovers all .incn files
@@ -4307,6 +6075,6 @@ fn test_generic_bounds_return_type_codegen() {
 //         let source = fs::read_to_string(path).expect("failed to read file");
 //         let rust_code = generate_rust(&source);
 //         let name = path.file_stem().unwrap().to_string_lossy();
-//         insta::assert_snapshot!(name.to_string(), rust_code);
+//         assert_codegen_snapshot!(name.to_string(), rust_code);
 //     });
 // }

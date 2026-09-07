@@ -6,8 +6,67 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::frontend::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 use incan_core::lang::callables;
+use incan_semantics_core::CanonicalSymbolId;
 
 impl TypeChecker {
+    /// Check one method call after overload/trait resolution proved the selected declaration.
+    ///
+    /// Diagnostic fallback paths must call [`Self::check_generic_method_call`] directly: they may borrow a candidate
+    /// merely to explain why no overload is viable and therefore must not publish a false reference identity.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::frontend::typechecker::check_expr) fn check_resolved_generic_method_call(
+        &mut self,
+        method: &str,
+        method_info: MethodInfo,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        call_site_span: Span,
+        receiver_ty: &ResolvedType,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let identity = method_info.identity.clone();
+        if let Some(identity) = identity.clone() {
+            self.type_info.record_resolved_identity(call_site_span, identity);
+        }
+        let first_error = self.errors.len();
+        let result = self.check_generic_method_call(
+            method,
+            method_info,
+            explicit_type_args,
+            args,
+            arg_types,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+        );
+        if let Some(identity) = identity {
+            self.attach_related_declaration_to_new_errors(first_error, &identity);
+        }
+        result
+    }
+
+    /// Attach one already-resolved declaration to errors produced while validating its call surface.
+    pub(in crate::frontend::typechecker::check_expr::calls) fn attach_related_declaration_to_new_errors(
+        &mut self,
+        first_error: usize,
+        identity: &CanonicalSymbolId,
+    ) {
+        for error in &mut self.errors[first_error..] {
+            if error
+                .related_declarations()
+                .iter()
+                .any(|related| related.identity == *identity)
+            {
+                continue;
+            }
+            *error = error.clone().with_related_declaration(
+                identity.clone(),
+                format!("declaration of `{}`", identity.declaration_name),
+            );
+        }
+    }
+
     /// Validate generic function call type arguments, contextual return bindings, value arguments, and explicit
     /// type-parameter bounds.
     pub(in crate::frontend::typechecker::check_expr::calls) fn validate_function_call(
@@ -355,7 +414,7 @@ impl TypeChecker {
                     if let Some((index, _)) = params
                         .iter()
                         .enumerate()
-                        .find(|(_, param)| param.name() == Some(name.as_str()))
+                        .find(|(_, param)| param.name() == Some(name.node.as_str()))
                     {
                         closure_params.insert(index, expr.span);
                     }
@@ -388,7 +447,7 @@ impl TypeChecker {
                 }
                 CallArg::Named(name, _) => normal_params
                     .iter()
-                    .find(|param| param.name() == Some(name.as_str()))
+                    .find(|param| param.name() == Some(name.node.as_str()))
                     .copied(),
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => None,
             };

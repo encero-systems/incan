@@ -129,7 +129,7 @@ pub def import_jsonl(source: str) -> Result[GraphSummary, JsonError]:
     if record_kind != "header":
         return Err(_invalid_snapshot("first codegraph record must be snapshot metadata (`record` = `header`)"))
     summary.schema_version = metadata.require("schema_version")?.expect_int()?
-    if summary.schema_version != 1 and summary.schema_version != 2 and summary.schema_version != 3 and summary.schema_version != 4 and summary.schema_version != 5 and summary.schema_version != 6:
+    if summary.schema_version != 1 and summary.schema_version != 2 and summary.schema_version != 3 and summary.schema_version != 4 and summary.schema_version != 5 and summary.schema_version != 6 and summary.schema_version != 7:
         return Err(_invalid_snapshot("unsupported codegraph schema version"))
     summary.mode = metadata.require("mode")?.expect_str()?
     summary.degraded = metadata.require("degraded")?.expect_bool()?

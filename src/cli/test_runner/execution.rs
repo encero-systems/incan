@@ -708,7 +708,6 @@ pub(super) struct PreparedModuleHarness {
 }
 
 /// Return the generated function name that contains the post-yield teardown body.
-/// Return the generated function name that contains the post-yield teardown body.
 fn yield_fixture_teardown_name(name: &str) -> String {
     format!("__incan_fixture_teardown_{}", safe_fixture_ident(name))
 }
@@ -861,7 +860,53 @@ fn expr_references_name(expr: &Expr, name: &str) -> bool {
                 .any(|arg| expr_references_name(&arg.node, name))
                 || body_references_name(&block.body, name)
         }
+        // Unlike `Surface` (DSL-owned syntax with no real Incan bindings reachable from this analysis), an
+        // embedded fragment's holes are genuine Incan expressions (RFC 081, `#1023`) that can legitimately
+        // reference a yield-fixture setup binding, so they must be recursed into rather than treated as opaque.
+        Expr::Embedded(fragment) => fragment
+            .nodes
+            .iter()
+            .any(|node| embedded_node_references_name(&node.node, name)),
         Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) | Expr::Partial(_) | Expr::Surface(_) => false,
+    }
+}
+
+/// Return whether an expression hole nested inside one embedded-fragment node references `name`.
+///
+/// Mirrors `expr_references_name`'s traversal shape for `EmbeddedNode`.
+fn embedded_node_references_name(node: &crate::frontend::ast::EmbeddedNode, name: &str) -> bool {
+    use crate::frontend::ast::EmbeddedNode;
+    match node {
+        EmbeddedNode::Text(_)
+        | EmbeddedNode::EntityRef(_)
+        | EmbeddedNode::Comment(_)
+        | EmbeddedNode::Value(_)
+        | EmbeddedNode::Regex { .. }
+        | EmbeddedNode::TypeShape(_) => false,
+        EmbeddedNode::Hole(expr) => expr_references_name(&expr.node, name),
+        EmbeddedNode::Element(element) => {
+            element.attrs.iter().any(|attr| {
+                attr.value
+                    .as_ref()
+                    .is_some_and(|value| embedded_node_references_name(&value.node, name))
+            }) || element
+                .children
+                .iter()
+                .any(|child| embedded_node_references_name(&child.node, name))
+        }
+        EmbeddedNode::StyleRule(rule) => {
+            rule.selectors
+                .iter()
+                .any(|selector| embedded_node_references_name(&selector.node, name))
+                || rule
+                    .declarations
+                    .iter()
+                    .any(|declaration| embedded_node_references_name(&declaration.node, name))
+        }
+        EmbeddedNode::Declaration(declaration) => declaration
+            .value
+            .iter()
+            .any(|value| embedded_node_references_name(&value.node, name)),
     }
 }
 
@@ -1006,6 +1051,18 @@ fn split_yield_fixture_declarations(
                 func.name
             ));
         };
+        // A batch can carry the same fixture declaration more than once -- one copy per test source that pulled the
+        // module in. Those copies are identical down to their spans, so splitting each one appends a teardown that
+        // projects to the same identity as the last, and generated Rust defined it twice. `teardowns` is keyed by
+        // fixture name, so it already collapses them; append at most one declaration to match.
+        if teardowns.contains_key(&func.name) {
+            continue;
+        }
+        // The teardown is a second declaration split out of one source function, so it cannot share the fixture's
+        // declaration span: a canonical identity is namespace + declaration + kind + scope + span, and two
+        // declarations carrying the same span project to the same name however they are called. The `yield` that
+        // splits the body is the honest span for the half that follows it.
+        let yield_span = func.body[yield_index].span;
         let teardown_name = yield_fixture_teardown_name(&func.name);
         let mut setup_body = func.body[..yield_index].to_vec();
         let teardown_body = if yield_index + 1 < func.body.len() {
@@ -1092,7 +1149,7 @@ fn split_yield_fixture_declarations(
                 value_ty: original_return_type,
             },
         );
-        additional.push(Spanned::new(Declaration::Function(teardown_func), decl.span));
+        additional.push(Spanned::new(Declaration::Function(teardown_func), yield_span));
     }
 
     ast.declarations.extend(additional);
@@ -2916,6 +2973,44 @@ mod tests {
     use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
 
     #[test]
+    fn one_teardown_is_generated_when_a_batch_carries_a_fixture_twice() -> Result<(), Box<dyn std::error::Error>> {
+        // A batch concatenates every test source, so a fixture module reached from two of them lands twice. Both
+        // copies carry the same name, module and span, so a teardown per copy projects to one identity and generated
+        // Rust defined it twice.
+        let source = r#"from std.testing import fixture
+
+@fixture
+def captured_resource() -> int:
+    value = 1
+    yield value
+    println(str(value))
+"#;
+        let tokens = lexer::lex(source).map_err(|error| format!("{error:?}"))?;
+        let mut ast = parser::parse(&tokens).map_err(|error| format!("{error:?}"))?;
+        let duplicate = ast.declarations.clone();
+        ast.declarations.extend(duplicate);
+
+        let mut semantics = TestingMarkerSemantics::default();
+        semantics.marker_kinds.insert(
+            "fixture".to_string(),
+            crate::frontend::testing_markers::TestingMarkerKind::Fixture,
+        );
+        let teardowns = split_yield_fixture_declarations(&mut ast, &semantics)?;
+
+        assert_eq!(teardowns.len(), 1, "one fixture name yields one teardown");
+        let generated = ast
+            .declarations
+            .iter()
+            .filter(|decl| {
+                matches!(&decl.node, Declaration::Function(function)
+                    if function.name == yield_fixture_teardown_name("captured_resource"))
+            })
+            .count();
+        assert_eq!(generated, 1, "a duplicated fixture must not emit its teardown twice");
+        Ok(())
+    }
+
+    #[test]
     fn oven_test_seed_compatibility_records_only_used_sdk_capabilities() -> Result<(), Box<dyn std::error::Error>> {
         let sdk = ProviderRecord {
             identity: ProviderIdentity {
@@ -3416,5 +3511,58 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
         assert!(generated.contains("__incan_async_block_on(super::test_async(__incan_fixture_value_0_resource))"));
         assert!(generated.contains("__incan_run_teardown"));
         assert!(generated.contains("__incan_async_block_on(super::__incan_fixture_teardown_resource())"));
+    }
+
+    /// Build a minimal `Expr::Embedded` fragment (RFC 081, `#1023`) whose sole node is a `Hole` referencing
+    /// `hole_name` as a bare identifier, for `embedded_node_references_name` coverage below.
+    fn embedded_fragment_expr_with_hole(hole_name: &str) -> Expr {
+        use crate::frontend::ast::{EmbeddedFragmentExpr, EmbeddedNode};
+        use incan_semantics_core::SurfaceFeatureKey;
+        Expr::Embedded(Box::new(EmbeddedFragmentExpr {
+            key: SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "webkit".to_string(),
+                descriptor_key: "html.fragment".to_string(),
+            },
+            submode: incan_vocab::EmbeddedFragmentSubmode::Markup,
+            nodes: vec![Spanned::new(
+                EmbeddedNode::Hole(Box::new(Spanned::new(
+                    Expr::Ident(hole_name.to_string()),
+                    Span::default(),
+                ))),
+                Span::default(),
+            )],
+            source_text: format!("{{{hole_name}}}"),
+        }))
+    }
+
+    #[test]
+    fn expr_references_name_recurses_into_an_embedded_fragment_hole() {
+        // Regression coverage for the RFC 081 (`#1023`) `Expr::Embedded` arm added to `expr_references_name`: a
+        // yield-fixture setup binding referenced only inside an embedded fragment's hole (e.g. `html:\n
+        // <h1>{title}</h1>`) must still be detected, or the test runner could tear down that binding before the
+        // fragment's own hole reads it.
+        let fragment = embedded_fragment_expr_with_hole("title");
+        assert!(expr_references_name(&fragment, "title"));
+        assert!(!expr_references_name(&fragment, "unrelated_name"));
+    }
+
+    #[test]
+    fn embedded_node_references_name_does_not_search_opaque_leaf_nodes() {
+        use crate::frontend::ast::EmbeddedNode;
+        // Leaf node kinds carry no nested Incan expressions to search -- confirms the opaque-leaf arm of
+        // `embedded_node_references_name` (RFC 081, `#1023`) genuinely returns `false` rather than accidentally
+        // matching on the node's own text content.
+        assert!(!embedded_node_references_name(
+            &EmbeddedNode::Text("title".to_string()),
+            "title"
+        ));
+        assert!(!embedded_node_references_name(
+            &EmbeddedNode::EntityRef("title".to_string()),
+            "title"
+        ));
+        assert!(!embedded_node_references_name(
+            &EmbeddedNode::Comment("references title".to_string()),
+            "title"
+        ));
     }
 }

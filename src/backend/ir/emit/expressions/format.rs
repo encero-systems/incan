@@ -8,6 +8,7 @@ use incan_core::strings::escape_format_literal;
 use proc_macro2::{Literal as TokenLiteral, TokenStream};
 use quote::quote;
 
+use super::super::super::conversions::exact_float_value_validation;
 use super::super::super::expr::{FormatPart, TypedExpr};
 use super::super::{EmitError, IrEmitter};
 
@@ -43,7 +44,7 @@ impl<'a> IrEmitter<'a> {
                 FormatPart::Expr { expr, style } => {
                     literal_parts.push(current.clone());
                     current.clear();
-                    let arg_expr = self.emit_expr(expr)?;
+                    let arg_expr = exact_float_value_validation(&expr.ty).apply(self.emit_expr(expr)?);
                     if style.emits_rust_debug(&expr.ty) {
                         args.push(quote! { format!("{:?}", #arg_expr) });
                     } else {

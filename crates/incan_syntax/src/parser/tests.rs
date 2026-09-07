@@ -25,6 +25,43 @@ mod tests {
         parse_with_module_path(&tokens, module_path)
     }
 
+    /// Return the exact span of one fixture occurrence without introducing a panic path in fallible parser tests.
+    fn require_source_span(
+        source: &str,
+        needle: &str,
+        occurrence: usize,
+    ) -> Result<Span, Vec<CompileError>> {
+        source
+            .match_indices(needle)
+            .nth(occurrence)
+            .map(|(start, matched)| Span::new(start, start + matched.len()))
+            .ok_or_else(|| {
+                vec![CompileError::new(
+                    format!("parser test internal error: occurrence {occurrence} of `{needle}` not found"),
+                    Span::default(),
+                )]
+            })
+    }
+
+    /// Return the exact span of the last fixture occurrence without introducing a panic path.
+    fn require_last_source_span(source: &str, needle: &str) -> Result<Span, Vec<CompileError>> {
+        source
+            .rmatch_indices(needle)
+            .next()
+            .map(|(start, matched)| Span::new(start, start + matched.len()))
+            .ok_or_else(|| {
+                vec![CompileError::new(
+                    format!("parser test internal error: `{needle}` not found"),
+                    Span::default(),
+                )]
+            })
+    }
+
+    /// Build a structured fixture-shape failure for fallible parser tests.
+    fn parser_test_error(message: &str) -> Vec<CompileError> {
+        vec![CompileError::new(message.to_string(), Span::default())]
+    }
+
     /// Test helper: surface a structured failure instead of panicking when a declaration is not a trait.
     fn require_trait_decl(decl: &Spanned<Declaration>) -> Result<&TraitDecl, Vec<CompileError>> {
         match &decl.node {
@@ -183,6 +220,60 @@ trait From[T]:
     }
 
     #[test]
+    fn method_receiver_bindings_retain_the_exact_source_token() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class ReceiverExamples:
+  def immutable(self) -> None: ...
+  def mutable(mut self) -> None: ...
+
+  @classmethod
+  def create(cls) -> Self: ...
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.methods.len(), 3);
+
+        let immutable = class.methods[0]
+            .node
+            .receiver_binding
+            .as_ref()
+            .ok_or_else(|| {
+                vec![CompileError::new(
+                    "parser test internal error: immutable receiver has no source binding".to_string(),
+                    class.methods[0].span,
+                )]
+            })?;
+        let mutable = class.methods[1]
+            .node
+            .receiver_binding
+            .as_ref()
+            .ok_or_else(|| {
+                vec![CompileError::new(
+                    "parser test internal error: mutable receiver has no source binding".to_string(),
+                    class.methods[1].span,
+                )]
+            })?;
+        let class_receiver = class.methods[2]
+            .node
+            .receiver_binding
+            .as_ref()
+            .ok_or_else(|| {
+                vec![CompileError::new(
+                    "parser test internal error: class receiver has no source binding".to_string(),
+                    class.methods[2].span,
+                )]
+            })?;
+
+        assert_eq!(immutable.node, "self");
+        assert_eq!(immutable.span, require_source_span(source, "self", 0)?);
+        assert_eq!(mutable.node, "self");
+        assert_eq!(mutable.span, require_source_span(source, "self", 1)?);
+        assert_eq!(class_receiver.node, "cls");
+        assert_eq!(class_receiver.span, require_source_span(source, "cls", 0)?);
+        Ok(())
+    }
+
+    #[test]
     fn test_assert_keyword_lexes_as_identifier() -> Result<(), Vec<CompileError>> {
         let tokens = lexer::lex("assert value\n").map_err(|_| {
             vec![CompileError::new(
@@ -320,7 +411,7 @@ def check(user: Option[str]) -> None:
         assert!(matches!(
             &pattern.node,
             Pattern::Constructor(name, args)
-                if name == "Some"
+                if name.node == "Some"
                     && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(&arg.node, Pattern::Binding(binding) if binding == "value"))
         ));
         assert!(assert_stmt.message.is_some());
@@ -345,7 +436,7 @@ def check(user: Option[str]) -> None:
         assert!(matches!(
             &assert_stmt.kind,
             AssertKind::IsPattern { pattern, .. }
-                if matches!(&pattern.node, Pattern::Constructor(name, args) if name == "None" && args.is_empty())
+                if matches!(&pattern.node, Pattern::Constructor(name, args) if name.node == "None" && args.is_empty())
         ));
         Ok(())
     }
@@ -372,7 +463,7 @@ def check(result: Result[int, str]) -> None:
                 if matches!(
                     &pattern.node,
                     Pattern::Constructor(name, args)
-                        if name == "Ok"
+                        if name.node == "Ok"
                             && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(&arg.node, Pattern::Binding(binding) if binding == "value"))
                 )
         ));
@@ -389,7 +480,7 @@ def check(result: Result[int, str]) -> None:
                 if matches!(
                     &pattern.node,
                     Pattern::Constructor(name, args)
-                        if name == "Err"
+                        if name.node == "Err"
                             && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(arg.node, Pattern::Wildcard))
                 )
         ));
@@ -573,10 +664,7 @@ pub model Vocabulary:
         let program = parse_str(source)?;
         let model = require_model_decl(&program.declarations[0])?;
         assert_eq!(model.fields[0].node.name, "private");
-        assert_eq!(
-            model.fields[0].node.metadata.alias.as_deref(),
-            Some("private_value")
-        );
+        assert_eq!(model.fields[0].node.metadata.alias.as_deref(), Some("private_value"));
         assert!(matches!(model.fields[0].node.visibility, Visibility::Public));
         Ok(())
     }
@@ -876,8 +964,18 @@ def f(a: Foo) -> int:
             },
             _ => panic!("Expected assignment statement"),
         };
-        assert!(matches!(call_expr[0], CallArg::Named(ref name, _) if name == "type"));
-        assert!(matches!(call_expr[1], CallArg::Named(ref name, _) if name == "class"));
+        assert!(matches!(call_expr[0], CallArg::Named(ref name, _) if name.node == "type"));
+        assert!(matches!(call_expr[1], CallArg::Named(ref name, _) if name.node == "class"));
+        let type_start = require_source_span(source, "type=1", 0)?.start;
+        let class_start = require_source_span(source, "class=2", 0)?.start;
+        let CallArg::Named(type_label, _) = &call_expr[0] else {
+            unreachable!("first argument shape was asserted above")
+        };
+        let CallArg::Named(class_label, _) = &call_expr[1] else {
+            unreachable!("second argument shape was asserted above")
+        };
+        assert_eq!(type_label.span, Span::new(type_start, type_start + "type".len()));
+        assert_eq!(class_label.span, Span::new(class_start, class_start + "class".len()));
         let return_expr = match &func.body[1].node {
             Statement::Return(Some(expr)) => expr,
             _ => panic!("Expected return"),
@@ -914,7 +1012,7 @@ def use(xs: list[int], kw: dict[str, str]) -> int:
         assert!(matches!(call_args[0], CallArg::Positional(_)));
         assert!(matches!(call_args[1], CallArg::Positional(_)));
         assert!(matches!(call_args[2], CallArg::PositionalUnpack(_)));
-        assert!(matches!(call_args[3], CallArg::Named(ref name, _) if name == "name"));
+        assert!(matches!(call_args[3], CallArg::Named(ref name, _) if name.node == "name"));
         assert!(matches!(call_args[4], CallArg::KeywordUnpack(_)));
         Ok(())
     }
@@ -1000,12 +1098,19 @@ def f(a: Foo) -> int:
         let arm = &arms[0].node;
         match &arm.pattern.node {
             Pattern::Constructor(name, args) => {
-                assert_eq!(name, "Foo");
+                assert_eq!(name.node, "Foo");
+                let constructor_start = require_last_source_span(source, "Foo(type")?.start;
+                assert_eq!(name.span, Span::new(constructor_start, constructor_start + 3));
                 assert!(matches!(
                     &args[0],
                     PatternArg::Named(field, pat)
-                        if field == "type" && matches!(&pat.node, Pattern::Binding(b) if b == "x")
+                        if field.node == "type" && matches!(&pat.node, Pattern::Binding(b) if b == "x")
                 ));
+                let PatternArg::Named(field, _) = &args[0] else {
+                    unreachable!("named pattern shape was asserted above")
+                };
+                let field_start = require_source_span(source, "type=x", 0)?.start;
+                assert_eq!(field.span, Span::new(field_start, field_start + "type".len()));
             }
             _ => panic!("Expected constructor pattern"),
         }
@@ -1037,7 +1142,9 @@ def f(x: int) -> int:
         let arm = &arms[0].node;
         match &arm.pattern.node {
             Pattern::Constructor(name, args) => {
-                assert_eq!(name, "Kind::Read");
+                assert_eq!(name.node, "Kind::Read");
+                let start = require_source_span(source, "Kind.Read", 0)?.start;
+                assert_eq!(name.span, Span::new(start, start + "Kind.Read".len()));
                 assert!(args.is_empty());
             }
             _ => panic!("Expected constructor pattern"),
@@ -1069,10 +1176,10 @@ def f(kind: Kind) -> int:
             Pattern::Or(patterns) => {
                 assert_eq!(patterns.len(), 3);
                 assert!(
-                    matches!(&patterns[0].node, Pattern::Constructor(name, args) if name == "Kind::Read" && args.is_empty())
+                    matches!(&patterns[0].node, Pattern::Constructor(name, args) if name.node == "Kind::Read" && args.is_empty())
                 );
                 assert!(
-                    matches!(&patterns[1].node, Pattern::Constructor(name, args) if name == "Kind::Scan" && args.is_empty())
+                    matches!(&patterns[1].node, Pattern::Constructor(name, args) if name.node == "Kind::Scan" && args.is_empty())
                 );
                 assert!(matches!(&patterns[2].node, Pattern::Wildcard));
             }
@@ -1128,7 +1235,7 @@ def f(opt: Option[int]) -> int:
                 assert!(matches!(&value.node, Expr::Ident(name) if name == "opt"));
                 match &pattern.node {
                     Pattern::Constructor(name, args) => {
-                        assert_eq!(name, "Some");
+                        assert_eq!(name.node, "Some");
                         assert!(matches!(
                             &args[0],
                             PatternArg::Positional(pat)
@@ -1168,13 +1275,13 @@ def f(result: Result[int, int]) -> int:
                         assert!(matches!(
                             &patterns[0].node,
                             Pattern::Constructor(name, args)
-                                if name == "Ok"
+                            if name.node == "Ok"
                                     && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
                         ));
                         assert!(matches!(
                             &patterns[1].node,
                             Pattern::Constructor(name, args)
-                                if name == "Err"
+                            if name.node == "Err"
                                     && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
                         ));
                     }
@@ -1206,7 +1313,7 @@ def drain(current: Option[int]) -> int:
                 assert!(matches!(
                     &pattern.node,
                     Pattern::Constructor(name, args)
-                        if name == "Some"
+                        if name.node == "Some"
                             && matches!(
                                 &args[0],
                                 PatternArg::Positional(pat)
@@ -3390,6 +3497,40 @@ def main() -> int:
     }
 
     #[test]
+    fn test_parse_fstring_closure_parameter_and_body_spans_use_outer_coordinates() -> Result<(), Vec<CompileError>> {
+        let source = "def render() -> str:\n  return f\"{((value) => value)(1)}\"\n";
+        let program = parse_str(source)?;
+        let Declaration::Function(function) = &program.declarations[0].node else {
+            return Err(parser_test_error("expected function"));
+        };
+        let Statement::Return(Some(return_expr)) = &function.body[0].node else {
+            return Err(parser_test_error("expected return with expression"));
+        };
+        let Expr::FString(parts) = &return_expr.node else {
+            return Err(parser_test_error("expected f-string expression"));
+        };
+        let FStringPart::Expr { expr, .. } = &parts[0] else {
+            return Err(parser_test_error("expected interpolation expression"));
+        };
+        let Expr::Call(callee, _, _) = &expr.node else {
+            return Err(parser_test_error("expected immediate closure call"));
+        };
+        let Expr::Paren(closure) = &callee.node else {
+            return Err(parser_test_error("expected parenthesized closure callee"));
+        };
+        let Expr::Closure(params, body) = &closure.node else {
+            return Err(parser_test_error("expected closure"));
+        };
+
+        let first = require_source_span(source, "value", 0)?.start;
+        let second = require_source_span(source, "value", 1)?.start;
+        assert_eq!(params[0].span, Span::new(first, first + "value".len()));
+        assert_eq!(params[0].node.ty.span, params[0].span);
+        assert_eq!(body.span, Span::new(second, second + "value".len()));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_fstring_debug_format_marker() -> Result<(), Vec<CompileError>> {
         let source = "def render(columns: list[str]) -> str:\n  return f\"columns: {columns:?}\"\n";
         let program = parse_str(source)?;
@@ -3431,7 +3572,8 @@ def main() -> int:
     #[test]
     /// Verifies that a direct zero-argument call remains an ordinary call expression inside an f-string interpolation.
     fn test_parse_fstring_expr_direct_zero_arg_call() -> Result<(), Vec<CompileError>> {
-        let source = "def enabled() -> bool:\n  return True\n\ndef render() -> str:\n  return f\"enabled:{enabled()}\"\n";
+        let source =
+            "def enabled() -> bool:\n  return True\n\ndef render() -> str:\n  return f\"enabled:{enabled()}\"\n";
         let program = parse_str(source)?;
         let render = match &program.declarations[1].node {
             Declaration::Function(function) => function,
@@ -5227,12 +5369,8 @@ def has_name(name: str | None) -> bool:
                                 .with_signature_head()
                                 .with_statement_body(),
                         )
-                        .with_declaration(
-                            incan_vocab::DeclarationSurface::named("enum").with_statement_body(),
-                        )
-                        .with_declaration(
-                            incan_vocab::DeclarationSurface::named("struct").with_statement_body(),
-                        ),
+                        .with_declaration(incan_vocab::DeclarationSurface::named("enum").with_statement_body())
+                        .with_declaration(incan_vocab::DeclarationSurface::named("struct").with_statement_body()),
                 ),
             )
             .metadata();
@@ -5241,13 +5379,9 @@ def has_name(name: str | None) -> bool:
         let mut surface_map = std::collections::HashMap::new();
         surface_map.insert("std.interop".to_string(), metadata.dsl_surfaces);
 
-        let program = crate::parser::parse_with_context_and_surfaces(
-            &tokens,
-            None,
-            Some(&keyword_map),
-            Some(&surface_map),
-        )
-        .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
         let crate::ast::Declaration::VocabBlock(binding) = &program.declarations[1].node else {
             return Err(format!("expected binding declaration, got {:?}", program.declarations[1].node).into());
         };
@@ -6010,7 +6144,12 @@ async def run() -> int:
             )]);
         };
 
-        assert_eq!(race.binding, "value");
+        assert_eq!(race.binding.node, "value");
+        let binding_start = require_source_span(source, "race for value", 0)?.start + "race for ".len();
+        assert_eq!(
+            race.binding.span,
+            Span::new(binding_start, binding_start + "value".len())
+        );
         assert_eq!(race.arms.len(), 2);
         assert!(
             matches!(&race.arms[0].awaitable.node, Expr::Call(callee, _, _) if matches!(&callee.node, Expr::Ident(name) if name == "fast"))
@@ -6428,7 +6567,9 @@ Bad = partial Target(1)
         let source = "capability ping:\n    describe = \"typo\"\n";
         let errors = parse_str_err(source, "an unknown clause must not parse");
         assert!(
-            errors.iter().any(|error| error.message.contains("Unknown capability clause")),
+            errors
+                .iter()
+                .any(|error| error.message.contains("Unknown capability clause")),
             "expected a clause-specific error, got {errors:?}"
         );
         Ok(())

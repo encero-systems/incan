@@ -4,7 +4,7 @@ Use this route if you can read small programs but types, explicit failures, or n
 
 ## The short route
 
-1. **Complete [Getting Started](../tooling/tutorials/getting_started.md).** It owns the supported installation choices and first-project commands. The direct installer can provision the stable Rust backend; the other installation channels tell you when Rust must be managed separately.
+1. **Complete [Getting Started](../tooling/tutorials/getting_started.md).** It owns the supported installation choices and first-project commands. The direct installer can provision the pinned Rust 1.98.0 backend; the other installation channels tell you when Rust must be managed separately.
 2. **Set up [editor feedback](../tooling/how-to/editor_setup.md).** Diagnostics beside the source are easier to learn from than a long terminal error after several edits.
 3. **Read the first six chapters of [The Incan Book](../language/tutorials/book/index.md).** Stop after the errors chapter and complete each exercise before continuing.
 4. **Build [your first real project](../tooling/tutorials/your_first_project.md).** This is where modules, tests, failures, and a release build become one coherent workflow.

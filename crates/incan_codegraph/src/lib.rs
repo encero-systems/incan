@@ -8,7 +8,49 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Current codegraph JSONL schema version.
-pub const CODEGRAPH_SCHEMA_VERSION: u32 = 6;
+pub const CODEGRAPH_SCHEMA_VERSION: u32 = 7;
+
+/// Storage-neutral projection of one compiler-owned canonical symbol identity.
+///
+/// This mirrors the semantic identity fields deliberately instead of depending on compiler crates. Equality of this
+/// value answers whether two checked codegraph facts name the same declaration; source spellings and record ids are
+/// presentation/linkage projections only.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CodegraphCanonicalSymbolId {
+    /// Namespace in which the declaration is resolved.
+    pub namespace: String,
+    /// Compiler-owned declaration origin.
+    pub origin: CodegraphSymbolOrigin,
+    /// Spelling at the original declaration site.
+    pub declaration_name: String,
+    /// Semantic declaration category.
+    pub declaration_kind: String,
+    /// Scope discriminator for non-module bindings.
+    pub scope_discriminant: Option<usize>,
+    /// Original declaration byte span.
+    pub declaration_span: CodegraphIdentitySpan,
+}
+
+/// Origin of a canonical codegraph symbol identity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodegraphSymbolOrigin {
+    /// Declaration in a project source module.
+    Module { path: Vec<String> },
+    /// Declaration loaded from a compiled public package.
+    Package { library: String, module_path: Vec<String> },
+    /// Item owned by a Rust crate path.
+    RustCrate { path: Vec<String> },
+    /// Compiler-owned builtin registry entry.
+    Builtin,
+}
+
+/// Source-independent byte-span component of a canonical identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CodegraphIdentitySpan {
+    pub start: usize,
+    pub end: usize,
+}
 
 /// Package identity attached to a codegraph export when an `incan.toml` manifest is available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,6 +307,18 @@ pub struct CodegraphDiagnosticRelatedSpan {
     pub label: String,
 }
 
+/// Canonical declaration identity related to a diagnostic fact.
+///
+/// Unlike [`CodegraphDiagnosticRelatedSpan`], this keeps the provider-owned declaration coordinates embedded in
+/// the identity instead of projecting them into the primary file's line/column system.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphDiagnosticRelatedDeclaration {
+    /// Compiler-owned identity of the declaration involved in the diagnostic.
+    pub identity: CodegraphCanonicalSymbolId,
+    /// Compiler-owned explanation for this relationship.
+    pub label: String,
+}
+
 /// Header record emitted first in every JSONL export.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegraphHeaderRecord {
@@ -344,6 +398,9 @@ pub struct CodegraphDeclarationRecord {
     pub type_params: Vec<String>,
     /// Human-readable declaration signature when cheaply available.
     pub signature: Option<String>,
+    /// Compiler-owned declaration identity. `None` is an explicit unproven result.
+    #[serde(default)]
+    pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
     /// Source span for the declaration.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -367,6 +424,9 @@ pub struct CodegraphImportRecord {
     pub path: String,
     /// Imported item names for item imports.
     pub items: Vec<String>,
+    /// Per-binding checked identity projections in source binding order.
+    #[serde(default)]
+    pub bindings: Vec<CodegraphImportBinding>,
     /// Top-level import alias when present.
     pub alias: Option<String>,
     /// Visibility spelling.
@@ -377,6 +437,15 @@ pub struct CodegraphImportRecord {
     pub provenance: CodegraphProvenance,
     /// Whether this import is partial due to diagnostics.
     pub degraded: bool,
+}
+
+/// One local binding introduced by an import declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphImportBinding {
+    /// Spelling introduced in the importing module.
+    pub local_name: String,
+    /// Identity of the original declaration, unchanged through aliases and re-exports.
+    pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
 }
 
 /// Public export fact.
@@ -394,6 +463,9 @@ pub struct CodegraphExportRecord {
     pub kind: String,
     /// Source record id for the exported declaration/import.
     pub source_id: String,
+    /// Identity exported under `name`; aliases and re-exports keep the original declaration identity.
+    #[serde(default)]
+    pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
     /// Source span for the export.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -419,6 +491,9 @@ pub struct CodegraphReferenceRecord {
     pub kind: String,
     /// Resolved target id when a semantic graph layer can prove it.
     pub target_id: Option<String>,
+    /// Compiler-owned identity of the resolved target, independent of source spelling and graph record availability.
+    #[serde(default)]
+    pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
     /// Source span for the reference.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -448,6 +523,9 @@ pub struct CodegraphCallRecord {
     pub type_argument_count: usize,
     /// Resolved target id when a semantic graph layer can prove it.
     pub target_id: Option<String>,
+    /// Compiler-owned identity of the selected callable, independent of source spelling and graph record availability.
+    #[serde(default)]
+    pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
     /// Source span for the call expression.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -510,6 +588,10 @@ pub struct CodegraphDiagnosticRecord {
     /// Secondary compiler-owned source locations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_spans: Vec<CodegraphDiagnosticRelatedSpan>,
+    /// Canonical declarations related to this diagnostic, including declarations owned by another source file or
+    /// compiled provider.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_declarations: Vec<CodegraphDiagnosticRelatedDeclaration>,
     /// Explain command for the diagnostic code.
     pub explain: String,
     /// Fact provenance.
@@ -886,8 +968,10 @@ pub fn to_jsonl(records: &[CodegraphRecord]) -> Result<String, serde_json::Error
 #[cfg(test)]
 mod tests {
     use super::{
-        CODEGRAPH_SCHEMA_VERSION, CodegraphDiagnosticRecord, CodegraphFileRecord, CodegraphHeaderRecord,
-        CodegraphLanguage, CodegraphMode, CodegraphProvenance, CodegraphRecord, CodegraphSourceSpan, to_jsonl,
+        CODEGRAPH_SCHEMA_VERSION, CodegraphCanonicalSymbolId, CodegraphDiagnosticRecord,
+        CodegraphDiagnosticRelatedDeclaration, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphIdentitySpan,
+        CodegraphLanguage, CodegraphMode, CodegraphProvenance, CodegraphRecord, CodegraphReferenceRecord,
+        CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
     };
 
     #[test]
@@ -924,6 +1008,41 @@ mod tests {
     }
 
     #[test]
+    fn canonical_identity_is_structured_and_independent_of_reference_spelling() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let identity = CodegraphCanonicalSymbolId {
+            namespace: "ordinary_lexical".to_string(),
+            origin: CodegraphSymbolOrigin::Module {
+                path: vec!["provider".to_string()],
+            },
+            declaration_name: "helper".to_string(),
+            declaration_kind: "function".to_string(),
+            scope_discriminant: None,
+            declaration_span: CodegraphIdentitySpan { start: 4, end: 31 },
+        };
+        let record = CodegraphRecord::Reference(CodegraphReferenceRecord {
+            id: "reference:consumer:0".to_string(),
+            language: CodegraphLanguage::Incan,
+            module_id: "module:consumer".to_string(),
+            owner_id: None,
+            name: "renamed_helper".to_string(),
+            kind: "identifier".to_string(),
+            target_id: None,
+            canonical_identity: Some(identity.clone()),
+            span: None,
+            provenance: CodegraphProvenance::Checked,
+            degraded: false,
+        });
+
+        let encoded = serde_json::to_value(&record)?;
+        assert_eq!(encoded["name"], "renamed_helper");
+        assert_eq!(encoded["canonical_identity"]["declaration_name"], "helper");
+        assert_eq!(encoded["canonical_identity"]["origin"]["kind"], "module");
+        assert_eq!(serde_json::from_value::<CodegraphRecord>(encoded)?, record);
+        Ok(())
+    }
+
+    #[test]
     fn diagnostic_records_without_origin_remain_readable() -> Result<(), Box<dyn std::error::Error>> {
         let record = CodegraphRecord::Diagnostic(CodegraphDiagnosticRecord {
             id: "diagnostic:0".to_string(),
@@ -947,6 +1066,20 @@ mod tests {
             expected: None,
             actual: None,
             related_spans: Vec::new(),
+            related_declarations: vec![CodegraphDiagnosticRelatedDeclaration {
+                identity: CodegraphCanonicalSymbolId {
+                    namespace: "ordinary_lexical".to_string(),
+                    origin: CodegraphSymbolOrigin::Package {
+                        library: "provider".to_string(),
+                        module_path: vec!["api".to_string()],
+                    },
+                    declaration_name: "expected_value".to_string(),
+                    declaration_kind: "function".to_string(),
+                    scope_discriminant: None,
+                    declaration_span: CodegraphIdentitySpan { start: 7, end: 42 },
+                },
+                label: "previous declaration".to_string(),
+            }],
             explain: "incan explain INCAN-T0001".to_string(),
             provenance: CodegraphProvenance::Diagnostic,
             degraded: true,
@@ -959,6 +1092,11 @@ mod tests {
             return Err("expected diagnostic record".into());
         };
         assert_eq!(diagnostic.origin, "unknown");
+        assert_eq!(diagnostic.related_declarations.len(), 1);
+        assert_eq!(
+            diagnostic.related_declarations[0].identity.declaration_name,
+            "expected_value"
+        );
         Ok(())
     }
 }

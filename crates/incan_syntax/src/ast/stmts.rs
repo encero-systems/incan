@@ -58,6 +58,8 @@ pub enum Statement {
 pub struct AssignmentStmt {
     pub binding: BindingKind,
     pub name: Ident,
+    /// Exact source span of `name`.
+    pub name_span: Span,
     pub ty: Option<Spanned<Type>>,
     pub value: Spanned<Expr>,
 }
@@ -97,6 +99,8 @@ pub enum BindingKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompoundAssignmentStmt {
     pub name: Ident,
+    /// Exact source span of `name`.
+    pub name_span: Span,
     pub op: CompoundOp,
     pub value: Spanned<Expr>,
 }
@@ -105,6 +109,8 @@ pub struct CompoundAssignmentStmt {
 pub struct ChainedAssignmentStmt {
     pub binding: BindingKind,
     pub targets: Vec<Ident>,
+    /// Exact source spans aligned one-to-one with `targets`.
+    pub target_spans: Vec<Span>,
     pub value: Spanned<Expr>,
 }
 
@@ -112,6 +118,8 @@ pub struct ChainedAssignmentStmt {
 pub struct TupleUnpackStmt {
     pub binding: BindingKind,
     pub names: Vec<Ident>,
+    /// Exact source spans aligned one-to-one with `names`.
+    pub name_spans: Vec<Span>,
     pub value: Spanned<Expr>,
 }
 
