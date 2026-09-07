@@ -15651,6 +15651,37 @@ pub fn library_vocab() -> VocabRegistration {
         Ok(())
     }
 
+    /// Publish the root identity a schema-v2 manifest owes for one directly declared model export.
+    ///
+    /// A v2 identity graph publishes one root entry per raw declaration. A hand-built fixture that pushes a
+    /// `ModelExport` without one is rejected while the manifest is written, before the test reaches the diagnostic it
+    /// is actually checking.
+    fn push_root_model_identity(manifest: &mut LibraryManifest, library: &str, name: &str) {
+        let identity = incan_semantics_core::CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+            origin: incan_semantics_core::SymbolOrigin::Package {
+                library: library.to_string(),
+                module_path: Vec::new(),
+            },
+            declaration_name: name.to_string(),
+            kind: incan_semantics_core::SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: incan_semantics_core::HirSourceSpan::new(0, 1),
+        };
+        manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .push(incan::library_manifest::ExportIdentity {
+                public_name: name.to_string(),
+                public_path: vec![library.to_string(), name.to_string()],
+                source_path: vec![name.to_string()],
+                kind: incan::library_manifest::ExportIdentityKind::Model,
+                projection: incan::library_manifest::ExportIdentityProjection::Direct,
+                canonical: incan::library_manifest::CanonicalIdentityExport::from_canonical(library, &identity),
+            });
+    }
+
     fn mylib_manifest_with_widget() -> LibraryManifest {
         let mut manifest = LibraryManifest::new("mylib", "0.1.0");
         manifest.exports.models.push(ModelExport {
@@ -15663,6 +15694,7 @@ pub fn library_vocab() -> VocabRegistration {
             properties: Vec::new(),
             methods: Vec::new(),
         });
+        push_root_model_identity(&mut manifest, "mylib", "Widget");
         manifest
     }
 
@@ -15841,6 +15873,7 @@ pub fn library_vocab() -> VocabRegistration {
             properties: Vec::new(),
             methods: Vec::new(),
         });
+        push_root_model_identity(&mut manifest, "widgets_core", "Widget");
         manifest.write_to_path(&dep_artifact_root.join("widgets_core.incnlib"))?;
         write_minimal_library_crate(&dep_artifact_root, "different_package_name")?;
 
