@@ -1,6 +1,6 @@
 # RFC 081: Language-shaped DSL embeddings
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-27
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,7 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/555
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.6
 
 ## Summary
 
@@ -198,6 +198,7 @@ This RFC is additive. Code that does not import and use a DSL with language-shap
 - [x] Structural formatting for known fragments, and LSP ownership inside expression holes (#1022).
 - [x] End-to-end conformance across all six accepted submodes: typed artifact, hole ownership, typecheck, lowering, emission refusal, and both formatter modes (#1022).
 - [x] Editor ownership at the fragment boundary: DSL-owned syntax reports its owning submode and descriptor rather than resolving against ordinary Incan scope (#1022).
+- [x] Semantic highlighting that makes the ownership boundary visible while reading: DSL-owned bytes take their submode's category and expression holes are highlighted as ordinary Incan (#1400).
 
 ## Design Decisions
 
