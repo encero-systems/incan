@@ -14,7 +14,13 @@ incan_core = { path = "../incan_core" }
 serde = { version = "1.0", features = ["derive"] }
 # The wire encoding for the checked representation RFC 123 publishes. Already in the workspace graph through
 # wasmtime and rust-analyzer, so making it direct adds no third-party code, licence surface, or build cost.
-postcard = { version = "1.1", features = ["use-std"] }
+#
+# `default-features = false` is load-bearing, not tidiness. Postcard's defaults pull `heapless`, whose 0.7 line
+# depends on `atomic-polyfill` — unmaintained, RUSTSEC-2023-0089, with no safe upgrade available. The existing
+# consumers in this graph take postcard without those defaults, so enabling them here would have been this change
+# introducing an advisory the workspace had avoided. Only `use-std` is needed: this encodes to and from `Vec<u8>`
+# in a hosted compiler, and none of the embedded allocation machinery applies.
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 thiserror = "2.0"
 
 [dev-dependencies]
