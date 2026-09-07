@@ -62,6 +62,7 @@ import std.regex._core as regex_core
 import std.regex._replacement
 import std.regex.types
 import std.registry
+import std.runtime.host
 import std.result
 import std.serde.json as serde_json_module
 import std.serde

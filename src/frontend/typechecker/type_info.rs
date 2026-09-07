@@ -910,6 +910,13 @@ pub struct DeclarationArtifacts {
     /// This is the producer-side fact that package publication persists. Body-IR lowering consumes the resulting
     /// provider-plan projection rather than re-reading a decorator or inferring an operation from a module name.
     pub provider_operations: BTreeMap<CanonicalSymbolId, ProviderOperationDeclarationInfo>,
+    /// Checked RFC 104 capability declarations, keyed by their own canonical identity.
+    ///
+    /// The declaration is validated at its own site, so its resolved `requires` edges are already known there.
+    /// Retaining them makes the authority contract inspectable as static facts: a consumer asking which capability
+    /// a package declares, or what that capability itself needs, reads checked identities instead of re-resolving a
+    /// dotted reference or parsing source (RFC 104, #1027).
+    pub capabilities: BTreeMap<CanonicalSymbolId, CapabilityDeclarationInfo>,
     /// Module-local function declarations keyed by declaration span, preserving same-name overloads.
     pub function_bindings_by_span: HashMap<(usize, usize), FunctionBindingInfo>,
     /// Concrete class/model/trait method declarations keyed by declaration span (#1121).
@@ -984,6 +991,29 @@ pub struct ProviderOperationDeclarationInfo {
     /// The first vertical currently records none. A future declaration contract may add requirements only when it
     /// has a checked source form; lowering must not infer them from a provider name or generated implementation.
     pub runtime_requirements: Vec<incan_semantics_core::AbiV0RuntimeRequirement>,
+}
+
+/// One checked RFC 104 capability declaration.
+///
+/// Every field is a resolved fact rather than source spelling. `requires` in particular holds the canonical
+/// identities the declaration's references resolved to, not the dotted paths the author wrote: two packages can
+/// spell a requirement the same way and mean different capabilities, so a consumer that compared spellings would
+/// conflate them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityDeclarationInfo {
+    /// Canonical identity of the capability being declared.
+    pub capability: CanonicalSymbolId,
+    /// Prose from the `description` clause.
+    pub description: Option<String>,
+    /// Typed scope dimensions from the `scope:` block, in declaration order, as `(name, rendered type)`.
+    pub scope: Vec<(String, String)>,
+    /// Canonical identities of the capabilities this one declares it requires, in declaration order.
+    ///
+    /// A requirement that failed to resolve is absent: the reference already reported its own error, and recording a
+    /// placeholder would let a consumer read an unproven edge as a checked one.
+    pub requires: Vec<CanonicalSymbolId>,
+    /// Whether the declaration is public to package consumers.
+    pub is_public: bool,
 }
 
 /// Checked RFC 113 registry data that later stages consume without re-parsing decorator expressions.

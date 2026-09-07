@@ -663,52 +663,10 @@ impl TypeChecker {
     /// new `ResolvedType` variant that every exhaustive match over `ResolvedType` across the compiler would need
     /// to handle for a type with no ordinary-Incan operations anyway.
     fn check_embedded_fragment_expr(&mut self, fragment: &EmbeddedFragmentExpr) -> ResolvedType {
-        for node in &fragment.nodes {
-            self.check_embedded_fragment_node_holes(node);
+        for hole in fragment.holes() {
+            self.check_expr(hole);
         }
         ResolvedType::Unknown
-    }
-
-    /// Recursively typecheck every expression hole nested inside one embedded-fragment node.
-    ///
-    /// Structural node kinds with no possible nested hole (`Text`, `EntityRef`, `Comment`, `Value`, `Regex`,
-    /// `TypeShape`) are no-ops here; `Hole` is the one leaf that reaches ordinary `check_expr`, and container
-    /// kinds (`Element`, `StyleRule`, `Declaration`) recurse into their children/attrs/selectors/declarations.
-    fn check_embedded_fragment_node_holes(&mut self, node: &Spanned<EmbeddedNode>) {
-        match &node.node {
-            EmbeddedNode::Text(_)
-            | EmbeddedNode::EntityRef(_)
-            | EmbeddedNode::Comment(_)
-            | EmbeddedNode::Value(_)
-            | EmbeddedNode::Regex { .. }
-            | EmbeddedNode::TypeShape(_) => {}
-            EmbeddedNode::Hole(expr) => {
-                self.check_expr(expr);
-            }
-            EmbeddedNode::Element(element) => {
-                for attr in &element.attrs {
-                    if let Some(value) = &attr.value {
-                        self.check_embedded_fragment_node_holes(value);
-                    }
-                }
-                for child in &element.children {
-                    self.check_embedded_fragment_node_holes(child);
-                }
-            }
-            EmbeddedNode::StyleRule(rule) => {
-                for selector in &rule.selectors {
-                    self.check_embedded_fragment_node_holes(selector);
-                }
-                for declaration in &rule.declarations {
-                    self.check_embedded_fragment_node_holes(declaration);
-                }
-            }
-            EmbeddedNode::Declaration(declaration) => {
-                for value in &declaration.value {
-                    self.check_embedded_fragment_node_holes(value);
-                }
-            }
-        }
     }
 }
 

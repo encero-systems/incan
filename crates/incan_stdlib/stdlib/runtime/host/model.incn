@@ -1,0 +1,6 @@
+"""
+`host.model` authority for `std.runtime`.
+"""
+
+pub capability invoke:
+    description = "Invoke a model through the host"

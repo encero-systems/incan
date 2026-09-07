@@ -116,6 +116,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.math` | - | - | - |
 | `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.locking`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
 | `std.datetime` | - | `std.datetime.runtime`, `std.datetime.civil`, `std.datetime.civil.intervals`, `std.datetime.civil.naive`, `std.datetime.civil.offset`, `std.datetime.error`, `std.datetime.prelude` | - |
+| `std.runtime` | - | `std.runtime.prelude`, `std.runtime.host`, `std.runtime.host.clock`, `std.runtime.host.env`, `std.runtime.host.fs`, `std.runtime.host.http`, `std.runtime.host.model`, `std.runtime.host.process`, `std.runtime.host.tool` | - |
 | `std.graph` | - | - | - |
 | `std.uuid` | - | - | - |
 | `std.regex` | - | `std.regex._core`, `std.regex._replacement`, `std.regex.types`, `std.regex.prelude` | - |
@@ -123,7 +124,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.io` | - | - | - |
 | `std.encoding` | - | `std.encoding._shared`, `std.encoding.prelude`, `std.encoding.hex`, `std.encoding.base32`, `std.encoding.base64`, `std.encoding.base85`, `std.encoding.base58`, `std.encoding.bech32` | - |
 | `std.checksum` | - | - | - |
-| `std.hash` | - | `std.hash._core`, `std.hash._streaming`, `std.hash.prelude` | - |
+| `std.hash` | - | `std.hash._core`, `std.hash._hmac`, `std.hash._streaming`, `std.hash.prelude` | - |
 | `std.compression` | - | `std.compression._core`, `std.compression._auto`, `std.compression.gzip`, `std.compression.zlib`, `std.compression.deflate`, `std.compression.zstd`, `std.compression.bz2`, `std.compression.lzma`, `std.compression.snappy`, `std.compression.snappy.raw` | - |
 | `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |

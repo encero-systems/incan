@@ -17,15 +17,16 @@ use incan_codegraph::{
     CodegraphCBindingEnumVariant, CodegraphCBindingFacadeRecord, CodegraphCBindingOutcome, CodegraphCBindingParameter,
     CodegraphCBindingRecord, CodegraphCBindingResource, CodegraphCBindingStruct, CodegraphCBindingStructField,
     CodegraphCBindingSymbol, CodegraphCBindingType, CodegraphCallRecord, CodegraphCanonicalSymbolId,
-    CodegraphComponentSelectionReason, CodegraphContainmentRecord, CodegraphDeclarationRecord,
-    CodegraphDependencyFeatureProjection, CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedDeclaration,
-    CodegraphDiagnosticRelatedSpan, CodegraphExportRecord, CodegraphFeatureActivationReason,
-    CodegraphFeatureReasonProjection, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphIdentitySpan,
-    CodegraphImportBinding, CodegraphImportRecord, CodegraphLanguage, CodegraphMode, CodegraphModuleRecord,
-    CodegraphPackage, CodegraphPackageFeatureProjection, CodegraphProvenance, CodegraphProviderParticipation,
-    CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord, CodegraphReferenceRecord,
-    CodegraphRegistryRecord, CodegraphRegistryReexportProjection, CodegraphSdkComponentProjection,
-    CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
+    CodegraphCapabilityRecord, CodegraphCapabilityScopeDimension, CodegraphComponentSelectionReason,
+    CodegraphContainmentRecord, CodegraphDeclarationRecord, CodegraphDependencyFeatureProjection,
+    CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedDeclaration, CodegraphDiagnosticRelatedSpan,
+    CodegraphExportRecord, CodegraphFeatureActivationReason, CodegraphFeatureReasonProjection, CodegraphFileRecord,
+    CodegraphHeaderRecord, CodegraphIdentitySpan, CodegraphImportBinding, CodegraphImportRecord, CodegraphLanguage,
+    CodegraphMode, CodegraphModuleRecord, CodegraphPackage, CodegraphPackageFeatureProjection, CodegraphProvenance,
+    CodegraphProviderParticipation, CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord,
+    CodegraphReferenceRecord, CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
+    CodegraphSdkComponentProjection, CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan,
+    CodegraphSymbolOrigin, to_jsonl,
 };
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
@@ -35,9 +36,8 @@ use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, Decorator, DecoratorArg, DecoratorArgValue,
-    DictEntry, EmbeddedNode, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath,
-    ListEntry, MatchBody, RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam,
-    Visibility,
+    DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchBody,
+    RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use crate::frontend::diagnostics::{self, StableDiagnostic};
 use crate::frontend::registry_metadata::{
@@ -46,7 +46,7 @@ use crate::frontend::registry_metadata::{
 use crate::frontend::typechecker::{
     CAbiInteropArtifacts, CBindingEnum, CBindingEnumVariant, CBindingOutcome, CBindingParameter, CBindingResource,
     CBindingStruct, CBindingStructField, CBindingSymbol, CBindingType, COutputMode, CResourceAccess,
-    c_binding_descriptor_identity,
+    CapabilityDeclarationInfo, c_binding_descriptor_identity,
 };
 use crate::provider::{
     BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, FeatureSelection,
@@ -109,6 +109,7 @@ fn collect_codegraph_records(
         if analysis.diagnostics.is_empty() {
             builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
             builder.set_registry_metadata(analysis.registry_metadata_by_path);
+            builder.set_capabilities(analysis.capabilities_by_path);
             builder.set_c_abi_artifacts(analysis.c_abi_by_path);
             builder.seed_canonical_target_ids(&modules);
             for module in &modules {
@@ -166,6 +167,7 @@ fn collect_codegraph_records(
                 }
                 builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
                 builder.set_registry_metadata(analysis.registry_metadata_by_path);
+                builder.set_capabilities(analysis.capabilities_by_path);
                 builder.set_c_abi_artifacts(analysis.c_abi_by_path);
                 builder.seed_canonical_target_ids(&modules);
                 for module in &modules {
@@ -191,6 +193,7 @@ struct CheckedCodegraphAnalysis {
     diagnostics: Vec<StableDiagnostic>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
+    capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
 }
 
@@ -209,6 +212,7 @@ fn directory_modules_diagnostics_and_info(
     let mut sessions = BTreeMap::new();
     let mut semantic_snapshots_by_path = BTreeMap::new();
     let mut registry_metadata_by_path = BTreeMap::new();
+    let mut capabilities_by_path = BTreeMap::new();
     let mut c_abi_by_path = BTreeMap::new();
 
     for file in files {
@@ -251,6 +255,9 @@ fn directory_modules_diagnostics_and_info(
                         for (path, metadata) in checked_registry_metadata_by_path(&analysis, &modules, &package_name) {
                             registry_metadata_by_path.entry(path).or_insert(metadata);
                         }
+                        for (path, declarations) in checked_capabilities_by_path(&analysis, &modules) {
+                            capabilities_by_path.entry(path).or_insert(declarations);
+                        }
                         for (path, c_abi) in checked_c_abi_by_path(&analysis, &modules) {
                             c_abi_by_path.entry(path).or_insert(c_abi);
                         }
@@ -281,6 +288,11 @@ fn directory_modules_diagnostics_and_info(
             } else {
                 registry_metadata_by_path
             },
+            capabilities_by_path: if has_diagnostics {
+                BTreeMap::new()
+            } else {
+                capabilities_by_path
+            },
             c_abi_by_path: if has_diagnostics {
                 BTreeMap::new()
             } else {
@@ -309,12 +321,14 @@ fn typecheck_diagnostics_and_info(
                 modules,
                 package_name.unwrap_or("<unpackaged>"),
             ),
+            capabilities_by_path: checked_capabilities_by_path(&analysis, modules),
             c_abi_by_path: checked_c_abi_by_path(&analysis, modules),
         }),
         Err(failure) => Ok(CheckedCodegraphAnalysis {
             diagnostics: stable_diagnostics(failure),
             semantic_snapshots_by_path: BTreeMap::new(),
             registry_metadata_by_path: BTreeMap::new(),
+            capabilities_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
         }),
     }
@@ -335,6 +349,29 @@ fn checked_registry_metadata_by_path(
                     (
                         module.file_path.clone(),
                         collect_checked_registry_metadata(type_info, module.path_segments.clone(), package_name),
+                    )
+                })
+        })
+        .collect()
+}
+
+/// Retain the compilation's checked RFC 104 capability declarations for the codegraph projection.
+///
+/// Ordered by canonical identity so an export is byte-stable across runs: the typechecker keys these by identity in a
+/// `BTreeMap`, and preserving that order avoids a second sort with a different tiebreak.
+fn checked_capabilities_by_path(
+    analysis: &CompilationAnalysis,
+    modules: &[ParsedModule],
+) -> BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>> {
+    modules
+        .iter()
+        .filter_map(|module| {
+            analysis
+                .type_info_for_module_path(&module.path_segments)
+                .map(|type_info| {
+                    (
+                        module.file_path.clone(),
+                        type_info.declarations.capabilities.values().cloned().collect(),
                     )
                 })
         })
@@ -696,6 +733,7 @@ struct CodegraphBuilder {
     next_body_fact_index: usize,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
+    capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
     canonical_target_ids: BTreeMap<CanonicalSymbolId, String>,
 }
@@ -729,6 +767,7 @@ impl CodegraphBuilder {
             next_body_fact_index: 0,
             semantic_snapshots_by_path: BTreeMap::new(),
             registry_metadata_by_path: BTreeMap::new(),
+            capabilities_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
             canonical_target_ids: BTreeMap::new(),
         }
@@ -742,6 +781,11 @@ impl CodegraphBuilder {
     /// Attach the checked registry projection produced from the same session-owned typechecking pass.
     fn set_registry_metadata(&mut self, registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>) {
         self.registry_metadata_by_path = registry_metadata_by_path;
+    }
+
+    /// Attach the compilation's checked RFC 104 capability declarations alongside the other graph facts.
+    fn set_capabilities(&mut self, capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>) {
+        self.capabilities_by_path = capabilities_by_path;
     }
 
     /// Attach successful checked C ABI artifacts from the same compilation session as the other graph facts.
@@ -891,7 +935,49 @@ impl CodegraphBuilder {
         self.collect_program_records(module, &module_id, degraded);
         if !degraded {
             self.collect_checked_registry_records(module, &module_id);
+            self.collect_checked_capability_records(module, &module_id);
             self.collect_checked_c_binding_records(module, &module_id);
+        }
+    }
+
+    /// Project RFC 104 capability declarations from the session's checked facts.
+    ///
+    /// RFC 104 requires its authority contract to be inspectable without executing source. Codegraph never re-reads a
+    /// `capability` block or re-resolves a `requires` reference to reconstruct that contract; it publishes what the
+    /// typechecker already proved at the declaration site.
+    fn collect_checked_capability_records(&mut self, module: &ParsedModule, module_id: &str) {
+        let Some(declarations) = self.capabilities_by_path.get(&module.file_path).cloned() else {
+            return;
+        };
+        for declaration in declarations {
+            let declaration_span = declaration.capability.declaration_span;
+            let span = Some(source_span(
+                &module.file_path,
+                &module.source,
+                Span::new(declaration_span.start, declaration_span.end),
+            ));
+            self.records
+                .push(CodegraphRecord::Capability(CodegraphCapabilityRecord {
+                    id: capability_record_id(&declaration.capability, declaration_span.start),
+                    language: CodegraphLanguage::Incan,
+                    module_id: module_id.to_string(),
+                    capability_identity: codegraph_canonical_identity(&declaration.capability),
+                    name: declaration.capability.declaration_name.clone(),
+                    public: declaration.is_public,
+                    description: declaration.description.clone(),
+                    scope: declaration
+                        .scope
+                        .iter()
+                        .map(|(name, ty)| CodegraphCapabilityScopeDimension {
+                            name: name.clone(),
+                            ty: ty.clone(),
+                        })
+                        .collect(),
+                    requires: declaration.requires.iter().map(codegraph_canonical_identity).collect(),
+                    span,
+                    provenance: CodegraphProvenance::Checked,
+                    degraded: false,
+                }));
         }
     }
 
@@ -1721,61 +1807,15 @@ impl CodegraphBuilder {
                 }
                 self.collect_statements(module, module_id, owner_id, &block.body, degraded);
             }
+            // A fragment's DSL-owned structural content (tags, selectors, declarations, ...) has no ordinary Incan
+            // symbol references of its own — only its expression holes are genuine Incan, so only they contribute
+            // codegraph references and calls. `holes` is the single authority on which those are (RFC 081, #1022).
             Expr::Embedded(fragment) => {
-                for node in &fragment.nodes {
-                    self.collect_embedded_node(module, module_id, owner_id, node, degraded);
+                for hole in fragment.holes() {
+                    self.collect_expr(module, module_id, owner_id, hole, degraded);
                 }
             }
             Expr::Yield(None) => {}
-        }
-    }
-
-    /// Collect source-level reference and call facts from the expression holes nested in one embedded-fragment
-    /// node (RFC 081, `#1023`).
-    ///
-    /// The fragment's DSL-owned structural content (tags, selectors, declarations, ...) has no ordinary Incan
-    /// symbol references of its own — only its holes are genuine Incan expressions, so only they contribute
-    /// codegraph references/calls.
-    #[allow(clippy::too_many_arguments)]
-    fn collect_embedded_node(
-        &mut self,
-        module: &ParsedModule,
-        module_id: &str,
-        owner_id: Option<&str>,
-        node: &Spanned<EmbeddedNode>,
-        degraded: bool,
-    ) {
-        match &node.node {
-            EmbeddedNode::Text(_)
-            | EmbeddedNode::EntityRef(_)
-            | EmbeddedNode::Comment(_)
-            | EmbeddedNode::Value(_)
-            | EmbeddedNode::Regex { .. }
-            | EmbeddedNode::TypeShape(_) => {}
-            EmbeddedNode::Hole(expr) => self.collect_expr(module, module_id, owner_id, expr, degraded),
-            EmbeddedNode::Element(element) => {
-                for attr in &element.attrs {
-                    if let Some(value) = &attr.value {
-                        self.collect_embedded_node(module, module_id, owner_id, value, degraded);
-                    }
-                }
-                for child in &element.children {
-                    self.collect_embedded_node(module, module_id, owner_id, child, degraded);
-                }
-            }
-            EmbeddedNode::StyleRule(rule) => {
-                for selector in &rule.selectors {
-                    self.collect_embedded_node(module, module_id, owner_id, selector, degraded);
-                }
-                for declaration in &rule.declarations {
-                    self.collect_embedded_node(module, module_id, owner_id, declaration, degraded);
-                }
-            }
-            EmbeddedNode::Declaration(declaration) => {
-                for value in &declaration.value {
-                    self.collect_embedded_node(module, module_id, owner_id, value, degraded);
-                }
-            }
         }
     }
 
@@ -2417,7 +2457,21 @@ fn record_degraded(record: &CodegraphRecord) -> bool {
         CodegraphRecord::CBinding(record) => record.degraded,
         CodegraphRecord::CBindingCall(record) => record.degraded,
         CodegraphRecord::CBindingFacade(record) => record.degraded,
+        CodegraphRecord::Capability(record) => record.degraded,
     }
+}
+
+/// Construct a deterministic id for one capability declaration.
+///
+/// Module path, declaration name, and span start together stay unique within an export without depending on the
+/// order modules were analysed in, which is what keeps a JSONL export byte-stable between runs.
+fn capability_record_id(identity: &CanonicalSymbolId, anchor_start: usize) -> String {
+    let module = identity.module_path().map(|path| path.join(".")).unwrap_or_default();
+    format!(
+        "capability:{}:{}:{anchor_start}",
+        sanitize_record_label(&module),
+        sanitize_record_label(&identity.declaration_name)
+    )
 }
 
 /// Construct a deterministic id for one registry entry without depending on runtime loading order.
@@ -3139,6 +3193,87 @@ mod tests {
             )
         );
         assert_eq!(import_export_names(&from_import), vec!["Index".to_string()]);
+    }
+
+    #[test]
+    fn codegraph_projects_a_checked_capability_and_its_requirement() -> Result<(), String> {
+        // RFC 104 requires its authority contract to be inspectable without executing source. Codegraph publishes
+        // what the typechecker proved at the declaration site; it never re-reads a `capability` block or re-resolves
+        // a `requires` reference to reconstruct that contract (#1027).
+        let source = r#"
+from std.runtime import host
+
+pub capability load_policy:
+    description = "Load a policy document from disk"
+    scope:
+        tenant: str
+    requires = [host.fs.read]
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["policy".to_string()]));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+
+        let file_path = PathBuf::from("/policy.incn");
+        let module = ParsedModule {
+            name: "policy".to_string(),
+            path_segments: vec!["policy".to_string()],
+            file_path: file_path.clone(),
+            source: source.to_string(),
+            ast,
+        };
+        let mut builder = CodegraphBuilder::new(&file_path, None, false);
+        builder.set_capabilities(BTreeMap::from([(
+            file_path,
+            checker
+                .type_info()
+                .declarations
+                .capabilities
+                .values()
+                .cloned()
+                .collect(),
+        )]));
+        builder.collect_parsed_module(&module, Vec::new());
+
+        let capability = builder
+            .records
+            .iter()
+            .find_map(|record| match record {
+                CodegraphRecord::Capability(capability) if capability.name == "load_policy" => Some(capability),
+                _ => None,
+            })
+            .ok_or_else(|| "expected a capability record".to_string())?;
+
+        assert!(capability.public, "a `pub capability` should project as public");
+        assert_eq!(
+            capability.description.as_deref(),
+            Some("Load a policy document from disk")
+        );
+        let [dimension] = capability.scope.as_slice() else {
+            return Err(format!("expected one scope dimension, got {:?}", capability.scope));
+        };
+        assert_eq!((dimension.name.as_str(), dimension.ty.as_str()), ("tenant", "str"));
+
+        let [requirement] = capability.requires.as_slice() else {
+            return Err(format!("expected one requirement, got {:?}", capability.requires));
+        };
+        assert_eq!(requirement.declaration_name, "read");
+        assert_eq!(
+            requirement.origin,
+            CodegraphSymbolOrigin::Module {
+                path: vec![
+                    "std".to_string(),
+                    "runtime".to_string(),
+                    "host".to_string(),
+                    "fs".to_string()
+                ]
+            },
+            "the requirement must carry the host capability's own declaring module"
+        );
+        Ok(())
     }
 
     #[test]

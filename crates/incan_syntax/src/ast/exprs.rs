@@ -4,7 +4,7 @@ use std::fmt;
 
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Ident, Param, Spanned, Statement, Type, VocabBlockStmt};
+use super::{Ident, Param, Span, Spanned, Statement, Type, VocabBlockStmt};
 
 // ============================================================================
 // Expressions
@@ -212,9 +212,157 @@ pub struct EmbeddedFragmentExpr {
     pub submode: incan_vocab::EmbeddedFragmentSubmode,
     /// Structural node tree produced by the submode's grammar, in source order.
     pub nodes: Vec<Spanned<EmbeddedNode>>,
-    /// Verbatim original source text of the whole fragment, for the formatter's layout-preserving fallback and for
+    /// Verbatim original source text of the whole fragment, for the formatter's layout-preserving mode and for
     /// tooling that needs the untouched source rather than the structural tree.
     pub source_text: String,
+    /// Whether the claiming descriptor declared itself layout-sensitive.
+    ///
+    /// RFC 081 gives the formatter exactly two modes: render from this structural tree, or preserve `source_text`
+    /// verbatim for a DSL that declares itself layout-sensitive. The descriptor owns that choice, and the parser
+    /// resolves it here so the formatter never has to rediscover the descriptor to answer it.
+    pub layout_sensitive: bool,
+}
+
+impl EmbeddedFragmentExpr {
+    /// Collect every ordinary-Incan expression hole in this fragment, in source order.
+    ///
+    /// A hole is genuine Incan syntax: the typechecker and lowering already treat it exactly as they would the same
+    /// expression written in ordinary position. Tooling that walks expressions has to reach holes the same way, or a
+    /// fragment becomes an opaque region where hover, signature help, and scoped-symbol resolution stop working for
+    /// code that is not embedded at all. This is the one traversal that answers "which expressions does this
+    /// fragment own", so the compiler and its tooling cannot drift into different answers (RFC 081, #1022).
+    pub fn holes(&self) -> Vec<&Spanned<Expr>> {
+        let mut holes = Vec::new();
+        collect_embedded_holes(&self.nodes, &mut holes);
+        holes
+    }
+
+    /// Collect every ordinary-Incan expression hole in this fragment mutably, in source order.
+    ///
+    /// The mutable counterpart to [`EmbeddedFragmentExpr::holes`], for the passes that rewrite a hole in place
+    /// rather than only reading it — the pre-typecheck vocab desugar pass is the one such caller, because a hole
+    /// may itself contain another DSL's vocab block or scoped surface. It answers the same ownership question as
+    /// `holes`, over the same node kinds in the same order, so the two cannot disagree about what a fragment owns.
+    pub fn holes_mut(&mut self) -> Vec<&mut Spanned<Expr>> {
+        let mut holes = Vec::new();
+        collect_embedded_holes_mut(&mut self.nodes, &mut holes);
+        holes
+    }
+
+    /// Return the source extent this fragment's structural nodes cover, or `None` when it parsed to no nodes.
+    ///
+    /// [`EmbeddedFragmentExpr`] deliberately carries no span field: the fragment's own span lives on the enclosing
+    /// [`Spanned<Expr>`], and duplicating it here would create a second thing to keep in sync. Tooling that has the
+    /// fragment but not its wrapper — an [`Expr`]-level predicate walk, for instance — recovers the extent from the
+    /// nodes themselves, which carry absolute source offsets. An empty fragment has no DSL-owned content to locate,
+    /// so `None` is the honest answer rather than a zero-width guess.
+    pub fn node_extent(&self) -> Option<Span> {
+        let mut extent: Option<Span> = None;
+        for node in &self.nodes {
+            extent = Some(match extent {
+                Some(current) => current.merge(node.span),
+                None => node.span,
+            });
+        }
+        extent
+    }
+
+    /// Answer which side of the ownership boundary `offset` falls on inside this fragment.
+    ///
+    /// RFC 081 draws exactly one boundary through a fragment: an expression hole is ordinary Incan and everything
+    /// around it is DSL-owned syntax whose meaning belongs to the claiming descriptor. Tooling that resolves a
+    /// position — hover above all — has to ask that question before it interprets anything, because a tag name, a
+    /// selector, or a declaration property is spelled like an Incan identifier and would otherwise resolve as one.
+    ///
+    /// Returns `None` when `offset` lies outside the fragment entirely. The hole side is decided by
+    /// [`EmbeddedFragmentExpr::holes`], so this never becomes a second opinion about what a fragment owns.
+    pub fn ownership_at(&self, offset: usize) -> Option<EmbeddedOwnership<'_>> {
+        let extent = self.node_extent()?;
+        if offset < extent.start || offset > extent.end {
+            return None;
+        }
+        let hole = self
+            .holes()
+            .into_iter()
+            .find(|hole| hole.span.start <= offset && offset <= hole.span.end);
+        Some(match hole {
+            Some(hole) => EmbeddedOwnership::Hole(hole),
+            None => EmbeddedOwnership::DslOwned,
+        })
+    }
+}
+
+/// Which side of an embedded fragment's ownership boundary a source offset falls on (RFC 081, #1022).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EmbeddedOwnership<'a> {
+    /// Ordinary Incan: the offset is inside an expression hole, which is typechecked and lowered exactly as the
+    /// same expression written in ordinary position. Tooling should treat it as ordinary Incan, not as DSL syntax.
+    Hole(&'a Spanned<Expr>),
+    /// DSL-owned syntax: tags, selectors, declaration properties, regex patterns, type shapes, raw text. It carries
+    /// no ordinary Incan meaning, so resolving a name here against ordinary Incan scope would be wrong.
+    DslOwned,
+}
+
+/// Walk embedded nodes in source order, collecting the expression holes reachable from each.
+///
+/// `Hole` is the one leaf carrying an ordinary expression. Container kinds recurse into their own children; every
+/// remaining kind is DSL-owned syntax that cannot contain one.
+fn collect_embedded_holes<'a>(nodes: &'a [Spanned<EmbeddedNode>], holes: &mut Vec<&'a Spanned<Expr>>) {
+    for node in nodes {
+        match &node.node {
+            EmbeddedNode::Hole(expr) => holes.push(expr.as_ref()),
+            EmbeddedNode::Element(element) => {
+                for attr in &element.attrs {
+                    if let Some(value) = &attr.value {
+                        collect_embedded_holes(std::slice::from_ref(value), holes);
+                    }
+                }
+                collect_embedded_holes(&element.children, holes);
+            }
+            EmbeddedNode::StyleRule(rule) => {
+                collect_embedded_holes(&rule.selectors, holes);
+                collect_embedded_holes(&rule.declarations, holes);
+            }
+            EmbeddedNode::Declaration(declaration) => collect_embedded_holes(&declaration.value, holes),
+            EmbeddedNode::Text(_)
+            | EmbeddedNode::EntityRef(_)
+            | EmbeddedNode::Comment(_)
+            | EmbeddedNode::Value(_)
+            | EmbeddedNode::Regex { .. }
+            | EmbeddedNode::TypeShape(_) => {}
+        }
+    }
+}
+
+/// Walk embedded nodes mutably in source order, collecting the expression holes reachable from each.
+///
+/// Kept structurally identical to [`collect_embedded_holes`] so the mutable and shared answers to "which
+/// expressions does this fragment own" cannot diverge.
+fn collect_embedded_holes_mut<'a>(nodes: &'a mut [Spanned<EmbeddedNode>], holes: &mut Vec<&'a mut Spanned<Expr>>) {
+    for node in nodes {
+        match &mut node.node {
+            EmbeddedNode::Hole(expr) => holes.push(expr.as_mut()),
+            EmbeddedNode::Element(element) => {
+                for attr in &mut element.attrs {
+                    if let Some(value) = &mut attr.value {
+                        collect_embedded_holes_mut(std::slice::from_mut(value), holes);
+                    }
+                }
+                collect_embedded_holes_mut(&mut element.children, holes);
+            }
+            EmbeddedNode::StyleRule(rule) => {
+                collect_embedded_holes_mut(&mut rule.selectors, holes);
+                collect_embedded_holes_mut(&mut rule.declarations, holes);
+            }
+            EmbeddedNode::Declaration(declaration) => collect_embedded_holes_mut(&mut declaration.value, holes),
+            EmbeddedNode::Text(_)
+            | EmbeddedNode::EntityRef(_)
+            | EmbeddedNode::Comment(_)
+            | EmbeddedNode::Value(_)
+            | EmbeddedNode::Regex { .. }
+            | EmbeddedNode::TypeShape(_) => {}
+        }
+    }
 }
 
 /// One structural node inside a descriptor-gated embedded fragment.
