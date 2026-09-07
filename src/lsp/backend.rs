@@ -74,6 +74,7 @@ use crate::lsp::diagnostics::{
     RelatedDeclarationSource, RelatedDeclarationSources, compile_error_to_diagnostic_with_phase,
     compile_error_to_diagnostic_with_phase_and_sources, position_to_offset, span_to_range,
 };
+use crate::lsp::semantic_tokens;
 use crate::manifest::ProjectManifest;
 use crate::provider::{ProviderModuleResolution, ProviderPlan, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
@@ -7022,6 +7023,15 @@ impl LanguageServer for IncanLanguageServer {
                     commands: vec![EMIT_CONTRACT_MODEL_COMMAND.to_string()],
                     ..Default::default()
                 }),
+                // Semantic highlighting for the whole language, including RFC 081 embedded-fragment ownership.
+                semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    SemanticTokensOptions {
+                        legend: semantic_tokens::legend(),
+                        full: Some(SemanticTokensFullOptions::Bool(true)),
+                        range: Some(false),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -7403,6 +7413,24 @@ impl LanguageServer for IncanLanguageServer {
     }
 
     /// Return document symbols for the current parsed document, if available.
+    /// Answer `textDocument/semanticTokens/full` for an open document.
+    ///
+    /// The reply covers every token in the file, as the protocol requires: there is no way to classify one region
+    /// and leave the rest to the editor's grammar. A document with no stored state yields `None` so the client keeps
+    /// its previous result rather than briefly losing all colour; a document that failed to parse still answers,
+    /// from the token stream alone, because losing highlighting on every keystroke is worse than never having it.
+    async fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Result<Option<SemanticTokensResult>> {
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        let data = semantic_tokens::semantic_tokens(&doc.source, doc.ast.as_ref());
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        })))
+    }
+
     async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
         let docs = self.documents.read().await;
