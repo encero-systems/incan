@@ -184,7 +184,14 @@ impl<'a> IrEmitter<'a> {
             && !matches!(visibility, super::super::decl::Visibility::Private)
         {
             let alias = Self::rust_generated_static_ident(name);
-            (alias != name_ident).then(|| quote! { #vis use #name_ident as #alias; })
+            // Like the function-side alias, this keeps the pre-projection spelling reachable for whoever imports it.
+            // This compilation need not use it, and generated code is built with warnings denied.
+            (alias != name_ident).then(|| {
+                quote! {
+                    #[allow(unused_imports)]
+                    #vis use #name_ident as #alias;
+                }
+            })
         } else {
             None
         };
