@@ -423,6 +423,29 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "toml",
+        feature: None,
+        extra_crate_deps: &[
+            StdlibExtraCrateDep {
+                crate_name: "toml_edit",
+                source: StdlibExtraCrateSource::Version("0.25"),
+                features: &["parse"],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "toml",
+                source: StdlibExtraCrateSource::Version("0.9"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "serde",
+                source: StdlibExtraCrateSource::Version("1.0"),
+                features: &["derive"],
+            },
+        ],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "reflection",
         feature: None,
         extra_crate_deps: &[],
