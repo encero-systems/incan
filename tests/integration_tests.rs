@@ -11192,18 +11192,37 @@ def main() -> None:
         );
 
         let generated = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        // Assert the syntax, not the method's spelling. RFC 120 projects `add_static`, so pinning the source name
+        // tested the projection rather than the associated-function lowering this case exists for. Requiring the
+        // decorator's own argument to arrive at a `Registry::`-qualified callee keeps it specific to this decorator.
+        let normalized: String = generated
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        let lowered_as_associated_function = normalized.split("Registry::").skip(1).any(|tail| {
+            tail.split_once('(').is_some_and(|(callee, arguments)| {
+                callee.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                    && arguments.starts_with("\"static\".to_string()")
+            })
+        });
         assert!(
-            generated.contains("Registry :: add_static")
-                || generated.contains("Registry::add_static")
-                || generated.contains("Registry :: add_static ::"),
+            lowered_as_associated_function,
             "class static method decorator should lower as associated function syntax:\n{}",
             generated,
         );
+        // Same again for the instance half: `add` is projected, and the storage access is what this case pins.
+        // Requiring the materialized argument to arrive at a method on the borrowed static keeps that specific.
+        let reaches_receiver_through_static_storage = normalized.split("__incan_static_value.").skip(1).any(|tail| {
+            tail.split_once('(').is_some_and(|(method, arguments)| {
+                method.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                    && arguments.starts_with("__incan_static_arg_0")
+            })
+        });
         assert!(
-            generated.contains(".with_mut(|__incan_static_value|")
-                && (generated.contains("let __incan_static_arg_0 = \"instance\".to_string();")
-                    || generated.contains("let __incan_static_arg_0 = \"instance\".into();"))
-                && generated.contains("__incan_static_value.add(__incan_static_arg_0)"),
+            normalized.contains(".with_mut(|__incan_static_value|")
+                && (normalized.contains("let__incan_static_arg_0=\"instance\".to_string();")
+                    || normalized.contains("let__incan_static_arg_0=\"instance\".into();"))
+                && reaches_receiver_through_static_storage,
             "static registry receiver should lower through static storage access:\n{}",
             generated,
         );
