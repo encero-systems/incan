@@ -262,7 +262,7 @@ impl<'a> IrEmitter<'a> {
             "result".to_string(),
             result_methods::as_str(method).to_string(),
         ];
-        self.emit_canonical_callee_path(&path, false, None)?.ok_or_else(|| {
+        self.emit_canonical_callee_path(&path, false)?.ok_or_else(|| {
             EmitError::Unsupported(format!(
                 "cannot resolve canonical std.result.{} helper path",
                 result_methods::as_str(method)

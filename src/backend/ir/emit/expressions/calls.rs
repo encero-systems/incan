@@ -722,11 +722,7 @@ impl<'a> IrEmitter<'a> {
         } else if let Some(path) = canonical_path {
             let materialize_internal_path =
                 *self.qualify_internal_canonical_paths.borrow() || Self::callee_is_imported_module_path(func);
-            let resolved_declaration = match &func.kind {
-                IrExprKind::Var { name, .. } => Some(name.as_str()),
-                _ => None,
-            };
-            self.emit_canonical_callee_path(path, materialize_internal_path, resolved_declaration)?
+            self.emit_canonical_callee_path(path, materialize_internal_path)?
                 .unwrap_or(self.emit_expr(func)?)
         } else {
             self.emit_expr(func)?
@@ -1247,7 +1243,6 @@ impl<'a> IrEmitter<'a> {
         &self,
         canonical_path: &[String],
         materialize_internal_path: bool,
-        resolved_declaration: Option<&str>,
     ) -> Result<Option<TokenStream>, EmitError> {
         if canonical_path.len() < 2 {
             return Ok(None);
@@ -1346,20 +1341,6 @@ impl<'a> IrEmitter<'a> {
                     .canonical_identity_for_path(canonical_path)
             })
             .map(incan_semantics_core::encode_incan_symbol_identity)
-            .or_else(|| {
-                // Only a reserved Incan projection may stand in for a declaration, and only on a stdlib path. That is
-                // where the lookups genuinely cannot answer: an overload set's path is ambiguous by construction, so
-                // both fail closed and the source spelling they fall back to is one the stdlib provider never
-                // exports. A `pub::` dependency keeps its plain spelling, which its crate does export.
-                let stdlib_path = matches!(
-                    canonical_path.first().map(String::as_str),
-                    Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE)
-                );
-                resolved_declaration
-                    .filter(|_| stdlib_path)
-                    .filter(|name| name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX))
-                    .map(str::to_string)
-            })
             .unwrap_or_else(|| function_name.clone());
         let fn_ident = Self::rust_ident(&emitted_name);
         segments.push(quote! { #fn_ident });
@@ -1531,87 +1512,6 @@ mod tests {
 
     fn render(tokens: TokenStream) -> String {
         tokens.to_string().replace(' ', "")
-    }
-
-    #[test]
-    fn a_callee_path_the_lookups_cannot_resolve_names_the_declaration_lowering_selected()
-    -> Result<(), Box<dyn std::error::Error>> {
-        // An overload set has no single declaration, so its path is ambiguous by construction and both identity
-        // lookups fail closed. The bare set spelling they used to fall back to is one a provider never exports.
-        let registry = FunctionRegistry::new();
-        let emitter = IrEmitter::new(&registry);
-        let selected = encode_incan_symbol_identity(&CanonicalSymbolId {
-            namespace: SymbolNamespace::OrdinaryLexical,
-            origin: SymbolOrigin::Package {
-                library: "incan_stdlib_system".to_string(),
-                module_path: vec!["environ".to_string()],
-            },
-            declaration_name: "get_as".to_string(),
-            kind: SemanticSourceTargetKind::Function,
-            scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(7763, 8373),
-        });
-        let path = ["std".to_string(), "environ".to_string(), "get_as".to_string()];
-
-        let emitted = emitter
-            .emit_canonical_callee_path(&path, false, Some(&selected))?
-            .ok_or("expected a canonical callee path")?;
-
-        assert!(
-            render(emitted).ends_with(&format!("::{selected}")),
-            "the callee must name the declaration lowering selected"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_callee_path_into_a_dependency_keeps_its_plain_spelling() -> Result<(), Box<dyn std::error::Error>> {
-        // A `pub::` dependency exports the plain name, and its crate path resolves it. Standing a projection in here
-        // named something that crate does not export, which is why the fallback is confined to stdlib paths.
-        let registry = FunctionRegistry::new();
-        let emitter = IrEmitter::new(&registry);
-        let selected = encode_incan_symbol_identity(&CanonicalSymbolId {
-            namespace: SymbolNamespace::OrdinaryLexical,
-            origin: SymbolOrigin::Package {
-                library: "filterkit_core".to_string(),
-                module_path: vec!["main".to_string()],
-            },
-            declaration_name: "filter".to_string(),
-            kind: SemanticSourceTargetKind::Function,
-            scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(1, 2),
-        });
-        let path = ["pub".to_string(), "filterkit".to_string(), "filter".to_string()];
-
-        let emitted = emitter.emit_canonical_callee_path(&path, false, Some(&selected))?;
-
-        if let Some(tokens) = emitted {
-            assert!(
-                render(tokens).ends_with("::filter"),
-                "a dependency call keeps the spelling its crate exports"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn a_callee_path_ignores_a_resolved_name_that_is_not_an_incan_projection() -> Result<(), Box<dyn std::error::Error>>
-    {
-        // The same slot carries ordinary bindings -- vocab helper functions among them -- whose names are local
-        // spellings, not declarations any provider exports.
-        let registry = FunctionRegistry::new();
-        let emitter = IrEmitter::new(&registry);
-        let path = ["std".to_string(), "environ".to_string(), "get_as".to_string()];
-
-        let emitted = emitter
-            .emit_canonical_callee_path(&path, false, Some("__incan_vocab_helper_query_filter"))?
-            .ok_or("expected a canonical callee path")?;
-
-        assert!(
-            render(emitted).ends_with("::get_as"),
-            "only a reserved Incan projection may stand in for the source spelling"
-        );
-        Ok(())
     }
 
     fn rust_call_target(name: &str) -> TypedExpr {
