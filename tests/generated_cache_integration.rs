@@ -242,7 +242,7 @@ fn normal_oven_reuses_sealed_inputs_offline_across_projects() -> Result<(), Box<
     let mut first_bake = baker_incan_command(&first_root, &incan_home);
     first_bake.args(["oven", "bake", "--project", "."]);
     run_checked(first_bake, "explicit Oven bake before sealed cross-project reuse")?;
-    fs::copy(first_root.join("incan.lock"), second_root.join("incan.lock"))?;
+    fs::copy(first_root.join("oven.lock"), second_root.join("oven.lock"))?;
 
     let mut first_build = guarded_incan_command(&first_root, &incan_home, &guard_root, &marker)?;
     // This retired limit must not influence an Oven command or create its removed cache.
@@ -303,13 +303,13 @@ fn explicitly_baked_project_reuses_release_json_authority_without_cargo() -> Res
         !marker.exists(),
         "initial project lock launched the guarded Cargo executable"
     );
-    let locked_before_bake = fs::read(project_root.join("incan.lock"))?;
+    let locked_before_bake = fs::read(project_root.join("oven.lock"))?;
 
     let mut bake = baker_incan_command(&project_root, &incan_home);
     bake.args(["oven", "bake", "--project", "."]);
     run_checked(bake, "explicit Oven bake for release-owned JSON authority")?;
     assert_eq!(
-        fs::read(project_root.join("incan.lock"))?,
+        fs::read(project_root.join("oven.lock"))?,
         locked_before_bake,
         "explicit project bake changed the canonical lock after the initial fixed point"
     );
@@ -392,7 +392,7 @@ fn explicitly_baked_project_reuses_release_json_authority_without_cargo() -> Res
         String::from_utf8_lossy(&lock_drift_output.stderr)
     );
     assert!(
-        diagnostics.contains("incan.lock is out of date"),
+        diagnostics.contains("oven.lock is out of date"),
         "locked manifest drift did not fail at the canonical lock boundary:\n{diagnostics}"
     );
     assert!(
@@ -417,7 +417,7 @@ fn concurrent_normal_oven_builds_ignore_cargo_rustc_wrapper() -> Result<(), Box<
     let mut first_bake = baker_incan_command(&first_root, &incan_home);
     first_bake.args(["oven", "bake", "--project", "."]);
     run_checked(first_bake, "one explicit Oven bake before concurrent replay")?;
-    fs::copy(first_root.join("incan.lock"), second_root.join("incan.lock"))?;
+    fs::copy(first_root.join("oven.lock"), second_root.join("oven.lock"))?;
 
     let barrier = Arc::new(Barrier::new(3));
     let first_barrier = Arc::clone(&barrier);

@@ -3094,11 +3094,11 @@ def captured_resource() -> int:
             &FeatureSelection::default(),
             None,
         ) {
-            Ok(()) => return Err("a frozen Oven test created an incan.lock through Cargo".into()),
+            Ok(()) => return Err("a frozen Oven test created an oven.lock through Cargo".into()),
             Err(error) => error,
         };
 
-        assert!(error.message.contains("incan.lock is missing; run `incan lock`"));
+        assert!(error.message.contains("oven.lock is missing; run `incan lock`"));
         Ok(())
     }
 

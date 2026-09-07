@@ -13197,7 +13197,7 @@ def main() -> None:
             String::from_utf8_lossy(&lock_output.stdout),
             String::from_utf8_lossy(&lock_output.stderr)
         );
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
         let mut lock = incan::lockfile::IncanLock::load(&lock_path)?;
         lock.format = 1;
         lock.write(&lock_path)?;
@@ -20195,7 +20195,7 @@ def main() -> None:
             String::from_utf8_lossy(&consumer_bake.stdout),
             String::from_utf8_lossy(&consumer_bake.stderr)
         );
-        let lock_path = project_root.join("incan.lock");
+        let lock_path = project_root.join("oven.lock");
         let baked_lock_bytes = std::fs::read(&lock_path)?;
 
         let build_out_dir = project_root.join("out");

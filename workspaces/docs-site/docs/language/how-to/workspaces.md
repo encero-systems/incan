@@ -1,6 +1,6 @@
 # Work with a multi-project workspace
 
-Use a workspace when several ordinary Incan projects share one repository and should use deterministic command selection, reusable dependency declarations, and one canonical `incan.lock`. Each member keeps its own project name, version, source tree, and publication lifecycle.
+Use a workspace when several ordinary Incan projects share one repository and should use deterministic command selection, reusable dependency declarations, and one canonical `oven.lock`. Each member keeps its own project name, version, source tree, and publication lifecycle.
 
 ## Create two member projects
 
@@ -92,7 +92,7 @@ incan lock
 incan workspace inspect --format json
 ```
 
-The workspace always publishes one canonical `incan.lock` at the workspace root. Do not commit member-local lockfiles as authorities; the inspector reports any stale member-local locks so they can be removed deliberately. Builds and tests attribute their semantic and backend closure to the selected member while consuming the same root lock.
+The workspace always publishes one canonical `oven.lock` at the workspace root. Do not commit member-local lockfiles as authorities; the inspector reports any stale member-local locks so they can be removed deliberately. Builds and tests attribute their semantic and backend closure to the selected member while consuming the same root lock.
 
 ## Choose rooted or virtual layout deliberately
 

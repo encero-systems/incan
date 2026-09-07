@@ -384,7 +384,7 @@ fn write_locked_oven_interop_plan(root: &Path) -> Result<(), Box<dyn std::error:
         },
         String::new(),
     );
-    lock.write(&root.join("incan.lock"))?;
+    lock.write(&root.join("oven.lock"))?;
     Ok(())
 }
 
@@ -416,7 +416,7 @@ fn write_locked_workspace_oven_interop_plan(
         },
         String::new(),
     );
-    lock.write(&workspace_root.join("incan.lock"))?;
+    lock.write(&workspace_root.join("oven.lock"))?;
     Ok(())
 }
 
@@ -1636,7 +1636,7 @@ default-members = ["zebra", "alpha"]
             format!("[project]\nname = \"{name}\"\n"),
         )?;
     }
-    fs::write(root.path().join("packages/zebra/incan.lock"), "obsolete member lock")?;
+    fs::write(root.path().join("packages/zebra/oven.lock"), "obsolete member lock")?;
 
     let default_output = run_incan(root.path(), &["workspace", "inspect", "--format", "json"])?;
     assert_success(&default_output, "workspace inspect from root");
@@ -1719,7 +1719,7 @@ itoa = "1"
 
     let output = run_incan(&root.path().join("packages/alpha"), &["lock"])?;
     assert_success(&output, "incan lock from workspace member");
-    let root_lock = root.path().join("incan.lock");
+    let root_lock = root.path().join("oven.lock");
     assert!(root_lock.is_file(), "workspace root lock was not written");
     let lock = incan::lockfile::IncanLock::load(&root_lock)?;
     assert_eq!(
@@ -1765,8 +1765,8 @@ itoa = "1"
         Some(2)
     );
     assert!(
-        !root.path().join("packages/alpha/incan.lock").exists()
-            && !root.path().join("packages/zebra/incan.lock").exists(),
+        !root.path().join("packages/alpha/oven.lock").exists()
+            && !root.path().join("packages/zebra/oven.lock").exists(),
         "workspace members must not receive authoritative lockfiles"
     );
     for (name, _) in [("alpha", "1.2.3"), ("zebra", "4.5.6")] {
@@ -1870,7 +1870,7 @@ members = ["packages/member"]
     let output = run_incan(root.path(), &["lock"])?;
     assert_success(&output, "rooted workspace lock without scripts");
 
-    let root_lock = root.path().join("incan.lock");
+    let root_lock = root.path().join("oven.lock");
     assert!(root_lock.is_file(), "rooted workspace lock was not written");
     let lock = incan::lockfile::IncanLock::load(&root_lock)?;
     let roots = lock
@@ -1881,7 +1881,7 @@ members = ["packages/member"]
         .collect::<Vec<_>>();
     assert_eq!(roots, vec!["", "packages/member"]);
     assert!(
-        !member.join("incan.lock").exists(),
+        !member.join("oven.lock").exists(),
         "a workspace member must not receive a second authoritative lock"
     );
     Ok(())
@@ -1937,7 +1937,7 @@ root_lib = { workspace = true }
 
         let lock_output = run_incan(root, &["lock"])?;
         assert_success(&lock_output, "rooted workspace lock generation");
-        Ok(incan::lockfile::IncanLock::load(&root.join("incan.lock"))?)
+        Ok(incan::lockfile::IncanLock::load(&root.join("oven.lock"))?)
     }
 
     let temp = tempfile::tempdir()?;
@@ -2151,7 +2151,7 @@ def test_workspace_rust_dependency_is_available() -> None:
 
     assert!(!root.path().join("target").exists());
     assert!(!incan_home.exists());
-    assert!(!root.path().join("incan.lock").exists());
+    assert!(!root.path().join("oven.lock").exists());
 
     // The same cold fixture covers both #908/#909's selected-root artifact and #931's bounded Oven
     // admission/fixed-point contract. The explicit package bake is the only permitted provider publication step.
@@ -2180,7 +2180,7 @@ def test_workspace_rust_dependency_is_available() -> None:
     );
     assert_success(&provider_bake_output, "cold rooted workspace provider publication");
 
-    let lock_path = root.path().join("incan.lock");
+    let lock_path = root.path().join("oven.lock");
     assert!(
         lock_path.is_file(),
         "the explicit project bake must publish the canonical workspace lock before sealing its completed Loaf"
@@ -2401,7 +2401,7 @@ def test_workspace_rust_dependency_is_available() -> None:
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(
-            diagnostic.contains("workspace incan.lock is out of date"),
+            diagnostic.contains("workspace oven.lock is out of date"),
             "{description} did not preserve strict-lock diagnostic precedence:\n{diagnostic}"
         );
         assert!(
@@ -2427,7 +2427,7 @@ def test_workspace_rust_dependency_is_available() -> None:
         String::from_utf8_lossy(&non_strict.stderr)
     );
     assert!(
-        non_strict_diagnostic.contains("workspace incan.lock is out of date; continuing without using it"),
+        non_strict_diagnostic.contains("workspace oven.lock is out of date; continuing without using it"),
         "non-strict stale-lock build did not expose its tolerated-stale authority decision:\n{non_strict_diagnostic}"
     );
     assert_eq!(fs::read_to_string(&lock_path)?, stale_lock);
@@ -2530,7 +2530,7 @@ path = "../vendor/foo-v2"
         &bake_output,
         "explicit Oven bake for the selected unreferenced workspace member",
     );
-    let canonical = incan::lockfile::IncanLock::load(&root.path().join("incan.lock"))?;
+    let canonical = incan::lockfile::IncanLock::load(&root.path().join("oven.lock"))?;
     let member_roots = canonical
         .semantic
         .workspace_members
@@ -2639,17 +2639,17 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     assert_success(&left_output, "first concurrent workspace lock publisher");
     assert_success(&right_output, "second concurrent workspace lock publisher");
 
-    let lock_path = root.path().join("incan.lock");
+    let lock_path = root.path().join("oven.lock");
     let lock = incan::lockfile::IncanLock::load(&lock_path)?;
     assert!(!lock.deps_fingerprint.is_empty());
     assert!(
         root.path()
-            .join("target/incan_lock/.incan.lock.publication.lock")
+            .join("target/incan_lock/.oven.lock.publication.lock")
             .is_file(),
         "concurrent publishers must share one stable compiler-owned publication lock"
     );
     assert!(
-        !root.path().join(".incan.lock.incan.lock").exists(),
+        !root.path().join(".oven.lock.incan.lock").exists(),
         "concurrent lock publication must not leave a persistent project-root sidecar"
     );
     assert!(
@@ -3780,7 +3780,7 @@ def main() -> None:
     fs::create_dir_all(relocated_root.join("src"))?;
     for relative_path in [
         "incan.toml",
-        "incan.lock",
+        "oven.lock",
         "fixture.h",
         "src/fixture.incn",
         "src/main.incn",
@@ -5505,7 +5505,7 @@ beta = []
         ],
     )?;
     assert_success(&lock, "semantic lock generation with transient selections");
-    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("oven.lock"))?)?;
     assert_eq!(lock["semantic"]["sdk"]["profile"].as_str(), Some("minimal"));
     let locked_package = lock["semantic"]["packages"]
         .as_array()
@@ -5568,7 +5568,7 @@ beta = []
         );
         let stderr = String::from_utf8_lossy(&build.stderr);
         assert!(
-            stderr.contains("incan.lock") && stderr.contains("out of date") && stderr.contains("Run `incan lock`"),
+            stderr.contains("oven.lock") && stderr.contains("out of date") && stderr.contains("Run `incan lock`"),
             "locked projection drift should fail as stale lock state:\n{stderr}"
         );
     }
@@ -6041,16 +6041,16 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     )?;
 
     assert_success(&output, "incan lock");
-    let lock = fs::read_to_string(tmp.path().join("incan.lock"))?;
+    let lock = fs::read_to_string(tmp.path().join("oven.lock"))?;
     assert!(lock.contains("# Auto-generated by Incan - do not edit manually"));
     assert!(lock.contains("[incan]"));
     assert!(
         !lock.contains("generated ="),
-        "incan.lock must not include volatile generation timestamps"
+        "oven.lock must not include volatile generation timestamps"
     );
     assert!(lock.contains("deps-fingerprint = \"sha256:"));
     assert!(lock.contains("[cargo]"));
-    let parsed = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let parsed = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(
         parsed.cargo_lock_payload, "version = 4\n",
         "normal `incan lock` records semantic Incan state, not a generated Cargo resolution"
@@ -6061,7 +6061,7 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
         &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
     assert_success(&second_output, "second incan lock");
-    let second_lock = fs::read_to_string(tmp.path().join("incan.lock"))?;
+    let second_lock = fs::read_to_string(tmp.path().join("oven.lock"))?;
     assert_eq!(lock, second_lock, "relocking unchanged inputs must be deterministic");
     Ok(())
 }
@@ -6086,7 +6086,7 @@ fn lock_generates_semantic_state_without_starting_cargo() -> Result<(), Box<dyn 
         "normal incan lock must not launch Cargo; stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let lock = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let lock = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(lock.cargo_lock_payload, "version = 4\n");
     Ok(())
 }
@@ -6136,7 +6136,7 @@ output = "fixture_bridge"
 
     let lock_output = run_incan_with_env(tmp.path(), &["lock", main_arg], &[("INCAN_HOME", incan_home)])?;
     assert_success(&lock_output, "incan lock with declared Oven interop requirements");
-    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("oven.lock"))?)?;
     let target = lock["semantic"]["oven"]["interop"]
         .as_array()
         .and_then(|targets| targets.first())
@@ -6172,7 +6172,7 @@ output = "fixture_bridge"
     )?;
     assert_failure(&stale, "locked build after declared interop input drift");
     assert!(
-        String::from_utf8_lossy(&stale.stderr).contains("incan.lock is out of date"),
+        String::from_utf8_lossy(&stale.stderr).contains("oven.lock is out of date"),
         "declared interop input drift should invalidate the lock:\n{}",
         String::from_utf8_lossy(&stale.stderr)
     );
@@ -6205,7 +6205,7 @@ api-level = 34
 
     let lock_output = run_incan(tmp.path(), &["lock", main_arg])?;
     assert_success(&lock_output, "incan lock with Android platform requirements");
-    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("oven.lock"))?)?;
     let target = lock["semantic"]["oven"]["interop"]
         .as_array()
         .and_then(|targets| targets.first())
@@ -6388,7 +6388,7 @@ output = "llama_bridge"
     )?;
     assert_failure(&stale, "stale interop plan inspection");
     assert!(
-        String::from_utf8_lossy(&stale.stderr).contains("incan.lock Oven interop requirements are out of date"),
+        String::from_utf8_lossy(&stale.stderr).contains("oven.lock Oven interop requirements are out of date"),
         "unexpected stale interop-plan diagnostic:\n{}",
         String::from_utf8_lossy(&stale.stderr)
     );
@@ -6439,7 +6439,7 @@ capability = "apple.framework.Accelerate"
     // ---- Publish the one canonical workspace lock ----
     write_locked_workspace_oven_interop_plan(root.path(), &member)?;
     assert!(
-        root.path().join("incan.lock").is_file() && !member.join("incan.lock").exists(),
+        root.path().join("oven.lock").is_file() && !member.join("oven.lock").exists(),
         "interop workspace fixture did not publish exactly one canonical root lock"
     );
 
@@ -6746,8 +6746,8 @@ bitflags = "=1.3.2"
 
     let first_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
     assert_success(&first_output, "canonical lock with bitflags 1.3.2");
-    let first_bytes = fs::read(tmp.path().join("incan.lock"))?;
-    let first = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let first_bytes = fs::read(tmp.path().join("oven.lock"))?;
+    let first = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(
         first.cargo_lock_payload, "version = 4\n",
         "normal lock generation must not resolve a Cargo package graph"
@@ -6758,8 +6758,8 @@ bitflags = "=1.3.2"
     fs::write(&manifest_path, first_manifest.replace("=1.3.2", "=2.11.0"))?;
     let second_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
     assert_success(&second_output, "canonical lock with bitflags 2.11.0");
-    let second_bytes = fs::read(tmp.path().join("incan.lock"))?;
-    let second = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let second_bytes = fs::read(tmp.path().join("oven.lock"))?;
+    let second = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(second.cargo_lock_payload, "version = 4\n");
     assert_ne!(
         first.deps_fingerprint, second.deps_fingerprint,
@@ -6815,7 +6815,7 @@ pub def exported_value() -> int:
         "explicit Oven bake must materialize a caller-owned direct-rustc release artifact"
     );
     assert!(
-        tmp.path().join("incan.lock").is_file(),
+        tmp.path().join("oven.lock").is_file(),
         "explicit Oven bake must publish the canonical project lock"
     );
     assert!(
@@ -6949,7 +6949,7 @@ pub def join_ranges(text: str, start: int, middle: int, end: int) -> str:
 }
 
 fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let lock_path = root.join("incan.lock");
+    let lock_path = root.join("oven.lock");
     let original = fs::read_to_string(&lock_path)?;
     let stale = original.replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale");
     fs::write(lock_path, &stale)?;
@@ -6985,17 +6985,17 @@ def test_smoke() -> None:
 
     assert_success(&build_output, "incan build with stale lockfile by default");
     assert_eq!(
-        fs::read_to_string(tmp.path().join("incan.lock"))?,
+        fs::read_to_string(tmp.path().join("oven.lock"))?,
         stale_lock,
-        "default build must not rewrite an existing stale incan.lock"
+        "default build must not rewrite an existing stale oven.lock"
     );
 
     let test_output = run_incan(tmp.path(), &["test"])?;
     assert_success(&test_output, "incan test with stale lockfile by default");
     assert_eq!(
-        fs::read_to_string(tmp.path().join("incan.lock"))?,
+        fs::read_to_string(tmp.path().join("oven.lock"))?,
         stale_lock,
-        "default test must not rewrite an existing stale incan.lock"
+        "default test must not rewrite an existing stale oven.lock"
     );
     Ok(())
 }
@@ -7687,8 +7687,8 @@ edition = "2021"
     let assert_no_stale_warning = |output: &Output, context: &str| {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            !stderr.contains("incan.lock is out of date"),
-            "{context} should not warn that incan.lock is stale, got:\n{stderr}"
+            !stderr.contains("oven.lock is out of date"),
+            "{context} should not warn that oven.lock is stale, got:\n{stderr}"
         );
     };
 
@@ -8639,7 +8639,7 @@ def main() -> None:
     assert_failure(&build_output, "incan build --locked with stale lockfile");
     let stderr = String::from_utf8_lossy(&build_output.stderr);
     assert!(
-        stderr.contains("incan.lock is out of date"),
+        stderr.contains("oven.lock is out of date"),
         "locked build should report stale lockfile, got:\n{stderr}"
     );
     assert!(
@@ -8666,12 +8666,41 @@ fn build_frozen_rejects_missing_lockfile() -> Result<(), Box<dyn std::error::Err
     assert_failure(&build_output, "incan build --frozen without lockfile");
     let stderr = String::from_utf8_lossy(&build_output.stderr);
     assert!(
-        stderr.contains("incan.lock is missing; run `incan lock`"),
+        stderr.contains("oven.lock is missing; run `incan lock`"),
         "frozen build should report missing lockfile, got:\n{stderr}"
     );
     assert!(
-        !tmp.path().join("incan.lock").exists(),
-        "frozen build must not create incan.lock after rejecting a missing lockfile"
+        !tmp.path().join("oven.lock").exists(),
+        "frozen build must not create oven.lock after rejecting a missing lockfile"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_frozen_does_not_read_a_pre_rename_lock() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "cli_pre_rename_lock_project", "")?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    // Generate a genuinely current lock, then give it the pre-rename name. RFC 117 makes `oven.lock` the sole
+    // generated resolution state and says `incan.lock` is not read afterwards, so the planted file must be invisible
+    // rather than read and rejected. Planting a hand-written file could not tell those two outcomes apart: a frozen
+    // build would fail either way, and for the wrong reason.
+    let lock_output = run_incan(tmp.path(), &["lock", main_arg])?;
+    assert_success(&lock_output, "incan lock before renaming the generated lock");
+    fs::rename(tmp.path().join("oven.lock"), tmp.path().join("incan.lock"))?;
+
+    let build_output = run_incan(tmp.path(), &["build", "--frozen", main_arg])?;
+
+    assert_failure(&build_output, "incan build --frozen with only a pre-rename lock");
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
+    assert!(
+        stderr.contains("oven.lock is missing; run `incan lock`"),
+        "a project holding only the pre-rename lock must report the canonical lock missing, got:\n{stderr}"
+    );
+    assert!(
+        tmp.path().join("incan.lock").is_file(),
+        "the pre-rename lock is inert state, not something the compiler consumes or removes"
     );
     Ok(())
 }

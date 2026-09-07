@@ -2126,7 +2126,7 @@ mod tests {
         // RFC 117 settles both spellings. Asserted against literals rather than the constants so a capitalized
         // reintroduction fails here instead of passing quietly on a case-insensitive filesystem.
         assert_eq!(LOAF_MANIFEST_FILENAME, "loaf.toml");
-        assert_eq!(crate::lockfile::LOCK_FILENAME, "incan.lock");
+        assert_eq!(crate::lockfile::LOCK_FILENAME, "oven.lock");
     }
 
     #[test]

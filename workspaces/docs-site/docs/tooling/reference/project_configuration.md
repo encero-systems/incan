@@ -13,7 +13,7 @@ my_project/
 ├── tests/
 │   └── test_main.incn
 ├── incan.toml            # Project manifest
-└── incan.lock            # Generated lock file (commit to VCS)
+└── oven.lock            # Generated lock file (commit to VCS)
 ```
 
 You can scaffold a full new project (manifest, entry point, starter test, README, and `.gitignore`) with `incan new`. Use `incan init` when you already have a directory and want to add Incan project files there.
