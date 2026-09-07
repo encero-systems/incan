@@ -119,7 +119,20 @@ impl<'a> IrEmitter<'a> {
                     target_qualifier.as_ref(),
                     &emitted_target_path,
                 );
+                // A public alias of a projected declaration has to carry the projection itself, not only the alias
+                // spelling. A module re-exporting this one reaches the declaration the way every reference does --
+                // by its projection -- and an alias-only re-export left that name absent here.
+                let projection_reexport = matches!(visibility, super::super::decl::Visibility::Public)
+                    .then(|| {
+                        emitted_target_path
+                            .last()
+                            .filter(|name| name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX))
+                            .map(|_| quote! { #vis use #target; })
+                    })
+                    .flatten()
+                    .unwrap_or_default();
                 Ok(quote! {
+                    #projection_reexport
                     #vis use #target as #name_ident;
                 })
             }
