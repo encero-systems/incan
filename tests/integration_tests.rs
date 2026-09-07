@@ -14634,8 +14634,11 @@ def main() -> None:
         );
         let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         let normalized: String = generated_main.chars().filter(|c| !c.is_whitespace()).collect();
+        // Assert the wrapping, not the callee's spelling. RFC 120 projections emit a linker-visible
+        // `__incan_v1_...` name for `lit`, so pinning the source spelling tested the projection rather than the union
+        // arm this case exists for. The leading `(` still proves the literal reaches the call as the argument itself.
         assert!(
-            normalized.contains("lit(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"),
+            normalized.contains("(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string())"),
             "expected string literal to be wrapped directly as the union string arm, got:\n{generated_main}"
         );
         assert!(

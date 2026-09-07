@@ -708,7 +708,6 @@ pub(super) struct PreparedModuleHarness {
 }
 
 /// Return the generated function name that contains the post-yield teardown body.
-/// Return the generated function name that contains the post-yield teardown body.
 fn yield_fixture_teardown_name(name: &str) -> String {
     format!("__incan_fixture_teardown_{}", safe_fixture_ident(name))
 }
