@@ -1339,6 +1339,10 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
 
     let path = Path::new(path);
     enforce_test_path_toolchain_constraint(path)?;
+    // `incan test` builds and runs under Oven authority like `build` and `run`, so RFC 117 rule 11 applies here too.
+    crate::cli::commands::common::warn_once_about_ignored_cargo_manifest(
+        &crate::cli::commands::common::resolve_project_root(path),
+    );
     let stable_id_root = stable_id_root(path);
     let candidates = discover_test_file_candidates(path);
     if candidates.is_empty() {
