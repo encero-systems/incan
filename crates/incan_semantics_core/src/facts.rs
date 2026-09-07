@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::IncanType;
 
 /// Kind of compiler-owned node that can receive semantic facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CompilerNodeKind {
     /// A package selected at a command/session boundary.
     Package,
@@ -44,7 +44,7 @@ impl CompilerNodeKind {
 /// The `path` is intentionally semantic rather than Rust-shaped. Current bridge code may derive it from spans or
 /// source paths at first, but consumers should treat the rendered form as a compiler identity, not as an emitted Rust
 /// item path.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CompilerNodeId {
     kind: CompilerNodeKind,
     path: String,

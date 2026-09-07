@@ -28,6 +28,7 @@ use incan_core::lang::keywords::KeywordId;
 pub mod authority;
 pub mod body_ir;
 pub mod emitted_symbol;
+pub mod executable_representation;
 mod facts;
 mod hir;
 pub mod receipts;
