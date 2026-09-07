@@ -4406,6 +4406,70 @@ def f() -> None:
 }
 
 #[test]
+fn module_style_item_import_carries_the_declaration_signature_issue1407() -> Result<(), Box<dyn std::error::Error>> {
+    // `import dep::give_float` bound its last segment as if it named a module: the name resolved, so nothing
+    // reported an error, but the binding carried no signature and the call inferred `Unknown`. Arithmetic on the
+    // result then failed with `expected 'numeric', found '? + ?'`, pointing at the arithmetic rather than at the
+    // import — `examples/advanced/multifile` had not typechecked for exactly this reason.
+    let dep_source = r#"
+pub def give_float(n: int) -> float:
+  return float(n)
+"#;
+    let module_style = r#"
+import dep::give_float
+
+def main() -> None:
+  a = give_float(1)
+  b = give_float(2)
+  total = a + b
+  println(f"{total}")
+"#;
+    // The same program in the other spelling, which already worked. Both are checked here so the two import
+    // surfaces cannot drift apart again without this failing.
+    let from_style = r#"
+from dep import give_float
+
+def main() -> None:
+  a = give_float(1)
+  b = give_float(2)
+  total = a + b
+  println(f"{total}")
+"#;
+
+    // The reference documents `import utils::format_currency as fmt`, so the aliased spelling has to carry the
+    // signature too, under the alias.
+    let aliased_module_style = r#"
+import dep::give_float as give
+
+def main() -> None:
+  a = give(1)
+  b = give(2)
+  total = a + b
+  println(f"{total}")
+"#;
+
+    for (label, source) in [
+        ("module style", module_style),
+        ("aliased module style", aliased_module_style),
+        ("from style", from_style),
+    ] {
+        let dep_tokens =
+            lexer::lex(dep_source).map_err(|errs| std::io::Error::other(format!("lex dep failed: {errs:?}")))?;
+        let dep_ast =
+            parser::parse(&dep_tokens).map_err(|errs| std::io::Error::other(format!("parse dep failed: {errs:?}")))?;
+        let tokens =
+            lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{label}: lex failed: {errs:?}")))?;
+        let ast =
+            parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{label}: parse failed: {errs:?}")))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_with_imports(&ast, &[("dep", &dep_ast)])
+            .map_err(|errs| std::io::Error::other(format!("{label}: {errs:?}")))?;
+    }
+    Ok(())
+}
+
+#[test]
 fn test_rust_from_import_shadows_dependency_type_for_rust_display_name() -> Result<(), Box<dyn std::error::Error>> {
     let dep_source = r#"
 pub model Duration:
