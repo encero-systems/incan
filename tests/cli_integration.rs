@@ -8671,6 +8671,51 @@ fn build_frozen_rejects_missing_lockfile() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn a_cargo_manifest_beside_a_loaf_manifest_warns_without_stopping_the_build() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "cli_ignored_cargo_project", "")?;
+    // Deliberately a Cargo manifest that would fail if anything tried to use it: rule 11 requires Oven to ignore the
+    // file, not to parse it and find it acceptable.
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"not-a-real-crate\"\nversion = \"0.0.0\"\n\n[dependencies]\nthis-crate-does-not-exist = \"9999\"\n",
+    )?;
+
+    // Rule 11's subject is Oven, so the warning is emitted where Oven takes authority over the project rather than at
+    // manifest discovery. `incan check` never reaches that point and stays silent, which is why this drives a build.
+    let assert_rule_11 = |output: &Output, context: &str| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Cargo.toml"),
+            "{context}: rule 11 requires the diagnostic to name the ignored file, got:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("Cargo-compatibility mode"),
+            "{context}: rule 11 requires the diagnostic to explain explicit Cargo-compatibility selection, got:\n{stderr}"
+        );
+        assert_eq!(
+            stderr.matches("Cargo files here do not contribute").count(),
+            1,
+            "{context}: one command must warn once, got:\n{stderr}"
+        );
+    };
+
+    let bake_output = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake_output, "incan oven bake with an ignored Cargo.toml");
+    assert_rule_11(&bake_output, "oven bake");
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&build_output, "incan build with an ignored Cargo.toml");
+    assert_rule_11(&build_output, "build");
+
+    Ok(())
+}
+
+#[test]
 fn build_frozen_does_not_read_a_pre_rename_lock() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_pre_rename_lock_project", "")?;
