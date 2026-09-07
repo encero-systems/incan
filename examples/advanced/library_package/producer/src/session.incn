@@ -1,0 +1,26 @@
+"""A running basket, so callers can price several items without re-summing the list themselves."""
+
+from pricing import LineItem, subtotal
+
+
+pub model Session:
+    """One customer's basket: the items added so far, in the order they were added."""
+
+    items: list[LineItem]
+
+    @staticmethod
+    def empty() -> Session:
+        """Start a basket with nothing in it."""
+        return Session(items=[])
+
+    def add(mut self, item: LineItem) -> None:
+        """Put one line item into the basket."""
+        self.items.append(item)
+
+    def count(self) -> int:
+        """Return how many line items the basket holds."""
+        return len(self.items)
+
+    def total(self) -> float:
+        """Return what the basket costs, summing each line's own subtotal."""
+        return self.items.iter().map(subtotal).sum()

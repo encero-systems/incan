@@ -1,0 +1,101 @@
+"""
+Reading a binary sensor feed: exact widths, an agreed byte order, and a stream that can fail while you iterate it.
+
+`BytesIO` is a cursor over bytes that are already in memory, so a frame format can be written and read without
+touching the filesystem. Reads and writes are selected by the exact-width type, and the byte order is spelled at
+every call rather than assumed once at the top of the file.
+
+The chunk stream is the part that has no Python equivalent. Ordinary iteration has two outcomes, an item or the end;
+a fallible stream has three, because the source can fail while being asked for the next item. The `?` in the loop
+header is what makes that third outcome visible: it propagates the read error out of this function instead of
+letting the loop end quietly as though the data had simply run out.
+
+Python equivalent:
+```python
+import io, struct
+
+def encode_frame(reading, sequence):
+    return struct.pack("<HI", reading, sequence)
+
+def read_frame(raw):
+    return struct.unpack("<HI", raw)
+
+def frame_sizes(raw):
+    stream = io.BytesIO(raw)
+    sizes = []
+    while chunk := stream.read(6):   # a read error here just raises
+        sizes.append(len(chunk))
+    return sizes
+```
+"""
+
+from std.io import BytesIO, Endian, IoError
+
+
+def encode_frame(reading: u16, sequence: u32) -> Result[bytes, IoError]:
+    """Write one six-byte frame: a two-byte reading then a four-byte sequence number, little-endian."""
+    mut out = BytesIO()
+    out.write(reading, Endian.Little)?
+    out.write(sequence, Endian.Little)?
+    return Ok(out.getvalue())
+
+
+def read_frame(raw: bytes) -> Result[str, IoError]:
+    """Read one frame back. The expected width of each field is what selects the read, so it must be annotated."""
+    mut source = BytesIO(raw)
+    reading: u16 = source.read(Endian.Little)?
+    sequence: u32 = source.read(Endian.Little)?
+    return Ok(f"reading {reading} at sequence {sequence}")
+
+
+def frame_sizes(feed: bytes) -> Result[list[int], IoError]:
+    """
+    Walk a whole feed one frame at a time and report the size of each.
+
+    `chunks` hands back a fallible stream rather than a list, so nothing is materialized and a read failure has
+    somewhere to go. The trailing `?` on the loop header propagates that failure; a short final chunk is ordinary
+    data, and exhaustion ends the loop normally.
+    """
+    stream = BytesIO(feed).chunks(6)
+    mut sizes: list[int] = []
+    for frame in stream?:
+        sizes.append(len(frame))
+    return Ok(sizes)
+
+
+def whole_feed(feed: bytes) -> Result[list[bytes], IoError]:
+    """
+    Read the entire feed in one go instead of a frame at a time.
+
+    `collect` is the terminal form of the same stream: it folds every poll into one `Result`, so the caller decides
+    once whether the read succeeded rather than at each step.
+    """
+    stream = BytesIO(feed).chunks(6)
+    return stream.collect()
+
+
+def report_frame(frame: bytes) -> None:
+    """Print one encoded frame and the values it decodes back to."""
+    println(f"encoded {len(frame)} bytes")
+    match read_frame(frame):
+        Ok(description) => println(description)
+        Err(error) => println(f"could not read frame: {error.detail}")
+
+
+def main() -> None:
+    match encode_frame(220, 4):
+        Ok(frame) => report_frame(frame)
+        Err(error) => println(f"could not encode frame: {error.detail}")
+
+    # Two whole frames followed by a truncated one, so the last chunk is deliberately short.
+    feed = b"\xdc\x00\x04\x00\x00\x00\xe1\x00\x05\x00\x00\x00\xe2\x00"
+    match frame_sizes(feed):
+        Ok(sizes) =>
+            println(f"read {len(sizes)} frames")
+            for size in sizes:
+                println(f"  frame of {size} bytes")
+        Err(error) => println(f"feed stopped early: {error.detail}")
+
+    match whole_feed(feed):
+        Ok(frames) => println(f"the same feed collected in one call: {len(frames)} frames")
+        Err(error) => println(f"feed stopped early: {error.detail}")
