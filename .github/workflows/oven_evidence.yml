@@ -22,21 +22,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: linux-stable
-            name: ubuntu-latest, stable
+          - id: linux-rust-1-98
+            name: ubuntu-latest, Rust 1.98.0
             runner: ubuntu-latest
-            toolchain: stable
+            toolchain: 1.98.0
             benchmark: true
-          - id: macos-stable
-            name: macos-latest, stable
+          - id: macos-rust-1-98
+            name: macos-latest, Rust 1.98.0
             runner: macos-latest
-            toolchain: stable
+            toolchain: 1.98.0
             benchmark: true
-          - id: linux-msrv
-            name: ubuntu-latest, MSRV 1.93.0
-            runner: ubuntu-latest
-            toolchain: 1.93.0
-            benchmark: false
     steps:
       - uses: actions/checkout@v5
         with:

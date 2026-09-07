@@ -11,12 +11,12 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{
     collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
-    option_ty, render_resolved_type_as_rust_arg, string_method_return,
+    option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return, string_method_return,
 };
 use crate::frontend::typechecker::type_info::{
     CBindingEnumAccess, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse, RustTraitImportInfo,
 };
-use crate::frontend::typechecker::{IdentKind, canonical_public_library_type_name};
+use crate::frontend::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_core::interop::{
     RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustVisibility,
     metadata_free_method_signature,
@@ -24,6 +24,7 @@ use incan_core::interop::{
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::result_methods::ResultMethodId;
+use incan_core::lang::surface::string_methods::{self, SelectedStringMethodArgumentKind, StringMethodId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
@@ -35,6 +36,8 @@ use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::NumericFamily;
 use incan_core::lang::{conventions, stdlib};
 use incan_core::lang::{enum_helpers, surface::option_methods};
+use incan_semantics_core::body_ir::HelperOp;
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 use quote::ToTokens;
 use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 
@@ -56,6 +59,7 @@ struct MethodCandidate {
 
 struct SourceMethodPrepass<'a> {
     method: &'a str,
+    receiver_surface: MemberBindingSurface,
     type_args: &'a [Spanned<Type>],
     args: &'a [CallArg],
     span: Span,
@@ -389,6 +393,7 @@ impl TypeChecker {
             .zip(signature.params.iter())
             .map(|(param, expected)| {
                 let ty = expected.resolved_ty.clone();
+                self.validate_protected_builtin_binding(&param.node.name, param.span);
                 self.symbols.define(Symbol {
                     name: param.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
@@ -648,7 +653,7 @@ impl TypeChecker {
                     }
                 }
                 CallArg::Named(name, expr) => {
-                    let slot = match name.as_str() {
+                    let slot = match name.node.as_str() {
                         "value" => Some(&mut value),
                         "count" => Some(&mut count),
                         _ => None,
@@ -657,7 +662,7 @@ impl TypeChecker {
                         if let Some(first_expr) = *slot {
                             self.errors.push(errors::duplicate_call_argument(
                                 callee,
-                                name,
+                                &name.node,
                                 first_expr.span,
                                 expr.span,
                             ));
@@ -668,7 +673,7 @@ impl TypeChecker {
                         }
                     } else {
                         self.errors
-                            .push(errors::unknown_keyword_argument(callee, name, expr.span));
+                            .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
                         self.check_expr(expr);
                         valid = false;
                     }
@@ -829,6 +834,80 @@ impl TypeChecker {
             span,
         ));
         false
+    }
+
+    /// Validate an ordinary positional call before retaining a selected string-helper identity.
+    ///
+    /// The canonical signature comes from [`StringMethodId::selected_helper_signature`], while this frontend layer
+    /// projects its language-level argument kinds into [`ResolvedType`] values. Named and unpacked forms intentionally
+    /// do not acquire a helper identity: the string-method registry gives them neither parameter names nor unpacking
+    /// semantics, and assigning either here would make a frontend guess into a language contract.
+    fn validate_selected_string_helper_call(
+        &mut self,
+        method: StringMethodId,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> bool {
+        let Some(signature) = method.selected_helper_signature() else {
+            return false;
+        };
+
+        // Named and unpacked arguments have no selected-helper binding contract yet.
+        if !args.iter().all(|arg| matches!(arg, CallArg::Positional(_))) {
+            return false;
+        }
+
+        // The optional `split` separator is represented by a smaller required count than its positional shape.
+        let callee = format!("str.{}", string_methods::as_str(method));
+        let supplied = args.len();
+        let maximum = signature.positional_arguments.len();
+        if supplied < signature.required_positional_arguments {
+            self.errors.push(errors::builtin_arity(
+                callee.as_str(),
+                signature.required_positional_arguments,
+                supplied,
+                span,
+            ));
+            return false;
+        }
+        if supplied > maximum {
+            if signature.required_positional_arguments == maximum {
+                self.errors
+                    .push(errors::builtin_arity(callee.as_str(), maximum, supplied, span));
+            } else {
+                self.errors
+                    .push(errors::builtin_max_arity(callee.as_str(), maximum, supplied, span));
+            }
+            return false;
+        }
+
+        // Each admitted positional slot is checked against the source-owned helper signature.
+        let mut valid = true;
+        for ((arg, actual), expected_kind) in args
+            .iter()
+            .zip(arg_types.iter())
+            .zip(signature.positional_arguments.iter())
+        {
+            let expected = match expected_kind {
+                SelectedStringMethodArgumentKind::Str => ResolvedType::Str,
+                SelectedStringMethodArgumentKind::ListOfStr => list_ty(ResolvedType::Str),
+            };
+            let CallArg::Positional(expr) = arg else {
+                continue;
+            };
+            if !self.types_compatible(actual, &expected) {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    callee.as_str(),
+                    None,
+                    &expected.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+                valid = false;
+            }
+        }
+        valid
     }
 
     /// Build a resolved callable type from parameter and return types for adapter diagnostics.
@@ -1148,6 +1227,7 @@ impl TypeChecker {
         trait_name: &str,
         type_args: Vec<ResolvedType>,
         origin_module_path: Option<&[String]>,
+        implementation_type_params: Vec<ImplementationTypeParamInfo>,
         receiver_is_mutable: bool,
     ) -> crate::frontend::typechecker::ResolvedMethodDispatch {
         let module_path = origin_module_path
@@ -1157,6 +1237,7 @@ impl TypeChecker {
             trait_name: trait_name.to_string(),
             module_path,
             type_args,
+            implementation_type_params,
             receiver_is_mutable,
         }
     }
@@ -1168,6 +1249,149 @@ impl TypeChecker {
         };
         self.lookup_symbol(name)
             .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Enum(_))))
+    }
+
+    /// Build the canonical target for one member defined by a compiler-owned surface registry.
+    ///
+    /// Builtin members have no source declaration span, and [`CanonicalSymbolId`] has no separate member-owner slot.
+    /// Their registry declaration key is therefore owner-qualified (`List.append`, `str.upper`, and so on). The owner
+    /// and member are selected from typed compiler registries before this is called; source spelling alone is never
+    /// treated as semantic evidence.
+    fn compiler_builtin_member_identity(owner: &str, member: &str) -> CanonicalSymbolId {
+        CanonicalSymbolId {
+            namespace: SymbolNamespace::Member,
+            origin: SymbolOrigin::Builtin,
+            declaration_name: format!("{owner}.{member}"),
+            kind: SemanticSourceTargetKind::Method,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 0),
+        }
+    }
+
+    /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
+    fn synthetic_member_identity(
+        owner: &CanonicalSymbolId,
+        member: &str,
+        kind: SemanticSourceTargetKind,
+    ) -> CanonicalSymbolId {
+        CanonicalSymbolId {
+            namespace: SymbolNamespace::Member,
+            origin: owner.origin.clone(),
+            declaration_name: member.to_string(),
+            kind,
+            scope_discriminant: owner.scope_discriminant,
+            declaration_span: owner.declaration_span,
+        }
+    }
+
+    /// Resolve an owner declaration first, then mint its compiler-synthesized member target.
+    fn synthetic_member_identity_for_named_owner(
+        &self,
+        owner_name: &str,
+        member: &str,
+        kind: SemanticSourceTargetKind,
+    ) -> Option<CanonicalSymbolId> {
+        let owner_id = self.symbols.lookup(owner_name)?;
+        let owner = self.symbols.identity_of(owner_id)?;
+        Some(Self::synthetic_member_identity(owner, member, kind))
+    }
+
+    /// Record one compiler-generated member without classifying its generated Rust helper as a source declaration.
+    fn record_compiler_generated_member_identity(&mut self, owner_name: &str, member: &str, span: Span) {
+        let Some(identity) =
+            self.synthetic_member_identity_for_named_owner(owner_name, member, SemanticSourceTargetKind::Method)
+        else {
+            return;
+        };
+        self.type_info.record_resolved_identity(span, identity.clone());
+        self.type_info.record_compiler_generated_member_identity(identity);
+    }
+
+    /// Resolve a builtin method through its receiver and method registries, preserving owner discrimination.
+    fn compiler_builtin_method_identity(base_ty: &ResolvedType, method: &str) -> Option<CanonicalSymbolId> {
+        let (owner, member) = match base_ty {
+            ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool => {
+                let owner_id = super::super::numeric_type_id_for_compat(base_ty)?;
+                let owner = incan_core::lang::types::numerics::as_str(owner_id);
+                let member = if matches!(
+                    method,
+                    "resize" | "try_resize" | "wrapping_resize" | "saturating_resize"
+                ) {
+                    method
+                } else if matches!(
+                    incan_core::lang::types::numerics::info_for(owner_id).family,
+                    NumericFamily::BinaryFloat
+                ) {
+                    float_methods::from_str(method).map(float_methods::as_str)?
+                } else {
+                    return None;
+                };
+                (owner, member)
+            }
+            ResolvedType::Str => (
+                incan_core::lang::types::stringlike::as_str(incan_core::lang::types::stringlike::StringLikeId::Str),
+                string_methods::from_str(method).map(string_methods::as_str)?,
+            ),
+            ResolvedType::FrozenStr => (
+                incan_core::lang::types::stringlike::as_str(
+                    incan_core::lang::types::stringlike::StringLikeId::FrozenStr,
+                ),
+                string_methods::from_str(method).map(string_methods::as_str)?,
+            ),
+            ResolvedType::Bytes if method == "as_slice" => (
+                incan_core::lang::types::stringlike::as_str(incan_core::lang::types::stringlike::StringLikeId::Bytes),
+                "as_slice",
+            ),
+            ResolvedType::FrozenBytes => (
+                incan_core::lang::types::stringlike::as_str(
+                    incan_core::lang::types::stringlike::StringLikeId::FrozenBytes,
+                ),
+                frozen_bytes_methods::from_str(method).map(frozen_bytes_methods::as_str)?,
+            ),
+            ResolvedType::FrozenList(_) => (
+                incan_core::lang::types::collections::as_str(CollectionTypeId::FrozenList),
+                frozen_list_methods::from_str(method).map(frozen_list_methods::as_str)?,
+            ),
+            ResolvedType::FrozenSet(_) => (
+                incan_core::lang::types::collections::as_str(CollectionTypeId::FrozenSet),
+                frozen_set_methods::from_str(method).map(frozen_set_methods::as_str)?,
+            ),
+            ResolvedType::FrozenDict(_, _) => (
+                incan_core::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
+                frozen_dict_methods::from_str(method).map(frozen_dict_methods::as_str)?,
+            ),
+            ResolvedType::Generic(name, _) => match collection_type_id(name) {
+                Some(CollectionTypeId::List) => (
+                    incan_core::lang::types::collections::as_str(CollectionTypeId::List),
+                    list_methods::from_str(method).map(list_methods::as_str)?,
+                ),
+                Some(CollectionTypeId::Dict) => (
+                    incan_core::lang::types::collections::as_str(CollectionTypeId::Dict),
+                    dict_methods::from_str(method).map(dict_methods::as_str)?,
+                ),
+                Some(CollectionTypeId::Set) => (
+                    incan_core::lang::types::collections::as_str(CollectionTypeId::Set),
+                    set_methods::from_str(method).map(set_methods::as_str)?,
+                ),
+                Some(CollectionTypeId::Option) => (
+                    incan_core::lang::types::collections::as_str(CollectionTypeId::Option),
+                    option_methods::from_str(method)
+                        .map(option_methods::as_str)
+                        .or_else(|| (method == "clone").then_some("clone"))?,
+                ),
+                Some(CollectionTypeId::Result) => (
+                    incan_core::lang::types::collections::as_str(CollectionTypeId::Result),
+                    result_methods::from_str(method).map(result_methods::as_str)?,
+                ),
+                Some(CollectionTypeId::Generator) => (
+                    incan_core::lang::types::collections::as_str(CollectionTypeId::Generator),
+                    iterator_methods::from_str(method).map(iterator_methods::as_str)?,
+                ),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some(Self::compiler_builtin_member_identity(owner, member))
     }
 
     /// Typecheck built-in numeric resize helpers using the expected result type as the target.
@@ -1247,7 +1471,7 @@ impl TypeChecker {
         );
         match policy {
             NumericResizeMethodPolicy::Lossless => {
-                if !super::super::numeric_type_losslessly_widens_to(source, target) {
+                if !incan_core::numeric_values::numeric_type_losslessly_widens_to(source, target) {
                     self.errors.push(
                         errors::type_mismatch("lossless numeric resize target", &target_ty.to_string(), span)
                             .with_hint(
@@ -1588,7 +1812,7 @@ impl TypeChecker {
         if let Some(surface_ty) = self.resolve_surface_type_field_type(type_name, field) {
             return Some(surface_ty);
         }
-        let type_info = self.lookup_semantic_type_info(type_name)?;
+        let type_info = self.lookup_semantic_type_info(type_name)?.clone();
 
         let field_info = match type_info {
             TypeInfo::Model(model) => {
@@ -1602,7 +1826,11 @@ impl TypeChecker {
                     return Some(ResolvedType::Unknown);
                 }
                 let (_, info) = self.resolve_field_info(&model.fields, field, true, false)?;
-                if self.private_field_is_inaccessible(type_name, info) {
+                let info = info.clone();
+                if let Some(identity) = info.identity.clone() {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
+                if self.private_field_is_inaccessible(type_name, &info) {
                     self.errors.push(errors::private_field(type_name, field, span));
                     return Some(ResolvedType::Unknown);
                 }
@@ -1615,7 +1843,11 @@ impl TypeChecker {
             TypeInfo::Class(class) => {
                 // RFC 021: No alias-aware resolution for classes (models only)
                 let (_, info) = self.resolve_field_info(&class.fields, field, false, true)?;
-                if self.private_field_is_inaccessible(type_name, info) {
+                let info = info.clone();
+                if let Some(identity) = info.identity.clone() {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
+                if self.private_field_is_inaccessible(type_name, &info) {
                     self.errors.push(errors::private_field(type_name, field, span));
                     return Some(ResolvedType::Unknown);
                 }
@@ -1632,6 +1864,9 @@ impl TypeChecker {
                     .map(String::as_str)
                     .unwrap_or(field);
                 if enum_info.variants.iter().any(|variant| variant == canonical_variant) {
+                    if let Some(identity) = enum_info.variant_identities.get(field).cloned() {
+                        self.type_info.record_resolved_identity(span, identity);
+                    }
                     let enum_ty = if let Some(args) = type_args {
                         ResolvedType::Generic(type_name.to_string(), args.to_vec())
                     } else {
@@ -1698,10 +1933,13 @@ impl TypeChecker {
         property: &str,
         span: Span,
     ) -> Option<ResolvedType> {
-        let type_info = self.lookup_semantic_type_info(type_name)?;
+        let type_info = self.lookup_semantic_type_info(type_name)?.clone();
         match type_info {
             TypeInfo::Model(model) => {
-                let info = model.properties.get(property)?;
+                let info = model.properties.get(property)?.clone();
+                if let Some(identity) = info.identity.clone() {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
                 let return_type = if let Some(args) = type_args {
                     let subst = type_param_subst_map(&model.type_params, args);
                     substitute_resolved_type(&info.return_type, &subst)
@@ -1713,7 +1951,10 @@ impl TypeChecker {
                 Some(return_type)
             }
             TypeInfo::Class(class) => {
-                let info = class.properties.get(property)?;
+                let info = class.properties.get(property)?.clone();
+                if let Some(identity) = info.identity.clone() {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
                 let owner = info.owner.as_deref().unwrap_or(type_name);
                 if matches!(info.visibility, Visibility::Private) && self.current_method_owner.as_deref() != Some(owner)
                 {
@@ -1771,6 +2012,9 @@ impl TypeChecker {
         }
         for bound in &active_bounds {
             if let Some(info) = self.trait_property_info_resolved_for_adoption(bound, property, span) {
+                if let Some(identity) = info.identity.clone() {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
                 self.type_info
                     .record_computed_property_access(span, &bound.name, property);
                 return Some(info.return_type);
@@ -2214,7 +2458,7 @@ impl TypeChecker {
                     } else {
                         &effective_sig.params
                     };
-                    self.record_rust_call_site_params(span, params, callable_display.as_str(), true);
+                    self.record_rust_call_site_params(span, params, callable_display.as_str());
                 }
                 // A `Self` result must become the receiver this call was reconciled against, not the bare owner
                 // path: `Box.new(v)` checked against `Box<T>` is a `Box<T>`, and the bare `std::boxed::Box` that
@@ -2656,6 +2900,7 @@ impl TypeChecker {
                 trait_name,
                 module_path,
                 type_args,
+                implementation_type_params,
                 receiver_is_mutable,
             } => crate::frontend::typechecker::ResolvedMethodDispatch::Trait {
                 trait_name,
@@ -2663,6 +2908,30 @@ impl TypeChecker {
                 type_args: type_args
                     .into_iter()
                     .map(|ty| self.substitute_self_in_resolved_type(ty, receiver))
+                    .collect(),
+                implementation_type_params: implementation_type_params
+                    .into_iter()
+                    .map(|type_param| ImplementationTypeParamInfo {
+                        name: type_param.name,
+                        bounds: type_param
+                            .bounds
+                            .into_iter()
+                            .map(|bound| ImplementationTraitBoundInfo {
+                                trait_path: bound.trait_path,
+                                type_args: bound
+                                    .type_args
+                                    .into_iter()
+                                    .map(|ty| self.substitute_self_in_resolved_type(ty, receiver))
+                                    .collect(),
+                                associated_types: bound
+                                    .associated_types
+                                    .into_iter()
+                                    .map(|(name, ty)| (name, self.substitute_self_in_resolved_type(ty, receiver)))
+                                    .collect(),
+                                origin: bound.origin,
+                            })
+                            .collect(),
+                    })
                     .collect(),
                 receiver_is_mutable,
             },
@@ -2710,6 +2979,7 @@ impl TypeChecker {
         method_overloads: Option<&std::collections::HashMap<String, Vec<MethodInfo>>>,
         trait_adoptions: Option<&[TypeBoundInfo]>,
         method: &str,
+        receiver_surface: MemberBindingSurface,
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         arg_types: &[ResolvedType],
@@ -2730,6 +3000,7 @@ impl TypeChecker {
                 .unwrap_or_default();
             let candidates = overloads
                 .iter()
+                .filter(|info| receiver_surface.accepts_method(info))
                 .cloned()
                 .map(|info| {
                     let dispatch = trait_entries
@@ -2746,25 +3017,31 @@ impl TypeChecker {
                                 &entry.origin_trait,
                                 entry.origin_type_args.clone(),
                                 entry.origin_module_path.as_deref(),
+                                entry.implementation_type_params.clone(),
                                 entry.info.receiver == Some(Receiver::Mutable),
                             )
                         });
                     MethodCandidate { info, dispatch }
                 })
                 .collect::<Vec<_>>();
-            return self.resolve_method_overload(
-                method,
-                &candidates,
-                explicit_type_args,
-                args,
-                arg_types,
-                call_site_span,
-                receiver_ty,
-                expected_return_ty,
-            );
+            if !candidates.is_empty() {
+                return self.resolve_method_overload(
+                    method,
+                    &candidates,
+                    explicit_type_args,
+                    args,
+                    arg_types,
+                    call_site_span,
+                    receiver_ty,
+                    expected_return_ty,
+                );
+            }
         }
-        if let Some(method_info) = methods.get(method) {
-            return Some(self.check_generic_method_call(
+        if let Some(method_info) = methods
+            .get(method)
+            .filter(|method_info| receiver_surface.accepts_method(method_info))
+        {
+            return Some(self.check_resolved_generic_method_call(
                 method,
                 method_info.clone(),
                 explicit_type_args,
@@ -2779,10 +3056,14 @@ impl TypeChecker {
             let mut candidates = Vec::new();
             for adoption in trait_adoptions {
                 if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
+                    if !receiver_surface.accepts_method(&entry.info) {
+                        continue;
+                    }
                     let dispatch = self.resolved_trait_dispatch(
                         &entry.origin_trait,
                         entry.origin_type_args.clone(),
                         entry.origin_module_path.as_deref(),
+                        entry.implementation_type_params.clone(),
                         entry.info.receiver == Some(Receiver::Mutable),
                     );
                     candidates.push(MethodCandidate {
@@ -2878,7 +3159,7 @@ impl TypeChecker {
                 self.type_info
                     .record_call_site_callable_params_for_dispatch(call_site_span, &params);
             }
-            return Some(self.check_generic_method_call(
+            return Some(self.check_resolved_generic_method_call(
                 method,
                 candidate.info,
                 explicit_type_args,
@@ -2903,24 +3184,11 @@ impl TypeChecker {
     /// directly, the same way function calls do.
     fn resolve_unambiguous_source_method_without_arg_prepass(
         &mut self,
-        base_ty: &ResolvedType,
-        method: &str,
-        type_args: &[Spanned<Type>],
-        args: &[CallArg],
-        span: Span,
-        expected_return_ty: Option<&ResolvedType>,
+        call: &SourceMethodPrepass<'_>,
     ) -> Option<ResolvedType> {
-        let type_name = match base_ty {
+        let type_name = match call.receiver_ty {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return None,
-        };
-        let call = SourceMethodPrepass {
-            method,
-            type_args,
-            args,
-            span,
-            receiver_ty: base_ty,
-            expected_return_ty,
         };
         let type_info = self.lookup_semantic_type_info(type_name).cloned().or_else(|| {
             if type_name == "Logger" {
@@ -2932,7 +3200,7 @@ impl TypeChecker {
         });
         let Some(type_info) = type_info else {
             self.lookup_semantic_trait_info(type_name)?;
-            let trait_args = match base_ty {
+            let trait_args = match call.receiver_ty {
                 ResolvedType::Generic(_, args) => args.clone(),
                 _ => Vec::new(),
             };
@@ -2941,9 +3209,10 @@ impl TypeChecker {
                 source_name: None,
                 type_args: trait_args,
                 module_path: None,
+                implementation_type_params: Vec::new(),
             };
             return self
-                .resolve_unambiguous_adopted_trait_method_without_arg_prepass(std::slice::from_ref(&adoption), &call);
+                .resolve_unambiguous_adopted_trait_method_without_arg_prepass(std::slice::from_ref(&adoption), call);
         };
         match type_info {
             TypeInfo::Model(model) => {
@@ -2952,7 +3221,7 @@ impl TypeChecker {
                     &model.methods,
                     &model.method_overloads,
                     &trait_adoptions,
-                    &call,
+                    call,
                 )
             }
             TypeInfo::Class(class) => {
@@ -2961,7 +3230,7 @@ impl TypeChecker {
                     &class.methods,
                     &class.method_overloads,
                     &trait_adoptions,
-                    &call,
+                    call,
                 )
             }
             TypeInfo::Enum(en) => {
@@ -2970,14 +3239,19 @@ impl TypeChecker {
                     &en.methods,
                     &en.method_overloads,
                     &trait_adoptions,
-                    &call,
+                    call,
                 )
             }
             TypeInfo::Newtype(nt) => {
-                let resolved_method = self.resolve_newtype_method_name(&nt, method);
+                let resolved_method = self.resolve_newtype_method_name(&nt, call.method);
                 let resolved_call = SourceMethodPrepass {
                     method: resolved_method,
-                    ..call
+                    receiver_surface: call.receiver_surface,
+                    type_args: call.type_args,
+                    args: call.args,
+                    span: call.span,
+                    receiver_ty: call.receiver_ty,
+                    expected_return_ty: call.expected_return_ty,
                 };
                 let ret = self.resolve_source_owner_method_without_arg_prepass(
                     &nt.methods,
@@ -2986,7 +3260,7 @@ impl TypeChecker {
                     &resolved_call,
                 )?;
                 if nt.is_rusttype {
-                    self.maybe_record_rusttype_return_coercion(&nt, resolved_method, &ret, span);
+                    self.maybe_record_rusttype_return_coercion(&nt, resolved_method, &ret, call.span);
                 }
                 Some(ret)
             }
@@ -3003,18 +3277,25 @@ impl TypeChecker {
         call: &SourceMethodPrepass<'_>,
     ) -> Option<ResolvedType> {
         let method_info = if let Some(overloads) = method_overloads.get(call.method) {
-            if overloads.len() != 1 {
+            let mut matching = overloads
+                .iter()
+                .filter(|method| call.receiver_surface.accepts_method(method));
+            let method = matching.next().cloned();
+            if matching.next().is_some() {
                 return None;
             }
-            Some(overloads[0].clone())
+            method
         } else {
-            methods.get(call.method).cloned()
+            methods
+                .get(call.method)
+                .filter(|method| call.receiver_surface.accepts_method(method))
+                .cloned()
         };
         let Some(method_info) = method_info else {
             return self.resolve_unambiguous_adopted_trait_method_without_arg_prepass(trait_adoptions, call);
         };
 
-        Some(self.check_generic_method_call(
+        Some(self.check_resolved_generic_method_call(
             call.method,
             method_info,
             call.type_args,
@@ -3035,6 +3316,7 @@ impl TypeChecker {
         let mut candidates = trait_adoptions
             .iter()
             .filter_map(|adoption| self.trait_method_entry_resolved_for_adoption(adoption, call.method, call.span))
+            .filter(|candidate| call.receiver_surface.accepts_method(&candidate.info))
             .collect::<Vec<_>>();
         if candidates.len() != 1 {
             return None;
@@ -3044,6 +3326,7 @@ impl TypeChecker {
             &candidate.origin_trait,
             candidate.origin_type_args.clone(),
             candidate.origin_module_path.as_deref(),
+            candidate.implementation_type_params.clone(),
             candidate.info.receiver == Some(Receiver::Mutable),
         );
         let dispatch = self.method_dispatch_substituting_call_site_self(dispatch, call.receiver_ty);
@@ -3052,7 +3335,7 @@ impl TypeChecker {
         let (params, _) = self.method_types_substituting_call_site_self(&candidate.info, call.receiver_ty);
         self.type_info
             .record_call_site_callable_params_for_dispatch(call.span, &params);
-        Some(self.check_generic_method_call(
+        Some(self.check_resolved_generic_method_call(
             call.method,
             candidate.info,
             call.type_args,
@@ -3112,13 +3395,13 @@ impl TypeChecker {
                     }
                 }
                 CallArg::Named(name, _) => {
-                    if !named_seen.insert(name.as_str()) {
+                    if !named_seen.insert(name.node.as_str()) {
                         return None;
                     }
                     if let Some((normal_idx, param)) = normal_params
                         .iter()
                         .enumerate()
-                        .find(|(_, param)| param.name() == Some(name.as_str()))
+                        .find(|(_, param)| param.name() == Some(name.node.as_str()))
                     {
                         if normal_bound[normal_idx] {
                             return None;
@@ -3216,6 +3499,7 @@ impl TypeChecker {
                     &entry.origin_trait,
                     entry.origin_type_args.clone(),
                     entry.origin_module_path.as_deref(),
+                    entry.implementation_type_params.clone(),
                     entry.info.receiver == Some(Receiver::Mutable),
                 );
                 candidates.push(MethodCandidate {
@@ -3249,6 +3533,7 @@ impl TypeChecker {
         &mut self,
         receiver_ty: &ResolvedType,
         method: &str,
+        receiver_surface: MemberBindingSurface,
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         arg_types: &[ResolvedType],
@@ -3267,12 +3552,14 @@ impl TypeChecker {
             source_name: None,
             type_args: trait_args,
             module_path: None,
+            implementation_type_params: Vec::new(),
         };
         self.resolve_named_method(
             &std::collections::HashMap::new(),
             None,
             Some(std::slice::from_ref(&adoption)),
             method,
+            receiver_surface,
             explicit_type_args,
             args,
             arg_types,
@@ -3334,6 +3621,12 @@ impl TypeChecker {
     }
 
     /// Recognize `TypeName[T]` receiver expressions used for type-owned calls.
+    ///
+    /// The subscript supplies type arguments; it does not change which type owns the call. Resolving to `Unknown`
+    /// here left `FactoryBox[int].make(...)` with no receiver type, so method resolution never matched a declaration
+    /// and recorded no identity for the call. Lowering then had nothing to project with and emitted the source
+    /// spelling, while the declaration was emitted under its projection. Keeping the nominal type gives the
+    /// subscripted spelling the same receiver the bare `FactoryBox.make(...)` form already has.
     fn resolve_type_index_expression(&self, base_ty: &ResolvedType, base: &Spanned<Expr>) -> Option<ResolvedType> {
         let ResolvedType::Named(_) = base_ty else {
             return None;
@@ -3341,7 +3634,7 @@ impl TypeChecker {
         if !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName)) {
             return None;
         }
-        Some(ResolvedType::Unknown)
+        Some(base_ty.clone())
     }
 
     /// Return whether `ty` is the compiler-owned `std.json.JsonValue` wrapper over the raw runtime carrier.
@@ -3535,7 +3828,10 @@ impl TypeChecker {
 
         // Imported modules use symbol-driven metadata resolution.
         if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
-            if let Some(info) = self.resolve_imported_module_constant_member(&module_path, field) {
+            if let Some((info, identity)) = self.resolve_imported_module_constant_member(&module_path, field) {
+                if let Some(identity) = identity {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
                 return info.ty;
             }
             let is_public_library_module =
@@ -3545,6 +3841,7 @@ impl TypeChecker {
                     Ok(resolved) => resolved.map(|resolved| {
                         (
                             resolved.kind,
+                            resolved.canonical,
                             resolved.source_module_path,
                             resolved.source_name,
                             Some(module_path[1].clone()),
@@ -3563,10 +3860,17 @@ impl TypeChecker {
                 }
             } else {
                 self.resolve_imported_module_function_member_with_source(&module_path, field)
-                    .map(|(kind, source_module_path)| (kind, source_module_path, field.to_string(), None))
+                    .map(|(kind, source_module_path)| {
+                        let canonical =
+                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), field);
+                        (kind, canonical, source_module_path, field.to_string(), None)
+                    })
             };
-            if let Some((kind, source_module_path, source_name, public_library)) = resolved {
+            if let Some((kind, canonical, source_module_path, source_name, public_library)) = resolved {
                 let callable = format!("{module_name}.{field}");
+                if let Some(identity) = canonical {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
                 match (kind, public_library) {
                     (
                         SymbolKind::Type(
@@ -3679,22 +3983,39 @@ impl TypeChecker {
 
         let resolve_on = |checker: &mut Self, ty: &ResolvedType| -> ResolvedType {
             if field == "__name__" && checker.is_generic_placeholder_type(ty) {
+                if let Some(owner_name) = checker.generic_placeholder_name(ty)
+                    && let Some(identity) = checker.synthetic_member_identity_for_named_owner(
+                        owner_name,
+                        field,
+                        SemanticSourceTargetKind::Field,
+                    )
+                {
+                    checker.type_info.record_resolved_identity(span, identity);
+                }
                 return ResolvedType::Str;
             }
             match ty {
                 ResolvedType::Unknown => ResolvedType::Unknown,
                 // Trait default methods typecheck against `Self`, but field access must be declared via
                 // `@requires(...)` on the trait.
-                ResolvedType::SelfType => checker
-                    .current_trait_properties
-                    .as_ref()
-                    .and_then(|properties| properties.get(field))
-                    .map(|info| {
+                ResolvedType::SelfType => {
+                    if let Some(info) = checker
+                        .current_trait_properties
+                        .as_ref()
+                        .and_then(|properties| properties.get(field))
+                        .cloned()
+                    {
+                        if let Some(identity) = info.identity {
+                            checker.type_info.record_resolved_identity(span, identity);
+                        }
                         checker.type_info.record_computed_property_access(span, "Self", field);
-                        info.return_type.clone()
-                    })
-                    .or_else(|| checker.trait_required_field_type(field, span))
-                    .unwrap_or(ResolvedType::Unknown),
+                        info.return_type
+                    } else {
+                        checker
+                            .trait_required_field_type(field, span)
+                            .unwrap_or(ResolvedType::Unknown)
+                    }
+                }
                 ResolvedType::Tuple(elements) => {
                     if let Ok(idx) = field.parse::<usize>()
                         && idx < elements.len()
@@ -3704,7 +4025,15 @@ impl TypeChecker {
                     checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
                     ResolvedType::Unknown
                 }
-                ResolvedType::Function(_, _) if field == "__name__" => ResolvedType::Str,
+                ResolvedType::Function(_, _) if field == "__name__" => {
+                    if let Some(owner) = checker.type_info.resolved_identity(base.span).cloned() {
+                        checker.type_info.record_resolved_identity(
+                            span,
+                            Self::synthetic_member_identity(&owner, field, SemanticSourceTargetKind::Field),
+                        );
+                    }
+                    ResolvedType::Str
+                }
                 ResolvedType::Named(type_name) => {
                     if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
                         return field_ty;
@@ -3914,6 +4243,26 @@ impl TypeChecker {
         self.check_method_call_with_expected(base, method, type_args, args, span, None)
     }
 
+    /// Classify a checked member-call receiver without recovering ownership from its spelling.
+    ///
+    /// The identifier resolution fact is authoritative for ordinary and parenthesized type expressions. A
+    /// `TypeToken[T]` value is also type-owned, which covers checked classmethod receiver values. Everything else is
+    /// an instance receiver, even when its source spelling happens to begin with an uppercase letter.
+    fn checked_member_receiver_surface(&self, base: &Spanned<Expr>, base_ty: &ResolvedType) -> MemberBindingSurface {
+        if matches!(base_ty, ResolvedType::TypeToken(_))
+            || matches!(
+                self.type_info.ident_kind(base.span),
+                Some(IdentKind::TypeName | IdentKind::Trait)
+            )
+        {
+            return MemberBindingSurface::Type;
+        }
+        match &base.node {
+            Expr::Paren(inner) | Expr::Index(inner, _) => self.checked_member_receiver_surface(inner, base_ty),
+            _ => MemberBindingSurface::Instance,
+        }
+    }
+
     /// Type-check the consuming read of one compiler-managed C output slot.
     fn check_c_abi_output_slot_take(
         &mut self,
@@ -4031,6 +4380,11 @@ impl TypeChecker {
         }
         if Self::is_explicit_builtin_namespace_expr(base) {
             let result = self.check_explicit_builtin_call(method, args, span);
+            if let Some(builtin) = incan_core::lang::builtins::from_str(method)
+                && let Some(identity) = self.symbols.builtin_function_identity(builtin)
+            {
+                self.type_info.record_resolved_identity(span, identity);
+            }
             if !type_args.is_empty() {
                 self.errors
                     .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -4042,6 +4396,13 @@ impl TypeChecker {
         if self.is_builtin_list_surface_receiver(base)
             && method == collection_helpers::member(BuiltinCollectionHelperId::ListRepeat)
         {
+            self.type_info.record_resolved_identity(
+                span,
+                Self::compiler_builtin_member_identity(
+                    incan_core::lang::types::collections::as_str(CollectionTypeId::List),
+                    collection_helpers::member(BuiltinCollectionHelperId::ListRepeat),
+                ),
+            );
             if !type_args.is_empty() {
                 self.errors.push(errors::type_mismatch(
                     "inferred type arguments",
@@ -4057,6 +4418,7 @@ impl TypeChecker {
         }
 
         let mut base_ty = self.check_type_receiver_expr(base);
+        let receiver_surface = self.checked_member_receiver_surface(base, &base_ty);
         if let Some(expected) = expected_return_ty
             && matches!(
                 result_methods::from_str(method),
@@ -4082,11 +4444,20 @@ impl TypeChecker {
             self.check_call_args(args);
             return ResolvedType::Unknown;
         }
+        if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {
+            self.type_info.record_resolved_identity(span, identity);
+        }
 
         if let ResolvedType::Generic(name, type_arguments) = &base_ty
             && name == "Registry"
             && method == "entry"
         {
+            if let Some(identity) = self
+                .method_info_for_owner(name, method)
+                .and_then(|method_info| method_info.identity.clone())
+            {
+                self.type_info.record_resolved_identity(span, identity);
+            }
             self.check_call_args(args);
             if !self.checking_registry_entry_static_initializer {
                 self.errors.push(CompileError::type_error(
@@ -4161,6 +4532,7 @@ impl TypeChecker {
                     Ok(resolved) => resolved.map(|resolved| {
                         (
                             resolved.kind,
+                            resolved.canonical,
                             resolved.source_module_path,
                             resolved.source_name,
                             Some(module_path[1].clone()),
@@ -4179,9 +4551,13 @@ impl TypeChecker {
                 }
             } else {
                 self.resolve_imported_module_function_member_with_source(&module_path, method)
-                    .map(|(kind, source_module_path)| (kind, source_module_path, method.to_string(), None))
+                    .map(|(kind, source_module_path)| {
+                        let canonical =
+                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), method);
+                        (kind, canonical, source_module_path, method.to_string(), None)
+                    })
             };
-            if let Some((kind, source_module_path, source_name, public_library)) = resolved {
+            if let Some((kind, canonical, source_module_path, source_name, public_library)) = resolved {
                 let callable = format!("{module_name}.{method}");
                 if is_public_library_module
                     && let Some(projection) = self.lookup_pub_library_module_partial_projection(
@@ -4193,9 +4569,19 @@ impl TypeChecker {
                 {
                     self.type_info.record_partial_projection(projection);
                 }
+                if let Some(identity) = canonical {
+                    self.type_info.record_resolved_identity(span, identity);
+                }
                 return match (kind, public_library) {
                     (SymbolKind::Function(info), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
+                        // Resolution has just selected one concrete declaration in another module, and its declared
+                        // parameters are the only place a later stage can learn how this call's arguments bind:
+                        // the callee's name is not in scope here, so no by-name lookup can recover them. Recording
+                        // them at the point of resolution is what keeps a cross-module call bindable without
+                        // re-deriving a target from the qualifier and member spellings.
+                        self.type_info
+                            .record_call_site_callable_params_exact(span, &info.params);
                         self.validate_stdlib_module_function_call(
                             callable.as_str(),
                             &info,
@@ -4207,12 +4593,13 @@ impl TypeChecker {
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
-                        self.validate_function_overload_call(
+                        self.validate_function_overload_call_with_callee_span(
                             callable.as_str(),
                             &overloads,
                             type_args,
                             args,
                             span,
+                            Some(span),
                             expected_return_ty,
                         )
                     }
@@ -4245,14 +4632,16 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        if let Some(ret) = self.resolve_unambiguous_source_method_without_arg_prepass(
-            &base_ty,
+        let source_method_prepass = SourceMethodPrepass {
             method,
+            receiver_surface,
             type_args,
             args,
             span,
+            receiver_ty: &base_ty,
             expected_return_ty,
-        ) {
+        };
+        if let Some(ret) = self.resolve_unambiguous_source_method_without_arg_prepass(&source_method_prepass) {
             self.type_info.inherit_same_trait_method_module(base.span, span);
             return ret;
         }
@@ -4264,6 +4653,22 @@ impl TypeChecker {
                 None
             }
         });
+        let result_callback_input = match (&base_ty, result_methods::from_str(method)) {
+            (ResolvedType::Generic(name, type_args), Some(method_id))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && type_args.len() == 2 =>
+            {
+                match method_id {
+                    ResultMethodId::Map | ResultMethodId::AndThen | ResultMethodId::Inspect => {
+                        Some(type_args[0].clone())
+                    }
+                    ResultMethodId::MapErr | ResultMethodId::OrElse | ResultMethodId::InspectErr => {
+                        Some(type_args[1].clone())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
 
         // Rust callable bounds are not available until receiver metadata selects the method signature below. Defer
         // direct closures on Rust receivers so the selected `Fn`/`FnMut` bound can contextually type them once, rather
@@ -4275,14 +4680,23 @@ impl TypeChecker {
         let arg_types: Vec<ResolvedType> = args
             .iter()
             .map(|arg| {
-                let is_closure = match arg {
+                let arg_expr = match arg {
                     CallArg::Positional(expr)
                     | CallArg::Named(_, expr)
                     | CallArg::PositionalUnpack(expr)
-                    | CallArg::KeywordUnpack(expr) => matches!(expr.node, Expr::Closure(_, _)),
+                    | CallArg::KeywordUnpack(expr) => expr,
                 };
+                let is_closure = matches!(arg_expr.node, Expr::Closure(_, _));
                 if defer_rust_closures && contextual_rust_callable.is_none() && is_closure {
                     ResolvedType::Unknown
+                } else if let Some(input_ty) = result_callback_input.as_ref()
+                    && is_closure
+                {
+                    let expected = ResolvedType::Function(
+                        vec![CallableParam::positional(input_ty.clone())],
+                        Box::new(ResolvedType::Unknown),
+                    );
+                    self.check_expr_with_expected(arg_expr, Some(&expected))
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }
@@ -4351,6 +4765,13 @@ impl TypeChecker {
         if self.nominal_type_supports_reflection_magic(&base_ty, method)
             && let Some(ret) = self.reflection_magic_method_return_type(&base_ty, method)
         {
+            if let Some(owner_name) = match &base_ty {
+                ResolvedType::Named(name) | ResolvedType::Generic(name, _) => Some(name.as_str()),
+                _ => None,
+            } && let Some(id) = magic_methods::from_str(method)
+            {
+                self.record_compiler_generated_member_identity(owner_name, magic_methods::as_str(id), span);
+            }
             self.validate_reflection_magic_call(method, type_args, args, span);
             return ret;
         }
@@ -4370,6 +4791,7 @@ impl TypeChecker {
                 span,
             })
         {
+            self.record_compiler_generated_member_identity(enum_name, method, span);
             return ret;
         }
 
@@ -4378,8 +4800,12 @@ impl TypeChecker {
             && let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name)
             && (enum_info.variants.iter().any(|v| v == method) || enum_info.variant_aliases.contains_key(method))
         {
+            let variant_identity = enum_info.variant_identities.get(method).cloned();
             // Args were checked above; no strict arity enforcement here.
             let _ = &arg_types; // keep for potential future validation
+            if let Some(identity) = variant_identity {
+                self.type_info.record_resolved_identity(span, identity);
+            }
             return ResolvedType::Named(enum_name.clone());
         }
 
@@ -4459,8 +4885,14 @@ impl TypeChecker {
         }
 
         if matches!(base_ty, ResolvedType::Str)
-            && let Some(ret) = string_method_return(method, false)
+            && let Some((id, ret)) = runtime_string_method_identity_and_return(method)
         {
+            if type_args.is_empty()
+                && HelperOp::for_selected_string_method(id).is_some()
+                && self.validate_selected_string_helper_call(id, args, &arg_types, span)
+            {
+                self.type_info.record_resolved_string_helper_call(span, id);
+            }
             return ret;
         }
 
@@ -4746,6 +5178,7 @@ impl TypeChecker {
             if let Some(ret) = self.resolve_trait_receiver_method(
                 &base_ty,
                 method,
+                receiver_surface,
                 type_args,
                 args,
                 &arg_types,
@@ -4771,6 +5204,7 @@ impl TypeChecker {
                         Some(&model.method_overloads),
                         Some(&trait_adoptions),
                         method,
+                        receiver_surface,
                         type_args,
                         args,
                         &arg_types,
@@ -4788,6 +5222,7 @@ impl TypeChecker {
                         Some(&class.method_overloads),
                         Some(&trait_adoptions),
                         method,
+                        receiver_surface,
                         type_args,
                         args,
                         &arg_types,
@@ -4805,6 +5240,7 @@ impl TypeChecker {
                         Some(&en.method_overloads),
                         Some(&trait_adoptions),
                         method,
+                        receiver_surface,
                         type_args,
                         args,
                         &arg_types,
@@ -4822,6 +5258,7 @@ impl TypeChecker {
                         Some(&newtype.method_overloads),
                         Some(&newtype.trait_adoptions),
                         resolved_method,
+                        receiver_surface,
                         type_args,
                         args,
                         &arg_types,
@@ -4873,6 +5310,7 @@ impl TypeChecker {
                             Some(&model.method_overloads),
                             Some(&trait_adoptions),
                             method,
+                            receiver_surface,
                             type_args,
                             args,
                             &arg_types,
@@ -4891,6 +5329,7 @@ impl TypeChecker {
                             Some(&class.method_overloads),
                             Some(&trait_adoptions),
                             method,
+                            receiver_surface,
                             type_args,
                             args,
                             &arg_types,
@@ -4902,7 +5341,8 @@ impl TypeChecker {
                         }
                     }
                     TypeInfo::Enum(en) => {
-                        if enum_helpers::from_str(method) == Some(enum_helpers::EnumHelperId::Message) {
+                        if let Some(id @ enum_helpers::EnumHelperId::Message) = enum_helpers::from_str(method) {
+                            self.record_compiler_generated_member_identity(type_name, enum_helpers::as_str(id), span);
                             return ResolvedType::Str;
                         }
                         let trait_adoptions = self.trait_adoptions_for_type_methods(&en.trait_adoptions, &en.derives);
@@ -4911,6 +5351,7 @@ impl TypeChecker {
                             Some(&en.method_overloads),
                             Some(&trait_adoptions),
                             method,
+                            receiver_surface,
                             type_args,
                             args,
                             &arg_types,
@@ -4928,6 +5369,7 @@ impl TypeChecker {
                             Some(&nt.method_overloads),
                             Some(&nt.trait_adoptions),
                             resolved_method,
+                            receiver_surface,
                             type_args,
                             args,
                             &arg_types,
@@ -5006,6 +5448,13 @@ impl TypeChecker {
                 return ret;
             }
             if let Some(ret) = self.generic_reflection_magic_method_return_type(method) {
+                if let Some(id) = magic_methods::from_str(method) {
+                    self.record_compiler_generated_member_identity(
+                        self.generic_placeholder_name(&base_ty).unwrap_or_default(),
+                        magic_methods::as_str(id),
+                        span,
+                    );
+                }
                 self.validate_reflection_magic_call(method, type_args, args, span);
                 return ret;
             }
@@ -5076,6 +5525,7 @@ impl TypeChecker {
             source_name: None,
             type_args: Vec::new(),
             module_path: None,
+            implementation_type_params: Vec::new(),
         };
         let method_info = self.trait_method_info_resolved_for_adoption(&adoption, method, span)?;
         if !self.is_clone_type(receiver_ty) {
@@ -5085,7 +5535,16 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        Some(self.check_generic_method_call(method, method_info, type_args, args, arg_types, span, receiver_ty, None))
+        Some(self.check_resolved_generic_method_call(
+            method,
+            method_info,
+            type_args,
+            args,
+            arg_types,
+            span,
+            receiver_ty,
+            None,
+        ))
     }
 
     /// Return known method result types for Rust imports when rust-inspect metadata is not specific enough.

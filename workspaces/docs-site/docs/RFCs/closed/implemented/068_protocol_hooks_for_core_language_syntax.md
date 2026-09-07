@@ -9,7 +9,7 @@
     - RFC 050 (enum methods and enum trait adoption)
     - RFC 051 (`JsonValue` for `std.json`)
 - **Issue:** [#86](https://github.com/encero-systems/incan/issues/86)
-- **RFC PR:** —
+- **RFC PR:** [#490](https://github.com/encero-systems/incan/pull/490)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

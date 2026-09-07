@@ -3,11 +3,10 @@
 //! This module centralizes import-driven activation and feature-key routing for language-surface features.
 //! It is intentionally lightweight so parser/typechecker/lowering can share one source of truth.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::frontend::ast::{Declaration, Expr, ImportKind, Program};
 use crate::frontend::ast_walk;
-use crate::frontend::decorator_resolution;
 use incan_core::lang::keywords::KeywordId;
 use incan_core::lang::stdlib;
 use incan_semantics_core::SurfaceFeatureKey;
@@ -20,7 +19,6 @@ pub struct SurfaceContext {
     active_soft_keywords: HashSet<KeywordId>,
     /// Normalized module imports (`std.testing`, `std.async`, ...).
     imported_modules: HashSet<String>,
-    import_aliases: HashMap<String, Vec<String>>,
 }
 
 impl SurfaceContext {
@@ -28,7 +26,6 @@ impl SurfaceContext {
     pub fn from_program(program: &Program) -> Self {
         let mut active_soft_keywords = HashSet::new();
         let mut imported_modules = HashSet::new();
-        let import_aliases = decorator_resolution::collect_import_aliases(program);
 
         for decl in &program.declarations {
             let Declaration::Import(import_decl) = &decl.node else {
@@ -54,16 +51,11 @@ impl SurfaceContext {
         Self {
             active_soft_keywords,
             imported_modules,
-            import_aliases,
         }
     }
 
     pub fn is_soft_keyword_active(&self, keyword: KeywordId) -> bool {
         self.active_soft_keywords.contains(&keyword)
-    }
-
-    pub fn import_aliases(&self) -> &HashMap<String, Vec<String>> {
-        &self.import_aliases
     }
 
     pub fn has_imported_module(&self, module_path: &[String]) -> bool {

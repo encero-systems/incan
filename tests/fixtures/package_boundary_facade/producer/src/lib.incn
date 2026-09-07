@@ -1,0 +1,3 @@
+"""Package root that publishes everything through a facade rather than declaring it."""
+
+pub from inner import LIMIT, Name, Count, Item, Holder, Describable, Mode, build

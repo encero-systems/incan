@@ -6,7 +6,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 022 (stdlib namespacing), RFC 023 (compilable stdlib), RFC 028 (operator overloading)
 - **Issue:** [#164](https://github.com/encero-systems/incan/issues/164)
-- **RFC PR:** —
+- **RFC PR:** [#530](https://github.com/encero-systems/incan/pull/530)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

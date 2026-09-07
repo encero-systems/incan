@@ -14,7 +14,9 @@
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
-use crate::frontend::typechecker::{ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind};
+use crate::frontend::typechecker::{
+    MemberBindingSurface, ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind,
+};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods::{self, MagicMethodId};
@@ -259,6 +261,20 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if matches!(
+            op,
+            BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::FloorDiv
+                | BinaryOp::Mod
+                | BinaryOp::Pow
+        ) && let Some(expected_ty) = expected_return_ty
+        {
+            self.validate_exact_float_literals_in_arithmetic(left, expected_ty);
+            self.validate_exact_float_literals_in_arithmetic(right, expected_ty);
+        }
         let left_ty = self.check_expr(left);
         let right_ty = self.check_expr(right);
 
@@ -1050,12 +1066,14 @@ impl TypeChecker {
             source_name: None,
             type_args: receiver_args,
             module_path: Some(module_path.clone()),
+            implementation_type_params: Vec::new(),
         };
         self.resolve_named_method(
             &std::collections::HashMap::new(),
             None,
             Some(std::slice::from_ref(&adoption)),
             method,
+            MemberBindingSurface::Instance,
             &[],
             args,
             arg_types,
@@ -1157,6 +1175,7 @@ impl TypeChecker {
                     self.resolve_trait_receiver_method(
                         receiver_ty,
                         method,
+                        MemberBindingSurface::Instance,
                         &[],
                         args,
                         arg_types,
@@ -1180,6 +1199,7 @@ impl TypeChecker {
                     self.resolve_trait_receiver_method(
                         receiver_ty,
                         method,
+                        MemberBindingSurface::Instance,
                         &[],
                         args,
                         arg_types,
@@ -1212,6 +1232,7 @@ impl TypeChecker {
                     Some(&model.method_overloads),
                     Some(&trait_adoptions),
                     method,
+                    MemberBindingSurface::Instance,
                     &[],
                     args,
                     arg_types,
@@ -1227,6 +1248,7 @@ impl TypeChecker {
                     Some(&class.method_overloads),
                     Some(&trait_adoptions),
                     method,
+                    MemberBindingSurface::Instance,
                     &[],
                     args,
                     arg_types,
@@ -1242,6 +1264,7 @@ impl TypeChecker {
                     Some(&en.method_overloads),
                     Some(&trait_adoptions),
                     method,
+                    MemberBindingSurface::Instance,
                     &[],
                     args,
                     arg_types,
@@ -1257,6 +1280,7 @@ impl TypeChecker {
                     Some(&newtype.method_overloads),
                     Some(&newtype.trait_adoptions),
                     resolved_method,
+                    MemberBindingSurface::Instance,
                     &[],
                     args,
                     arg_types,

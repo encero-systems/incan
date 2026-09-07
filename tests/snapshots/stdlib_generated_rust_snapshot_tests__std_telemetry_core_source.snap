@@ -121,10 +121,21 @@ impl incan_stdlib::reflection::HasTypeClassName for Timestamp {
 }
 impl Serialize for Timestamp {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl Timestamp {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// Structured telemetry value.
@@ -304,7 +315,9 @@ impl TelemetryValue {
         };
     }
     /// Return a telemetry string value.
-    pub fn string(value: String) -> Self {
+    pub fn string(
+        value: String,
+    ) -> Self {
         let _ = "Return a telemetry string value.";
         return TelemetryValue {
             kind: TelemetryValueKind::STRING.clone(),
@@ -318,7 +331,9 @@ impl TelemetryValue {
         };
     }
     /// Return a telemetry boolean value.
-    pub fn bool(value: bool) -> Self {
+    pub fn bool(
+        value: bool,
+    ) -> Self {
         let _ = "Return a telemetry boolean value.";
         return TelemetryValue {
             kind: TelemetryValueKind::BOOL.clone(),
@@ -332,7 +347,9 @@ impl TelemetryValue {
         };
     }
     /// Return a telemetry integer value.
-    pub fn int(value: i64) -> Self {
+    pub fn int(
+        value: i64,
+    ) -> Self {
         let _ = "Return a telemetry integer value.";
         return TelemetryValue {
             kind: TelemetryValueKind::INT.clone(),
@@ -346,7 +363,9 @@ impl TelemetryValue {
         };
     }
     /// Return a telemetry floating-point value.
-    pub fn float(value: f64) -> Self {
+    pub fn float(
+        value: f64,
+    ) -> Self {
         let _ = "Return a telemetry floating-point value.";
         return TelemetryValue {
             kind: TelemetryValueKind::FLOAT.clone(),
@@ -362,7 +381,9 @@ impl TelemetryValue {
     /// Return a telemetry bytes value from an encoded string.
     ///
     /// The caller owns the encoding convention.
-    pub fn bytes(value: String) -> Self {
+    pub fn bytes(
+        value: String,
+    ) -> Self {
         let _ = "\n        Return a telemetry bytes value from an encoded string.\n\n        The caller owns the encoding convention.\n        ";
         return TelemetryValue {
             kind: TelemetryValueKind::BYTES.clone(),
@@ -376,7 +397,9 @@ impl TelemetryValue {
         };
     }
     /// Return a telemetry array value.
-    pub fn array(values: Vec<TelemetryValue>) -> Self {
+    pub fn array(
+        values: Vec<TelemetryValue>,
+    ) -> Self {
         let _ = "Return a telemetry array value.";
         return TelemetryValue {
             kind: TelemetryValueKind::ARRAY.clone(),
@@ -390,7 +413,9 @@ impl TelemetryValue {
         };
     }
     /// Return a telemetry map value.
-    pub fn map(values: std::collections::HashMap<String, TelemetryValue>) -> Self {
+    pub fn map(
+        values: std::collections::HashMap<String, TelemetryValue>,
+    ) -> Self {
         let _ = "Return a telemetry map value.";
         return TelemetryValue {
             kind: TelemetryValueKind::MAP.clone(),
@@ -407,7 +432,9 @@ impl TelemetryValue {
     ///
     /// String values render as their underlying text. Structured values render through their JSON representation so
     /// callers do not lose shape when displaying nested telemetry data.
-    pub fn display_text(&self) -> String {
+    pub fn display_text(
+        &self,
+    ) -> String {
         let _ = "\n        Return a concise text representation for human-oriented output.\n\n        String values render as their underlying text. Structured values render through their JSON representation so\n        callers do not lose shape when displaying nested telemetry data.\n        ";
         let _ = match self.string_value.clone() {
             Some(text) => {
@@ -417,6 +444,70 @@ impl TelemetryValue {
                 return crate::__incan_std::serde::json::Serialize::to_json(self);
             }
         };
+    }
+    /// Return a telemetry null value.
+    #[inline]
+    pub fn none() -> Self {
+        Self::none()
+    }
+    /// Return a telemetry string value.
+    #[inline]
+    pub fn string(value: String) -> Self {
+        Self::string(
+            value,
+        )
+    }
+    /// Return a telemetry boolean value.
+    #[inline]
+    pub fn bool(value: bool) -> Self {
+        Self::bool(
+            value,
+        )
+    }
+    /// Return a telemetry integer value.
+    #[inline]
+    pub fn int(value: i64) -> Self {
+        Self::int(
+            value,
+        )
+    }
+    /// Return a telemetry floating-point value.
+    #[inline]
+    pub fn float(value: f64) -> Self {
+        Self::float(
+            value,
+        )
+    }
+    /// Return a telemetry bytes value from an encoded string.
+    ///
+    /// The caller owns the encoding convention.
+    #[inline]
+    pub fn bytes(value: String) -> Self {
+        Self::bytes(
+            value,
+        )
+    }
+    /// Return a telemetry array value.
+    #[inline]
+    pub fn array(values: Vec<TelemetryValue>) -> Self {
+        Self::array(
+            values,
+        )
+    }
+    /// Return a telemetry map value.
+    #[inline]
+    pub fn map(values: std::collections::HashMap<String, TelemetryValue>) -> Self {
+        Self::map(
+            values,
+        )
+    }
+    /// Return a concise text representation for human-oriented output.
+    ///
+    /// String values render as their underlying text. Structured values render through their JSON representation so
+    /// callers do not lose shape when displaying nested telemetry data.
+    #[inline]
+    pub fn display_text(&self) -> String {
+        self.display_text()
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -535,10 +626,21 @@ impl TelemetryValue {
 }
 impl Serialize for TelemetryValue {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl TelemetryValue {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// String-keyed telemetry attributes.
@@ -576,6 +678,18 @@ impl Attributes {
                 .collect::<std::collections::HashMap<_, _>>(),
         );
     }
+    /// Convert string fields into structured telemetry attributes.
+    ///
+    /// Args:
+    ///     fields: String-valued field map from ordinary logging call sites.
+    #[inline]
+    pub fn from_string_fields(
+        fields: std::collections::HashMap<String, String>,
+    ) -> Attributes {
+        Self::from_string_fields(
+            fields,
+        )
+    }
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
@@ -598,10 +712,21 @@ impl Attributes {
 }
 impl Serialize for Attributes {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl Attributes {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// Trace identifier for a correlated telemetry record.
@@ -616,10 +741,21 @@ impl incan_stdlib::reflection::HasTypeClassName for TraceId {
 }
 impl Serialize for TraceId {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl TraceId {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// Span identifier for a correlated telemetry record.
@@ -634,10 +770,21 @@ impl incan_stdlib::reflection::HasTypeClassName for SpanId {
 }
 impl Serialize for SpanId {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl SpanId {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// W3C trace flags for a correlated span context.
@@ -652,10 +799,21 @@ impl incan_stdlib::reflection::HasTypeClassName for TraceFlags {
 }
 impl Serialize for TraceFlags {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl TraceFlags {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// Entity that produced telemetry.
@@ -737,10 +895,21 @@ impl Resource {
 }
 impl Serialize for Resource {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl Resource {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// Logical scope that emitted telemetry.
@@ -923,10 +1092,21 @@ impl InstrumentationScope {
 }
 impl Serialize for InstrumentationScope {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl InstrumentationScope {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }
 /// Serializable span context identifiers.
@@ -1051,9 +1231,20 @@ impl SpanContext {
 }
 impl Serialize for SpanContext {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
+    }
+}
+impl SpanContext {
+    #[inline(never)]
+    pub fn to_json(
+        &self,
+    ) -> String {
+        <Self as Serialize>::to_json(self)
     }
 }

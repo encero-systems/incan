@@ -14,7 +14,7 @@
     - RFC 037 (Native web and HTTP stdlib redesign — consumer of `@app.get` / `@app.post`)
     - RFC 084 (RHS partial callable presets — future decorator factory ergonomics)
 - **Issue:** [#170](https://github.com/encero-systems/incan/issues/170), [#640](https://github.com/encero-systems/incan/issues/640)
-- **RFC PR:** —
+- **RFC PR:** [#523](https://github.com/encero-systems/incan/pull/523)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 
