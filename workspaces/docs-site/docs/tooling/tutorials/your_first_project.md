@@ -62,7 +62,7 @@ Created project 'greeter' at greeter
 
   src/main.incn          Entry point
   tests/test_main.incn   Starter test
-  incan.toml             Project manifest
+  loaf.toml             Project manifest
 
 Run it:   incan run
 Test it:  incan test
@@ -78,10 +78,10 @@ greeter/
 │   └── test_main.incn     # Placeholder test
 ├── README.md              # Project README
 ├── .gitignore             # Ignores target/
-└── incan.toml             # Manifest with project metadata and [project.scripts] main set
+└── loaf.toml             # Manifest with project metadata and [project.scripts] main set
 ```
 
-The generated `incan.toml` carries a `requires-incan` constraint for the current release line. Commit `incan.lock` once the project generates it so builds stay reproducible.
+The generated `loaf.toml` carries a `requires-incan` constraint for the current release line. Commit `oven.lock` once the project generates it so builds stay reproducible.
 
 Try it immediately:
 
@@ -93,9 +93,9 @@ incan run
 Hello from greeter!
 ```
 
-The generated `incan.toml` records the project metadata and already has `[project.scripts] main` pointing at `src/main.incn`, so commands like `incan lock` will work without a file argument later on:
+The generated `loaf.toml` records the project metadata and already has `[project.scripts] main` pointing at `src/main.incn`, so commands like `incan lock` will work without a file argument later on:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [project]
 name = "greeter"
 version = "0.1.0"
@@ -245,7 +245,7 @@ greeter/
 │   └── test_main.incn     # Tests for greet module
 ├── README.md
 ├── .gitignore
-└── incan.toml             # Project manifest
+└── loaf.toml             # Project manifest
 ```
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
@@ -265,7 +265,7 @@ You now have a manifest-backed command-line project with a public module boundar
 ## Next steps
 
 - [Rust interop](../../language/how-to/rust_interop.md) — Use Rust crates from Incan code
-- [Managing dependencies](../how-to/dependencies.md) — `incan.toml`, version annotations, and lock files
-- [Project configuration reference](../reference/project_configuration.md) — Full `incan.toml` format
+- [Managing dependencies](../how-to/dependencies.md) — `loaf.toml`, version annotations, and lock files
+- [Project configuration reference](../reference/project_configuration.md) — Full `loaf.toml` format
 - [CI & automation](../how-to/ci_and_automation.md) — Locked builds, pipelines, and deployment
 - [The Incan Book](../../language/tutorials/book/index.md) — Learn the language itself

@@ -30,7 +30,7 @@ Use this layout:
 
 ```text
 typed_data_processor/
-├── incan.toml
+├── loaf.toml
 ├── orders.json
 ├── src/
 │   ├── domain.incn

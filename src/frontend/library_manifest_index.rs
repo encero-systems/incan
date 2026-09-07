@@ -597,7 +597,7 @@ fn dependency_crate_root(dependency_root: &Path) -> PathBuf {
 
 /// Return the project root that owns a generated library artifact root, inverting [`dependency_crate_root`].
 ///
-/// A caller-owned `pub::` provider's own project root (where its `incan.toml` and `.incan/oven/` receipts live) is
+/// A caller-owned `pub::` provider's own project root (where its `loaf.toml` and `.incan/oven/` receipts live) is
 /// not carried anywhere on [`LibraryArtifactMetadata`] -- only its generated `crate_root` is. Re-materializing that
 /// provider's compiled libraries into a different consumer needs the provider's own project root to locate its
 /// receipts and resolve its own registry-leaf authority, so this strips the fixed `target/lib` suffix
@@ -917,7 +917,7 @@ mod tests {
     #[test]
     fn loads_dependency_manifest_into_index() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("mylib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         let dep_manifest_path = dep_artifact_root.join("mylib.incnlib");
@@ -984,7 +984,7 @@ mylib = { path = "deps/mylib" }
     #[test]
     fn records_failed_entry_for_missing_dependency_manifest() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("missinglib");
         std::fs::create_dir_all(&dep_root)?;
 
@@ -1017,7 +1017,7 @@ missinglib = { path = "deps/missinglib" }
     #[test]
     fn supports_dependency_key_alias_to_manifest_name() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("widgets-lib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1060,7 +1060,7 @@ widgets = { path = "deps/widgets-lib" }
     #[test]
     fn records_failure_for_manifest_and_cargo_name_mismatch() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("broken");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1098,7 +1098,7 @@ widgets = { path = "deps/broken" }
     #[test]
     fn exposes_imported_vocab_registrations_from_manifest_payload() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("widgets-lib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1172,7 +1172,7 @@ widgets = { path = "deps/widgets-lib" }
     fn characterization_records_failure_for_missing_packaged_vocab_desugarer_artifact()
     -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("routes-lib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1230,7 +1230,7 @@ routes = { path = "deps/routes-lib" }
     #[test]
     fn merges_provider_required_dependencies_and_stdlib_features() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_a_root = tmp.path().join("deps").join("widgets-lib");
         let dep_a_artifact_root = dep_a_root.join("target").join("lib");
         let dep_b_root = tmp.path().join("deps").join("analytics-lib");
@@ -1306,7 +1306,7 @@ analytics = { path = "deps/analytics-lib" }
     #[test]
     fn reports_provider_dependency_conflict() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_a_root = tmp.path().join("deps").join("widgets-lib");
         let dep_a_artifact_root = dep_a_root.join("target").join("lib");
         let dep_b_root = tmp.path().join("deps").join("analytics-lib");

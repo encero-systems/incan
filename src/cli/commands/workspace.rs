@@ -12,7 +12,7 @@ use clap::ValueEnum;
 use serde_json::{Value, json};
 
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::lockfile::IncanLock;
+use crate::lockfile::{IncanLock, LOCK_FILENAME};
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::workspace::{
     EffectiveLibraryDependency, EffectiveRustDependency, WorkspaceDependencyOrigin, WorkspaceError, WorkspaceGraph,
@@ -62,11 +62,11 @@ fn inspection_report(
     selection: &crate::workspace::WorkspaceSelection<'_>,
     current_dir: &Path,
 ) -> Result<Value, WorkspaceError> {
-    let root_lock_path = graph.root().join("incan.lock");
+    let root_lock_path = graph.root().join(LOCK_FILENAME);
     let stale_member_locks = graph
         .members()
         .filter(|member| !member.is_root_member())
-        .map(|member| member.root().join("incan.lock"))
+        .map(|member| member.root().join(LOCK_FILENAME))
         .filter(|path| path.is_file())
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
@@ -393,7 +393,7 @@ mod tests {
     fn inspection_projection_reports_scope_and_stale_member_locks() -> TestResult {
         let root = tempfile::tempdir()?;
         fs::write(
-            root.path().join("incan.toml"),
+            root.path().join("loaf.toml"),
             r#"
 [project]
 name = "root"
@@ -404,10 +404,10 @@ members = ["packages/member"]
         )?;
         fs::create_dir_all(root.path().join("packages/member"))?;
         fs::write(
-            root.path().join("packages/member/incan.toml"),
+            root.path().join("packages/member/loaf.toml"),
             "[project]\nname = \"member\"\n",
         )?;
-        fs::write(root.path().join("packages/member/incan.lock"), "obsolete")?;
+        fs::write(root.path().join("packages/member/oven.lock"), "obsolete")?;
 
         let graph = WorkspaceGraph::load_from_root(root.path())?;
         let selection = graph.resolve_scope(WorkspaceScopeRequest::new(root.path(), false, ["member"]))?;

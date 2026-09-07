@@ -38,9 +38,9 @@ Inactive declarations remain parseable syntax for formatting and editor navigati
 ## Restrictions
 
 - `feature(...)` accepts one string literal containing a local package-feature name.
-- Dependency-qualified names such as `dependency/feature` are invalid in source conditions; dependency features are selected on dependency edges in `incan.toml`.
+- Dependency-qualified names such as `dependency/feature` are invalid in source conditions; dependency features are selected on dependency edges in `loaf.toml`.
 - `not`, `or`, target predicates, values, and arbitrary expressions are not supported.
 - A feature condition is valid only at compilation-unit scope. It is not an `if` expression and cannot inspect runtime state.
 - Features are additive. Enabling a feature may contribute API or dependencies but must not subtract or reinterpret an unconditional API.
 
-Declare package features and dependency edges in [`incan.toml`](../../tooling/reference/project_configuration.md#projectfeatures), select them through manifest dependencies or Incan CLI feature flags, and inspect the resolved projection with `incan inspect features --format json`. See [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md) for the full resolution model.
+Declare package features and dependency edges in [`loaf.toml`](../../tooling/reference/project_configuration.md#projectfeatures), select them through manifest dependencies or Incan CLI feature flags, and inspect the resolved projection with `incan inspect features --format json`. See [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md) for the full resolution model.

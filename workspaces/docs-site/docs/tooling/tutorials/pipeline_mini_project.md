@@ -28,7 +28,7 @@ Create this small project layout:
 
 ```text
 my_project/
-├── incan.toml
+├── loaf.toml
 ├── src/
 │   └── pipeline_step.incn
 └── tests/
@@ -37,7 +37,7 @@ my_project/
 
 Run the commands below from `my_project/` (this matters for module resolution).
 
-Create `incan.toml`:
+Create `loaf.toml`:
 
 ```toml
 [project]

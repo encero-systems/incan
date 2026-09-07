@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use globset::{GlobBuilder, GlobMatcher};
 
 use crate::manifest::{
-    DependencySpec, EnvSection, LibraryDependencySpec, MANIFEST_FILENAME, ManifestError, ProjectManifest,
+    DependencySpec, EnvSection, LOAF_MANIFEST_FILENAME, LibraryDependencySpec, ManifestError, ProjectManifest,
     WorkspaceRustDependencyRequest, WorkspaceSection, WorkspaceSharedDependencies,
 };
 
@@ -128,7 +128,7 @@ impl WorkspaceMember {
         &self.root
     }
 
-    /// Canonical `incan.toml` path for this member.
+    /// Canonical `loaf.toml` path for this member.
     pub fn manifest_path(&self) -> &Path {
         &self.manifest_path
     }
@@ -330,13 +330,13 @@ pub struct WorkspaceGraph {
 }
 
 impl WorkspaceGraph {
-    /// Load the workspace declared by `root/incan.toml` and construct its complete member graph.
+    /// Load the workspace declared by `root/loaf.toml` and construct its complete member graph.
     ///
     /// This API validates topology only. Call [`Self::resolve_scope`] before any workspace-aware command reads or
     /// mutates member state.
     pub fn load_from_root(root: &Path) -> Result<Self, WorkspaceError> {
         let root = canonical_directory(root)?;
-        let manifest_path = root.join(MANIFEST_FILENAME);
+        let manifest_path = root.join(LOAF_MANIFEST_FILENAME);
         let manifest = ProjectManifest::load(&manifest_path)?;
         let Some(workspace) = manifest.workspace().cloned() else {
             return Err(WorkspaceError::NotWorkspace { manifest_path });
@@ -359,7 +359,7 @@ impl WorkspaceGraph {
         let mut candidate_root = project_root.clone();
 
         loop {
-            let manifest_path = candidate_root.join(MANIFEST_FILENAME);
+            let manifest_path = candidate_root.join(LOAF_MANIFEST_FILENAME);
             if manifest_path.is_file() {
                 let manifest = ProjectManifest::load(&manifest_path)?;
                 if let Some(workspace) = manifest.workspace().cloned() {
@@ -814,7 +814,7 @@ impl WorkspaceGraph {
         manifest: ProjectManifest,
         workspace: &WorkspaceSection,
     ) -> Result<Self, WorkspaceError> {
-        let manifest_path = root.join(MANIFEST_FILENAME);
+        let manifest_path = root.join(LOAF_MANIFEST_FILENAME);
         // Validate workspace-owned dependency identity at graph construction time so no command can observe a valid
         // topology while silently carrying malformed shared configuration.
         let _shared_dependencies = manifest.workspace_shared_dependencies()?;
@@ -1004,6 +1004,22 @@ pub enum WorkspaceError {
         /// The required manifest filename.
         manifest_filename: &'static str,
     },
+    /// A literal non-root member still holds the retired manifest instead of the authored Loaf one.
+    ///
+    /// Distinct from [`WorkspaceError::MissingMember`] because the two are different mistakes: one member was never
+    /// created, the other exists and has not been migrated. Reporting "it does not contain loaf.toml" for a directory
+    /// that plainly contains a manifest sends the author looking for the wrong problem.
+    #[error(
+        "workspace {root} declares member {member}, which still holds `incan.toml`. RFC 117 makes `loaf.toml` the \
+         authored manifest and does not read `incan.toml`; rename the member's manifest once its tables satisfy the \
+         Loaf schema."
+    )]
+    LegacyMember {
+        /// Canonical workspace root.
+        root: PathBuf,
+        /// Root-relative member declaration.
+        member: String,
+    },
     /// A workspace declaration violated RFC 077 topology rules.
     #[error("invalid workspace {root}: {message}")]
     Invalid {
@@ -1045,14 +1061,14 @@ fn root_member(root: &Path, name: Option<&str>) -> Result<WorkspaceMember, Works
     Ok(WorkspaceMember {
         name,
         root: root.to_path_buf(),
-        manifest_path: root.join(MANIFEST_FILENAME),
+        manifest_path: root.join(LOAF_MANIFEST_FILENAME),
         is_root_member: true,
     })
 }
 
 /// Parse and validate one explicitly listed non-root workspace member.
 fn load_non_root_member(root: &Path, member_root: &Path) -> Result<(WorkspaceMember, ProjectManifest), WorkspaceError> {
-    let manifest_path = member_root.join(MANIFEST_FILENAME);
+    let manifest_path = member_root.join(LOAF_MANIFEST_FILENAME);
     let manifest = ProjectManifest::load(&manifest_path)?;
     if manifest.workspace().is_some() {
         return Err(invalid_workspace(
@@ -1112,7 +1128,7 @@ fn discover_project_manifests(root: &Path) -> Result<Vec<DiscoveredProject>, Wor
             })?;
             if file_type.is_dir() {
                 directories.push(path);
-            } else if file_type.is_file() && entry.file_name() == MANIFEST_FILENAME {
+            } else if file_type.is_file() && entry.file_name() == LOAF_MANIFEST_FILENAME {
                 let Some(member_root) = path.parent() else {
                     continue;
                 };
@@ -1167,13 +1183,21 @@ fn expand_member_paths(
             members.extend(matches);
         } else {
             let member_root = resolve_literal_workspace_path(root, declaration, "member")?;
-            let manifest_path = member_root.join(MANIFEST_FILENAME);
-            if !manifest_path.is_file() {
-                return Err(WorkspaceError::MissingMember {
-                    root: root.to_path_buf(),
-                    member: declaration.clone(),
-                    manifest_filename: MANIFEST_FILENAME,
-                });
+            match crate::manifest::discovered_manifest_kind(&member_root) {
+                crate::manifest::DiscoveredManifest::Loaf(_) => {}
+                crate::manifest::DiscoveredManifest::LegacyIncanOnly(_) => {
+                    return Err(WorkspaceError::LegacyMember {
+                        root: root.to_path_buf(),
+                        member: declaration.clone(),
+                    });
+                }
+                crate::manifest::DiscoveredManifest::None => {
+                    return Err(WorkspaceError::MissingMember {
+                        root: root.to_path_buf(),
+                        member: declaration.clone(),
+                        manifest_filename: LOAF_MANIFEST_FILENAME,
+                    });
+                }
             }
             members.insert(member_root);
         }
@@ -1220,7 +1244,7 @@ fn resolve_literal_workspace_path(root: &Path, declaration: &str, kind: &str) ->
             return Err(WorkspaceError::MissingMember {
                 root: root.to_path_buf(),
                 member: declaration.to_string(),
-                manifest_filename: MANIFEST_FILENAME,
+                manifest_filename: LOAF_MANIFEST_FILENAME,
             });
         }
         Err(source) => {
@@ -1440,7 +1464,7 @@ mod tests {
     use std::path::Path;
 
     use super::{WorkspaceDependencyOrigin, WorkspaceGraph, WorkspaceScopeOrigin, WorkspaceScopeRequest};
-    use crate::manifest::MANIFEST_FILENAME;
+    use crate::manifest::LOAF_MANIFEST_FILENAME;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -1575,8 +1599,45 @@ members = ["packages/missing"]
             .err()
             .ok_or("workspace should be invalid")?;
         assert!(
-            error.to_string().contains("does not contain incan.toml"),
+            error.to_string().contains("does not contain loaf.toml"),
             "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_declared_member_still_holding_the_retired_manifest_is_named_as_such() -> TestResult {
+        // "does not contain loaf.toml" would send the author looking for a member that was never created. This one
+        // exists and has not been migrated, which is a different fix, so it gets a different message.
+        let root = tempfile::tempdir()?;
+        write_manifest(
+            root.path(),
+            r#"
+[project]
+name = "root"
+
+[workspace]
+members = ["packages/legacy"]
+"#,
+        )?;
+        let legacy = root.path().join("packages/legacy");
+        fs::create_dir_all(&legacy)?;
+        fs::write(
+            legacy.join(crate::manifest::LEGACY_MANIFEST_FILENAME),
+            "[project]\nname = \"legacy\"\n",
+        )?;
+
+        let error = WorkspaceGraph::load_from_root(root.path())
+            .err()
+            .ok_or("a workspace declaring an unmigrated member should be invalid")?;
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("still holds `incan.toml`"),
+            "must say the member exists but was not migrated: {rendered}"
+        );
+        assert!(
+            !rendered.contains("does not contain"),
+            "must not also claim the member is absent: {rendered}"
         );
         Ok(())
     }
@@ -1789,7 +1850,7 @@ approval = "required"
 [workspace.sources.internal]
 url = "https://packages.example.test"
 "#,
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         )?;
         let workspace = manifest.workspace().ok_or("workspace declaration missing")?;
 
@@ -1989,11 +2050,11 @@ proptest = { workspace = true, features = ["std"] }
         Ok(())
     }
 
-    /// Write an `incan.toml` at one directory, creating its parent first.
+    /// Write an `loaf.toml` at one directory, creating its parent first.
     fn write_manifest(directory: impl AsRef<Path>, content: &str) -> Result<(), std::io::Error> {
         let directory = directory.as_ref();
         fs::create_dir_all(directory)?;
-        fs::write(directory.join(MANIFEST_FILENAME), content)
+        fs::write(directory.join(LOAF_MANIFEST_FILENAME), content)
     }
 
     /// Write the smallest RFC 015 project manifest used by workspace topology tests.

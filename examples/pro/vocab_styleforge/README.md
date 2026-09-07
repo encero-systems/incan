@@ -50,6 +50,6 @@ lowering hook.
 Files worth reading in order:
 
 - `consumer/src/main.incn` - the user-facing DSL surface.
-- `producer/incan.toml` - points the producer library at its vocab companion crate.
+- `producer/loaf.toml` - points the producer library at its vocab companion crate.
 - `producer/vocab_companion/src/lib.rs` - registers the `style:`/`spacing:` blocks and their embedded-fragment
   descriptors.

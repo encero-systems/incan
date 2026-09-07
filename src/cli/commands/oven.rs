@@ -128,6 +128,7 @@ pub fn oven_bake_project(
     package_features: FeatureSelection,
     format: OvenOutputFormat,
 ) -> CliResult<ExitCode> {
+    super::common::warn_once_about_ignored_cargo_manifest(&project);
     let report = super::build::bake_oven_project_targets(&project, &package_features)?;
     match format {
         OvenOutputFormat::Text => {
@@ -1153,7 +1154,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 source.display()
             ))
         })?;
-        fs::write(project_root.join("incan.toml"), specification.manifest).map_err(|error| {
+        fs::write(project_root.join("loaf.toml"), specification.manifest).map_err(|error| {
             CliError::failure(format!(
                 "could not write checked Loaf manifest {}: {error}",
                 specification.label
