@@ -342,7 +342,7 @@ Resolution:
 
 The resolver must not wire downloaded generated Rust source into generated `Cargo.toml` as the package compatibility path. Rust-facing consumption should go through the ABI/Cargo-native package direction rather than treating generated Rust internals as public API.
 
-**Lockfile (`Oven.lock`):** on first resolution, write resolved versions, canonical registry identity, integrity facts, and checksums to `Oven.lock`. Subsequent bakes use the lockfile for reproducibility. `oven update` re-resolves.
+**Lockfile (`oven.lock`):** on first resolution, write resolved versions, canonical registry identity, integrity facts, and checksums to `oven.lock`. Subsequent bakes use the lockfile for reproducibility. `oven update` re-resolves.
 
 ### CLI commands
 
@@ -351,7 +351,7 @@ The resolver must not wire downloaded generated Rust source into generated `Carg
 | `oven add <pkg>`              | Add a Loaf dependency to `loaf.toml` (fetch latest version from `incan.pub`)      |
 | `oven add --crate <pkg>`      | Add a crate dependency to `loaf.toml` (fetch from crates.io by default)           |
 | `oven remove <pkg>`           | Remove a typed dependency from `loaf.toml`                                        |
-| `oven update`                 | Re-resolve the selected closure and update `Oven.lock`                            |
+| `oven update`                 | Re-resolve the selected closure and update `oven.lock`                            |
 | `oven login`                  | Authenticate with `incan.pub`, save credentials in Oven-controlled secure storage |
 | `oven publish`                | Bake the selected Loaf, package `.incanpkg`, sign, and upload it                  |
 | `oven yank <pkg> <ver>`       | Mark a version as yanked (still downloadable but skipped in new resolves)         |
@@ -392,7 +392,7 @@ $ oven add widgets --git https://github.com/example/widgets --tag v0.2.0
 3. Default to `^major.minor.patch` range (SemVer-compatible, like Cargo)
 4. Write the typed entry to `[dependencies]`
 5. If the package is already in `loaf.toml`, update the version (with a confirmation prompt unless `--force`)
-6. Update `Oven.lock` with the resolved closure
+6. Update `oven.lock` with the resolved closure
 
 `oven remove` does the inverse: removes the entry from `loaf.toml` and re-locks.
 
@@ -541,7 +541,7 @@ German provider, good pricing. However: no scale-to-zero compute (minimum €4.5
 
 ## Future extensions (out of scope)
 
-- **Private registries.** Organizations may register an `incan.pub`-compatible registry in Oven-controlled organization or user configuration, then allow-list that registered identity from a Loaf or workspace. Credentials and trust policy never live in `loaf.toml`; `Oven.lock` records the resolved canonical identity and observed trust facts.
+- **Private registries.** Organizations may register an `incan.pub`-compatible registry in Oven-controlled organization or user configuration, then allow-list that registered identity from a Loaf or workspace. Credentials and trust policy never live in `loaf.toml`; `oven.lock` records the resolved canonical identity and observed trust facts.
 - **Trusted Publishers (GitHub Actions OIDC).** Like PyPI's Trusted Publishers — CI/CD can publish without long-lived tokens by using GitHub Actions' OIDC identity directly with Sigstore.
 - **Package auditing tools.** `oven audit` to check dependencies against a vulnerability database.
 - **Mirror support.** Read-only mirrors of `incan.pub` for network-restricted environments or regional performance.

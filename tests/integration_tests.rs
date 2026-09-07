@@ -7513,13 +7513,16 @@ async def main() -> Result[None, str]:
             panic!("failed to read generated Rust source");
         };
         let normalized: String = main_rs.chars().filter(|c| !c.is_whitespace()).collect();
+        // Assert the ordering, not the callee's spelling. RFC 120 projections emit a linker-visible
+        // `__incan_v1_...` name for `register_sources`, so pinning the source spelling tested the projection rather
+        // than the await/try ordering this case exists for.
         assert!(
-            normalized.contains("register_sources().await?;"),
+            normalized.contains(").await?;"),
             "expected awaited-then-try ordering in generated Rust, got:\n{}",
             main_rs
         );
         assert!(
-            !normalized.contains("register_sources()?.await;"),
+            !normalized.contains(")?.await"),
             "generated Rust must not apply `?` before `.await`, got:\n{}",
             main_rs
         );
@@ -7586,12 +7589,14 @@ def main() -> None:
             normalized_main.contains("#[path=\"extern.rs\"]modr#extern;"),
             "expected top-level keyword module path attr in generated main.rs, got:\n{main_rs}"
         );
+        // The escape is `crate::r#extern::`; what follows it is the callee's emitted name, which RFC 120 projections
+        // now own. Asserting the raw `root_value` spelling tested the projection instead of the keyword escaping.
         assert!(
-            normalized_main.contains("crate::r#extern::root_value"),
+            normalized_main.contains("crate::r#extern::"),
             "expected generated use path to escape top-level keyword module, got:\n{main_rs}"
         );
         assert!(
-            normalized_main.contains("crate::api::r#extern::nested_value"),
+            normalized_main.contains("crate::api::r#extern::"),
             "expected generated use path to escape nested keyword module, got:\n{main_rs}"
         );
         assert!(
@@ -8423,8 +8428,21 @@ async def main() -> None:
         let artifact_root = compiled_sdk_provider_artifact_root(generated_project, "incan_stdlib_data")?;
         let generated_collections = fs::read_to_string(artifact_root.join("src/collections.rs"))
             .map_err(|error| format!("failed to read compiled std.collections artifact: {error}"))?;
+        // The splice now passes the two support functions it needs, and RFC 120 projects their names, so the
+        // invocation reads `!(<projection>, <projection>);` rather than the argument-free form this assertion was
+        // written against. Require the splice and both arguments without pinning either spelling or a line break.
+        let compact_collections: String = generated_collections.split_whitespace().collect();
+        let spliced_with_support_functions = compact_collections
+            .split_once("incan_stdlib::__incan_ordinal_map_string_fast_impls!(")
+            .and_then(|(_, rest)| rest.split_once(");"))
+            .is_some_and(|(arguments, _)| {
+                arguments.matches(',').count() == 1
+                    && arguments
+                        .split(',')
+                        .all(|argument| argument.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX))
+            });
         assert!(
-            generated_collections.contains("incan_stdlib::__incan_ordinal_map_string_fast_impls!();"),
+            spliced_with_support_functions,
             "the compiled std.collections artifact should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
         );
         Ok(())
@@ -11257,18 +11275,37 @@ def main() -> None:
         );
 
         let generated = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        // Assert the syntax, not the method's spelling. RFC 120 projects `add_static`, so pinning the source name
+        // tested the projection rather than the associated-function lowering this case exists for. Requiring the
+        // decorator's own argument to arrive at a `Registry::`-qualified callee keeps it specific to this decorator.
+        let normalized: String = generated
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        let lowered_as_associated_function = normalized.split("Registry::").skip(1).any(|tail| {
+            tail.split_once('(').is_some_and(|(callee, arguments)| {
+                callee.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                    && arguments.starts_with("\"static\".to_string()")
+            })
+        });
         assert!(
-            generated.contains("Registry :: add_static")
-                || generated.contains("Registry::add_static")
-                || generated.contains("Registry :: add_static ::"),
+            lowered_as_associated_function,
             "class static method decorator should lower as associated function syntax:\n{}",
             generated,
         );
+        // Same again for the instance half: `add` is projected, and the storage access is what this case pins.
+        // Requiring the materialized argument to arrive at a method on the borrowed static keeps that specific.
+        let reaches_receiver_through_static_storage = normalized.split("__incan_static_value.").skip(1).any(|tail| {
+            tail.split_once('(').is_some_and(|(method, arguments)| {
+                method.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                    && arguments.starts_with("__incan_static_arg_0")
+            })
+        });
         assert!(
-            generated.contains(".with_mut(|__incan_static_value|")
-                && (generated.contains("let __incan_static_arg_0 = \"instance\".to_string();")
-                    || generated.contains("let __incan_static_arg_0 = \"instance\".into();"))
-                && generated.contains("__incan_static_value.add(__incan_static_arg_0)"),
+            normalized.contains(".with_mut(|__incan_static_value|")
+                && (normalized.contains("let__incan_static_arg_0=\"instance\".to_string();")
+                    || normalized.contains("let__incan_static_arg_0=\"instance\".into();"))
+                && reaches_receiver_through_static_storage,
             "static registry receiver should lower through static storage access:\n{}",
             generated,
         );
@@ -12243,7 +12280,7 @@ def main() -> None:
         let source = r#"
 @derive(Clone)
 class FactoryBox[T with Clone]:
-  value: T
+  pub value: T
 
   @classmethod
   def make(cls, value: T) -> Self:
@@ -12807,7 +12844,14 @@ pub def exercise_callbacks() -> None:
         assert_eq!(factory_metadata.type_params, ["T", "U"]);
         assert!(!factory_metadata.has_const_params);
         let generated_provider = std::fs::read_to_string(provider_root.join("target/lib/src/lib.rs"))?;
-        let compact_generated_provider = generated_provider.split_whitespace().collect::<String>();
+        // `prettyplease` adds a trailing comma when it breaks an argument list across lines, so the same turbofish
+        // reads as `::<f32,_,_>` or `::<f32,_,_,>`, and the same call as `f(x)` or `f(x,)`, depending only on where
+        // the line happened to break. Compare against the form that does not depend on that.
+        let compact_generated_provider = generated_provider
+            .split_whitespace()
+            .collect::<String>()
+            .replace(",>", ">")
+            .replace(",)", ")");
         assert!(
             compact_generated_provider.contains(".build_output_stream::<f32,_,_>"),
             "expected the complete method turbofish in generated provider Rust:\n{generated_provider}"
@@ -12821,7 +12865,7 @@ pub def exercise_callbacks() -> None:
             "borrowed-slice callbacks must not lower to a borrowed Vec:\n{generated_provider}"
         );
         assert!(
-            compact_generated_provider.contains("PairFactory::<i64,String,>::new"),
+            compact_generated_provider.contains("PairFactory::<i64,String>::new"),
             "expected receiver-side turbofish for both owner type parameters:\n{generated_provider}"
         );
         assert!(
@@ -12829,8 +12873,12 @@ pub def exercise_callbacks() -> None:
             "expected owner specialization on a non-Self return:\n{generated_provider}"
         );
         assert!(
-            compact_generated_provider.contains("accept_pair(PairFactory::new(7,\"marker\".into()))")
-                || compact_generated_provider.contains("accept_pair(PairFactory::new(7,\"marker\".to_string()))"),
+            // Assert the specialization, not the callee's spelling. RFC 120 projects `accept_pair`, so pinning the
+            // source name tested the projection rather than the contextual receiver specialization this case exists
+            // for. The leading paren still requires the factory call to reach the callee as the argument itself,
+            // built without a turbofish and keeping its owned `String`.
+            compact_generated_provider.contains("(PairFactory::new(7,\"marker\".into()))")
+                || compact_generated_provider.contains("(PairFactory::new(7,\"marker\".to_string()))"),
             "expected contextual receiver specialization to preserve the owned String parameter:\n{generated_provider}"
         );
 
@@ -14699,8 +14747,11 @@ def main() -> None:
         );
         let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         let normalized: String = generated_main.chars().filter(|c| !c.is_whitespace()).collect();
+        // Assert the wrapping, not the callee's spelling. RFC 120 projections emit a linker-visible
+        // `__incan_v1_...` name for `lit`, so pinning the source spelling tested the projection rather than the union
+        // arm this case exists for. The leading `(` still proves the literal reaches the call as the argument itself.
         assert!(
-            normalized.contains("lit(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"),
+            normalized.contains("(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string())"),
             "expected string literal to be wrapped directly as the union string arm, got:\n{generated_main}"
         );
         assert!(
@@ -15670,6 +15721,37 @@ pub fn library_vocab() -> VocabRegistration {
         Ok(())
     }
 
+    /// Publish the root identity a schema-v2 manifest owes for one directly declared model export.
+    ///
+    /// A v2 identity graph publishes one root entry per raw declaration. A hand-built fixture that pushes a
+    /// `ModelExport` without one is rejected while the manifest is written, before the test reaches the diagnostic it
+    /// is actually checking.
+    fn push_root_model_identity(manifest: &mut LibraryManifest, library: &str, name: &str) {
+        let identity = incan_semantics_core::CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+            origin: incan_semantics_core::SymbolOrigin::Package {
+                library: library.to_string(),
+                module_path: Vec::new(),
+            },
+            declaration_name: name.to_string(),
+            kind: incan_semantics_core::SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: incan_semantics_core::HirSourceSpan::new(0, 1),
+        };
+        manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .push(incan::library_manifest::ExportIdentity {
+                public_name: name.to_string(),
+                public_path: vec![library.to_string(), name.to_string()],
+                source_path: vec![name.to_string()],
+                kind: incan::library_manifest::ExportIdentityKind::Model,
+                projection: incan::library_manifest::ExportIdentityProjection::Direct,
+                canonical: incan::library_manifest::CanonicalIdentityExport::from_canonical(library, &identity),
+            });
+    }
+
     fn mylib_manifest_with_widget() -> LibraryManifest {
         let mut manifest = LibraryManifest::new("mylib", "0.1.0");
         manifest.exports.models.push(ModelExport {
@@ -15682,6 +15764,7 @@ pub fn library_vocab() -> VocabRegistration {
             properties: Vec::new(),
             methods: Vec::new(),
         });
+        push_root_model_identity(&mut manifest, "mylib", "Widget");
         manifest
     }
 
@@ -15860,6 +15943,7 @@ pub fn library_vocab() -> VocabRegistration {
             properties: Vec::new(),
             methods: Vec::new(),
         });
+        push_root_model_identity(&mut manifest, "widgets_core", "Widget");
         manifest.write_to_path(&dep_artifact_root.join("widgets_core.incnlib"))?;
         write_minimal_library_crate(&dep_artifact_root, "different_package_name")?;
 

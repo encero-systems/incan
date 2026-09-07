@@ -18,17 +18,17 @@ If none is provided, ask the user what they want to work on.
 
 ---
 
-## Git commits — maintainer only
+## Git commits
 
-**Do not commit unless the user explicitly asks you to** (e.g. “commit this”, “make a commit”, “git commit with message …”). The maintainer is the only person who commits code to this repository by default.
+**Commit your own work.** Use the repo's message convention (`chore|bugfix|feature - <issue_id(s)> <description>`), push the branch, and open the PR when the work is ready. Do not leave finished work uncommitted waiting for the maintainer.
 
-Agents must **not** run, on their own initiative:
+Still off-limits on your own initiative:
 
-- `git commit` (any variant)
-- `git merge` / `git rebase` / `git cherry-pick` when the result would create or rewrite commits the user did not ask for
-- `git push` (unless the user explicitly asked to push)
+- anything that overwrites or deletes uncommitted work — `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`
+- force-pushing a shared branch, or any branch whose PR has already merged
+- `git rebase` of a branch that is already pushed — sync it with a merge commit instead, so ancestry survives and no force-push is needed
 
-**Do** create branches, apply edits, run tests, and leave the working tree ready for the user to review and commit. If finishing a task, summarize what changed and suggest a commit message **as text**; the user runs `git commit` when they are ready.
+Two habits keep pushing safe. Re-check a PR's state immediately before pushing to its branch: a squash-merge silently strands anything pushed afterwards. And prove work reached the integration branch by content (`git show origin/<dev-line>:<file> | grep <symbol>`), never by PR status — a stacked PR reports `MERGED` once its own base absorbs it, which says nothing about the dev line.
 
 This policy applies whenever this skill is used (and is the default for Incan work even without `/start-work`).
 
@@ -179,5 +179,5 @@ Provide a concise summary:
 ## Edge cases
 
 - **No GitHub CLI (`gh`)**: Fall back to reading the RFC file directly. Note that the issue could not be fetched and ask the user for context.
-- **Dirty working tree**: Warn the user about uncommitted changes before switching branches. Ask whether to stash, commit themselves, or abort — do not commit on their behalf unless they explicitly asked you to commit.
+- **Dirty working tree**: uncommitted changes you did not make belong to the maintainer. Report them before switching branches and let them decide; never discard or revert them.
 - **Branch already exists with divergent history**: Always ask before overwriting.

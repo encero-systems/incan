@@ -463,6 +463,18 @@ pub struct IrEmitter<'a> {
     /// both source names, but Rust still has one concrete implementation symbol, so a facade importing the canonical
     /// name and the alias must not emit the same `use`/`pub use` binding twice.
     emitted_overload_import_bindings: RefCell<HashSet<String>>,
+    /// Projections this module has already bound with a plain `use`.
+    ///
+    /// A projection names one declaration, so importing it through any facade that re-exports that declaration binds
+    /// the same Rust identifier. A module reaching one declaration through several facades emitted one `use` per
+    /// path, and Rust rejects the repeats as a redefinition.
+    emitted_projection_import_bindings: RefCell<HashSet<String>>,
+    /// Projections a public alias in the module being emitted re-exports under its own `pub use`.
+    ///
+    /// A module binds one projection once, and when a public alias republishes it that binding has to be the public
+    /// one. An ordinary import of the same declaration would otherwise bind it privately first and leave the alias
+    /// with nothing to add.
+    public_alias_projection_targets: RefCell<HashSet<String>>,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
     /// Whether serde is needed for emitted Rust derives or helpers.
@@ -673,6 +685,8 @@ impl<'a> IrEmitter<'a> {
             externally_reachable_items: HashSet::new(),
             generated_use_analysis: RefCell::new(GeneratedUseAnalysis::default()),
             emitted_overload_import_bindings: RefCell::new(HashSet::new()),
+            emitted_projection_import_bindings: RefCell::new(HashSet::new()),
+            public_alias_projection_targets: RefCell::new(HashSet::new()),
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
@@ -1811,7 +1825,20 @@ impl<'a> IrEmitter<'a> {
         if name.contains("::") || self.ambiguous_value_names.contains(name) {
             return None;
         }
-        let module_path = self.value_module_paths.get(name)?;
+        // The map is keyed by each dependency declaration's source spelling, read from its AST, while a reference
+        // reaching here carries the projection lowering gave it. Follow the registry's compiler-created pairing
+        // between the two rather than reading meaning out of the emitted name, and keep emitting the projection --
+        // that is the name the owning module defines.
+        let module_path = match self.value_module_paths.get(name) {
+            Some(module_path) => module_path,
+            None => {
+                let source_name = self.canonical_function_registry().source_name(name)?;
+                if self.ambiguous_value_names.contains(source_name) {
+                    return None;
+                }
+                self.value_module_paths.get(source_name)?
+            }
+        };
         self.emit_dependency_item_path(module_path, name)
     }
 
@@ -2075,15 +2102,39 @@ impl<'a> IrEmitter<'a> {
         api: &'api crate::frontend::api_metadata::CheckedApiMetadataPackage,
         target_path: &[String],
     ) -> Option<&'api ApiDeclaration> {
-        let name = target_path.last()?;
-        let path = target_path.strip_prefix(&["crate".to_string()]).unwrap_or(target_path);
-        let module_path = path.get(..path.len().saturating_sub(1))?;
-        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
-        module.declarations.iter().find(|declaration| match declaration {
-            ApiDeclaration::Model(model) => model.name == *name,
-            ApiDeclaration::Class(class) => class.name == *name,
-            _ => false,
-        })
+        let mut path = target_path.to_vec();
+        let mut seen = HashSet::new();
+        loop {
+            let name = path.last()?.clone();
+            let stripped = path.strip_prefix(&["crate".to_string()]).unwrap_or(&path).to_vec();
+            let module_path = stripped.get(..stripped.len().saturating_sub(1))?.to_vec();
+            let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+            if let Some(declaration) = module.declarations.iter().find(|declaration| match declaration {
+                ApiDeclaration::Model(model) => model.name == name,
+                ApiDeclaration::Class(class) => class.name == name,
+                _ => false,
+            }) {
+                return Some(declaration);
+            }
+            // A re-export chain may rename its export on every hop -- `Vault -> PublicVault -> ExportedVault` -- so
+            // the path recorded for the outermost name lands on an alias rather than the declaration. Follow the hop
+            // that alias names, requalifying a same-module target against the module it was written in, and stop on
+            // a repeat so a cyclic manifest cannot loop here.
+            let next = module.declarations.iter().find_map(|declaration| match declaration {
+                ApiDeclaration::Alias(alias) if alias.name == name => Some(alias.target_path.clone()),
+                _ => None,
+            })?;
+            if !seen.insert(path.clone()) {
+                return None;
+            }
+            path = if next.len() == 1 {
+                let mut qualified = module_path;
+                qualified.extend(next);
+                qualified
+            } else {
+                next
+            };
+        }
     }
 
     /// Return canonical provider candidates for one ordinary source import in source-resolution order.

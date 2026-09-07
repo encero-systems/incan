@@ -61,7 +61,7 @@ The missing layer is an explicit project mutation contract. Users need a command
 - Define explainable applicability and back-off behavior for existing projects.
 - Distinguish greenfield project creation from existing-project adoption so migration does not overwrite user-authored files under creation-oriented assumptions.
 - Allow starters and mixes to add manifest entries, dependencies, dev-dependencies, scripts, env definitions, file templates, tooling metadata, agent guidance metadata, and user-facing follow-up notes.
-- Keep generated projects ordinary: all persistent behavior must be represented in source files, `loaf.toml`, `Oven.lock`, or documented generated artifacts.
+- Keep generated projects ordinary: all persistent behavior must be represented in source files, `loaf.toml`, `oven.lock`, or documented generated artifacts.
 - Provide inspection commands so users can list available starters, preview one starter, and see which mixes are recorded in a project.
 - Define a review-first mix update path so a project can move an applied mix from one recorded descriptor version to another without treating the change as an automatic package upgrade or silent template rewrite.
 - Provide machine-readable inspection surfaces so LSP and IDE tooling can list starters, preview mix changes, show enabled mixes, and surface project-specific actions without reimplementing descriptor resolution.
@@ -693,7 +693,7 @@ Implementations must provide a machine-readable dry-run format for the full muta
 
 ### Lockfile interaction
 
-Starter and mix application may update `loaf.toml`, but it must not silently rewrite `Oven.lock` unless the command documents and exposes that behavior. The default behavior should leave lockfile updates to the next `oven lock`, `oven bake`, or `oven test` flow governed by RFC 020.
+Starter and mix application may update `loaf.toml`, but it must not silently rewrite `oven.lock` unless the command documents and exposes that behavior. The default behavior should leave lockfile updates to the next `oven lock`, `oven bake`, or `oven test` flow governed by RFC 020.
 
 If a descriptor includes dependency changes and the project is in a locked or frozen mode, the CLI must report that lockfile refresh is required rather than pretending the project remains fully locked.
 

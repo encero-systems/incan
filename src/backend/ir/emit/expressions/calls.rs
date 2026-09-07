@@ -1328,6 +1328,12 @@ impl<'a> IrEmitter<'a> {
             return Ok(None);
         };
 
+        // The path lookups own the ordinary case and must run first: they resolve the exact physical symbol from
+        // compiled-provider metadata, and a projection substituted into the path ahead of them makes that miss.
+        // They cannot resolve every callee, though. An overload set has no single declaration, so its path is
+        // ambiguous by construction and both lookups fail closed -- and the source spelling they then fell back to
+        // is one a provider never exports. Lowering already resolved which declaration the call selected, so prefer
+        // that over a spelling chosen only because nothing better was found.
         let emitted_name = self
             .canonical_stdlib_function_identity(canonical_path)
             .or_else(|| {

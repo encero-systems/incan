@@ -697,6 +697,12 @@ impl TypeChecker {
                 type_param_bound_details: binding.type_param_bound_details,
                 emitted_name: None,
             };
+            // Every other callee path proves which declaration the call selects: the `SymbolKind::Function` arm
+            // records it directly, and a decorated call without explicit type arguments reaches `check_expr(callee)`
+            // below, which records it there. This branch returns before either, so a decorated generic called as
+            // `f[T]()` left the reference unproven and lowering fell back to the source spelling -- which RFC 120
+            // renamed, so the generated Rust named a function that no longer exists.
+            self.record_direct_callee_identity(name, callee.span);
             return self.validate_function_call(name, &info, type_args, args, span, expected_return_ty);
         }
 

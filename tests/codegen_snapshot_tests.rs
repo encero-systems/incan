@@ -1720,6 +1720,40 @@ def main() -> None:
     }
 
     #[test]
+    fn a_type_owned_call_with_explicit_type_arguments_projects_like_its_declaration() -> TestResult {
+        // `FactoryBox[int].make(1)` and `FactoryBox.make(1)` call the same declaration; the subscript only supplies
+        // type arguments. The subscripted receiver used to resolve to `Unknown`, so method resolution matched no
+        // declaration and recorded no identity, and lowering emitted the source spelling against a declaration that
+        // was emitted under its projection.
+        let rust_code = generate_registry_rust(
+            r#"
+@derive(Clone)
+class FactoryBox[T with Clone]:
+  pub value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+
+def main() -> None:
+  boxed = FactoryBox[int].make(1)
+  println(f"{boxed.value}")
+"#,
+            "app.main",
+        );
+
+        assert!(
+            rust_code.contains("FactoryBox::__incan_v1_"),
+            "an explicitly instantiated type-owned call must name its declaration's projection:\n{rust_code}"
+        );
+        assert!(
+            !rust_code.contains("FactoryBox::make("),
+            "the pre-projection source spelling names no emitted function:\n{rust_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_derived_method_keeps_its_source_spelling_instead_of_a_wrapper_that_does_not_exist() -> TestResult {
         // `@derive(Default)` produces a Rust `Default` impl, not an Incan wrapper, so `Point.default()` has no
         // recoverable slot on `Point`. Projecting it named `std.derives.copying.default` -- a real declaration with

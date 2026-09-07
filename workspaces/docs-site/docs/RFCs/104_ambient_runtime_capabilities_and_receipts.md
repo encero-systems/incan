@@ -26,11 +26,11 @@
 
 ## Summary
 
-This RFC defines ambient runtime capabilities and receipts for Incan. Importing a module remains Python-readable and low ceremony, but using authority-bearing operations such as filesystem, environment, process, HTTP, clock, random, model, tool, or package-defined domain operations produces structured receipts and may be denied by a governed runtime. The stdlib is the first capability publisher, not the only one: library authors can define domain capabilities, attach receipt schemas, and participate in the same audit and policy system without reimplementing tracing or reaching for stdlib internals. The goal is ambient observation with explicit authority.
+This RFC defines ambient runtime capabilities and receipts for Incan. Importing a module remains Python-readable and low ceremony, but using authority-bearing operations such as filesystem, environment, process, HTTP, clock, random, model, tool, or package-defined domain operations produces structured receipts and may be denied by a governed runtime. In reporting modes, those operations are receipt-required: a receipt binds the checked authority to the selected execution boundary and its observed outcome. The stdlib is the first capability publisher, not the only one: library authors can define domain capabilities, attach receipt schemas, and participate in the same audit and policy system without reimplementing tracing or reaching for stdlib internals. The goal is ambient observation with explicit authority.
 
 ## Core model
 
-Read this RFC as ten foundations:
+Read this RFC as eleven foundations:
 
 1. **Import is not authority:** source code may import `std.fs`, `std.process`, `std.environ`, `std.http`, or a capability-aware package without automatically receiving permission to perform those operations.
 2. **Observation is ambient:** ordinary stdlib and library calls can emit structured receipts without requiring users to annotate every function with effect types.
@@ -42,6 +42,7 @@ Read this RFC as ten foundations:
 8. **Redaction is mandatory:** receipts must preserve sensitivity metadata and must not expose raw secret or policy-sensitive values by default.
 9. **Replay claims must be honest:** the runtime should describe what can be replayed exactly, what requires fixtures, and what cannot be replayed.
 10. **Policy consumes receipts:** policy systems, CI, editors, docs tooling, and agents consume the same capability declarations and receipt facts; they do not infer authority from prose or hidden conventions.
+11. **Receipt evidence is bound to execution:** a receipt records the exact authority decision, execution boundary, normalized operation inputs, observed outcome, and any applicable attestation or redaction commitment. It must not merely record that source code intended to make a call.
 
 ## Motivation
 
@@ -64,6 +65,7 @@ The key design constraint is usability. This RFC must not turn ordinary Incan in
 - Define how domain capabilities may imply or request host capabilities without granting themselves authority.
 - Make receipts consumable by RFC 102 semantic inspection, RFC 078 typed actions, RFC 093 telemetry, RFC 076 policy, CI, LSP, docs tooling, and agents.
 - Align typed action dry-runs and runtime reports so declared capability requirements can be compared with actual receipt emission.
+- Make receipt evidence re-derivable by an authorized reviewer, with an explicit statement of what the runtime can and cannot attest.
 - Keep ordinary source readable and low ceremony.
 - Make capability identities checked symbols, resolved from where they are declared, rather than string literals a caller can misspell or a package can spoof.
 - Let the compiler statically verify that a typed action's declared capabilities match what its body actually calls, so a mismatch is a compile-time diagnostic rather than a runtime capability denial discovered later.
@@ -82,6 +84,8 @@ The key design constraint is usability. This RFC must not turn ordinary Incan in
 - This RFC does not allow libraries to grant themselves host authority.
 - This RFC does not define global CLI flags unrelated to capability grants and reports, such as verbosity, color, or profile selection.
 - This RFC does not define a secret-value type; it only requires receipts to preserve sensitivity and redaction metadata from the owning subsystem.
+- This RFC does not make local runtime evidence equivalent to independent proof that an untrusted external system performed an effect.
+- This RFC does not define how signing keys are issued, distributed, stored, or rotated by a host or signer, nor how a verifier's trust roots or revocation policy are configured; it requires only that signed receipt and report-anchor evidence retain enough metadata (issuer identity, key id and generation, algorithm, signing time, verification material) to remain historically verifiable across rotation. This RFC does not define a general-purpose remote-attestation protocol for claims outside receipt and report-anchor evidence, and it does not define a secret-reveal system.
 
 ## Guide-level explanation
 
@@ -97,13 +101,13 @@ def fetch_status() -> int:
     return response.status.code
 ```
 
-A normal run observes authority-bearing operations while keeping ordinary development unblocked:
+A default run behaves like a normal program while the runtime records local authority facts, keeping ordinary development unblocked:
 
 ```text
 incan run status.incn
 ```
 
-The run can export those observed facts as a machine-readable report:
+`--report json` materializes those observed facts as a machine-readable report:
 
 ```text
 incan run status.incn --report json
@@ -134,6 +138,8 @@ The report can show the authority-bearing operations that happened:
   ]
 }
 ```
+
+`fetch_status` still returns an ordinary `int`; receipt-required does not create a value that the author must capture or pass around. The runtime retains the evidence in the report, including the report's ordered receipt-set commitment and its attestation classification.
 
 A governed run grants only selected authority:
 
@@ -225,9 +231,11 @@ A host may also supply a capability ceiling: a maximum grant set sourced from ou
 
 The runtime should support at least these conceptual modes:
 
-- `permissive`: operations run normally with reporting explicitly disabled; this is an escape hatch rather than the default.
+- `permissive`: operations run normally with receipt and report emission disabled; this is an escape hatch rather than the default.
 - `observe`: operations run normally and receipts are emitted; this is the default for ordinary development.
 - `governed`: operations require granted capabilities and receipts are emitted.
+
+`observe` and `governed` are collectively the reporting modes: both retain a receipt for every attempted operation, including denials. `permissive` is not a reporting mode and remains receipt-free.
 
 The user-facing shape is:
 
@@ -236,7 +244,7 @@ incan run app.incn --report json
 incan run app.incn --allow host.env.read,host.http.request --report json
 ```
 
-`incan run` defaults to `observe`: ordinary local development stays ordinary and records authority facts without unexpectedly denying an undeclared access. `permissive` is an explicit escape hatch for runs that must disable observation. `incan test` defaults to `governed` with nothing pre-granted, so a test that unexpectedly reaches the real filesystem or network fails with a capability diagnostic instead of silently succeeding -- the same test-isolation property most test frameworks already enforce by convention, made structural here instead. A typed action runs under whatever mode and grants its invoking context provides (a CI job's explicit `--allow`, a host's policy-selected grant set); this RFC does not define a third default distinct from `incan run` and `incan test`, since actions are never invoked in a vacuum.
+`incan run` defaults to `observe`: ordinary local development stays uninterrupted while authority facts are recorded without unexpectedly denying an undeclared access, and `--report` makes those facts available to a machine-readable consumer. `permissive` is an explicit escape hatch for runs that must disable observation. `incan test` defaults to `governed` with nothing pre-granted, so a test that unexpectedly reaches the real filesystem or network fails with a capability diagnostic instead of silently succeeding -- the same test-isolation property most test frameworks already enforce by convention, made structural here instead. A typed action runs under whatever mode and grants its invoking context provides (a CI job's explicit `--allow`, a host's policy-selected grant set); this RFC does not define a third default distinct from `incan run` and `incan test`, since actions are never invoked in a vacuum.
 
 ### Capability declarations
 
@@ -291,14 +299,48 @@ A receipt is a structured runtime fact emitted by a capability-aware operation. 
 - redacted attributes;
 - sensitivity metadata;
 - replay classification.
+- a versioned receipt identity;
+- an authority-decision binding;
+- an execution-evidence binding; and
+- a boundary attestation and redaction commitment when applicable.
 
 A receipt should include operation-specific attributes such as environment variable key, filesystem path policy, HTTP method, URL policy, process command policy, model id policy, artifact id, action id, or policy id. Sensitive values must be redacted by default.
 
 Receipts must be machine-readable. Human output may summarize receipts, but human output must not be the integration contract.
 
+### Receipt-required operations
+
+An authority-bearing operation is receipt-required whenever the selected runtime mode reports authority use. `observe` and `governed` modes must retain a receipt for every attempted operation, including a denial. User code may ignore an operation's ordinary return value; it must not be able to discard the authority evidence for an operation that ran.
+
+`permissive` mode is receipt-free. It must not create, retain, link, export, or summarize a receipt for an authority-bearing operation, including an `observed` receipt. A generic report may state `authority_reporting: disabled`, but it must not contain a receipt, receipt-linked execution record, receipt-set commitment, or claim of authority audit evidence.
+
+If a runtime cannot complete the required evidence for an operation in a reporting mode, it must represent the report as incomplete and must not present that operation as fully audited.
+
+### Receipt integrity and execution evidence
+
+Every receipt must bind the authority decision to the operation boundary that either executed the operation or refused it. The authority-decision binding must cover the canonical capability and operation identities, selected mode, effective grant or denial, applicable ceiling, and available source or semantic provenance. A display spelling, suggested grant, provider name, or emitted-language name must not substitute for those checked identities.
+
+The execution-evidence binding must be created at the execution boundary after final argument conversion or marshalling. It must cover the selected implementation identity, the target boundary, a commitment to the normalized arguments or byte streams delivered to that boundary, and the observed outcome. When the operation produces a result, it must also cover the result or result descriptor. When the boundary returns an acknowledgement or its own evidence of an external effect, the receipt must retain or commit to that evidence.
+
+A denied operation must bind its denial decision and source provenance, and must state that no provider or external boundary was invoked. It must not claim an execution outcome or external side effect.
+
+The receipt identity must be computed from a canonical, versioned serialization of the receipt's non-secret fields and declared commitments. A run report with authority reporting enabled must anchor its complete ordered receipt set with a canonical commitment to those receipt identities. A digest stored only inside a mutable receipt or report does not make that record trustworthy: it makes it re-derivable only when a reviewer has the relevant inputs and an independently trusted report anchor or execution attestation.
+
+### Attestation and redaction commitments
+
+Attestation has two independent scopes that must not be collapsed into one strongest classification. Every receipt must carry a per-receipt execution attestation for its own execution evidence. It must name the receipt identity, exact execution boundary, normalized-input commitment, and observed outcome that it covers. It is either `local`, meaning the local runtime recorded the evidence, or `boundary-attested`, meaning the external boundary supplied verifiable evidence. A boundary-attested receipt must retain signed evidence: the attestation issuer identity, immutable signer key id and key generation, signature algorithm, signing time, signature over the canonical stated coverage, and public verification material or certificate-chain snapshot needed to verify it.
+
+Every run report with authority reporting enabled must separately carry a report-anchor authentication. It must name the report identity, the canonical ordered receipt-set commitment, and the exact receipt identities and execution-evidence bindings that anchor covers. It is either `local`, meaning the local runtime recorded the anchor, or `host-signed`, meaning a configured host attestation identity signed that stated coverage. A host-signed anchor must retain the same signed-evidence fields as a boundary-attested receipt. A report-anchor authentication establishes the integrity of that set and its ordering; it must not upgrade a receipt with local execution attestation into a boundary-attested receipt, or imply that every receipt in the set has the same external proof.
+
+Signer metadata identifies attestation only; it is not an authority grant or a second source of policy. A signer key rotation creates a new immutable key generation and does not alter evidence signed under an earlier generation. A verifier may evaluate revocation or trust-policy changes using the evidence's signing time and a separately recorded verification result that identifies the verifier policy and check time. That result may change the verifier's current trust judgement, but must not rewrite the receipt identity, signed evidence, authority decision, or execution outcome. This RFC requires these durable bindings without defining how signing keys are issued, distributed, stored, or rotated, or how a verifier's trust roots or revocation policy are configured -- see Non-Goals.
+
+At either scope, `local` evidence is re-derivable by an authorized reviewer from available inputs, but carries no independent proof for an untrusted reviewer. A boundary-attested receipt proves only what its attesting boundary asserts. A locally attested receipt or host-signed report anchor must not be represented as independently proving that an untrusted external system performed an effect.
+
+Redaction must preserve an authorized audit link for every protected value that materially affected the operation or outcome. Such a value must use a keyed commitment or encrypted audit envelope, with an explicit algorithm and key or envelope identity. An ordinary unkeyed digest of a secret is forbidden: low-entropy values are vulnerable to offline guessing. An authorized reviewer must be able to verify the permitted redaction commitments; an unauthorized consumer may establish only that the published, attested evidence has not changed.
+
 ### Run reports
 
-A run report is a machine-readable summary of a run, action, test, or governed entrypoint. A report must include:
+A run report is a machine-readable summary of a run, action, test, or governed entrypoint. A report with authority reporting enabled must include:
 
 - toolchain version;
 - run mode;
@@ -308,6 +350,7 @@ A run report is a machine-readable summary of a run, action, test, or governed e
 - granted capabilities;
 - denied capability requests;
 - emitted receipts;
+- canonical receipt-set commitment, its report-anchor attestation, and the exact receipt identities and execution-evidence bindings that anchor covers;
 - diagnostics;
 - redaction summary;
 - replay manifest or replay limitations.
@@ -315,6 +358,8 @@ A run report is a machine-readable summary of a run, action, test, or governed e
 Reports may include artifact references, span trees, telemetry correlation ids, package versions, lockfile identity, source snapshot identity, and semantic package references.
 
 Reports must not include raw secret values or sensitive payloads unless a separate, explicit reveal policy approves that exposure.
+
+A permissive report may state `authority_reporting: disabled`. It must not contain emitted receipts, receipt-linked execution records, a receipt-set commitment, report-anchor authentication, or a claim of authority audit evidence.
 
 Report output reuses the existing `--report`/`--report-output` contract `incan build` already established, rather than defining a new one: `--report json` writes to stdout by default, and `--report-output <PATH>` redirects it to a file. Receipts and run reports use a numeric `schema_version`, matching the same convention already used by `incan check --format json`, `incan build --report json`, and other existing JSON report surfaces; this RFC does not define a new versioning scheme.
 
@@ -432,7 +477,7 @@ Static declarations and runtime receipts should be compared where possible. If a
 
 ### Compatibility
 
-This RFC is additive. Existing programs can continue to run in permissive mode. Governed mode may reveal hidden authority assumptions in existing programs, but those failures are the point of governed execution and must be diagnosable.
+This RFC is additive. Existing programs continue to run without new failures: the default `observe` mode records local authority facts but denies nothing, and `permissive` mode remains available for callers that want receipt emission fully disabled. Governed mode may reveal hidden authority assumptions in existing programs, but those failures are the point of governed execution and must be diagnosable.
 
 Stdlib APIs that already perform authority-bearing operations should be updated to emit receipts and enforce grants in governed mode. Libraries may opt in incrementally by publishing capability descriptors and using the public receipt surface.
 
@@ -481,7 +526,8 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 ## Layers affected
 
 - **Stdlib / Runtime (`incan_stdlib`)**: host-boundary modules need capability checks, receipt emission, redaction handling, and report integration.
-- **Tooling / CLI**: run, test, action, and build commands need report output, governed-mode grants, denial diagnostics, machine-readable schemas, and host-ceiling resolution.
+- **Runtime attestation and redaction commitments**: signing and verifying boundary-attested receipts and host-signed report anchors (signer key id/generation, algorithm, signature, verification material) and generating/verifying keyed redaction commitments or encrypted audit envelopes needs dedicated cryptographic primitives, likely a distinct crate boundary from ordinary receipt emission.
+- **Tooling / CLI**: run, test, action, and build commands need report output, governed-mode grants, denial diagnostics, machine-readable schemas, host-ceiling resolution, and a verification surface for signed receipt/report evidence and redaction commitments.
 - **Package metadata**: packages need a way to publish capability declarations and receipt schemas.
 - **Typechecker / Semantic metadata**: static capability declarations and action requirements should be exposed as checked metadata where available.
 - **IR Lowering / Backend**: source spans and semantic identities should be preserved well enough for receipts to point back to source and semantic objects.
@@ -535,7 +581,7 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 
 - **Capability identities are checked symbols, not strings:** a capability's fully-qualified identity is derived from where it is declared (package or toolchain identity plus module path), never typed by the author. Two packages cannot collide on a capability name because the namespace segment comes from an identity a registry already enforces as unique. A capability reference at a use site resolves like an import; a misspelled or nonexistent reference is a compile error, not a runtime surprise.
 - **Capability declarations live in source**, as a first-class `capability` declaration form, because deriving identity from declaration location requires the declaration to be real, compiler-resolved syntax rather than manifest or metadata.
-- **Default run modes:** `incan run` defaults to `observe`; it records authority facts without unexpectedly denying ordinary development access. `permissive` is an explicit escape hatch that disables observation, while `incan test` defaults to `governed` with nothing pre-granted, enforcing the same test-isolation property most test frameworks already assume by convention. Typed actions run under whatever mode and grants their invoking context provides; there is no third default.
+- **Default run modes:** `incan run` defaults to `observe`, recording authority facts without governed denials; `permissive` is an explicit escape hatch that disables observation, while `incan test` defaults to `governed` with nothing pre-granted, enforcing the same test-isolation property most test frameworks already assume by convention. Typed actions run under whatever mode and grants their invoking context provides; there is no third default.
 - **Minimum stable host capability set is exactly the nine already proposed** in Reference-level explanation (`host.env.read`, `host.fs.read`, `host.fs.write`, `host.process.spawn`, `host.http.request`, `host.clock.read`, `host.random`, `host.model.invoke`, `host.tool.invoke`), fixed and not package-extensible.
 - **Scoped grants:** a capability declares its own typed `scope` schema (host capabilities via `std.runtime`'s own declarations, package capabilities via their own). Scope values bind at grant time, never in a static declaration such as `@action(caps=[...])`, and are checked against the real operation's attributes at the moment it happens, independent of the declaring code.
 - **No implicit host-capability grants:** a package capability's `requires` list documents which host capabilities its implementation needs, for tooling and policy to inspect, but granting the package capability never automatically grants what it requires. Those must always be listed and granted separately.
@@ -543,6 +589,10 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 - **Report output reuses `incan build`'s existing `--report`/`--report-output` contract** rather than defining a new one.
 - **Four required replay classifications** for the first implementation: `deterministic`, `external`, `fixture-required`, `redacted`. `unavailable` remains a trivial fallback needing no further design.
 - **Telemetry export is confirmed orthogonal** to receipt generation, per this RFC's existing text: receipts remain available to local reports and policy regardless of whether `std.telemetry` is configured; telemetry is a second consumer of the same stream, not a dependency of producing it.
+- **Authority-bearing operations are receipt-required, not result-required:** in reporting modes, the runtime retains evidence for each attempted operation even when user code ignores its ordinary return value. `permissive` is explicitly receipt-free and may report only `authority_reporting: disabled`; `observe` and `governed` retain receipts, including denials.
+- **Report-anchor authentication and execution attestation are distinct:** a report anchor is either locally recorded or host-signed and covers its ordered receipt set. Each receipt is separately locally recorded or boundary-attested, covering its exact boundary, normalized inputs, outcome, issuer, and verification material where applicable. A report must not aggregate those facts into a strongest attestation or upgrade a local receipt.
+- **Signed evidence remains historically verifiable across signer rotation:** a host-signed anchor or boundary-attested receipt retains its attestation issuer, immutable signer key id and generation, algorithm, signing time, signature, and verification-material or certificate-chain snapshot. A rotation creates a new generation without rewriting earlier evidence. Revocation and trust-policy changes produce separate, time-stamped verifier judgements; they may change current trust but cannot alter historical receipt facts or turn attestation metadata into authority.
+- **Redaction uses authorized commitments, never guessable secret hashes:** protected values that materially influence an operation retain a keyed commitment or encrypted audit envelope. Plain hashes are not an acceptable redaction link because they permit offline guessing of low-entropy secrets.
 - **Capability budgets use the same grant syntax as scope**, via a reserved `budget.<key>=<value>` prefix, in CLI grants, package metadata, and typed action declarations alike -- no separate budget declaration form.
 - **Typed actions get a static caps-completeness check**, extending "Typed action alignment" from a runtime-only comparison to a compile-time one: the typechecker resolves every call in an `@action`-decorated body, unions the capabilities it actually requires, and diffs that against the declared `caps=[...]` list. A missing required capability is a compile error; an unused declared capability is a warning, matching the non-error default this RFC already gives runtime-observed unused declarations. The diagnostic is available through LSP the same way any other typechecker diagnostic is, including a quick fix to insert a missing capability.
 - **Host-supplied capability ceilings bound effective grants via intersection, never union:** a host may supply a maximum grant set sourced from outside the invocation itself -- for example, a harness-written policy file for an agent or CI job. The effective grant for any invocation is always the intersection of its ceiling and what it requests; an invocation can only receive less than its ceiling, never more, regardless of what it asks for. This RFC defines the ceiling as a distinct grant source and the intersection rule; it does not define how the ceiling's own source is protected from tampering, which is an operating-system/sandbox concern already excluded by this RFC's Non-Goals.

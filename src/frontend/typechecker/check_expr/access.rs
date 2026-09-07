@@ -3621,6 +3621,12 @@ impl TypeChecker {
     }
 
     /// Recognize `TypeName[T]` receiver expressions used for type-owned calls.
+    ///
+    /// The subscript supplies type arguments; it does not change which type owns the call. Resolving to `Unknown`
+    /// here left `FactoryBox[int].make(...)` with no receiver type, so method resolution never matched a declaration
+    /// and recorded no identity for the call. Lowering then had nothing to project with and emitted the source
+    /// spelling, while the declaration was emitted under its projection. Keeping the nominal type gives the
+    /// subscripted spelling the same receiver the bare `FactoryBox.make(...)` form already has.
     fn resolve_type_index_expression(&self, base_ty: &ResolvedType, base: &Spanned<Expr>) -> Option<ResolvedType> {
         let ResolvedType::Named(_) = base_ty else {
             return None;
@@ -3628,7 +3634,7 @@ impl TypeChecker {
         if !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName)) {
             return None;
         }
-        Some(ResolvedType::Unknown)
+        Some(base_ty.clone())
     }
 
     /// Return whether `ty` is the compiler-owned `std.json.JsonValue` wrapper over the raw runtime carrier.

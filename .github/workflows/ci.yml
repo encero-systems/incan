@@ -575,12 +575,17 @@ jobs:
           make -s test-oven-partition
           INCAN_TEST_OVEN_PARTITION_INDEX=${{ matrix.partition }}
           INCAN_TEST_OVEN_PARTITION_COUNT=4
+      # The JSON report is only written on success. A failing partition instead retains the complete libtest
+      # transcript beside its caller output, and that transcript is the only place every failing case is named:
+      # the terminal summary is deliberately bounded, so a few large panics can crowd the rest out of the log.
       - name: Upload Oven partition report
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: oven-pr-linux-partition-${{ matrix.partition }}
-          path: target/oven-pr-linux-partition-${{ matrix.partition }}.json
+          path: |
+            target/oven-pr-linux-partition-${{ matrix.partition }}.json
+            target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
           if-no-files-found: warn
           retention-days: 1
 

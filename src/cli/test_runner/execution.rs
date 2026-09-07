@@ -708,7 +708,6 @@ pub(super) struct PreparedModuleHarness {
 }
 
 /// Return the generated function name that contains the post-yield teardown body.
-/// Return the generated function name that contains the post-yield teardown body.
 fn yield_fixture_teardown_name(name: &str) -> String {
     format!("__incan_fixture_teardown_{}", safe_fixture_ident(name))
 }
@@ -1014,6 +1013,18 @@ fn split_yield_fixture_declarations(
                 func.name
             ));
         };
+        // A batch can carry the same fixture declaration more than once -- one copy per test source that pulled the
+        // module in. Those copies are identical down to their spans, so splitting each one appends a teardown that
+        // projects to the same identity as the last, and generated Rust defined it twice. `teardowns` is keyed by
+        // fixture name, so it already collapses them; append at most one declaration to match.
+        if teardowns.contains_key(&func.name) {
+            continue;
+        }
+        // The teardown is a second declaration split out of one source function, so it cannot share the fixture's
+        // declaration span: a canonical identity is namespace + declaration + kind + scope + span, and two
+        // declarations carrying the same span project to the same name however they are called. The `yield` that
+        // splits the body is the honest span for the half that follows it.
+        let yield_span = func.body[yield_index].span;
         let teardown_name = yield_fixture_teardown_name(&func.name);
         let mut setup_body = func.body[..yield_index].to_vec();
         let teardown_body = if yield_index + 1 < func.body.len() {
@@ -1100,7 +1111,7 @@ fn split_yield_fixture_declarations(
                 value_ty: original_return_type,
             },
         );
-        additional.push(Spanned::new(Declaration::Function(teardown_func), decl.span));
+        additional.push(Spanned::new(Declaration::Function(teardown_func), yield_span));
     }
 
     ast.declarations.extend(additional);
@@ -2922,6 +2933,44 @@ mod tests {
     use crate::frontend::library_manifest_index::LibraryManifestIndex;
     use crate::library_manifest::LibraryManifest;
     use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
+
+    #[test]
+    fn one_teardown_is_generated_when_a_batch_carries_a_fixture_twice() -> Result<(), Box<dyn std::error::Error>> {
+        // A batch concatenates every test source, so a fixture module reached from two of them lands twice. Both
+        // copies carry the same name, module and span, so a teardown per copy projects to one identity and generated
+        // Rust defined it twice.
+        let source = r#"from std.testing import fixture
+
+@fixture
+def captured_resource() -> int:
+    value = 1
+    yield value
+    println(str(value))
+"#;
+        let tokens = lexer::lex(source).map_err(|error| format!("{error:?}"))?;
+        let mut ast = parser::parse(&tokens).map_err(|error| format!("{error:?}"))?;
+        let duplicate = ast.declarations.clone();
+        ast.declarations.extend(duplicate);
+
+        let mut semantics = TestingMarkerSemantics::default();
+        semantics.marker_kinds.insert(
+            "fixture".to_string(),
+            crate::frontend::testing_markers::TestingMarkerKind::Fixture,
+        );
+        let teardowns = split_yield_fixture_declarations(&mut ast, &semantics)?;
+
+        assert_eq!(teardowns.len(), 1, "one fixture name yields one teardown");
+        let generated = ast
+            .declarations
+            .iter()
+            .filter(|decl| {
+                matches!(&decl.node, Declaration::Function(function)
+                    if function.name == yield_fixture_teardown_name("captured_resource"))
+            })
+            .count();
+        assert_eq!(generated, 1, "a duplicated fixture must not emit its teardown twice");
+        Ok(())
+    }
 
     #[test]
     fn oven_test_seed_compatibility_records_only_used_sdk_capabilities() -> Result<(), Box<dyn std::error::Error>> {

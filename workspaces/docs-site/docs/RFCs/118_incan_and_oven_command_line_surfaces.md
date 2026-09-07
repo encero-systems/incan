@@ -55,7 +55,7 @@ This separation also protects the architecture. Incan's semantic products—diag
 
 ## Non-Goals
 
-- Defining `loaf.toml`, `Oven.lock`, dependency resolution, target/carrier semantics, artifact format, or interop safety rules; RFC 117 and the corresponding interop RFCs own those contracts.
+- Defining `loaf.toml`, `oven.lock`, dependency resolution, target/carrier semantics, artifact format, or interop safety rules; RFC 117 and the corresponding interop RFCs own those contracts.
 - Creating a second resolver, environment manager, cache, registry/trust model, or package lifecycle in the Incan CLI.
 - Requiring the Oven CLI itself to be implemented in Incan by v0.7, or allowing its implementation language to change the Oven API/receipt contract.
 - Inferring or emulating Cargo workspace, build-script, proc-macro, or manifest semantics in a Loaf command.
@@ -234,7 +234,7 @@ RFC 090 owns `std.cli`, the framework for applications authored in Incan. It doe
 ### Release boundaries
 
 - **v0.5:** retains the current bounded RFC 116 interop release work and its existing `incan.toml` contract; this RFC does not backport a Loaf transition into that release.
-- **v0.6:** RFC 117 introduces `loaf.toml`, `Oven.lock`, hierarchical sub-Loaves, and the language-neutral project model.
+- **v0.6:** RFC 117 introduces `loaf.toml`, `oven.lock`, hierarchical sub-Loaves, and the language-neutral project model.
 - **v0.7:** this RFC introduces the canonical command-surface split over the v0.6 Oven API and project model.
 
 ## Compatibility and migration
@@ -280,7 +280,7 @@ Rejected. It would allow Cargo workspace discovery and side effects to leak into
 
 ## Inspectability and tooling surface
 
-- **Artifacts and metadata:** `loaf.toml`, `Oven.lock`, selected plan, target-bound `*.loaf` assets, execution receipt, compiler diagnostics, semantic inspection facts, codegraph records, and architect findings expose the chosen authority.
+- **Artifacts and metadata:** `loaf.toml`, `oven.lock`, selected plan, target-bound `*.loaf` assets, execution receipt, compiler diagnostics, semantic inspection facts, codegraph records, and architect findings expose the chosen authority.
 - **Inspection commands:** `oven inspect` reports operational plan/store/receipt facts; `incan inspect`, `incan codegraph`, and `incan architect` report checked semantic facts.
 - **Diagnostics:** commands must name whether failure occurred in direct-source mode, Loaf/Oven mode, or explicit Cargo-compatibility mode, and identify the selected manifest or target where relevant.
 - **Not implicit:** neither command surface may infer Cargo behavior from an adjacent manifest, execute an action during resolution, or hide the delegation path that produced a receipt.

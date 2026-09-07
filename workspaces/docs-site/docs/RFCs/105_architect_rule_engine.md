@@ -414,7 +414,7 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 
 - What is the default profile for `incan architect .`: architecture-only, architecture plus safety, or all stable rules?
 - What suppression syntax should Incan use for architect findings, and should it share vocabulary with compiler diagnostic suppressions?
-- Should baselines live in a typed `loaf.toml` table, a separate versioned baseline artifact, or generated project-tooling state? They must not be folded into `Oven.lock` merely because a project uses Oven.
+- Should baselines live in a typed `loaf.toml` table, a separate versioned baseline artifact, or generated project-tooling state? They must not be folded into `oven.lock` merely because a project uses Oven.
 - Where should peer-group metadata live, and which membership or boundary declarations belong in source, package metadata, or local tooling state?
 - Which peer-signature facts are stable and useful enough to expose without turning names, paths, or aggregate similarity into semantic authority?
 - How should a project review, accept, version, and retire an experimental baseline or intentional outlier without allowing a scan to rewrite its own comparison set?

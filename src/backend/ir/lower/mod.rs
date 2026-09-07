@@ -244,6 +244,13 @@ pub struct AstLowering {
     /// here even though the call resolves to a real declaration, so projection needs to know which traits were
     /// actually adopted rather than inferring it from the identity the call resolved to.
     pub(super) adopted_traits_by_type: HashMap<String, HashSet<String>>,
+    /// Trait names this program declares.
+    ///
+    /// A value typed as a trait names no implementation, so a method call on one cannot be projected: the trait's own
+    /// declaration is an abstract slot and only adopting types emit a wrapper beside it. A supertrait makes this
+    /// visible even when the dispatched trait differs from the receiver's -- `OrderedCollection[int]` dispatching
+    /// `Collection::first` is still a trait-typed receiver.
+    pub(super) declared_trait_names: HashSet<String>,
     /// Canonical package identity supplied by the build or test orchestration layer.
     ///
     /// Explicit `RegistrySubject.package()` entries need this boundary-owned fact so their runtime value agrees with
@@ -658,6 +665,7 @@ impl AstLowering {
             local_generated_method_partial_wrappers: HashSet::new(),
             current_source_module_name: None,
             adopted_traits_by_type: HashMap::new(),
+            declared_trait_names: HashSet::new(),
             registry_package_identity: None,
         }
     }
@@ -2009,6 +2017,14 @@ impl AstLowering {
                 (name, adopted)
             })
             .collect();
+        self.declared_trait_names = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Trait(trait_decl) => Some(trait_decl.name.clone()),
+                _ => None,
+            })
+            .collect();
         self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
             .declarations
@@ -2794,6 +2810,20 @@ impl AstLowering {
                         }
                         for decl in &decls {
                             if let IrDeclKind::Function(func) = &decl.kind {
+                                // A decorator original is lowered under a registry key that is deliberately not valid
+                                // syntax, and only the registry maps it to the private helper name. The undecorated
+                                // path registers that mapping; this one did not, so a decorated overload's key reached
+                                // emission verbatim and building an identifier from it panicked the compiler.
+                                if let Some(physical_name) = Self::decorator_original_physical_name_for_key(&func.name)
+                                {
+                                    ir_program.function_registry.register_generated(
+                                        func.name.clone(),
+                                        physical_name,
+                                        f.name.clone(),
+                                        func.params.clone(),
+                                        func.return_type.clone(),
+                                    );
+                                }
                                 ir_program.function_registry.register(
                                     func.name.clone(),
                                     func.params.clone(),

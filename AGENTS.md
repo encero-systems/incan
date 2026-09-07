@@ -8,11 +8,17 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 > Use `?` with `Result`-returning test functions, or propagate errors explicitly.
 > See [Error handling in tests](#error-handling-in-tests) for the correct pattern.
 
-> **CRITICAL — THE USER DECIDES WHAT IS RELEVANT.** Scope, PR boundaries, and which files “belong” on a branch are **the maintainer’s call**, not the agent’s. Never label work as “unrelated PR noise,” “cleanup,” or “hygiene” as a reason to remove or revert it. Always check with the user when in doubt.
+> **CRITICAL — DRIVE THE GOAL TO COMPLETION.** When the maintainer sets a goal, pursue it autonomously until it is delivered or provably impossible. Commit, push, and open PRs on your own initiative. Do not stop to report progress, seek reassurance, or hand back a decision the evidence already settles. If one part turns out to be impossible, finish every other part first, then state the blocking mechanism in a sentence or two — not a status essay.
 >
-> **FORBIDDEN without explicit user approval that quotes the exact paths or commands:** anything that overwrites or deletes uncommitted work — including `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`, or equivalent. If you believe files should be split, reverted, or left out of a PR, **state that and ask**; do not run destructive git operations on your own initiative.
+> **A blocker is a claim that needs proof.** Read the owning issue’s own scope and “Done when” list bullet by bullet before calling anything blocked: one gated bullet does not gate the issue. Quote the exact spec text that is silent or contradictory. If you cannot quote it, keep working. Check that what you assume is missing is actually missing — grep for the type or function before declaring it unbuilt.
 >
-> **Commits and pushes:** The maintainer commits code unless they **explicitly** ask you to run `git commit` or `git push`. Implement and test in the working tree; offer a suggested commit message as text. The `/start-work` skill states the same rule.
+> **Do not manufacture decisions.** Ask only when the answer changes what you do next *and* the evidence genuinely does not settle it. Sizing your own PRs, reclaiming regenerable build caches, choosing between equivalent spellings, and ordinary cleanup are not the maintainer’s call. When a message asks *why* you did something, answer the question — do not start changing it.
+>
+> **CRITICAL — THE USER DECIDES WHAT IS RELEVANT.** Scope, PR boundaries, and which files “belong” on a branch are **the maintainer’s call**, not the agent’s. Never label work as “unrelated PR noise,” “cleanup,” or “hygiene” as a reason to remove or revert it.
+>
+> **FORBIDDEN without explicit user approval that quotes the exact paths or commands:** anything that overwrites or deletes uncommitted work — including `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`, or equivalent — and force-pushing a shared branch or one whose PR has already merged. If you believe files should be split, reverted, or left out of a PR, **state that and ask**; do not run destructive git operations on your own initiative.
+>
+> **Commits and pushes are yours.** Commit your own work using the repo’s message convention, push the branch, and open the PR when it is ready. Two rules keep that safe: re-check a PR’s state immediately before pushing to its branch, because a squash-merge silently strands any later push; and prove work reached the integration branch by content (`git show origin/<dev-line>:<file> | grep <symbol>`), never by PR status alone. Sync a pushed branch with a merge commit rather than a rebase, so ancestry survives and no force-push is needed.
 
 ## Key References
 
@@ -40,12 +46,14 @@ Skills (`.agents/skills/`) and learnings (`.agents/learnings.md`) live under **t
 
 For every implementation issue in the `0.6 Release` milestone, [#1074](https://github.com/encero-systems/incan/issues/1074) is the central execution ledger. The RFC and owning issue remain the semantic authority; the ledger records delivery state, dependencies, and evidence across the programme.
 
-- Before the first production edit, post a structured `Active` update on #1074 that identifies the issue, branch or PR when one exists, intended scope, dependencies, and initial verification plan.
+- Post a structured `Active` update on #1074 once the work has a branch or PR, identifying the issue, intended scope, dependencies, and verification plan. Posting it is not a gate on starting: begin the work, then record it.
 - Post another update when the work is blocked, ready for integration, materially rescaled, or completed. Do not call v0.6 work ready to merge or complete without its ledger evidence.
 - Use the update format published on #1074. Updates are append-only comments so concurrent contributors do not overwrite each other; do not edit another contributor's update.
 - Keep public updates reproducible and repository-scoped: no local absolute paths, private environment details, or claims that unrun verification passed.
 
-This requirement applies to contributors and automated implementation workflows alike. If the current task does not authorize a GitHub write, prepare the exact update text and ask the maintainer to publish it before proceeding.
+This requirement applies to contributors and automated implementation workflows alike. If the current task does not authorize a GitHub write, put the update text in the PR description and carry on — do not pause the work waiting to publish it.
+
+Keep updates to the evidence: what changed, what proves it, what is left, and the mechanism blocking anything that is. Do not narrate process.
 
 ## General Workflow
 

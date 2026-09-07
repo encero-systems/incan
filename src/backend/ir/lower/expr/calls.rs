@@ -45,6 +45,20 @@ use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
+/// Name the concrete overload a call selected in its canonical callee path.
+///
+/// An overload set has no single declaration, so a provider exports only its concrete overloads -- each under its own
+/// projection -- and never the bare set spelling the checked path ends with. `selected` is `Some` exactly when the
+/// typechecker resolved one overload, which is also the only case where substituting is safe: a non-overloaded
+/// function is exported under its own name, and replacing its path segment would defeat the emitter's
+/// compiled-provider metadata lookup, which is keyed on the source-shaped path.
+fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Option<&str>) -> Vec<String> {
+    if let (Some(selected), Some(declaration)) = (selected, path.last_mut()) {
+        *declaration = selected.to_string();
+    }
+    path
+}
+
 impl AstLowering {
     /// Preserve the frontend type of builtins whose result participates in later type-directed lowering.
     pub(in crate::backend::ir::lower::expr) fn lowered_builtin_call_type(
@@ -3188,7 +3202,18 @@ impl AstLowering {
         // Keep the checked source path available for semantic lookups. RFC 120's emitted projection is a physical
         // Rust name, not a replacement for the declaration path that owns defaults, parameter types, provider
         // identity, and compiler-known helper behavior.
-        let imported_callee_path = self.imported_callee_path_for_expr(f);
+        // An overload set has no single declaration, so a provider exports only its concrete overloads -- each under
+        // its own projection -- and never the bare set spelling the checked path ends with. A non-overloaded function
+        // is exported under its own name, so its path is left exactly as resolved: substituting there would defeat
+        // the emitter's compiled-provider metadata lookup, which is keyed on the source-shaped path.
+        let imported_callee_path = self.imported_callee_path_for_expr(f).map(|path| {
+            canonical_path_naming_selected_overload(
+                path,
+                selected_reference_name
+                    .as_deref()
+                    .filter(|_| selected_emitted_name.is_some()),
+            )
+        });
         let imported_source_callee_path = imported_callee_path
             .as_deref()
             .map(|path| self.semantic_imported_callee_path(path));
@@ -3978,7 +4003,28 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
     use std::sync::Arc;
 
-    use super::AstLowering;
+    use super::{AstLowering, canonical_path_naming_selected_overload};
+    #[test]
+    fn canonical_path_names_the_overload_a_call_selected() {
+        let path = vec!["std".to_string(), "environ".to_string(), "get_as".to_string()];
+
+        let named = canonical_path_naming_selected_overload(path, Some("__incan_v1_00deadbeef"));
+
+        assert_eq!(
+            named.last().map(String::as_str),
+            Some("__incan_v1_00deadbeef"),
+            "a provider exports the concrete overload, never the bare set spelling"
+        );
+    }
+
+    #[test]
+    fn canonical_path_keeps_its_spelling_when_no_overload_was_selected() {
+        // A non-overloaded function is exported under its own name, and the emitter's provider-metadata lookup is
+        // keyed on this source-shaped path.
+        let path = vec!["pub".to_string(), "widgets".to_string(), "make_widget".to_string()];
+
+        assert_eq!(canonical_path_naming_selected_overload(path.clone(), None), path);
+    }
     use crate::backend::ir::decl::IrDeclKind;
     use crate::backend::ir::expr::{IrExprKind, IrInteropCoercionKind, MethodCallArgPolicy, VarRefKind};
     use crate::backend::ir::stmt::IrStmtKind;

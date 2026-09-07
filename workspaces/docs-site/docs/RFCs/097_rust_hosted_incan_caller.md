@@ -80,7 +80,7 @@ The end-state is Incan's own toolchain proving the model on itself: Oven's Rust 
 - This RFC does not require a Rust application to run the Incan compiler at runtime.
 - This RFC does not eagerly build a caller wrapper for every `pub` export regardless of whether anything calls it from Rust; only exports actually referenced by a Rust-authored unit in the same build graph enter the caller build (see "Public export profiles").
 - This RFC does not define registry publication mechanics beyond compatibility with RFC 034 and RFC 079.
-- This RFC does not define `loaf.toml`, `Oven.lock`, or the `*.loaf` asset format; it consumes the project, asset-identity, and receipt contract from RFC 117.
+- This RFC does not define `loaf.toml`, `oven.lock`, or the `*.loaf` asset format; it consumes the project, asset-identity, and receipt contract from RFC 117.
 - This RFC does not define the full implementation of async runtime internals, host capability enforcement, or telemetry backends.
 - This RFC does not guarantee that every Rust type imported through `rust::` can automatically cross back into a caller-visible Rust type without an adapter.
 

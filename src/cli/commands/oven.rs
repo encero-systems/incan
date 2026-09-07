@@ -5015,12 +5015,60 @@ fn write_native_test_failure_transcript(output: &Path, transcript: &str) -> CliR
     Ok(path)
 }
 
+/// Collect every test libtest reported as failing, in the order it first named them.
+///
+/// Two spellings have to be read because the suite runs libtest in both modes. With output captured, each failure
+/// body is introduced by `---- <name> stdout ----`. With output passed through, no such header is printed and the
+/// only place the test is named is the panic line, where libtest has set the thread name to the test name. Reading
+/// both keeps the roster complete in either mode, and de-duplicating keeps one entry per test when both appear.
+fn failing_test_names(output: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let captured = trimmed
+            .strip_prefix("---- ")
+            .and_then(|rest| rest.strip_suffix(" stdout ----"));
+        let passed_through = trimmed
+            .contains("panicked at")
+            .then(|| trimmed.split_once("thread '"))
+            .flatten()
+            .and_then(|(_, rest)| rest.split_once('\''))
+            .map(|(name, _)| name);
+        let Some(name) = captured.or(passed_through).map(str::trim) else {
+            continue;
+        };
+        // A panic on the harness thread names the runner, not a test; it would add noise to every roster.
+        if name.is_empty() || name == "main" || names.contains(&name) {
+            continue;
+        }
+        names.push(name);
+    }
+    names
+}
+
 /// Keep terminal failure reporting actionable without dumping an unbounded libtest transcript into the CLI error path.
 ///
-/// The complete caller-owned transcript is retained beside the direct-rustc test binary on failure.
+/// The roster of failing test names is emitted first and is never truncated: a handful of large panic bodies must not
+/// be able to spend the character budget and leave the remaining failures invisible to whoever reads CI output. The
+/// complete caller-owned transcript is retained beside the direct-rustc test binary on failure.
 fn native_test_failure_summary(output: &str) -> String {
     const MAX_CHARS: usize = 12_000;
     const PANIC_CONTEXT_LINES: usize = 12;
+
+    // ---- Roster: which tests failed, ahead of any bounded detail ----
+    let mut summary = String::new();
+    let failing = failing_test_names(output);
+    if !failing.is_empty() {
+        summary.push_str(&format!("failing tests ({}):\n", failing.len()));
+        for name in &failing {
+            summary.push_str("    ");
+            summary.push_str(name);
+            summary.push('\n');
+        }
+        summary.push('\n');
+    }
+
+    // ---- Detail: panic sites, their immediate context, and terminal libtest lines ----
     let mut relevant = Vec::new();
     let mut panic_context_remaining = 0;
     for line in output.lines() {
@@ -5042,12 +5090,12 @@ fn native_test_failure_summary(output: &str) -> String {
         }
     }
     let relevant = relevant.join("\n");
-    let summary = if relevant.is_empty() { output } else { &relevant };
-    let mut bounded = summary.chars().take(MAX_CHARS).collect::<String>();
-    if summary.chars().count() > MAX_CHARS {
-        bounded.push_str("\n… libtest transcript truncated");
+    let detail = if relevant.is_empty() { output } else { &relevant };
+    summary.extend(detail.chars().take(MAX_CHARS));
+    if detail.chars().count() > MAX_CHARS {
+        summary.push_str("\n… libtest transcript truncated");
     }
-    bounded
+    summary
 }
 
 /// Recompute the source-bound compiler root libtest receipt without invoking Cargo.
@@ -6115,6 +6163,42 @@ mod tests {
         assert!(summary.contains("benchmark fixture failed"));
         assert!(summary.contains("stdout: missing Loaf"));
         assert!(summary.contains("stderr: no Cargo fallback"));
+    }
+
+    #[test]
+    fn native_test_failure_summary_names_tests_libtest_only_identified_by_panic_thread() {
+        let bulky_panic_body = "y".repeat(20_000);
+        let transcript = format!(
+            "thread 'noisy_first_failure' (2719) panicked at tests/integration_tests.rs:1324:9:\n{bulky_panic_body}\nthread 'quiet_last_failure' (4810) panicked at tests/integration_tests.rs:8361:9:\nassertion failed\n"
+        );
+
+        let summary = native_test_failure_summary(&transcript);
+
+        assert!(
+            summary.starts_with("failing tests (2):\n    noisy_first_failure\n    quiet_last_failure\n"),
+            "a pass-through libtest run names its failures only on the panic line: {}",
+            &summary[..summary.len().min(200)]
+        );
+    }
+
+    #[test]
+    fn native_test_failure_summary_names_every_failing_test_before_bounded_detail() {
+        let bulky_panic_body = "x".repeat(20_000);
+        let transcript = format!(
+            "failures:\n\n---- noisy_first_failure stdout ----\nthread 'noisy_first_failure' panicked at src/fixture.rs:1:1:\n{bulky_panic_body}\n\n---- quiet_last_failure stdout ----\nthread 'quiet_last_failure' panicked at src/fixture.rs:2:2:\nassertion failed\n\ntest result: FAILED. 1 passed; 2 failed; 0 ignored\n"
+        );
+
+        let summary = native_test_failure_summary(&transcript);
+
+        assert!(
+            summary.starts_with("failing tests (2):\n    noisy_first_failure\n    quiet_last_failure\n"),
+            "roster must lead the summary: {}",
+            &summary[..summary.len().min(200)]
+        );
+        assert!(
+            summary.contains("… libtest transcript truncated"),
+            "the oversized body should still be bounded"
+        );
     }
 
     #[test]

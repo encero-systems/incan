@@ -56,7 +56,11 @@ while :; do
 done
 
 printf '{}\n' > "$blocked_by_path"
+# `tr` strips the carriage return jq writes on Windows, where its stdout is opened in text mode. Without it
+# the number carries a CR into the request path -- `issues/1284\r/dependencies/...` -- and curl rejects
+# the URL with a message that names neither the issue nor the line ending responsible.
 jq -r '.[] | select(.pull_request == null and .issue_dependencies_summary.blocked_by > 0) | .number' "$issues_path" |
+tr -d '\015' |
 while IFS= read -r issue_number; do
   response_path="$refresh_dir/blocked_by_$issue_number.json"
   github_get "$api_root/issues/$issue_number/dependencies/blocked_by?per_page=100" > "$response_path"

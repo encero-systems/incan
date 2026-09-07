@@ -328,7 +328,7 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 ## Layers affected
 
-- **Manifest schema / configuration validation:** project tooling needs a place to describe project-local policy and record policy-related audit metadata, whether in a typed `loaf.toml` policy table or an explicit tool-owned policy state artifact. `Oven.lock` is not a general policy store.
+- **Manifest schema / configuration validation:** project tooling needs a place to describe project-local policy and record policy-related audit metadata, whether in a typed `loaf.toml` policy table or an explicit tool-owned policy state artifact. `oven.lock` is not a general policy store.
 - **CLI / tooling:** lifecycle commands must evaluate policy before applying template, starter, capability, update, reset, refresh, or recovery mutations.
 - **LSP / IDE tooling:** editor-facing tools should surface policy outcomes, blocked mutation reasons, review requirements, and recovery actions from machine-readable lifecycle output.
 - **Package and catalog integration:** registries and catalogs may provide source identity, integrity, yanking, revocation, advisory, compatibility, and trust-tier metadata that policy can consume.

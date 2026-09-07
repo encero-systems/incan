@@ -30,7 +30,7 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 - Require the orchestrator to perform its own explicit plan -> do -> check -> act integration loop after collecting worker output.
 - Require workers and the orchestrator to maintain a persistent review report at `.agents/state/review-report.md` inside each worktree so findings survive across loops.
 - Require touched `.incn` source to pass `review-incan-source-quality`; Incan implementation work is not done when it merely compiles if the authored source reads like Rust-shaped scaffolding instead of well-written Python.
-- Do not commit, push, or open a PR unless the user explicitly asked for that. When not explicitly asked, still draft the commit message and PR description as ready-to-use artifacts.
+- The orchestrator commits, pushes, and opens the PR once integration is verified. Workers commit to their own branch only; publishing is the orchestrator's job, so accepted slice work never sits unpushed in a worker sandbox.
 
 ## PDCA model
 
@@ -383,7 +383,7 @@ Workers must be told:
 - they must adapt to concurrent changes
 - they must not produce PRs, PR descriptions, or final commit artifacts of their own when they are child loops under a parent RFC loop
 - child loops must not spawn further `ralph-loop` children; if they need extra decomposition, they may use `orchestrate-parallel-work` only for leaf-level workers within their owned scope
-- they must not commit or push unless the user explicitly asked for that
+- they commit to their own branch as they go, but must not push or open a PR — the orchestrator publishes after integration
 
 Require every worker to return the shape in [reference.md](reference.md).
 
@@ -458,7 +458,7 @@ If the user says "greenlight for PR", "green light for PR", or otherwise approve
 
 Do not leave a fully implemented RFC in `In Progress` while presenting the PR as review-ready. Do not use `Refs #NNN` as an escape hatch for RFC-driven Ralph-loop work unless the user explicitly changed the scope to a partial implementation. If the branch implements only part of the RFC, say that directly, leave the RFC active, and do not present the PR as a full-RFC closeout.
 
-Only run the actual commit / push / PR creation flow if the user explicitly asked for those actions.
+The orchestrator runs the commit, push, and PR flow itself once the integrated gate passes. Do not leave finished, verified work uncommitted.
 
 ## Quality bar
 
@@ -544,4 +544,4 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] If the implementation satisfies the full RFC, `bump-rfc` moved it to `Implemented` before the PR was presented as review-ready
 - [ ] Full-RFC PR bodies use a closing keyword such as `Closes #NNN`; partial-scope PRs explain the remaining RFC scope instead
 - [ ] Commit/PR artifacts were drafted
-- [ ] No commit/push/PR action was taken without explicit user permission
+- [ ] Accepted work was committed, pushed, and published by the orchestrator, not left in a worker sandbox

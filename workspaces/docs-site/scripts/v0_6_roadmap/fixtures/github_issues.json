@@ -1,59 +1,13 @@
 [
   {
-    "number": 1137,
-    "title": "chore - v0.6 Slice 1: Cutover foundation",
-    "state": "closed",
-    "html_url": "https://github.com/encero-systems/incan/issues/1137",
-    "issue_dependencies_summary": { "blocked_by": 0 }
-  },
-  {
-    "number": 1138,
-    "title": "chore - v0.6 Slice 2: First executable proof",
+    "number": 433,
+    "title": "feature - support native Windows x64 as a v0.6 platform",
     "state": "open",
-    "html_url": "https://github.com/encero-systems/incan/issues/1138",
-    "issue_dependencies_summary": { "blocked_by": 0 }
-  },
-  {
-    "number": 1139,
-    "title": "chore - v0.6 Slice 3: Canonical source meaning",
-    "state": "open",
-    "html_url": "https://github.com/encero-systems/incan/issues/1139",
-    "issue_dependencies_summary": { "blocked_by": 0 }
-  },
-  {
-    "number": 1140,
-    "title": "chore - v0.6 Slice 4: Language and runtime matrix",
-    "state": "open",
-    "html_url": "https://github.com/encero-systems/incan/issues/1140",
-    "issue_dependencies_summary": { "blocked_by": 0 }
-  },
-  {
-    "number": 1141,
-    "title": "chore - v0.6 Slice 5: Oven authority and native Rust",
-    "state": "open",
-    "html_url": "https://github.com/encero-systems/incan/issues/1141",
-    "issue_dependencies_summary": { "blocked_by": 0 }
-  },
-  {
-    "number": 1142,
-    "title": "chore - v0.6 Slice 6: Oven CLI delivery",
-    "state": "open",
-    "html_url": "https://github.com/encero-systems/incan/issues/1142",
-    "issue_dependencies_summary": { "blocked_by": 0 }
-  },
-  {
-    "number": 1143,
-    "title": "chore - v0.6 Slice 7: First-class inspectability",
-    "state": "open",
-    "html_url": "https://github.com/encero-systems/incan/issues/1143",
-    "issue_dependencies_summary": { "blocked_by": 0 }
-  },
-  {
-    "number": 1144,
-    "title": "chore - v0.6 Slice 8: Cutover and release",
-    "state": "open",
-    "html_url": "https://github.com/encero-systems/incan/issues/1144",
-    "issue_dependencies_summary": { "blocked_by": 0 }
+    "html_url": "https://github.com/encero-systems/incan/issues/433",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    },
+    "parent_issue_url": "https://api.github.com/repos/encero-systems/incan/issues/1379"
   },
   {
     "number": 653,
@@ -61,6 +15,89 @@
     "state": "open",
     "html_url": "https://github.com/encero-systems/incan/issues/653",
     "parent_issue_url": "https://api.github.com/repos/encero-systems/incan/issues/1137",
-    "issue_dependencies_summary": { "blocked_by": 1 }
+    "issue_dependencies_summary": {
+      "blocked_by": 1
+    }
+  },
+  {
+    "number": 1137,
+    "title": "chore - v0.6 Slice 1: Cutover foundation",
+    "state": "closed",
+    "html_url": "https://github.com/encero-systems/incan/issues/1137",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1138,
+    "title": "chore - v0.6 Slice 2: First executable proof",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1138",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1139,
+    "title": "chore - v0.6 Slice 7: Canonical source meaning",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1139",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1140,
+    "title": "chore - v0.6 Slice 3: Language and runtime matrix",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1140",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1141,
+    "title": "chore - v0.6 Slice 4: Oven authority and native Rust",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1141",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1142,
+    "title": "chore - v0.6 Slice 5: Oven CLI delivery",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1142",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1143,
+    "title": "chore - v0.6 Slice 6: First-class inspectability",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1143",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1144,
+    "title": "chore - v0.6 Slice 9: Cutover and release",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1144",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1379,
+    "title": "chore - v0.6 Slice 8: Native Windows support",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1379",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
   }
 ]

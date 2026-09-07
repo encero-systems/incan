@@ -336,6 +336,9 @@ fn collect_generic_callable_name_type_params_from_assign_target(target: &AssignT
     }
 }
 
+/// Prefix marking a registry key that stands for a generated decorator original.
+const DECORATOR_ORIGINAL_REGISTRY_PREFIX: &str = "@generated/decorator-original/";
+
 impl AstLowering {
     /// Lower a function declaration.
     ///
@@ -511,7 +514,16 @@ impl AstLowering {
     /// This is intentionally not valid source syntax. The registry maps it to the ordinary private Rust helper name,
     /// so hidden compiler names never reserve otherwise-valid Incan identifiers.
     pub(in crate::backend::ir::lower) fn decorator_original_function_registry_key(name: &str) -> String {
-        format!("@generated/decorator-original/{name}")
+        format!("{DECORATOR_ORIGINAL_REGISTRY_PREFIX}{name}")
+    }
+
+    /// Recover the private helper name a decorator-original registry key stands for.
+    ///
+    /// The key only means anything through the registry. Emission builds a Rust identifier from whatever name it is
+    /// handed, so a key that reaches it unmapped is not a wrong name but an impossible one.
+    pub(in crate::backend::ir::lower) fn decorator_original_physical_name_for_key(key: &str) -> Option<String> {
+        key.strip_prefix(DECORATOR_ORIGINAL_REGISTRY_PREFIX)
+            .map(Self::decorator_original_function_name)
     }
 
     /// Return the private emitted static name that stores the decorated callable binding.

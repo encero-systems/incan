@@ -106,7 +106,7 @@ Workers must be told:
 - they are not alone in the repo
 - they must not revert others' work
 - they must adapt to concurrent changes rather than overwrite them
-- they must not commit or push unless the user explicitly asked for that
+- they commit to their own branch as they go, but must not push or open a PR — the orchestrator publishes after integration
 
 ### Step 5: Keep orchestration disciplined
 
