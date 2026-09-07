@@ -7,7 +7,7 @@
     - [RFC 036] (User-defined decorators — depends on this RFC)
     - [RFC 005] (Rust interop — `@rust.extern` functions already passable via this mechanism)
 - **Issue:** [#169](https://github.com/encero-systems/incan/issues/169)
-- **RFC PR:** —
+- **RFC PR:** [#182](https://github.com/encero-systems/incan/pull/182)
 - **Target version:** 0.2
 - **Shipped in:** v0.2
 

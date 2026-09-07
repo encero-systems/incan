@@ -550,7 +550,7 @@ fn status_matches_authority(status: ReceiptStatus, authority: &AuthorityDecision
                     | ReceiptStatus::Partial,
             )
             | (
-                AuthorityMode::Permissive | AuthorityMode::Observe,
+                AuthorityMode::Observe,
                 true,
                 ReceiptStatus::Observed
                     | ReceiptStatus::Failed
@@ -605,7 +605,8 @@ mod tests {
         };
         let grant = AuthorityGrantContext {
             requested_scope: Vec::new(),
-            ceiling_applied: false,
+            effective_grants: Vec::new(),
+            ceiling: None,
         };
         if allowed {
             AuthorityDecision::allowed(capability, mode, grant, provenance)
@@ -829,11 +830,6 @@ mod tests {
             (AuthorityMode::Governed, true, ReceiptStatus::Redacted),
             (AuthorityMode::Governed, true, ReceiptStatus::Skipped),
             (AuthorityMode::Governed, true, ReceiptStatus::Partial),
-            (AuthorityMode::Permissive, true, ReceiptStatus::Observed),
-            (AuthorityMode::Permissive, true, ReceiptStatus::Failed),
-            (AuthorityMode::Permissive, true, ReceiptStatus::Redacted),
-            (AuthorityMode::Permissive, true, ReceiptStatus::Skipped),
-            (AuthorityMode::Permissive, true, ReceiptStatus::Partial),
             (AuthorityMode::Observe, true, ReceiptStatus::Observed),
             (AuthorityMode::Observe, true, ReceiptStatus::Failed),
             (AuthorityMode::Observe, true, ReceiptStatus::Redacted),
@@ -861,6 +857,8 @@ mod tests {
             (AuthorityMode::Governed, true, ReceiptStatus::Observed),
             (AuthorityMode::Governed, false, ReceiptStatus::Failed),
             (AuthorityMode::Permissive, true, ReceiptStatus::Allowed),
+            (AuthorityMode::Permissive, true, ReceiptStatus::Observed),
+            (AuthorityMode::Permissive, true, ReceiptStatus::Failed),
             (AuthorityMode::Observe, true, ReceiptStatus::Denied),
         ];
         for (mode, allowed, status) in invalid {

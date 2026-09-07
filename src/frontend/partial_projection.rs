@@ -25,7 +25,12 @@ pub(crate) fn merge_named_partial_args<'a>(
 ) -> Option<Vec<CallArg>> {
     let mut merged: Vec<CallArg> = presets
         .into_iter()
-        .map(|preset| CallArg::Named(preset.name.to_string(), preset.value.clone()))
+        .map(|preset| {
+            CallArg::Named(
+                crate::frontend::ast::Spanned::new(preset.name.to_string(), crate::frontend::ast::Span::default()),
+                preset.value.clone(),
+            )
+        })
         .collect();
 
     for arg in call_args {
@@ -33,7 +38,7 @@ pub(crate) fn merge_named_partial_args<'a>(
             return None;
         };
         if let Some(existing) = merged.iter_mut().find(|candidate| match candidate {
-            CallArg::Named(existing_name, _) => existing_name == name,
+            CallArg::Named(existing_name, _) => existing_name.node == name.node,
             _ => false,
         }) {
             *existing = CallArg::Named(name.clone(), value.clone());

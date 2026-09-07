@@ -147,7 +147,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::DictEntry::Pair(key, value) => {
                     let key_operand = self.lower_expr_to_operand(key, scope, out);
                     let value_operand = self.lower_expr_to_operand(value, scope, out);
-                    lowered.push(bir::DictEntry::Pair(key_operand, value_operand));
+                    lowered.push(bir::DictEntry::Pair(key_operand, Box::new(value_operand)));
                 }
                 ast::DictEntry::Spread(source) => {
                     // Reuse the shared spread lowering so the two construction sites cannot drift.
@@ -195,7 +195,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         ast::FStringFormat::Display => bir::FormatStyle::Display,
                         ast::FStringFormat::Debug => bir::FormatStyle::Debug,
                     };
-                    bir::FormatPart::Expr { operand, style }
+                    bir::FormatPart::Expr {
+                        operand: Box::new(operand),
+                        style,
+                    }
                 }
             })
             .collect();
@@ -294,7 +297,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        self.lower_nominal_construction(name, args, span, scope, out)
+        self.lower_nominal_construction(name, args, span, span, scope, out)
     }
 
     // ---- Async surface (#1164) ----

@@ -3,6 +3,8 @@
 //! This module contains functions for source file reading, module collection, project root resolution,
 //! dependency helpers, and Cargo flag construction.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -92,6 +94,56 @@ const INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV: &str = "INCAN_INTERNAL_SDK_DISTRIBU
 pub(crate) const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CARGO_LOCK_PAYLOAD_PATH";
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
 pub(crate) const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
+
+#[cfg(test)]
+thread_local! {
+    static COMPILATION_SESSION_ANALYSIS_INVOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+/// Scoped, current-thread instrumentation for calls to [`CompilationSession::analyze_modules`].
+///
+/// The counter is inactive unless this scope is constructed, and it restores any enclosing scope when dropped. This
+/// keeps structural command-path assertions isolated from Rust's parallel test execution while leaving production
+/// analysis behavior unchanged.
+#[cfg(test)]
+#[must_use = "keep the scope alive while observing compilation-session analysis invocations"]
+pub(crate) struct CompilationSessionAnalysisInvocationScope {
+    previous_count: Option<usize>,
+}
+
+/// Count compilation-session analysis invocations within a scope on the current test thread.
+#[cfg(test)]
+pub(crate) fn scoped_compilation_session_analysis_invocations() -> CompilationSessionAnalysisInvocationScope {
+    let previous_count = COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|count| count.replace(Some(0)));
+    CompilationSessionAnalysisInvocationScope { previous_count }
+}
+
+#[cfg(test)]
+impl CompilationSessionAnalysisInvocationScope {
+    /// Return the analysis calls observed since this scope was constructed.
+    #[cfg(test)]
+    pub(crate) fn invocation_count(&self) -> usize {
+        COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|count| count.get().unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+impl Drop for CompilationSessionAnalysisInvocationScope {
+    fn drop(&mut self) {
+        COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|count| count.set(self.previous_count));
+    }
+}
+
+/// Record one invocation when the current test thread has explicitly enabled the analysis counter.
+#[cfg(test)]
+fn record_compilation_session_analysis_invocation() {
+    COMPILATION_SESSION_ANALYSIS_INVOCATIONS.with(|counter| {
+        let Some(count) = counter.get() else {
+            return;
+        };
+        counter.set(Some(count.saturating_add(1)));
+    });
+}
 
 /// One compiler diagnostic with enough source context for either human or machine-readable rendering.
 #[derive(Debug, Clone)]
@@ -1681,7 +1733,40 @@ pub(crate) struct CompilationAnalysis {
     stdlib_cache: StdlibAstCache,
 }
 
+/// One module's checked lowering bridge and portable semantic snapshot from one [`CompilationAnalysis`].
+///
+/// This bundle prevents a consumer from treating an independently derived `TypeCheckInfo` as the authority for a
+/// semantic snapshot. `TypeCheckInfo` remains only because Body IR has not yet moved all of its lowering queries to
+/// portable semantic facts (#225).
+pub(crate) struct CompilationModuleAnalysis<'analysis> {
+    type_info: &'analysis TypeCheckInfo,
+    semantic_snapshot: &'analysis incan_semantics_core::SemanticModuleSnapshot,
+}
+
+impl CompilationModuleAnalysis<'_> {
+    /// Return the session-owned transition bridge Body IR currently requires for lowering.
+    pub(crate) fn type_info(&self) -> &TypeCheckInfo {
+        self.type_info
+    }
+
+    /// Return the portable semantic module produced beside this lowering bridge.
+    pub(crate) fn semantic_snapshot(&self) -> &incan_semantics_core::SemanticModuleSnapshot {
+        self.semantic_snapshot
+    }
+}
+
 impl CompilationAnalysis {
+    /// Return the paired checked products for one collected source file.
+    ///
+    /// A caller must consume this bundle when it needs both Body-IR lowering and semantic provenance. Looking up the
+    /// halves separately would make it too easy to join facts from different analysis products at the CLI boundary.
+    pub(crate) fn module_analysis_for_path(&self, path: &Path) -> Option<CompilationModuleAnalysis<'_>> {
+        Some(CompilationModuleAnalysis {
+            type_info: self.type_info_by_path.get(path)?,
+            semantic_snapshot: self.semantic_snapshots_by_path.get(path)?,
+        })
+    }
+
     /// Return the lowering input for one collected source file.
     pub(crate) fn type_info_for_path(&self, path: &Path) -> Option<&TypeCheckInfo> {
         self.type_info_by_path.get(path)
@@ -2041,6 +2126,8 @@ impl CompilationSession {
         modules: &[ParsedModule],
         #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
+        #[cfg(test)]
+        record_compilation_session_analysis_invocation();
         let provider_plan = self.provider_plan_for_modules(modules).map_err(|error| {
             let module = modules.last();
             CliDiagnosticFailure::single(
@@ -2139,19 +2226,45 @@ impl CompilationSession {
 
     /// Lex and parse one source file using the project-aware vocabulary surfaces, without running desugarers or
     /// compile-time materialization passes.
+    ///
+    /// Always parses with the original `source` text available (RFC 081, `#1023`), so a descriptor-gated embedded
+    /// fragment (`crates/incan_syntax/src/parser/embedded/`) can claim eligible positions in every real
+    /// compilation, not only in the parser's own unit tests. The ordinary strict lexer (`lexer::lex`) still runs
+    /// first, unchanged, for the overwhelming majority of files that tokenize cleanly. It only fails outright for
+    /// source containing bytes that are not valid ordinary-Incan token starts at all (`;`, `` ` ``, `$`, and
+    /// similar) -- exactly the kind of content realistic embedded-fragment submodes (style rules, template
+    /// literals, ...) routinely contain. Only in that fallback case does this retry with the tolerant lexer
+    /// (`lexer::lex_tolerant`), which never discards its token stream on error, and hand its collected lex errors
+    /// to the parser for reconciliation (`parser::parse_with_source_and_lex_errors`) rather than dropping or
+    /// unconditionally surfacing them: an error inside a fragment this parse actually claims is expected noise
+    /// from the ordinary lexer's honest confusion about foreign submode syntax, while every other error is a real
+    /// mistake and still reaches the caller.
     pub(crate) fn parse_source_for_collection(
         &self,
         file_path: &Path,
         source: &str,
     ) -> Result<Program, Vec<diagnostics::CompileError>> {
-        let tokens = lexer::lex(source)?;
         let file_path_display = file_path.to_string_lossy();
-        parser::parse_with_context_and_surfaces(
-            &tokens,
-            Some(file_path_display.as_ref()),
-            Some(&self.library_imported_vocab),
-            Some(&self.library_imported_dsl_surfaces),
-        )
+        match lexer::lex(source) {
+            Ok(tokens) => parser::parse_with_source(
+                &tokens,
+                Some(file_path_display.as_ref()),
+                Some(&self.library_imported_vocab),
+                Some(&self.library_imported_dsl_surfaces),
+                source,
+            ),
+            Err(_) => {
+                let (tokens, lex_errors) = lexer::lex_tolerant(source);
+                parser::parse_with_source_and_lex_errors(
+                    &tokens,
+                    Some(file_path_display.as_ref()),
+                    Some(&self.library_imported_vocab),
+                    Some(&self.library_imported_dsl_surfaces),
+                    source,
+                    lex_errors,
+                )
+            }
+        }
     }
 
     /// Lex, parse, vocab-desugar, and optionally materialize checked contract models for one source file.
@@ -4684,6 +4797,26 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
     module_index: usize,
     module_idx_by_key: &HashMap<String, usize>,
 ) -> Vec<(&'m str, &'m Program)> {
+    imported_module_deps_for_with_index_and_plan(modules, module_index, module_idx_by_key, None)
+}
+
+/// Resolve imported source dependencies with the SDK producer's bootstrap namespace bridge enabled.
+pub(crate) fn imported_module_deps_for_with_provider_plan<'m>(
+    modules: &'m [ParsedModule],
+    module_index: usize,
+    module_idx_by_key: &HashMap<String, usize>,
+    provider_plan: &ProviderPlan,
+) -> Vec<(&'m str, &'m Program)> {
+    imported_module_deps_for_with_index_and_plan(modules, module_index, module_idx_by_key, Some(provider_plan))
+}
+
+/// Shared source-dependency closure with an optional provider-build namespace bridge.
+fn imported_module_deps_for_with_index_and_plan<'m>(
+    modules: &'m [ParsedModule],
+    module_index: usize,
+    module_idx_by_key: &HashMap<String, usize>,
+    provider_plan: Option<&ProviderPlan>,
+) -> Vec<(&'m str, &'m Program)> {
     // ---- Context: bounds and setup ----
     if module_index >= modules.len() {
         return Vec::new();
@@ -4695,12 +4828,14 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
         modules: &[ParsedModule],
         module_index: usize,
         module_idx_by_key: &HashMap<String, usize>,
+        provider_plan: Option<&ProviderPlan>,
     ) -> BTreeSet<usize> {
         /// Resolve one import path to the exact collected source module, including a safe nested-entry fallback.
         fn resolve_local_dep_index(
             current_module_path: &[String],
             path: &ImportPath,
             module_idx_by_key: &HashMap<String, usize>,
+            provider_plan: Option<&ProviderPlan>,
         ) -> Option<usize> {
             let exact = logical_source_import_candidates(current_module_path, path)
                 .into_iter()
@@ -4708,8 +4843,24 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
                     let key = canonicalize_source_module_segments(&candidate).join("_");
                     module_idx_by_key.get(&key).copied()
                 });
-            if exact.is_some() || path.is_absolute || path.parent_levels > 0 {
+            if exact.is_some() {
                 return exact;
+            }
+
+            // An SDK producer writes its public spelling (`std.registry`) while compiling the physical provider
+            // source module (`registry`). Only its explicit bootstrap grant authorizes this source-graph edge.
+            if path.parent_levels == 0
+                && !path.is_absolute
+                && provider_plan.is_some_and(|plan| plan.bootstrap_owns_sdk_module(&path.segments))
+                && path.segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+            {
+                let physical_key = canonicalize_source_module_segments(&path.segments[1..]).join("_");
+                if let Some(index) = module_idx_by_key.get(&physical_key).copied() {
+                    return Some(index);
+                }
+            }
+            if path.is_absolute || path.parent_levels > 0 {
+                return None;
             }
 
             // CLI entrypoints retain the synthetic logical name `main` even when their file lives in a nested source
@@ -4739,9 +4890,12 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
             };
             match &import.kind {
                 ImportKind::From { module, .. } => {
-                    if let Some(dep_idx) =
-                        resolve_local_dep_index(&modules[module_index].path_segments, module, module_idx_by_key)
-                        && dep_idx != module_index
+                    if let Some(dep_idx) = resolve_local_dep_index(
+                        &modules[module_index].path_segments,
+                        module,
+                        module_idx_by_key,
+                        provider_plan,
+                    ) && dep_idx != module_index
                     {
                         dep_indexes.insert(dep_idx);
                     }
@@ -4751,11 +4905,17 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
                         &modules[module_index].path_segments,
                         path,
                         module_idx_by_key,
+                        provider_plan,
                     )
                     .or_else(|| {
                         let mut parent_path = path.clone();
                         parent_path.segments.pop();
-                        resolve_local_dep_index(&modules[module_index].path_segments, &parent_path, module_idx_by_key)
+                        resolve_local_dep_index(
+                            &modules[module_index].path_segments,
+                            &parent_path,
+                            module_idx_by_key,
+                            provider_plan,
+                        )
                     });
                     if let Some(dep_idx) = dep_idx
                         && dep_idx != module_index
@@ -4770,14 +4930,19 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
     }
 
     let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
-    let mut pending: Vec<usize> = direct_local_dep_indexes(modules, module_index, module_idx_by_key)
+    let mut pending: Vec<usize> = direct_local_dep_indexes(modules, module_index, module_idx_by_key, provider_plan)
         .into_iter()
         .collect();
     while let Some(dep_idx) = pending.pop() {
         if dep_idx == module_index || !dep_indexes.insert(dep_idx) {
             continue;
         }
-        pending.extend(direct_local_dep_indexes(modules, dep_idx, module_idx_by_key));
+        pending.extend(direct_local_dep_indexes(
+            modules,
+            dep_idx,
+            module_idx_by_key,
+            provider_plan,
+        ));
     }
 
     // ---- Context: materialize dependency pairs for typechecker.check_with_imports ----
@@ -4875,7 +5040,8 @@ fn typecheck_modules_with_import_graph_artifacts(
     let mut stdlib_cache = StdlibAstCache::new();
 
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module = imported_module_deps_for_with_index(modules, idx, &module_idx_by_key);
+        let deps_for_module =
+            imported_module_deps_for_with_provider_plan(modules, idx, &module_idx_by_key, provider_plan);
 
         // Parser warnings were already rendered at parse time; collect them here so both warning classes reach
         // machine-readable reports from one deterministic sweep.
@@ -6423,6 +6589,47 @@ pub def probe() -> SubstraitPlan:
                 .into());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn provider_bootstrap_std_import_adds_the_physical_source_dependency() -> Result<(), Box<dyn std::error::Error>> {
+        let make_module = |name: &str, source: &str| -> Result<ParsedModule, Box<dyn std::error::Error>> {
+            let tokens = lexer::lex(source).map_err(|errors| format!("{name} lex failed: {errors:?}"))?;
+            let ast = parser::parse(&tokens).map_err(|errors| format!("{name} parse failed: {errors:?}"))?;
+            Ok(ParsedModule {
+                name: name.to_string(),
+                path_segments: vec![name.to_string()],
+                file_path: PathBuf::from(format!("{name}.incn")),
+                source: source.to_string(),
+                ast,
+            })
+        };
+        let modules = vec![
+            make_module("registry", "pub model Registry:\n    label: str\n")?,
+            make_module(
+                "features",
+                "from std.registry import Registry\n\npub def label(value: Registry) -> str:\n    return value.label\n",
+            )?,
+        ];
+        let module_idx_by_key = module_key_index(&modules);
+        let features_index = modules
+            .iter()
+            .position(|module| module.path_segments == ["features".to_string()])
+            .ok_or("expected features module")?;
+        assert!(
+            imported_module_deps_for_with_index(&modules, features_index, &module_idx_by_key).is_empty(),
+            "an ordinary consumer must not reinterpret std.registry as a local source import"
+        );
+
+        let provider_plan = ProviderPlan::default().with_bootstrap_sdk_namespace_roots(["registry".to_string()]);
+        let dependencies =
+            imported_module_deps_for_with_provider_plan(&modules, features_index, &module_idx_by_key, &provider_plan);
+        assert_eq!(
+            dependencies.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            vec!["registry"],
+            "the bootstrap grant must add the exact physical provider source edge"
+        );
         Ok(())
     }
 
@@ -8040,10 +8247,13 @@ def main() -> None:
         let main_path = source_root.join("main.incn");
         std::fs::write(
             &main_path,
-            "from std.testing import assert_eq\n\ndef helper() -> int:\n  return 1\n\ndef main() -> int:\n  assert_eq(helper(), 1)\n  return helper()\n",
+            "def helper() -> int:\n  return 1\n\ndef main() -> int:\n  return helper()\n",
         )?;
 
-        let session = CompilationSession::discover_with_feature_selection(&main_path, &FeatureSelection::default())?;
+        let session = CompilationSession::discover_for_collection_with_feature_selection(
+            &main_path,
+            &FeatureSelection::default(),
+        )?;
         let modules = collect_modules_detailed_with_session(main_path.clone(), &session)
             .map_err(|failure| failure.render_human())?;
         let analysis = session
@@ -8053,24 +8263,31 @@ def main() -> None:
                 None,
             )
             .map_err(|failure| failure.render_human())?;
-        let snapshot = analysis
-            .semantic_snapshots()
-            .get(&main_path)
-            .ok_or("expected a session semantic snapshot for the entry module")?;
+        let entry_analysis = analysis
+            .module_analysis_for_path(&main_path)
+            .ok_or("expected one bundled session analysis for the entry module")?;
+        let snapshot = entry_analysis.semantic_snapshot();
+        let type_info = entry_analysis.type_info();
+        let retained_type_info = analysis
+            .type_info_for_path(&main_path)
+            .ok_or("expected the session to retain lowering input for the entry module")?;
 
-        assert!(analysis.type_info_for_path(&main_path).is_some());
+        assert!(std::ptr::eq(type_info, retained_type_info));
+        let entry_module = modules
+            .iter()
+            .find(|module| module.file_path == main_path)
+            .ok_or("expected the session to collect the entry module")?;
+        let lowered = crate::frontend::body_ir::build_body_ir_module_v0(
+            &entry_module.ast,
+            &entry_module.path_segments,
+            type_info,
+        );
+        assert!(lowered.render_snapshot().contains("body main"));
         assert!(snapshot.render_snapshot().contains("decl:main::helper type=() -> int"));
         assert!(
             snapshot
                 .render_snapshot()
                 .contains("symbol_target=function:main::helper")
-        );
-        let mut stdlib_cache = analysis.stdlib_cache().clone();
-        assert!(
-            stdlib_cache
-                .lookup_function_symbol(&["std".to_string(), "testing".to_string()], "assert_eq")
-                .is_some(),
-            "session analysis must retain source-backed stdlib metadata for lowering"
         );
         Ok(())
     }

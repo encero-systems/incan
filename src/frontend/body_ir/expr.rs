@@ -18,25 +18,39 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let span = hir_span(expr.span);
         match &expr.node {
             ast::Expr::Ident(name) => {
-                let place = bir::Place::from_local(self.local_for_name(name, span));
                 let ty = self.resolve_ty(expr.span);
+                let Some(place) = self.place_for_name(name, expr.span, &ty) else {
+                    return self.unsupported_operand(
+                        format!("resolved reference `{name}` has no Body IR value representation"),
+                        scope,
+                        span,
+                        out,
+                    );
+                };
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
             }
             ast::Expr::SelfExpr => {
                 // Resolved exactly like `Ident("self")` — see `BodyBuilder::declare_receiver_local`, which binds
-                // the receiver under the name "self" so this shares `local_for_name`'s ordinary lookup path. A
+                // the receiver under the name "self" so this shares `place_for_name`'s canonical lookup path. A
                 // top-level function body can never actually contain `SelfExpr` (the parser only accepts it inside
-                // a method), so this arm's `local_for_name` fallback to an `External` local is purely defensive.
-                let place = bir::Place::from_local(self.local_for_name("self", span));
+                // a method), so this arm's unproven-reference fallback to an `External` local is purely defensive.
                 let ty = self.resolve_ty(expr.span);
+                let Some(place) = self.place_for_name("self", expr.span, &ty) else {
+                    return self.unsupported_operand(
+                        "resolved receiver has no Body IR local".to_string(),
+                        scope,
+                        span,
+                        out,
+                    );
+                };
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
             }
-            ast::Expr::Literal(lit) => bir::Operand::Constant(lower_literal(lit)),
+            ast::Expr::Literal(lit) => bir::Operand::Constant(lower_checked_literal(lit, &self.resolve_ty(expr.span))),
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
             ast::Expr::Field(base, name) => {
-                if let Some(target) = self.local_fieldless_enum_variant_target(base, name) {
+                if let Some(target) = self.local_fieldless_enum_variant_target(base, name, expr.span) {
                     return self.push_assign_temp(
                         bir::Rvalue::FieldlessEnumVariant(target),
                         self.resolve_ty(expr.span),
@@ -45,7 +59,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 }
-                if let Some(target) = self.local_value_enum_variant_target(base, name) {
+                if let Some(target) = self.local_value_enum_variant_target(base, name, expr.span) {
                     return self.push_assign_temp(
                         bir::Rvalue::ValueEnumVariant(target),
                         self.resolve_ty(expr.span),
@@ -55,7 +69,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     );
                 }
                 let mut place = self.lower_expr_to_place(base, scope, out);
-                place.projection.push(bir::PlaceElem::Field(name.clone()));
+                place.projection.push(bir::PlaceElem::field(
+                    name.clone(),
+                    self.type_info.resolved_identity(expr.span).cloned(),
+                ));
                 let ty = self.resolve_ty(expr.span);
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
@@ -69,6 +86,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Operand::place(place, fact, last_use)
             }
             ast::Expr::Slice(base, slice) => self.lower_slice(base, slice, expr.span, scope, out),
+            ast::Expr::Unary(ast::UnaryOp::Neg, inner) => {
+                let ty = self.resolve_ty(expr.span);
+                if let ast::Expr::Literal(literal) = &inner.node
+                    && let Some(constant) = lower_checked_negative_literal(literal, &ty)
+                {
+                    bir::Operand::Constant(constant)
+                } else {
+                    let operand = self.lower_expr_to_operand(inner, scope, out);
+                    self.push_assign_temp(bir::Rvalue::UnaryOp(bir::UnOp::Neg, operand), ty, scope, span, out)
+                }
+            }
             ast::Expr::Unary(op, inner) => {
                 let un_op = lower_unary_op(*op);
                 let operand = self.lower_expr_to_operand(inner, scope, out);
@@ -112,11 +140,36 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Place {
         match &expr.node {
-            ast::Expr::Ident(name) => bir::Place::from_local(self.local_for_name(name, hir_span(expr.span))),
-            ast::Expr::SelfExpr => bir::Place::from_local(self.local_for_name("self", hir_span(expr.span))),
+            ast::Expr::Ident(name) => {
+                let ty = self.resolve_ty(expr.span);
+                self.place_for_name(name, expr.span, &ty).unwrap_or_else(|| {
+                    let operand = self.unsupported_operand(
+                        format!("resolved reference `{name}` has no Body IR place representation"),
+                        scope,
+                        hir_span(expr.span),
+                        out,
+                    );
+                    self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out)
+                })
+            }
+            ast::Expr::SelfExpr => {
+                let ty = self.resolve_ty(expr.span);
+                self.place_for_name("self", expr.span, &ty).unwrap_or_else(|| {
+                    let operand = self.unsupported_operand(
+                        "resolved receiver has no Body IR local".to_string(),
+                        scope,
+                        hir_span(expr.span),
+                        out,
+                    );
+                    self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out)
+                })
+            }
             ast::Expr::Field(base, name) => {
                 let mut place = self.lower_expr_to_place(base, scope, out);
-                place.projection.push(bir::PlaceElem::Field(name.clone()));
+                place.projection.push(bir::PlaceElem::field(
+                    name.clone(),
+                    self.type_info.resolved_identity(expr.span).cloned(),
+                ));
                 place
             }
             ast::Expr::Index(base, index) => {

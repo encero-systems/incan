@@ -6,14 +6,27 @@
 //!
 //! ## Position/Offset Conversion
 //!
-//! All conversion functions handle UTF-8 correctly by counting characters,
-//! not bytes. LSP positions are 0-based (line 0, character 0 is the first).
+//! All conversion functions translate UTF-8 byte offsets into the UTF-16 code-unit columns required by LSP.
+//! Positions are 0-based (line 0, character 0 is the first).
 
+use std::collections::HashMap;
+
+use incan_semantics_core::SymbolOrigin;
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Position, Range, Url,
 };
 
 use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, ErrorKind, stable_diagnostic};
+
+/// Source text and URI resolved for one canonical declaration origin.
+#[derive(Debug, Clone)]
+pub struct RelatedDeclarationSource {
+    pub uri: Url,
+    pub source: String,
+}
+
+/// Source-aware projection map for canonical declaration origins visible to one LSP typecheck.
+pub type RelatedDeclarationSources = HashMap<SymbolOrigin, RelatedDeclarationSource>;
 
 // ============================================================================
 // Position/Offset Conversion Utilities
@@ -23,7 +36,7 @@ use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, ErrorKind, sta
 
 /// Convert a byte offset to LSP Position (0-based line and character).
 ///
-/// Handles UTF-8 correctly by iterating over characters, not bytes.
+/// Counts UTF-16 code units, as required by the LSP default position encoding.
 /// If the offset is beyond the end of the source, returns the position
 /// at the end of the last line.
 pub fn offset_to_position(source: &str, offset: usize) -> Position {
@@ -39,7 +52,7 @@ pub fn offset_to_position(source: &str, offset: usize) -> Position {
             line += 1;
             col = 0;
         } else {
-            col += 1;
+            col += c.len_utf16() as u32;
         }
     }
 
@@ -49,32 +62,35 @@ pub fn offset_to_position(source: &str, offset: usize) -> Position {
 /// Convert an LSP Position (0-based line and character) to a byte offset.
 ///
 /// Returns `None` if the position is beyond the end of the source.
-/// Handles UTF-8 correctly by iterating over characters, not bytes.
+/// Counts UTF-16 code units, as required by the LSP default position encoding. A position beyond a line's end is
+/// clamped to that line's terminating newline (or end of file), matching [`offset_to_position`]'s bounded behavior.
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
     let mut line = 0u32;
     let mut col = 0u32;
-    let mut offset = 0usize;
 
     for (i, c) in source.char_indices() {
-        if line == position.line && col == position.character {
-            return Some(i);
-        }
-        if c == '\n' {
-            if line == position.line {
-                // Position is beyond line end - return end of line
+        if line == position.line {
+            if col >= position.character {
                 return Some(i);
             }
+            if c == '\n' {
+                return Some(i);
+            }
+            let next_col = col + c.len_utf16() as u32;
+            if position.character < next_col {
+                // A byte offset cannot point between a surrogate pair. Clamp such a malformed LSP position to the
+                // beginning of the scalar value instead of manufacturing a non-character-boundary offset.
+                return Some(i);
+            }
+            col = next_col;
+        } else if c == '\n' {
             line += 1;
             col = 0;
-        } else {
-            col += 1;
         }
-        offset = i + c.len_utf8();
     }
 
-    // Position at end of file
-    if line == position.line && col == position.character {
-        Some(offset)
+    if line == position.line {
+        Some(source.len())
     } else {
         None
     }
@@ -107,6 +123,17 @@ pub fn compile_error_to_diagnostic_with_phase(
     source: &str,
     uri: &Url,
     phase: DiagnosticPhase,
+) -> Diagnostic {
+    compile_error_to_diagnostic_with_phase_and_sources(error, source, uri, phase, &HashMap::new())
+}
+
+/// Convert a compiler error while resolving canonical related declarations only through their actual source origin.
+pub fn compile_error_to_diagnostic_with_phase_and_sources(
+    error: &CompileError,
+    source: &str,
+    uri: &Url,
+    phase: DiagnosticPhase,
+    related_sources: &RelatedDeclarationSources,
 ) -> Diagnostic {
     let stable = stable_diagnostic(uri.as_str(), source, error, phase);
     let range = span_to_range(source, stable.primary_span.start.offset, stable.primary_span.end.offset);
@@ -158,6 +185,27 @@ pub fn compile_error_to_diagnostic_with_phase(
             },
             message: related.label.clone(),
         });
+    }
+
+    for related in &stable.related_declarations {
+        if let Some(declaration_source) = related_sources.get(&related.identity.origin) {
+            related_information.push(DiagnosticRelatedInformation {
+                location: Location {
+                    uri: declaration_source.uri.clone(),
+                    range: span_to_range(
+                        &declaration_source.source,
+                        related.identity.declaration_span.start,
+                        related.identity.declaration_span.end,
+                    ),
+                },
+                message: related.label.clone(),
+            });
+        } else {
+            message.push_str("\n\nnote: ");
+            message.push_str(&related.label);
+            message.push_str(": ");
+            message.push_str(&related.identity.render_compact());
+        }
     }
 
     Diagnostic {
@@ -232,6 +280,16 @@ mod tests {
     }
 
     #[test]
+    fn position_conversion_uses_utf16_code_units() {
+        let source = "😀x\n";
+
+        assert_eq!(offset_to_position(source, "😀".len()), Position::new(0, 2));
+        assert_eq!(offset_to_position(source, "😀x".len()), Position::new(0, 3));
+        assert_eq!(position_to_offset(source, Position::new(0, 2)), Some("😀".len()));
+        assert_eq!(position_to_offset(source, Position::new(0, 3)), Some("😀x".len()));
+    }
+
+    #[test]
     fn lsp_diagnostic_projects_the_shared_compiler_fact() -> Result<(), Box<dyn std::error::Error>> {
         let source = "first\nsecond\n";
         let uri = Url::parse("file:///workspace/main.incn")?;
@@ -253,6 +311,85 @@ mod tests {
         assert_eq!(data["origin"], serde_json::json!("typechecker"));
         assert_eq!(data["expected"], serde_json::json!("int"));
         assert_eq!(data["actual"], serde_json::json!("str"));
+        Ok(())
+    }
+
+    #[test]
+    fn lsp_related_declaration_uses_provider_uri_and_utf16_range() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
+
+        let consumer_uri = Url::parse("file:///workspace/consumer.incn")?;
+        let provider_uri = Url::parse("file:///workspace/provider.incn")?;
+        let provider_source = "😀 def parse(value: int) -> int:\n  return value\n";
+        let declaration_start = provider_source.find("def parse").ok_or("missing declaration")?;
+        let declaration_end = declaration_start + "def parse".len();
+        let declaration = CanonicalSymbolId::module_declaration(
+            vec!["provider".to_string()],
+            "parse",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(declaration_start, declaration_end),
+        );
+        let error = CompileError::type_error(
+            "alias argument mismatch".to_string(),
+            crate::frontend::ast::Span::new(0, 5),
+        )
+        .with_related_declaration(declaration, "declaration of `parse`");
+        let mut sources = RelatedDeclarationSources::new();
+        sources.insert(
+            SymbolOrigin::Module(vec!["provider".to_string()]),
+            RelatedDeclarationSource {
+                uri: provider_uri.clone(),
+                source: provider_source.to_string(),
+            },
+        );
+
+        let diagnostic = compile_error_to_diagnostic_with_phase_and_sources(
+            &error,
+            "alias()\n",
+            &consumer_uri,
+            DiagnosticPhase::Typecheck,
+            &sources,
+        );
+        let related = diagnostic.related_information.ok_or("missing related location")?;
+        let [related] = related.as_slice() else {
+            return Err(format!("expected one related location, got {related:?}").into());
+        };
+        assert_eq!(related.location.uri, provider_uri);
+        assert_eq!(related.location.range.start, Position::new(0, 3));
+        Ok(())
+    }
+
+    #[test]
+    fn lsp_unmapped_declaration_never_fabricates_a_consumer_location() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
+
+        let consumer_uri = Url::parse("file:///workspace/consumer.incn")?;
+        let declaration = CanonicalSymbolId::module_declaration(
+            vec!["unloaded".to_string()],
+            "parse",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(50, 80),
+        );
+        let error = CompileError::type_error(
+            "alias argument mismatch".to_string(),
+            crate::frontend::ast::Span::new(0, 5),
+        )
+        .with_related_declaration(declaration, "declaration of `parse`");
+        let diagnostic = compile_error_to_diagnostic_with_phase_and_sources(
+            &error,
+            "alias()\n",
+            &consumer_uri,
+            DiagnosticPhase::Typecheck,
+            &RelatedDeclarationSources::new(),
+        );
+
+        assert!(diagnostic.related_information.is_none());
+        assert!(diagnostic.message.contains("function:unloaded::parse@50..80"));
+        assert_eq!(
+            diagnostic.data.ok_or("missing stable diagnostic")?["related_declarations"][0]["identity"]["declaration_span"]
+                ["start"],
+            serde_json::json!(50)
+        );
         Ok(())
     }
 }

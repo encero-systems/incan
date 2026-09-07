@@ -5,9 +5,16 @@
 //! missing compatibility inputs with Cargo. The compiler self-suite uses the same sealed direct-rustc executor and
 //! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
+mod options;
+mod support;
+
+// The command option shapes and the store/limit/reporting helpers move beside this file rather than into it.
+// Every path stays where callers expect it through these re-exports, so this is a move, not an interface change.
+pub use options::*;
+pub(crate) use support::*;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -99,7 +106,7 @@ pub const OVEN_COMPILER_TEST_JOBS_ENV: &str = "INCAN_OVEN_COMPILER_TEST_JOBS";
 /// A root that exceeds this limit is a suite failure with its partial libtest transcript retained; it must not hold
 /// the complete worker pool indefinitely on one host-specific child process.
 ///
-/// Constrained hosted MSRV runners can require more than fifteen minutes for the two largest integration roots even
+/// Constrained hosted runners can require more than fifteen minutes for the two largest integration roots even
 /// though prepared reference-machine replay remains inside the five-minute suite budget. The unsharded release
 /// evidence workflow (`oven_evidence.yml`) runs every root in one job rather than the four-way split the ordinary
 /// CI workflow uses, so its two largest roots (`cli_integration`, `integration_tests`) have repeatedly needed more
@@ -107,309 +114,8 @@ pub const OVEN_COMPILER_TEST_JOBS_ENV: &str = "INCAN_OVEN_COMPILER_TEST_JOBS";
 /// with enough headroom that slow hardware is not misreported as a test failure.
 const OVEN_COMPILER_TEST_ROOT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
-/// Inputs for `incan oven import`.
-#[derive(Debug, Clone)]
-pub struct OvenImportCommandOptions {
-    /// Root containing the frozen Cargo package to import as evidence.
-    pub project: PathBuf,
-    /// Explicit target triple for the recorded build intent.
-    pub target: String,
-    /// Exact selected Rust toolchain identity.
-    pub toolchain: String,
-    /// Explicit profile name for the recorded build intent.
-    pub profile: String,
-    /// Explicitly selected feature names.
-    pub features: Vec<String>,
-    /// Named generated source inputs expressed as `NAME=PATH`.
-    pub source_inputs: Vec<String>,
-    /// Optional receipt output; the project-local Oven receipt path is used otherwise.
-    pub output: Option<PathBuf>,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Shared bounded-store location and policy inputs for Oven Alpha commands.
-#[derive(Debug, Clone)]
-pub struct OvenStoreCommandOptions {
-    /// Optional explicit store root; the versioned `INCAN_HOME`/home default is used otherwise.
-    pub root: Option<PathBuf>,
-    /// Optional aggregate physical allocation cap in bytes.
-    pub max_physical_bytes: Option<u64>,
-    /// Optional per-domain physical allocation cap in bytes.
-    pub max_domain_physical_bytes: Option<u64>,
-    /// Optional per-domain logical artifact-byte cap in bytes.
-    pub max_domain_logical_bytes: Option<u64>,
-}
-
-impl OvenStoreCommandOptions {
-    /// Whether a command will resolve the ordinary compiler-owned Oven store without caller-specific policy.
-    fn is_ordinary_default(&self) -> bool {
-        self.root.is_none()
-            && self.max_physical_bytes.is_none()
-            && self.max_domain_physical_bytes.is_none()
-            && self.max_domain_logical_bytes.is_none()
-    }
-}
-
-/// Inputs for `incan inspect oven` receipt and build-unit inspection.
-#[derive(Debug, Clone)]
-pub struct OvenReceiptInspectCommandOptions {
-    /// Persisted receipt that authorizes the requested Oven build unit.
-    pub receipt: PathBuf,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Receipt/build-unit selection state shown by `incan inspect oven`.
-#[derive(Debug, Clone, Serialize)]
-pub struct OvenPlanSelectionInspection {
-    /// `hit`, `miss`, or `ambiguous`; normal consumers refuse the latter two.
-    pub state: String,
-    /// Matching immutable direct-rustc plan identities retained in the store.
-    pub plan_identities: Vec<String>,
-    /// Explicit explanation for a miss or ambiguity, absent for a unique hit.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// Command-level Oven receipt, compatibility, and bounded-storage evidence.
-#[derive(Debug, Clone, Serialize)]
-pub struct OvenReceiptInspection {
-    /// Verified complete source receipt identity.
-    pub receipt_identity: String,
-    /// Portable compatibility identity used to select a reusable native closure.
-    pub build_unit_identity: String,
-    /// Target/toolchain/profile/features selected by this receipt.
-    pub intent: OvenBuildIntent,
-    /// Named compiler, runtime, dependency, and provider inputs that compose the build-unit identity.
-    /// These values are portable identity evidence, never project-local source paths.
-    pub build_unit_inputs: std::collections::BTreeMap<String, String>,
-    /// Store-plan selection outcome for the receipt.
-    pub selection: OvenPlanSelectionInspection,
-    /// Store-wide logical artifact bytes.
-    pub logical_artifact_bytes: u64,
-    /// Store-wide measured physical allocation bytes.
-    pub physical_bytes: u64,
-    /// Inactive physical bytes available for policy-driven reclamation.
-    pub reclaimable_physical_bytes: u64,
-    /// Physical bytes protected by active consumer leases.
-    pub active_lease_physical_bytes: u64,
-}
-
-/// Inputs for `incan oven plan publish`.
-#[derive(Debug, Clone)]
-pub struct OvenPlanPublishCommandOptions {
-    /// Persisted receipt that authorizes the plan.
-    pub receipt: PathBuf,
-    /// JSON direct-rustc artifact manifest to validate and retain immutably.
-    pub manifest: PathBuf,
-    /// Immutable artifact root used for full manifest validation before publication.
-    pub artifact_root: PathBuf,
-    /// Compatibility domain which owns this retained plan.
-    pub domain: String,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for the explicitly named `legacy_cargo` publisher boundary.
-#[derive(Debug, Clone)]
-pub struct OvenLegacyCargoPrepareCommandOptions {
-    /// Generated-project receipt that authorizes the direct-rustc build unit.
-    pub receipt: PathBuf,
-    /// Caller-owned generated Rust project containing `Cargo.toml` and `src/main.rs`.
-    pub generated_project: PathBuf,
-    /// Explicit Cargo executable used only for this named publisher transition.
-    pub cargo: PathBuf,
-    /// Explicit Rust compiler used by Cargo and recorded in the receipt.
-    pub rustc: PathBuf,
-    /// Stable compatibility domain for bounded store admission.
-    pub domain: String,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for `incan oven interop bake`.
-#[derive(Debug, Clone)]
-pub struct OvenInteropBakeCommandOptions {
-    /// Package root containing the canonical manifest, lock, and package-owned interop inputs.
-    pub project: PathBuf,
-    /// Exact locked target triple to select and bake.
-    pub target: String,
-    /// Runtime-only receipt that selects the existing sealed direct-rustc Loaf plan.
-    ///
-    /// When omitted, Oven prepares an exact debug Rust-only base for a conventional executable before it selects and
-    /// seals the declared native inputs. The bootstrap cannot emit a caller-visible binary and never discovers a
-    /// native toolchain outside this command.
-    pub base_receipt: Option<PathBuf>,
-    /// Explicit selected C compiler for a declared toolchain requirement or C shim.
-    pub c_compiler: Option<PathBuf>,
-    /// Explicit selected C++ compiler for a declared C++ shim.
-    pub cxx_compiler: Option<PathBuf>,
-    /// Explicit selected static archiver for declared C/C++ shims.
-    pub archiver: Option<PathBuf>,
-    /// Semantic version of the selected compiler capability.
-    pub toolchain_version: Option<String>,
-    /// Explicit selected SDK root when the locked target requires an SDK capability.
-    pub sdk_root: Option<PathBuf>,
-    /// Semantic version of the selected SDK capability.
-    pub sdk_version: Option<String>,
-    /// Regular selected SDK identity file below `sdk_root`.
-    pub sdk_identity_file: Option<PathBuf>,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for `incan oven interop stage`.
-#[derive(Debug, Clone)]
-pub struct OvenInteropStageCommandOptions {
-    /// Package root containing the canonical manifest, current lock, and selected interop receipt.
-    pub project: PathBuf,
-    /// Exact locked target triple whose final interop plan will be staged.
-    pub target: String,
-    /// Runtime-only receipt used to reconstruct the immutable final interop plan receipt.
-    pub base_receipt: PathBuf,
-    /// Fixed native consumer layout to stage without invoking platform build tools.
-    pub adapter: OvenInteropAdapterArgument,
-    /// New caller-owned output directory. Existing output is deliberately never replaced.
-    pub output: PathBuf,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for the hidden baker that emits one complete compiler-owned Loaf envelope.
-#[derive(Debug, Clone)]
-pub struct OvenLoafBakeCommandOptions {
-    /// Compiler or staged toolchain root used to derive runtime source identity.
-    pub compiler_root: PathBuf,
-    /// Destination for immutable `<identity>.loaf` directories.
-    pub output: PathBuf,
-    /// Bounded compiler-suite store baked beside a compiler-suite Loaf envelope.
-    pub suite_store: Option<PathBuf>,
-    /// Built-in release or compiler-suite envelope.
-    pub envelope: OvenLoafEnvelopeArgument,
-    /// Exact SDK provider inventory used to derive compatibility identities.
-    pub sdk_inventory: PathBuf,
-    /// Cargo executable used only by this explicit baker.
-    pub cargo: PathBuf,
-    /// Rust compiler used by the baker and recorded by each receipt.
-    pub rustc: PathBuf,
-    /// Aggregate physical allowance for the selected envelope.
-    pub max_physical_bytes: Option<u64>,
-    /// Per-Loaf physical allowance.
-    pub max_domain_physical_bytes: Option<u64>,
-    /// Per-Loaf logical allowance.
-    pub max_domain_logical_bytes: Option<u64>,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for the direct-rustc compiler workspace-test consumer.
-#[derive(Debug, Clone)]
-pub struct OvenCompilerLibtestsRunCommandOptions {
-    /// Repository root containing the compiler Cargo package and `src/lib.rs`.
-    pub compiler_root: PathBuf,
-    /// Optional explicit Rust compiler; the active toolchain is resolved when absent.
-    pub rustc: Option<PathBuf>,
-    /// Requested root-package feature names; default Cargo features remain enabled.
-    pub features: Vec<String>,
-    /// Optional receipt-bound test source paths selected from the stored suite.
-    ///
-    /// With no selection the consumer executes every stored root. A selection is a diagnostic and development aid,
-    /// not a second suite definition: every requested path must match one indexed source root in the receipt-bound
-    /// payload.
-    pub targets: Vec<String>,
-    /// Exact tests selected from one receipt-bound target for a diagnostic Oven run.
-    ///
-    /// Exact selection is deliberately narrow: it preserves the stored target's ordinary direct-rustc build,
-    /// receipt, environment, working directory, and timeout supervisor while running every requested case
-    /// sequentially from one materialized libtest binary.
-    pub exact_names: Vec<String>,
-    /// Zero-based index of a deterministic receipt-index partition.
-    ///
-    /// CI uses this only after one independent prewarm has admitted the complete suite. It is a read-only
-    /// projection of the receipt-indexed roots, not a second suite definition or a baking capability.
-    pub partition_index: Option<usize>,
-    /// Number of deterministic receipt-index partitions.
-    pub partition_count: Option<usize>,
-    /// Explicit Cargo executable for compiler-suite roots that deliberately exercise the Loaf baker.
-    ///
-    /// The suite creates a logged proxy and grants it only through its package-qualified capability registry. It is
-    /// never available to normal Incan commands or used as an Oven execution fallback.
-    pub fixture_cargo: Option<PathBuf>,
-    /// Caller-owned directory for linked stored test executables.
-    pub output: Option<PathBuf>,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
 /// Compiler-owned receipt destination for the full native workspace-test compatibility unit.
 const COMPILER_LIBTEST_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/compiler-libtests-receipt.json";
-
-/// Inputs for `incan oven test`.
-#[derive(Debug, Clone)]
-pub struct OvenTestCommandOptions {
-    /// Persisted receipt authorizing source and selected direct-rustc plan.
-    pub receipt: PathBuf,
-    /// Exact immutable store identity of the direct-rustc plan.
-    pub plan_identity: String,
-    /// Explicit Rust compiler executable.
-    pub rustc: PathBuf,
-    /// Generated Rust test source authorized by receipt supplemental evidence.
-    pub source: PathBuf,
-    /// Caller-owned test executable path.
-    pub output: PathBuf,
-    /// Rust test crate name.
-    pub crate_name: String,
-    /// Supported Rust edition.
-    pub edition: String,
-    /// Receipt supplemental source-evidence key for `source`.
-    pub source_evidence_key: String,
-    /// Exact test names selected only after a full native inventory.
-    pub exact_names: Vec<String>,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for `incan oven run`.
-#[derive(Debug, Clone)]
-pub struct OvenRunCommandOptions {
-    /// Persisted receipt authorizing source and selected direct-rustc plan.
-    pub receipt: PathBuf,
-    /// Exact immutable store identity of the direct-rustc plan.
-    pub plan_identity: String,
-    /// Explicit Rust compiler executable.
-    pub rustc: PathBuf,
-    /// Generated Rust binary source authorized by receipt supplemental evidence.
-    pub source: PathBuf,
-    /// Caller-owned binary output path.
-    pub output: PathBuf,
-    /// Rust binary crate name.
-    pub crate_name: String,
-    /// Supported Rust edition.
-    pub edition: String,
-    /// Receipt supplemental source-evidence key for `source`.
-    pub source_evidence_key: String,
-    /// Explicit arguments forwarded only to the compiled native binary.
-    pub arguments: Vec<OsString>,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
 
 /// Explicitly select or bake sealed Loafs for the conventional targets in one supported Incan project.
 ///
@@ -5309,12 +5015,60 @@ fn write_native_test_failure_transcript(output: &Path, transcript: &str) -> CliR
     Ok(path)
 }
 
+/// Collect every test libtest reported as failing, in the order it first named them.
+///
+/// Two spellings have to be read because the suite runs libtest in both modes. With output captured, each failure
+/// body is introduced by `---- <name> stdout ----`. With output passed through, no such header is printed and the
+/// only place the test is named is the panic line, where libtest has set the thread name to the test name. Reading
+/// both keeps the roster complete in either mode, and de-duplicating keeps one entry per test when both appear.
+fn failing_test_names(output: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let captured = trimmed
+            .strip_prefix("---- ")
+            .and_then(|rest| rest.strip_suffix(" stdout ----"));
+        let passed_through = trimmed
+            .contains("panicked at")
+            .then(|| trimmed.split_once("thread '"))
+            .flatten()
+            .and_then(|(_, rest)| rest.split_once('\''))
+            .map(|(name, _)| name);
+        let Some(name) = captured.or(passed_through).map(str::trim) else {
+            continue;
+        };
+        // A panic on the harness thread names the runner, not a test; it would add noise to every roster.
+        if name.is_empty() || name == "main" || names.contains(&name) {
+            continue;
+        }
+        names.push(name);
+    }
+    names
+}
+
 /// Keep terminal failure reporting actionable without dumping an unbounded libtest transcript into the CLI error path.
 ///
-/// The complete caller-owned transcript is retained beside the direct-rustc test binary on failure.
+/// The roster of failing test names is emitted first and is never truncated: a handful of large panic bodies must not
+/// be able to spend the character budget and leave the remaining failures invisible to whoever reads CI output. The
+/// complete caller-owned transcript is retained beside the direct-rustc test binary on failure.
 fn native_test_failure_summary(output: &str) -> String {
     const MAX_CHARS: usize = 12_000;
     const PANIC_CONTEXT_LINES: usize = 12;
+
+    // ---- Roster: which tests failed, ahead of any bounded detail ----
+    let mut summary = String::new();
+    let failing = failing_test_names(output);
+    if !failing.is_empty() {
+        summary.push_str(&format!("failing tests ({}):\n", failing.len()));
+        for name in &failing {
+            summary.push_str("    ");
+            summary.push_str(name);
+            summary.push('\n');
+        }
+        summary.push('\n');
+    }
+
+    // ---- Detail: panic sites, their immediate context, and terminal libtest lines ----
     let mut relevant = Vec::new();
     let mut panic_context_remaining = 0;
     for line in output.lines() {
@@ -5336,12 +5090,12 @@ fn native_test_failure_summary(output: &str) -> String {
         }
     }
     let relevant = relevant.join("\n");
-    let summary = if relevant.is_empty() { output } else { &relevant };
-    let mut bounded = summary.chars().take(MAX_CHARS).collect::<String>();
-    if summary.chars().count() > MAX_CHARS {
-        bounded.push_str("\n… libtest transcript truncated");
+    let detail = if relevant.is_empty() { output } else { &relevant };
+    summary.extend(detail.chars().take(MAX_CHARS));
+    if detail.chars().count() > MAX_CHARS {
+        summary.push_str("\n… libtest transcript truncated");
     }
-    bounded
+    summary
 }
 
 /// Recompute the source-bound compiler root libtest receipt without invoking Cargo.
@@ -5656,235 +5410,6 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
         }))?,
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// Read and verify a persisted receipt before it authorizes another Oven stage.
-fn read_receipt(path: &Path) -> CliResult<OvenReceipt> {
-    let bytes = fs::read(path)
-        .map_err(|error| CliError::failure(format!("failed to read Oven receipt {}: {error}", path.display())))?;
-    let receipt = serde_json::from_slice::<OvenReceipt>(&bytes)
-        .map_err(|error| CliError::failure(format!("failed to parse Oven receipt {}: {error}", path.display())))?;
-    receipt.verify_identity().map_err(oven_error)?;
-    Ok(receipt)
-}
-
-/// Resolve the one compiler-owned default store root or a caller-explicit root without consulting Cargo state.
-fn open_store(options: &OvenStoreCommandOptions) -> CliResult<OvenStore> {
-    open_store_with_defaults(
-        options,
-        OvenStoreLimits::new(
-            DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
-            DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
-            DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
-        ),
-    )
-}
-
-/// Open one bounded store using the product profile owned by its command surface.
-fn open_store_with_defaults(options: &OvenStoreCommandOptions, defaults: OvenStoreLimits) -> CliResult<OvenStore> {
-    let root = match &options.root {
-        Some(root) => root.clone(),
-        None => default_store_root(env::var_os("INCAN_HOME"), user_home()).ok_or_else(|| {
-            CliError::failure("cannot resolve the Oven store root; set INCAN_HOME, HOME, or pass --store")
-        })?,
-    };
-    Ok(OvenStore::new(root, resolve_limits_with_defaults(options, defaults)?))
-}
-
-/// Open the one policy-bounded Oven store used by ordinary Alpha commands.
-///
-/// This keeps normal `build`, `run`, and `test` on the same receipt-owned store as the explicit inspection commands;
-/// normal execution never accepts a generated-Cargo target directory as a storage selector.
-pub(crate) fn open_default_oven_store() -> CliResult<OvenStore> {
-    open_store(&OvenStoreCommandOptions {
-        root: None,
-        max_physical_bytes: None,
-        max_domain_physical_bytes: None,
-        max_domain_logical_bytes: None,
-    })
-}
-
-/// Resolve bounded policy with one command-owned product profile and the real process environment.
-fn resolve_limits_with_defaults(
-    options: &OvenStoreCommandOptions,
-    defaults: OvenStoreLimits,
-) -> CliResult<OvenStoreLimits> {
-    resolve_limits_with_environment_and_defaults(options, |name| env::var(name).ok(), defaults)
-}
-
-/// Apply CLI and environment overrides over one explicit product-owned default profile.
-fn resolve_limits_with_environment_and_defaults(
-    options: &OvenStoreCommandOptions,
-    environment_value: impl Fn(&str) -> Option<String>,
-    defaults: OvenStoreLimits,
-) -> CliResult<OvenStoreLimits> {
-    let aggregate = match options.max_physical_bytes {
-        Some(value) => value,
-        None => parse_limit_value(
-            OVEN_MAX_PHYSICAL_BYTES_ENV,
-            environment_value(OVEN_MAX_PHYSICAL_BYTES_ENV),
-            defaults.max_physical_bytes,
-        )?,
-    };
-    let environment_domain_physical = environment_value(OVEN_MAX_DOMAIN_PHYSICAL_BYTES_ENV);
-    let domain_physical_was_explicit = options.max_domain_physical_bytes.is_some()
-        || environment_domain_physical
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-    let mut domain_physical = match options.max_domain_physical_bytes {
-        Some(value) => value,
-        None => parse_limit_value(
-            OVEN_MAX_DOMAIN_PHYSICAL_BYTES_ENV,
-            environment_domain_physical,
-            defaults.max_domain_physical_bytes,
-        )?,
-    };
-    let domain_logical = match options.max_domain_logical_bytes {
-        Some(value) => value,
-        None => parse_limit_value(
-            OVEN_MAX_DOMAIN_LOGICAL_BYTES_ENV,
-            environment_value(OVEN_MAX_DOMAIN_LOGICAL_BYTES_ENV),
-            defaults.max_domain_logical_bytes,
-        )?,
-    };
-    if aggregate == 0 || domain_physical == 0 || domain_logical == 0 {
-        return Err(CliError::failure(
-            "Oven storage policy limits must be greater than zero",
-        ));
-    }
-    if domain_physical > aggregate {
-        if domain_physical_was_explicit {
-            return Err(CliError::failure(
-                "Oven per-domain physical policy must not exceed aggregate physical policy",
-            ));
-        }
-        domain_physical = aggregate;
-    }
-    Ok(OvenStoreLimits::new(aggregate, domain_physical, domain_logical))
-}
-
-/// Parse one explicit byte-count environment variable without accepting ambiguous unit suffixes.
-fn parse_limit_value(name: &str, value: Option<String>, default: u64) -> CliResult<u64> {
-    match value {
-        Some(value) if !value.trim().is_empty() => value
-            .trim()
-            .parse::<u64>()
-            .map_err(|error| CliError::failure(format!("invalid {name} value `{value}`; expected bytes: {error}"))),
-        Some(_) | None => Ok(default),
-    }
-}
-
-/// Resolve the versioned Oven store location below `INCAN_HOME` before the user home directory.
-fn default_store_root(incan_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    incan_home
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            home.filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".incan"))
-        })
-        .map(|root| crate::oven::store::store_root_for_home(&root))
-}
-
-/// Return the platform home environment used by installed Incan binaries.
-fn user_home() -> Option<OsString> {
-    env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))
-}
-
-/// Resolve the toolchain-manager state needed when a compiler self-test deliberately exercises Rustup fallback.
-///
-/// Stored normal commands receive a verified absolute `RUSTC`; this path exists solely because compiler tests also
-/// verify Rustup discovery after removing that explicit variable. It is intentionally separate from Cargo state.
-fn default_rustup_home(rustup_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    rustup_home
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            home.filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".rustup"))
-        })
-}
-
-/// Parse a named source argument with a portable digest key and a filesystem input path.
-fn parse_named_path(value: &str) -> CliResult<(String, PathBuf)> {
-    let Some((name, path)) = value.split_once('=') else {
-        return Err(CliError::failure(format!(
-            "invalid Oven --source `{value}`; expected NAME=PATH"
-        )));
-    };
-    let name = name.trim();
-    let path = path.trim();
-    if name.is_empty() || path.is_empty() {
-        return Err(CliError::failure(format!(
-            "invalid Oven --source `{value}`; expected NAME=PATH"
-        )));
-    }
-    Ok((name.to_string(), PathBuf::from(path)))
-}
-
-/// Persist a complete scheduler aggregate beside caller-owned test outputs.
-///
-/// The terminal is intentionally a convenience surface and can be detached by a CI or desktop-session wrapper.
-/// The report is therefore a normal caller-owned output, not an immutable-store artifact, and remains available for
-/// a failed batch as well as a green batch. Atomic replacement prevents a reader from observing a partial summary.
-fn write_compiler_suite_report(path: &Path, report: &serde_json::Value) -> CliResult<()> {
-    let parent = path.parent().ok_or_else(|| {
-        CliError::failure(format!(
-            "compiler-suite report path {} has no parent directory",
-            path.display()
-        ))
-    })?;
-    fs::create_dir_all(parent).map_err(|error| {
-        CliError::failure(format!(
-            "cannot create compiler-suite report directory {}: {error}",
-            parent.display()
-        ))
-    })?;
-    let encoded = serde_json::to_vec_pretty(report)
-        .map_err(|error| CliError::failure(format!("failed to serialize compiler-suite report: {error}")))?;
-    let temporary = parent.join(format!(".compiler-suite-report-{}.tmp", std::process::id()));
-    fs::write(&temporary, encoded).map_err(|error| {
-        CliError::failure(format!(
-            "cannot write compiler-suite report temporary file {}: {error}",
-            temporary.display()
-        ))
-    })?;
-    fs::rename(&temporary, path).map_err(|error| {
-        CliError::failure(format!(
-            "cannot publish compiler-suite report {}: {error}",
-            path.display()
-        ))
-    })
-}
-
-/// Serialize a stable JSON report or convert the failure into standard CLI error vocabulary.
-fn print_json(value: &impl serde::Serialize) -> CliResult<()> {
-    let payload = serde_json::to_string_pretty(value)
-        .map_err(|error| CliError::failure(format!("failed to serialize Oven JSON report: {error}")))?;
-    println!("{payload}");
-    Ok(())
-}
-
-/// Render binary byte units for physical allocation and logical artifact-byte accounting without Cargo-cache
-/// terminology.
-fn human_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-    const GIB: u64 = MIB * 1024;
-    if bytes >= GIB {
-        format!("{:.1} GiB", bytes as f64 / GIB as f64)
-    } else if bytes >= MIB {
-        format!("{:.1} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.1} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-/// Translate all Oven typed failures through the top-level CLI error boundary.
-fn oven_error(error: impl std::fmt::Display) -> CliError {
-    CliError::failure(error.to_string())
 }
 
 #[cfg(test)]
@@ -6638,6 +6163,42 @@ mod tests {
         assert!(summary.contains("benchmark fixture failed"));
         assert!(summary.contains("stdout: missing Loaf"));
         assert!(summary.contains("stderr: no Cargo fallback"));
+    }
+
+    #[test]
+    fn native_test_failure_summary_names_tests_libtest_only_identified_by_panic_thread() {
+        let bulky_panic_body = "y".repeat(20_000);
+        let transcript = format!(
+            "thread 'noisy_first_failure' (2719) panicked at tests/integration_tests.rs:1324:9:\n{bulky_panic_body}\nthread 'quiet_last_failure' (4810) panicked at tests/integration_tests.rs:8361:9:\nassertion failed\n"
+        );
+
+        let summary = native_test_failure_summary(&transcript);
+
+        assert!(
+            summary.starts_with("failing tests (2):\n    noisy_first_failure\n    quiet_last_failure\n"),
+            "a pass-through libtest run names its failures only on the panic line: {}",
+            &summary[..summary.len().min(200)]
+        );
+    }
+
+    #[test]
+    fn native_test_failure_summary_names_every_failing_test_before_bounded_detail() {
+        let bulky_panic_body = "x".repeat(20_000);
+        let transcript = format!(
+            "failures:\n\n---- noisy_first_failure stdout ----\nthread 'noisy_first_failure' panicked at src/fixture.rs:1:1:\n{bulky_panic_body}\n\n---- quiet_last_failure stdout ----\nthread 'quiet_last_failure' panicked at src/fixture.rs:2:2:\nassertion failed\n\ntest result: FAILED. 1 passed; 2 failed; 0 ignored\n"
+        );
+
+        let summary = native_test_failure_summary(&transcript);
+
+        assert!(
+            summary.starts_with("failing tests (2):\n    noisy_first_failure\n    quiet_last_failure\n"),
+            "roster must lead the summary: {}",
+            &summary[..summary.len().min(200)]
+        );
+        assert!(
+            summary.contains("… libtest transcript truncated"),
+            "the oversized body should still be bounded"
+        );
     }
 
     #[test]

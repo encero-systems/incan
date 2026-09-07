@@ -1,13 +1,14 @@
 //! End-to-end proof for the bounded source-observable shadow comparison (#1146).
 //!
-//! Every "matched" result here comes from two genuinely independent executions of the same source: the
+//! Every typed-result agreement here comes from two genuinely independent executions of the same source: the
 //! replacement route executes Body IR directly in-process, and the legacy route emits Rust, has Oven authorize
 //! and build it through an immutable store-selected direct-`rustc` plan, and runs the produced program as a
 //! separate process. Nothing here compares generated Rust text, and nothing treats a successful build as
-//! agreement.
+//! agreement. Normal stdout and stderr are compared byte-for-byte independently of the typed result report;
+//! failures retain their prior streams and cannot match merely because the failure classes agree.
 //!
 //! The legacy route needs a staged Oven capability (see `incan::backend::shadow::legacy_oven`). Tests that assert
-//! a matched comparison require it and say so when it is missing; tests about honest unavailability do not.
+//! an executed comparison require it and say so when it is missing; tests about honest unavailability do not.
 //!
 //! Run with: `cargo test --test shadow_comparison_tests`
 
@@ -17,17 +18,29 @@ use incan::backend::replacement::ReplacementValue;
 use incan::backend::selection::{BackendKind, FallbackOutcome, FallbackPolicy, ShadowComparisonState};
 use incan::backend::shadow::legacy_oven::LegacyOvenCapability;
 use incan::backend::shadow::{
-    PROGRAM_ENTRYPOINT_UNAVAILABLE_REASON, RouteEvidence, RuntimeFailureClass, ShadowComparison,
-    ShadowComparisonProfile, SourceObservable, compare_source_observable,
+    FunctionResultKind, PROGRAM_ENTRYPOINT_UNAVAILABLE_REASON, RouteEvidence, RuntimeFailureClass, ShadowComparison,
+    ShadowComparisonProfile, ShadowUnavailable, SourceObservable, TypedFunctionResult,
 };
+use incan::cli::commands::compare_source_observable;
 
 #[path = "support/shadow_capability.rs"]
 mod shadow_capability;
 
-const ADD_SRC: &str = "def add(x: int, y: int) -> int:\n    return x + y\n";
 const GREET_SRC: &str = "def greet(name: str) -> str:\n    return \"hello, \" + name\n";
-const DIVIDE_SRC: &str = "def divide(a: int, b: int) -> int:\n    return a // b\n";
-const GUARD_SRC: &str = "def guarded(a: int) -> int:\n    assert a > 0\n    return a\n";
+const DIVIDE_SRC: &str = "def divide(a: int, b: int) -> int:\n    println(\"before division\")\n    return a // b\n";
+const GUARD_SRC: &str =
+    "def guarded(a: int) -> int:\n    println(\"before assertion\")\n    assert a > 0\n    return a\n";
+const PRINTING_ADD_SRC: &str =
+    "def add(x: int, y: int) -> int:\n    println(\"normal program stdout\")\n    return x + y\n";
+
+fn completed(kind: FunctionResultKind, value: &str) -> SourceObservable {
+    SourceObservable::Completed {
+        result: TypedFunctionResult {
+            kind,
+            value: value.to_string(),
+        },
+    }
+}
 
 /// Run one comparison against the staged Oven capability, or report why the legacy route is unavailable.
 fn compare(
@@ -115,52 +128,53 @@ fn assert_receipts_are_independent_but_bound(comparison: &ShadowComparison) -> R
 /// Returns the reason when nothing is staged, so the test reports why it could not assert a match rather than
 /// passing silently. Setting `INCAN_SHADOW_REQUIRE_LEGACY_ROUTE` turns that report into a failure, which is how
 /// an environment that is supposed to be staged proves it.
-fn require_staged_legacy_route() -> Option<String> {
+fn require_staged_legacy_route() -> Result<Option<String>, ShadowUnavailable> {
     shadow_capability::unstaged_legacy_route_reason()
 }
 
-/// A real scalar profile agrees across a directly executed Body IR and an Oven-built, separately run program.
+/// A real scalar profile keeps normal stdout separate from its typed result under Oven authority.
 #[test]
-fn a_scalar_profile_matches_across_two_independent_executions() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(reason) = require_staged_legacy_route() {
+fn a_scalar_profile_compares_program_streams_and_typed_result() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(reason) = require_staged_legacy_route()? {
         eprintln!("skipping: {reason}");
         return Ok(());
     }
     let workspace = tempfile::tempdir()?;
     let profile = ShadowComparisonProfile::new(
-        ADD_SRC,
+        PRINTING_ADD_SRC,
         "add",
         vec![ReplacementValue::Int(40), ReplacementValue::Int(2)],
     );
     let comparison = compare(&profile, workspace.path())?;
 
-    let ShadowComparisonState::Matched {
-        profile_kind,
-        profile_identity,
-        observable,
-    } = &comparison.state
-    else {
-        panic!("expected a matched comparison, got {:?}", comparison.state);
-    };
-    assert_eq!(profile_kind, incan::backend::shadow::SHADOW_COMPARISON_PROFILE_ID);
-    assert_eq!(profile_identity, &profile.profile_identity());
-    assert_eq!(observable, "completed(\"42\")");
-    assert!(comparison.matched());
+    assert!(comparison.matched(), "{:?}", comparison.state);
 
     let (legacy, replacement) = route_evidence(&comparison)?;
-    let expected = SourceObservable::Completed {
-        result: "42".to_string(),
-    };
+    let expected = completed(FunctionResultKind::Int, "42");
     assert_eq!(legacy.observation.observable, expected);
     assert_eq!(replacement.observation.observable, expected);
     assert_receipts_are_independent_but_bound(&comparison)?;
+
+    let process = comparison
+        .legacy_process
+        .as_ref()
+        .ok_or("an executed legacy route must retain raw process evidence")?;
+    assert_eq!(process.stdout, b"normal program stdout\n");
+    assert!(process.stderr.is_empty());
+    assert!(
+        process
+            .result_report
+            .as_deref()
+            .is_some_and(|report| report.starts_with(b"incan-shadow-result-v2:int:42")),
+        "the typed result must be out-of-band from program stdout"
+    );
 
     // The replacement route carried its own Body-IR evidence, proving it executed rather than reading the
     // legacy route's result.
     let execution = comparison
         .replacement_execution
         .as_ref()
-        .ok_or("a matched comparison must retain the direct Body-IR execution")?;
+        .ok_or("a direct execution must retain its Body-IR evidence")?;
     assert_eq!(execution.value, ReplacementValue::Int(42));
     assert!(
         execution.body_snapshot.contains("body add"),
@@ -174,10 +188,10 @@ fn a_scalar_profile_matches_across_two_independent_executions() -> Result<(), Bo
     Ok(())
 }
 
-/// String results compare through the exact printed value, not a trimmed approximation of it.
+/// String results compare through the typed report, not a trimmed stdout approximation.
 #[test]
-fn a_string_profile_matches_on_its_exact_printed_value() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(reason) = require_staged_legacy_route() {
+fn a_string_profile_retains_its_exact_typed_value() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(reason) = require_staged_legacy_route()? {
         eprintln!("skipping: {reason}");
         return Ok(());
     }
@@ -185,28 +199,22 @@ fn a_string_profile_matches_on_its_exact_printed_value() -> Result<(), Box<dyn s
     let profile = ShadowComparisonProfile::new(GREET_SRC, "greet", vec![ReplacementValue::Str("Ada".to_string())]);
     let comparison = compare(&profile, workspace.path())?;
 
-    assert!(
-        comparison.matched(),
-        "expected a matched string comparison, got {:?}",
-        comparison.state
-    );
+    assert!(comparison.matched(), "{:?}", comparison.state);
     let (legacy, replacement) = route_evidence(&comparison)?;
-    let expected = SourceObservable::Completed {
-        result: "hello, Ada".to_string(),
-    };
+    let expected = completed(FunctionResultKind::Str, "hello, Ada");
     assert_eq!(legacy.observation.observable, expected);
     assert_eq!(replacement.observation.observable, expected);
     assert_receipts_are_independent_but_bound(&comparison)?;
     Ok(())
 }
 
-/// A string whose value ends in a newline must survive the legacy route's stdout transport intact.
+/// A string whose value ends in a newline must survive the dedicated result transport intact.
 ///
-/// This is the case a trimming transport would corrupt: `"line\n"` and `"line"` would become indistinguishable,
-/// and a real difference between the routes would report as agreement.
+/// This is the case a stdout-based transport would corrupt: `"line\n"` and `"line"` would become
+/// indistinguishable if any layer trimmed the program stream.
 #[test]
 fn a_trailing_newline_in_a_result_is_not_lost_in_transport() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(reason) = require_staged_legacy_route() {
+    if let Some(reason) = require_staged_legacy_route()? {
         eprintln!("skipping: {reason}");
         return Ok(());
     }
@@ -218,27 +226,21 @@ fn a_trailing_newline_in_a_result_is_not_lost_in_transport() -> Result<(), Box<d
     );
     let comparison = compare(&profile, workspace.path())?;
 
-    assert!(
-        comparison.matched(),
-        "a trailing newline must survive both routes, got {:?}",
-        comparison.state
-    );
+    assert!(comparison.matched(), "{:?}", comparison.state);
     let (legacy, replacement) = route_evidence(&comparison)?;
-    let expected = SourceObservable::Completed {
-        result: "line\n".to_string(),
-    };
+    let expected = completed(FunctionResultKind::Str, "line\n");
     assert_eq!(
         legacy.observation.observable, expected,
-        "the legacy route must report the exact printed value, including its trailing newline"
+        "the legacy route must report the exact typed value, including its trailing newline"
     );
     assert_eq!(replacement.observation.observable, expected);
     Ok(())
 }
 
-/// The compared observable includes diagnostics: both routes must report the same classified runtime failure.
+/// Matching failure classes do not hide the current difference between native stderr and returned direct errors.
 #[test]
-fn a_runtime_failure_profile_matches_on_its_failure_class() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(reason) = require_staged_legacy_route() {
+fn division_failure_preserves_prior_stdout_and_reports_stderr_divergence() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(reason) = require_staged_legacy_route()? {
         eprintln!("skipping: {reason}");
         return Ok(());
     }
@@ -251,8 +253,8 @@ fn a_runtime_failure_profile_matches_on_its_failure_class() -> Result<(), Box<dy
     let comparison = compare(&profile, workspace.path())?;
 
     assert!(
-        comparison.matched(),
-        "expected both routes to report the same failure class, got {:?}",
+        matches!(comparison.state, ShadowComparisonState::Diverged { .. }),
+        "{:?}",
         comparison.state
     );
     let (legacy, replacement) = route_evidence(&comparison)?;
@@ -261,18 +263,34 @@ fn a_runtime_failure_profile_matches_on_its_failure_class() -> Result<(), Box<dy
     };
     assert_eq!(legacy.observation.observable, expected);
     assert_eq!(replacement.observation.observable, expected);
+    assert_eq!(legacy.observation.stdout, b"before division\n");
+    assert_eq!(replacement.observation.stdout, legacy.observation.stdout);
+    assert_eq!(
+        legacy.observation.stderr,
+        b"ZeroDivisionError: float division by zero\n"
+    );
+    assert!(replacement.observation.stderr.is_empty());
     assert!(
         comparison.replacement_execution.is_none(),
         "a failed direct execution has no successful Body-IR execution to retain"
     );
+    let process = comparison
+        .legacy_process
+        .as_ref()
+        .ok_or("a failed legacy process must retain its raw streams")?;
+    assert!(
+        process.result_report.is_none(),
+        "a failed process must not contribute a partial result report"
+    );
+    assert!(!process.stderr.is_empty(), "the raw legacy diagnostic must be retained");
     assert_receipts_are_independent_but_bound(&comparison)?;
     Ok(())
 }
 
-/// A failing source-level assertion is observed identically by both routes.
+/// Source failure output survives on both routes, but a native runtime diagnostic is not erased to claim parity.
 #[test]
-fn an_assertion_failure_matches_across_both_routes() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(reason) = require_staged_legacy_route() {
+fn assertion_failure_preserves_prior_stdout_and_reports_stderr_divergence() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(reason) = require_staged_legacy_route()? {
         eprintln!("skipping: {reason}");
         return Ok(());
     }
@@ -281,8 +299,8 @@ fn an_assertion_failure_matches_across_both_routes() -> Result<(), Box<dyn std::
     let comparison = compare(&profile, workspace.path())?;
 
     assert!(
-        comparison.matched(),
-        "expected both routes to report a failed assertion, got {:?}",
+        matches!(comparison.state, ShadowComparisonState::Diverged { .. }),
+        "{:?}",
         comparison.state
     );
     let (legacy, replacement) = route_evidence(&comparison)?;
@@ -291,19 +309,20 @@ fn an_assertion_failure_matches_across_both_routes() -> Result<(), Box<dyn std::
     };
     assert_eq!(legacy.observation.observable, expected);
     assert_eq!(replacement.observation.observable, expected);
+    assert_eq!(legacy.observation.stdout, b"before assertion\n");
+    assert_eq!(replacement.observation.stdout, legacy.observation.stdout);
+    assert_eq!(legacy.observation.stderr, b"AssertionError\n");
+    assert!(replacement.observation.stderr.is_empty());
+    assert!(comparison.replacement_execution.is_none());
+    assert_receipts_are_independent_but_bound(&comparison)?;
     Ok(())
 }
 
-/// Observing a program entrypoint is outside the profile — for the *legacy* route only.
-///
-/// The replacement backend executes a zero-argument `main` perfectly well, so it really does run here; it is the
-/// legacy route that has no way to observe an entrypoint's return value. That asymmetry is the point: the
-/// comparison is unavailable, and the replacement execution that genuinely happened is retained rather than
-/// discarded alongside the route that could not run.
+/// Observing a program entrypoint is outside the profile before either route executes.
 #[test]
-fn a_program_entrypoint_profile_is_unavailable_but_keeps_its_replacement_execution()
--> Result<(), Box<dyn std::error::Error>> {
-    if let Some(reason) = require_staged_legacy_route() {
+fn a_program_entrypoint_profile_is_unavailable_without_executing_either_route() -> Result<(), Box<dyn std::error::Error>>
+{
+    if let Some(reason) = require_staged_legacy_route()? {
         eprintln!("skipping: {reason}");
         return Ok(());
     }
@@ -316,8 +335,8 @@ fn a_program_entrypoint_profile_is_unavailable_but_keeps_its_replacement_executi
         .ok_or_else(|| format!("a `main` observation must stay unavailable, got {:?}", comparison.state))?;
     assert!(reason.contains(PROGRAM_ENTRYPOINT_UNAVAILABLE_REASON), "{reason}");
     assert!(
-        reason.contains("the legacy route did not execute"),
-        "the reason must name the route that could not run: {reason}"
+        reason.contains("neither route produced a comparable observation"),
+        "{reason}"
     );
     assert!(!comparison.matched());
     assert!(
@@ -329,26 +348,9 @@ fn a_program_entrypoint_profile_is_unavailable_but_keeps_its_replacement_executi
         "no Oven build was authorized for a route that never ran"
     );
 
-    // The replacement route executed and must keep its evidence.
-    let replacement = comparison
-        .replacement
-        .as_ref()
-        .ok_or("the replacement route executes a zero-argument `main` and must keep its evidence")?;
-    let receipt = replacement.receipt()?;
-    receipt.verify_identity()?;
-    assert_eq!(receipt.executed_backend, BackendKind::Replacement);
-    assert_eq!(receipt.shadow_comparison, comparison.state);
-    assert_eq!(
-        replacement.observation.observable,
-        SourceObservable::Completed {
-            result: "42".to_string()
-        }
-    );
-    let execution = comparison
-        .replacement_execution
-        .as_ref()
-        .ok_or("the executed replacement route must keep its Body-IR execution")?;
-    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(comparison.replacement.is_none());
+    assert!(comparison.replacement_execution.is_none());
+    assert!(comparison.legacy_process.is_none());
     Ok(())
 }
 
@@ -366,6 +368,9 @@ fn a_source_outside_the_replacement_profile_stays_unavailable() -> Result<(), Bo
     let capability = match shadow_capability::legacy_capability() {
         Ok(capability) => capability,
         Err(unavailable) => {
+            if shadow_capability::legacy_route_is_required() {
+                return Err(unavailable.into());
+            }
             eprintln!(
                 "legacy route unstaged ({}); the replacement refusal still decides",
                 unavailable.reason
@@ -384,7 +389,7 @@ fn a_source_outside_the_replacement_profile_stays_unavailable() -> Result<(), Bo
         )
     })?;
     assert!(
-        reason.contains("replacement route cannot execute this profile instance"),
+        reason.contains("requires a checked scalar or `None` return type"),
         "{reason}"
     );
     assert!(!comparison.matched());

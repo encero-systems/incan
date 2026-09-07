@@ -11,7 +11,7 @@ For task-oriented guidance, see [Choosing numeric types](../how-to/choosing_nume
 | Signed integers        | `i8`, `i16`, `i32`, `i64`, `i128`                    | Exact-width signed integers.                                       |
 | Unsigned integers      | `u8`, `u16`, `u32`, `u64`, `u128`                    | Exact-width unsigned integers.                                     |
 | Pointer-sized integers | `isize`, `usize`                                     | Platform-sized Rust integer types.                                 |
-| Binary floats          | `f32`, `f64`                                         | IEEE binary floating-point types in generated Rust.                |
+| Binary floats          | `float`, `f32`, `f64`                                | `float` is the broad IEEE type; exact-width `f32` and `f64` are finite-only. |
 | Decimal values         | `decimal[p, s]`, `numeric[p, s]`, `decimal128[p, s]` | Fixed-precision decimal types with precision and scale parameters. |
 
 ## Canonical type table
@@ -30,13 +30,16 @@ For task-oriented guidance, see [Choosing numeric types](../how-to/choosing_nume
 | `u128`          | `u128`                          | 0 to 2^128 - 1                                             |
 | `isize`         | `isize`                         | Platform-sized signed integer                              |
 | `usize`         | `usize`                         | Platform-sized unsigned integer                            |
-| `f32`           | `f32`                           | 32-bit IEEE binary float                                   |
-| `f64`           | `f64`                           | 64-bit IEEE binary float                                   |
+| `float`         | `f64`                           | Broad 64-bit IEEE binary float, including NaN and infinity |
+| `f32`           | `f32`                           | Finite 32-bit IEEE binary value                            |
+| `f64`           | `f64`                           | Finite 64-bit IEEE binary value                            |
 | `decimal[p, s]` | `incan_stdlib::num::Decimal128` | Base-10 fixed-scale value with precision `p` and scale `s` |
 
 ## Aliases
 
-Aliases resolve to canonical types. They do not introduce distinct nominal types.
+Aliases resolve to canonical types. They do not introduce distinct nominal types. The broad `float` type and the
+exact-width `f64` type share a Rust carrier but have different value contracts, so `float` is not an alias for
+`f64`.
 
 | Alias              | Canonical type                                                          |
 | ------------------ | ----------------------------------------------------------------------- |
@@ -50,7 +53,7 @@ Aliases resolve to canonical types. They do not introduce distinct nominal types
 | `hugeint`          | `i128`                                                                  |
 | `real`             | `f32`                                                                   |
 | `fp32`             | `f32`                                                                   |
-| `float`            | `f64`                                                                   |
+| `float`            | Broad binary float with an `f64` Rust carrier                           |
 | `double`           | `f64`                                                                   |
 | `fp64`             | `f64`                                                                   |
 | `numeric[p, s]`    | `decimal[p, s]`                                                         |
@@ -202,16 +205,17 @@ If a Rust API requires a narrowing conversion, apply an explicit resize policy b
 
 | Operator                         | Result type rule                                                                            |
 | -------------------------------- | ------------------------------------------------------------------------------------------- |
-| `+`, `-`, `*`                    | Integer-family operands produce `int`; if either operand is `float`, the result is `float`. |
-| `/`                              | Always `float`.                                                                             |
-| `//`                             | `int` when both operands are integer-family values; otherwise `float`.                      |
-| `%`                              | `int` when both operands are integer-family values; otherwise `float`.                      |
-| `**`                             | `int` only for `int ** <non-negative int literal>`; otherwise `float`.                      |
+| `+`, `-`, `*`                    | Matching exact floats retain their width; other floating combinations produce `float`; integer-family operands produce `int`. |
+| `/`                              | Matching exact floats retain their width; all other combinations produce `float`.           |
+| `//`                             | Matching exact floats retain their width; integer-family operands produce `int`; otherwise `float`. |
+| `%`                              | Matching exact floats retain their width; integer-family operands produce `int`; otherwise `float`. |
+| `**`                             | Matching exact floats retain their width; `int ** <non-negative int literal>` produces `int`; otherwise `float`. |
 | `==`, `!=`, `<`, `<=`, `>`, `>=` | `bool`.                                                                                     |
 
 ### Division
 
-`/` is true division and always returns `float`.
+`/` is true division. Matching `f32` operands produce `f32`, and matching exact `f64` operands produce exact `f64`.
+All other operand combinations produce `float`.
 
 ```incan
 1 / 2
@@ -292,11 +296,23 @@ n: i8 = 10
 maybe_next: Option[i8] = (n + 1).try_resize()
 ```
 
+Matching exact-width floating operands retain their width for `+`, `-`, `*`, `/`, `//`, `%`, and `**`. Every exact
+result is checked for finiteness when it is produced. Mixed `f32`/`f64`, `f32`/`float`, and `f32`/integer arithmetic
+widens the concrete `f32` operand and produces ordinary `float`.
+
 ## NaN and infinity
 
-`float`, `f32`, and `f64` are IEEE binary floating-point values in generated Rust. NaN and infinity can appear through Rust interop or APIs that produce IEEE special values.
+Ordinary `float` follows IEEE behavior and can contain NaN or infinity. Exact-width `f32` and `f64` use Rust's
+binary floating-point carriers but accept only finite values.
 
-Incan's checked numeric division helpers currently panic on division by zero instead of producing NaN or infinity.
+The compiler rejects non-finite exact literals. Generated code applies the same canonical `ValueError` check when a
+direct exact scalar enters through a public function or Rust interop, when an exact scalar is extracted from a field or
+collection index, when an exact call or arithmetic operation produces a result, and before an exact value is compared,
+formatted, or printed. Crossing from ordinary `float` into an exact carrier performs the same check; ordinary `float`
+itself remains unchanged. Public and Rust-facing aggregates are not recursively scanned at ingress; each exact scalar
+is checked when Incan extracts or observes it.
+
+Division by zero remains a `ZeroDivisionError` instead of producing NaN or infinity.
 
 ## Current limitations
 

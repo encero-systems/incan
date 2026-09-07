@@ -1,0 +1,6 @@
+[project]
+name = "scriptkit_consumer"
+version = "0.1.0"
+
+[dependencies]
+scriptkit = { path = "../producer" }

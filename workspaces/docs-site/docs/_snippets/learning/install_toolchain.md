@@ -9,7 +9,7 @@ The supported release channels install the same Incan toolchain payload. Choose 
     incan-lsp --version
     ```
 
-    This path verifies the release manifest and checksum and can provision the stable Rust backend through `rustup`.
+    This path verifies the release manifest and checksum and can provision the pinned Rust 1.98.0 backend through `rustup`.
 
 === "Homebrew"
 

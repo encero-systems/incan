@@ -1,0 +1,6 @@
+[project]
+name = "markform_consumer"
+version = "0.1.0"
+
+[dependencies]
+markform = { path = "../producer" }

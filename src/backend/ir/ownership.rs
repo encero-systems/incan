@@ -20,6 +20,17 @@ use super::expr::{IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind
 use super::reference_shape::expr_has_rust_reference_shape;
 use super::types::IrType;
 
+/// Return the owned assignment element type for a list index, including explicit reference wrappers.
+///
+/// Emission and clone-bound inference share this projection so both plan the same typed Assignment boundary.
+pub(super) fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType> {
+    match object_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => list_index_assignment_element_type(inner),
+        IrType::List(elem_ty) => Some(elem_ty.as_ref()),
+        _ => None,
+    }
+}
+
 /// A typed sink/source boundary that needs an ownership/coercion decision.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueUseSite<'a> {

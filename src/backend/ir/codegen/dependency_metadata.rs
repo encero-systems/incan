@@ -479,6 +479,7 @@ where
             crate::backend::ir::expr::FormatPart::Literal(_) => false,
             crate::backend::ir::expr::FormatPart::Expr { expr, .. } => ir_expr_any_expr(expr, predicate),
         }),
+        IrExprKind::EmbeddedFragment { holes, .. } => holes.iter().any(|hole| ir_expr_any_expr(hole, predicate)),
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }

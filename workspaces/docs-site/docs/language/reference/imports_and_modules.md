@@ -52,7 +52,7 @@ import utils::format_currency as fmt
 
 ### Imported names and core builtin functions
 
-An explicit import creates a normal binding in the importing module. If it has the same spelling as an ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision.
+An explicit import creates a normal binding in the importing module. If it has the same spelling as an ordinary ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision. The output spellings `print` and `println` are immutable language functions rather than fallback bindings, so a declaration or import cannot replace either one.
 
 ```incan
 # aggregates.incn
@@ -68,7 +68,16 @@ def report() -> int:
   return local_total + builtin_total
 ```
 
-`std.builtins.<name>` is the explicit escape hatch when an unqualified builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.
+`std.builtins.<name>` is the explicit escape hatch when an ordinary unqualified builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.
+
+Imports share the ordinary lexical namespace with declarations. A second declaration or import cannot silently replace an existing same-scope binding with the same local spelling. Repeating an import of the same proven declaration is a duplicate binding; importing different declarations under the same local spelling is ambiguous. Use an explicit alias when both imported targets are intentional:
+
+```incan
+import codecs.prelude as codecs_prelude
+import compression.prelude as compression_prelude
+```
+
+The first valid registration remains the active lookup binding while the compiler reports the later collision, so invalid source cannot change the meaning of subsequent references.
 
 ## Published library namespaces
 
@@ -243,8 +252,8 @@ The generated language reference shows the canonical name and aliases in one pla
 
 ```incan
 # Output
-println(value)      # Print with newline
-print(value)        # Print without newline
+println(value)      # Print one line
+print(value)        # Alias for the same line-oriented output function
 
 # Collections
 len(collection)     # Get length
@@ -267,14 +276,18 @@ set()               # Empty Set
 set(iterable)       # Convert to Set
 ```
 
-Every core builtin function is also reachable through `std.builtins.<name>`. This is an explicit escape path for code that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:
+Every core builtin function is also reachable through `std.builtins.<name>`. For ordinary fallback builtins, this is an explicit escape path for code that needs the core function when an inner scope or an imported DSL gives the unqualified name a different meaning:
 
 ```incan
 def total(values: list[int]) -> int:
   return std.builtins.sum(values)
 ```
 
+Source declarations, imports, local bindings, value parameters, and generic type parameters cannot use the immutable `print` or `println` spellings. Fields and methods may still use those names because member selection cannot replace a bare builtin function.
+
 `std.builtins` is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as `int`, `List[T]`, and `Result[T, E]` remain root prelude types.
+
+`print` and `println` are the exception to shadowing: both spellings select the same immutable output builtin and cannot be declared or imported as another binding.
 
 ## Special import: `import this`
 

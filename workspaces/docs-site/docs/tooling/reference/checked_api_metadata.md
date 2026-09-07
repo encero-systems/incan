@@ -168,6 +168,12 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 
 Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`.
 
+A checked trait-bound entry may also contain `implementation_type_params`. This optional schema-v1 field records the
+generic header required by that exact implementation rather than adding those requirements to every use of the owning
+type. Each entry names the implementation parameter and its bounds; a bound records `trait_path`, structural
+`type_args`, associated-type equalities, and whether the requirement came from a standard trait, Rust capability, or
+source callable. Older schema-v1 metadata may omit this field, which is equivalent to an empty implementation header.
+
 Private model- and class-field entries include `"visibility": "private"`. In source, a field is private when it omits `pub`. In serialized metadata, an omitted visibility still means public so schema-v1 manifests created under the earlier public-model default remain compatible. Public model and class fields therefore retain the compact representation without a `visibility` key.
 
 Function metadata keeps the source declaration's public callable surface. For a decorated callable, each decorator entry also carries `decorated_callable`, which contains the decorated declaration's checked public identity, source anchor, type parameters, parameter names and types, return type, receiver when applicable, and async marker. Registry and catalog tooling should read that field instead of asking authors to repeat the decorated function name or signature in decorator arguments.

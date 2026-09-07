@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+use incan_core::lang::types::numerics::{self, NumericTypeId};
+
 use serde::{Deserialize, Serialize};
 
 /// Read the arity of a Rust tuple type spelling, or `None` when the shape cannot be established.
@@ -69,6 +71,11 @@ pub enum IncanType {
         base: String,
         args: Vec<IncanType>,
     },
+    /// A checked fixed-scale decimal type with compiler-owned precision and scale.
+    Decimal {
+        precision: u8,
+        scale: u8,
+    },
     Function {
         params: Vec<IncanCallableParam>,
         return_type: Box<IncanType>,
@@ -105,7 +112,8 @@ impl IncanType {
     fn abi_v0_ownership(&self) -> AbiV0Ownership {
         match self {
             Self::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(_))
-            | Self::Primitive(IncanPrimitiveType::Bool | IncanPrimitiveType::Unit) => AbiV0Ownership::CopyOrTrivial,
+            | Self::Primitive(IncanPrimitiveType::Bool | IncanPrimitiveType::Unit)
+            | Self::Decimal { .. } => AbiV0Ownership::CopyOrTrivial,
             Self::Ref(_) => AbiV0Ownership::Borrowed,
             Self::RefMut(_) => AbiV0Ownership::MutBorrowed,
             Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown => AbiV0Ownership::Unknown,
@@ -118,6 +126,7 @@ impl IncanType {
         match self {
             Self::Primitive(_) => AbiV0Representation::BuiltinValue,
             Self::Named(_) => AbiV0Representation::SourceNominal,
+            Self::Decimal { .. } => AbiV0Representation::BuiltinValue,
             Self::Generic { .. } => AbiV0Representation::GenericInstance,
             Self::Function { .. } => AbiV0Representation::FunctionValue,
             Self::TypeToken(_) => AbiV0Representation::TypeToken,
@@ -138,6 +147,7 @@ impl fmt::Display for IncanType {
             Self::Primitive(primitive) => write!(f, "{primitive}"),
             Self::Named(name) | Self::TypeVar(name) => write!(f, "{name}"),
             Self::Generic { base, args } => write_joined_type_args(f, base, args),
+            Self::Decimal { precision, scale } => write!(f, "decimal[{precision}, {scale}]"),
             Self::Function { params, return_type } => {
                 write!(f, "(")?;
                 for (i, param) in params.iter().enumerate() {
@@ -186,7 +196,7 @@ fn write_joined_type_args(f: &mut fmt::Formatter<'_>, base: &str, args: &[IncanT
 pub enum IncanPrimitiveType {
     Int,
     Float,
-    Numeric(String),
+    Numeric(NumericTypeId),
     Bool,
     Str,
     Bytes,
@@ -200,7 +210,7 @@ impl fmt::Display for IncanPrimitiveType {
         match self {
             Self::Int => write!(f, "int"),
             Self::Float => write!(f, "float"),
-            Self::Numeric(name) => write!(f, "{name}"),
+            Self::Numeric(id) => write!(f, "{}", numerics::as_str(*id)),
             Self::Bool => write!(f, "bool"),
             Self::Str => write!(f, "str"),
             Self::Bytes => write!(f, "bytes"),

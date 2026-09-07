@@ -8,7 +8,7 @@
     - RFC 025 (multi-instantiation trait dispatch)
     - RFC 050 (enum methods and enum trait adoption)
 - **Issue:** https://github.com/encero-systems/incan/issues/335
-- **RFC PR:** —
+- **RFC PR:** [#594](https://github.com/encero-systems/incan/pull/594)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

@@ -6,6 +6,40 @@ use incan::library_manifest::{LibraryManifest, TypeRef};
 
 mod support;
 
+#[path = "support/canonical_projection.rs"]
+mod canonical_projection;
+
+/// Generated Rust read back with RFC 120 projections decoded to the spellings the source used.
+///
+/// Every linker-visible Incan-origin declaration reaches generated Rust as an encoded projection, so an assertion
+/// written against a source spelling can only be evaluated after decoding. Both views are retained because decoding
+/// preserves comments while re-formatting restores the one-line signatures that the longer encoded names had forced
+/// `prettyplease` to wrap; an assertion holds when either view contains it.
+struct GeneratedSource {
+    decoded: String,
+    reformatted: Option<String>,
+}
+
+impl GeneratedSource {
+    /// Read one generated file and decode the projections inside it.
+    fn read(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let decoded = canonical_projection::decoded_source_spellings(&fs::read_to_string(path)?);
+        let reformatted = canonical_projection::reformatted_after_decode(&decoded);
+        Ok(Self { decoded, reformatted })
+    }
+
+    /// Report whether either decoded view contains `needle`.
+    fn contains(&self, needle: &str) -> bool {
+        self.decoded.contains(needle) || self.reformatted.as_deref().is_some_and(|code| code.contains(needle))
+    }
+}
+
+impl std::fmt::Display for GeneratedSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.decoded)
+    }
+}
+
 fn incan_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
         return PathBuf::from(path);
@@ -168,14 +202,14 @@ fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<()
         "expected generated Cargo package name, got:\n{cargo_toml}"
     );
 
-    let lib_rs = fs::read_to_string(artifact.join("src/lib.rs"))?;
+    let lib_rs = GeneratedSource::read(&artifact.join("src/lib.rs"))?;
     assert!(
         lib_rs.contains("pub use crate::transforms::map_owned;")
             && lib_rs.contains("pub use crate::transforms::inspect_payload;"),
         "expected callable exports re-exported from generated package root, got:\n{lib_rs}"
     );
 
-    let transforms_rs = fs::read_to_string(artifact.join("src/transforms.rs"))?;
+    let transforms_rs = GeneratedSource::read(&artifact.join("src/transforms.rs"))?;
     assert!(
         transforms_rs.contains("pub fn map_owned(items: Vec<i64>, f: fn(i64) -> i64) -> Vec<i64>"),
         "expected owned scalar callable to lower to an exported fn pointer parameter, got:\n{transforms_rs}"
@@ -224,7 +258,7 @@ fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<()
             && generated_toml.contains("callability_lib/target/lib"),
         "expected consumer generated Cargo.toml to depend on producer target/lib, got:\n{generated_toml}"
     );
-    let generated_main = fs::read_to_string(out_dir.join("src/main.rs"))?;
+    let generated_main = GeneratedSource::read(&out_dir.join("src/main.rs"))?;
     assert!(
         !generated_main.contains("use callability::map_owned;")
             && generated_main.contains("use callability::plus_one;")

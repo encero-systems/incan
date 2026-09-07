@@ -1,0 +1,16 @@
+from pub::markform import markform_name
+
+def render_card(title: str, image_url: str) -> None:
+    """Demonstrate the `Markup` submode: an element, a content hole, a comment, an entity, and an attribute hole."""
+    markup:
+        <section class="card">
+            <h1>{title}</h1>
+            <!-- rendered by markform -->
+            Terms &amp; conditions apply
+            <img src={image_url} alt="Preview" />
+        </section>
+
+def main() -> None:
+    let name = markform_name()
+    print(name)
+    render_card("Welcome", "preview.png")

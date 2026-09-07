@@ -1,0 +1,6 @@
+"""An omitted split separator retains the existing one-part string behavior."""
+
+
+def split_default(text: str) -> str:
+    """Return the original text through split and join without supplying a separator."""
+    return "|".join(text.split())

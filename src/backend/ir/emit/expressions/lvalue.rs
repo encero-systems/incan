@@ -122,8 +122,8 @@ impl<'a> IrEmitter<'a> {
                 let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }
-            AssignTarget::Static(name) => {
-                let n = Self::rust_static_ident(name);
+            AssignTarget::Static { name, reference_kind } => {
+                let n = self.rust_static_reference_ident(name, *reference_kind)?;
                 Ok(quote! { #n })
             }
             AssignTarget::Field { object, field } => {

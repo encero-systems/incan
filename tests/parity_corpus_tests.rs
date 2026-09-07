@@ -10,11 +10,10 @@
 //!
 //! ## Why these cases
 //!
-//! Per #987's own plan step 3 ("add a narrow source-only seed corpus before public package or Rust-interop
-//! rows"), every seed case here uses a direct-parser/typechecker, generated-project-run, or codegen-snapshot
-//! lane. Package/import, Rust-interop, vocab, and downstream lanes are deferred until the required compiler/ABI
-//! decisions are available (plan step 4). Issue #987 records the expansion criteria; a seed case must never imply
-//! that an unavailable lane has been proven.
+//! The original source-only seed has grown with the RFC 120 cutover matrix. Package/import rows execute the checked
+//! graph and both compiler consumers, while direct replacement package execution stays explicitly unavailable under
+//! #989. The release-artifact row compiles and inspects its pinned native fixture; neither form is mislabeled as a
+//! two-route source-observable execution.
 //!
 //! Each case's `evaluate` function probes the *current* compiler directly (not a fixture snapshot of past output),
 //! so a behavior change shows up as [`parity_corpus::ComparisonOutcome::Mismatch`] the next time this test runs.
@@ -24,7 +23,9 @@ use incan::backend::replacement::provider::{
     PROVIDER_COMPARISON_UNAVAILABLE_REASON, ProviderInputValue, ProviderInvocation, ProviderOperationHost,
     ProviderOperationOutcome, ProviderRuntime,
 };
-use incan::backend::replacement::{ReplacementExecutionError, ReplacementValue, execute_free_function_with_providers};
+use incan::backend::replacement::{
+    ReplacementExecutionError, ReplacementNumericValue, ReplacementValue, execute_free_function_with_providers,
+};
 use incan::frontend::body_ir::{build_body_ir_module_v0, build_body_ir_module_v0_with_provider_plan};
 use incan::frontend::diagnostics::CompileError;
 use incan::frontend::library_manifest_index::LibraryManifestIndex;
@@ -33,27 +34,79 @@ use incan::library_manifest::{CompiledProviderMetadata, LibraryManifest, Provide
 use incan::provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
 use incan_semantics_core::authority::StaticAuthority;
 use incan_semantics_core::receipts::{AttributeSensitivity, ReceiptAttribute, ReceiptStatus, ReplayClassification};
-use incan_semantics_core::{AuthorityMode, CanonicalSymbolId, HirSourceSpan};
+use incan_semantics_core::{
+    AuthorityMode, CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+#[path = "support/emitted_symbol_artifact.rs"]
+mod emitted_symbol_artifact;
 #[path = "support/parity_corpus.rs"]
 mod parity_corpus;
 #[path = "support/shadow_capability.rs"]
 mod shadow_capability;
 
-/// The one corpus row that declares the bounded #1146 source-observable comparison profile.
-///
-/// Named once so the "exactly one green row" contract is stated in a single place; widening it is a deliberate
-/// edit here, not a side effect of adding another direct-execution row.
+/// The original scalar case that exercises the reusable paired-comparison route.
 const SHADOW_COMPARED_CASE_ID: &str = "replacement-body-v0-001";
+/// The selected canonical list-iteration row that also carries a receipt-backed paired comparison.
+const ENUMERATE_ZIP_SHADOW_CASE_ID: &str = "replacement-body-v0-023";
+
+/// Hashed membership has its own stable paired case; adding direct execution alone never widens this list.
+const HASHED_SHADOW_CASE_ID: &str = "replacement-body-v0-020";
+/// Selected checked string helpers have a separate case; wider string/format behavior stays non-green.
+const STRING_HELPER_SHADOW_CASE_ID: &str = "replacement-body-v0-021";
+/// Scalar conversions have their own paired case without admitting the broader numeric surface.
+const SCALAR_CONVERSIONS_SHADOW_CASE_ID: &str = "replacement-body-v0-022";
+/// Unicode-scalar string length has a separate case; other builtin operand profiles stay bounded.
+const STRING_LEN_SHADOW_CASE_ID: &str = "replacement-body-v0-024";
+/// Scalar JSON stringification has a separate exact-byte paired case.
+const JSON_STRINGIFY_SHADOW_CASE_ID: &str = "replacement-body-v0-025";
+/// Hashed set/dict entry count has a separate paired case without admitting broader aggregate operations.
+const COLLECTION_LEN_SHADOW_CASE_ID: &str = "replacement-body-v0-026";
+/// Canonical bounded truthiness has its own paired case without admitting every frontend-supported carrier.
+const BOOL_TRUTHINESS_SHADOW_CASE_ID: &str = "replacement-body-v0-027";
+/// Nonempty integer-list sorting has a separate paired case without admitting general ordering.
+const SORTED_INT_LIST_SHADOW_CASE_ID: &str = "replacement-body-v0-028";
+/// Exact numeric carriers have one bounded paired case; #988 still owns their operation surface.
+const TYPED_NUMERIC_SHADOW_CASE_ID: &str = "replacement-body-v0-029";
+/// Checked primitive `isinstance` targets have a case-scoped paired proof without promoting broad union/nominal work.
+const ISINSTANCE_TARGETS_SHADOW_CASE_ID: &str = "replacement-body-v0-030";
+const SHADOW_COMPARED_CASE_IDS: [&str; 12] = [
+    SHADOW_COMPARED_CASE_ID,
+    HASHED_SHADOW_CASE_ID,
+    STRING_HELPER_SHADOW_CASE_ID,
+    SCALAR_CONVERSIONS_SHADOW_CASE_ID,
+    ENUMERATE_ZIP_SHADOW_CASE_ID,
+    STRING_LEN_SHADOW_CASE_ID,
+    JSON_STRINGIFY_SHADOW_CASE_ID,
+    COLLECTION_LEN_SHADOW_CASE_ID,
+    BOOL_TRUTHINESS_SHADOW_CASE_ID,
+    SORTED_INT_LIST_SHADOW_CASE_ID,
+    TYPED_NUMERIC_SHADOW_CASE_ID,
+    ISINSTANCE_TARGETS_SHADOW_CASE_ID,
+];
+const BOOL_TRUTHINESS_SOURCE: &str = include_str!("fixtures/replacement/bool_truthiness.incn");
+const HASHED_MEMBERSHIP_SOURCE: &str = include_str!("fixtures/replacement/hashed_membership.incn");
+const COLLECTION_LEN_SOURCE: &str = include_str!("fixtures/replacement/collection_len.incn");
+const STRING_HELPER_SOURCE: &str = include_str!("fixtures/replacement/string_helpers.incn");
+const STRING_LEN_SOURCE: &str = include_str!("fixtures/replacement/string_len.incn");
+const JSON_STRINGIFY_SCALARS_SOURCE: &str = include_str!("fixtures/replacement/json_stringify_scalars.incn");
+const JSON_STRINGIFY_SCALARS_EXPECTED: &str =
+    r#"7|-42|9223372036854775807|-9223372036854775807|true|false|"quote:\" slash:\\ line:\n tab:\t café 😀"|null"#;
+const SORTED_INT_LIST_SOURCE: &str = include_str!("fixtures/replacement/sorted_int_list.incn");
+const ISINSTANCE_TARGETS_SOURCE: &str = include_str!("fixtures/replacement/isinstance_targets.incn");
 
 use parity_corpus::{
-    BehaviorCategory, ComparisonOutcome, Disposition, EvidenceLane, OverallState, ParityCase, ReceiptRef,
-    validate_corpus,
+    BehaviorCategory, CheckedIdentityGraph, ComparisonOutcome, Disposition, EvidenceLane, IdentityAssertions,
+    IdentityBindingForm, IdentityConformancePlan, IdentityConformanceSubject, IdentityCoverageCell,
+    IdentityGraphDeferral, IdentityGraphEntrypoint, IdentityNamespace, IdentityReplacementPlan, IdentityScope,
+    IdentitySourceModule, OverallState, ParityCase, ReceiptRef, ReleaseArtifactAssertions,
+    SourceIdentityConformancePlan, behavior_observation_identity, exact_rust_identifier,
+    identity_conformance_evidence_identity, validate_corpus, validate_identity_coverage,
 };
 
 // ============================================================================
@@ -171,6 +224,41 @@ fn body_ir_snapshot(src: &str, expect_desc: &str) -> Result<String, ComparisonOu
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()).render_snapshot())
 }
 
+/// Run one module through the direct route's source-profile gate and classify the refusal it produces.
+///
+/// This observes admission, not execution: the profile decides which source modules the direct route will run at
+/// all, and a boundary it declines never reaches Body IR. `None` means the module was admitted.
+fn outcome_from_source_profile(
+    src: &str,
+    expect: impl FnOnce(Option<&str>) -> bool,
+    expect_desc: &str,
+) -> ComparisonOutcome {
+    let tokens = match lexer::lex(src) {
+        Ok(tokens) => tokens,
+        Err(errors) => {
+            return ComparisonOutcome::Incompatible {
+                reason: format!("lex failed before the profile could run: {errors:?}"),
+            };
+        }
+    };
+    let program = match parser::parse(&tokens) {
+        Ok(program) => program,
+        Err(errors) => {
+            return ComparisonOutcome::Incompatible {
+                reason: format!("parse failed before the profile could run: {errors:?}"),
+            };
+        }
+    };
+    let refusal = incan::backend::replacement::source_profile::source_profile_refusal(&program).map(|e| e.to_string());
+    if expect(refusal.as_deref()) {
+        ComparisonOutcome::Match
+    } else {
+        ComparisonOutcome::Mismatch {
+            detail: format!("expected {expect_desc}, got profile refusal: {refusal:?}"),
+        }
+    }
+}
+
 fn outcome_from_typecheck(src: &str, expect: impl FnOnce(&[String]) -> bool, expect_desc: &str) -> ComparisonOutcome {
     match typecheck_err_messages(src) {
         Err(errs) => ComparisonOutcome::Incompatible {
@@ -230,6 +318,41 @@ def main() -> None:
     if a < b < c:
         println("chained")
 "#;
+
+/// One package consumer: a call into a dependency through the public `pub::` surface.
+const PACKAGE_CONSUMER_SRC: &str = r#"
+from pub::widgets import build
+
+def f() -> int:
+    return build()
+"#;
+
+/// Confirm that a package consumer is still refused before the direct route reaches execution.
+///
+/// This row exists to keep the #989 package boundary counted rather than absent. It confirms current behavior, so
+/// it flips the day #1339 ships an executable representation -- at which point the row must be promoted to a real
+/// execution rather than quietly left recording a refusal that no longer happens.
+fn case_package_consumer_call_is_refused() -> ComparisonOutcome {
+    outcome_from_source_profile(
+        PACKAGE_CONSUMER_SRC,
+        |refusal| refusal.is_some(),
+        "the direct route refuses a `pub::` package consumer",
+    )
+}
+
+/// Confirm that the refusal is still reported as an unreached construct rather than in packaging terms.
+///
+/// RFC 123 requires a consumer that cannot obtain a usable representation to name the package, the version and the
+/// unmet requirement, and never to report the condition as an unsupported language construct. Today it reports
+/// `import declaration` -- the same misdiagnosis #1262 fixed for `rust::`. Pinning the current wording keeps the gap
+/// visible and makes the row fail when #1339 corrects it.
+fn case_package_representation_refusal_is_not_a_language_refusal() -> ComparisonOutcome {
+    outcome_from_source_profile(
+        PACKAGE_CONSUMER_SRC,
+        |refusal| refusal.is_some_and(|text| text.contains("import declaration")),
+        "the package boundary still refuses as an unreached construct rather than in packaging terms",
+    )
+}
 
 fn case_diagnostic_chained_comparison_rejected() -> ComparisonOutcome {
     outcome_from_typecheck(
@@ -1047,6 +1170,32 @@ async def source_order_race() -> int:
     return winner
 "#;
 
+// This stays a typed `str` result so the scalar conversion proof is independent of selected string-method work.
+// The printed line is source-observable comparison evidence: it proves normal conversion output reaches both route
+// receipts rather than treating a matching return value as a substitute for program-stream parity.
+const REPLACEMENT_BODY_V0_022_SRC: &str = r#"
+def scalar_conversions() -> str:
+    parsed_int = int("42")
+    parsed_float = float("3.14")
+    widened_float = float(10)
+    println(f"converted: {parsed_int} {parsed_float} {widened_float}")
+    return f"{str(parsed_int)} {parsed_float} {widened_float}"
+"#;
+
+const REPLACEMENT_BODY_V0_023_SRC: &str = include_str!("fixtures/replacement/enumerate_zip.incn");
+
+const REPLACEMENT_BODY_V0_029_SRC: &str = r#"
+def typed_numeric_profile() -> f32:
+    unsigned_min: u8 = 0
+    unsigned_max: u8 = 255
+    signed_min: i128 = -170141183460469231731687303715884105728
+    wide_max: u128 = 340282366920938463463374607431768211455
+    rounded: f32 = 1.23456789
+    money: decimal[6, 2] = 19.90d
+    println(f"{unsigned_min} {unsigned_max} {signed_min} {wide_max} {money}")
+    return rounded
+"#;
+
 fn replacement_body_v0_001_arguments() -> Vec<ReplacementValue> {
     vec![ReplacementValue::Int(40), ReplacementValue::Int(2)]
 }
@@ -1199,6 +1348,32 @@ fn replacement_body_v0_019_expected() -> ReplacementValue {
     ReplacementValue::Int(1)
 }
 
+fn replacement_body_v0_025_expected() -> ReplacementValue {
+    ReplacementValue::Str(JSON_STRINGIFY_SCALARS_EXPECTED.to_string())
+}
+
+fn replacement_body_v0_022_arguments() -> Vec<ReplacementValue> {
+    vec![]
+}
+
+fn replacement_body_v0_022_expected() -> ReplacementValue {
+    ReplacementValue::Str("42 3.14 10".to_string())
+}
+
+/// The selected list-iteration fixture has no entry arguments.
+fn replacement_body_v0_023_arguments() -> Vec<ReplacementValue> {
+    vec![]
+}
+
+/// Stored enumeration contributes ten and Zip contributes thirty-nine.
+fn replacement_body_v0_023_expected() -> ReplacementValue {
+    ReplacementValue::Int(49)
+}
+
+fn replacement_body_v0_029_expected() -> ReplacementValue {
+    ReplacementValue::Numeric(ReplacementNumericValue::F32(1.234_567_9_f32))
+}
+
 // ============================================================================
 // Case 7 — Diagnostic behavior: statement tuple unpack of a non-tuple (migrated from a silent accept)
 // ============================================================================
@@ -1238,12 +1413,12 @@ fn case_diagnostic_statement_tuple_unpack_of_non_tuple() -> ComparisonOutcome {
 // comparison; each probe asserts that the execution it observed declared that non-green state explicitly rather
 // than leaving it implied.
 //
-// These rows carry a legacy-side corpus receipt because `ReplacementExecutionPlan` -- the corpus's own direct
-// execution shape -- names a function and concrete arguments, with nowhere to name the authority source and
-// provider host a provider operation needs. Their provider executions therefore produce real #986
-// selection/execution receipts inside the probe, which the probe asserts on, rather than corpus-visible
-// `ReceiptRef::ReplacementExecuted` evidence. Binding them into the corpus receipt is corpus-schema work in
-// `tests/support/parity_corpus.rs`, and belongs with #1146's comparison route rather than with this vertical.
+// `ReplacementExecutionPlan` -- the corpus's direct execution shape -- names a function and concrete arguments,
+// with nowhere to name the authority source and provider host a provider operation needs. These callbacks therefore
+// inspect the real provider receipts internally, while the outer corpus row records only a `BehaviorObserved`
+// evidence identity over the callback outcome. It does not fabricate a legacy receipt or borrow the provider's
+// nested receipt as if it authorized the whole row. A corpus-visible provider execution receipt belongs with
+// #1146's explicit comparison route rather than with this vertical.
 
 /// One ledger charge, plus a same-module caller that invokes it.
 ///
@@ -1260,9 +1435,6 @@ def charge(account: str, amount: int) -> int:
 def settle(account: str, amount: int) -> int:
   return charge(account, amount)
 "#;
-
-/// The grant spelling the selected capability renders to, and therefore the one a governed run must hold.
-const PROVIDER_GRANT: &str = "app.ledger_charge";
 
 /// What the fixture ledger does when an authorized charge reaches it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1385,7 +1557,7 @@ struct ProviderPathObservation {
 fn observe_provider_path(
     behavior: LedgerBehavior,
     mode: AuthorityMode,
-    grants: &[&str],
+    grant_capability: bool,
 ) -> Result<ProviderPathObservation, String> {
     let tokens = lexer::lex(PROVIDER_CASE_SRC).map_err(|errors| format!("provider fixture lex failure: {errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("provider fixture parse failure: {errors:?}"))?;
@@ -1410,10 +1582,11 @@ fn observe_provider_path(
             runtime_requirements: declared.runtime_requirements.clone(),
         })
         .collect();
-    let operation = descriptors
+    let descriptor = descriptors
         .first()
-        .map(|descriptor| descriptor.operation.clone())
         .ok_or("the provider fixture declares no checked provider operation")?;
+    let operation = descriptor.operation.clone();
+    let required_capability = descriptor.required_capability.clone();
     let namespace_claims: BTreeSet<Vec<String>> = descriptors
         .iter()
         .filter_map(|descriptor| descriptor.operation.module_path().map(ToOwned::to_owned))
@@ -1450,7 +1623,7 @@ fn observe_provider_path(
             .map_err(|error| format!("provider fixture lowering failure: {error}"))?;
 
     let host = Rc::new(CorpusLedgerHost::new(operation, behavior));
-    let authority = StaticAuthority::new(mode, grants.iter().map(|grant| (*grant).to_string()));
+    let authority = StaticAuthority::new(mode, grant_capability.then_some(required_capability));
     let providers = ProviderRuntime::new(Rc::new(authority), host.clone());
     let executed = execute_free_function_with_providers(
         &module,
@@ -1526,7 +1699,7 @@ fn provider_outcome(
 /// An allowed invocation runs the provider and binds a backend receipt to the operation receipt it describes.
 fn case_provider_allowed_invocation() -> ComparisonOutcome {
     provider_outcome(
-        observe_provider_path(LedgerBehavior::Settle, AuthorityMode::Governed, &[PROVIDER_GRANT]),
+        observe_provider_path(LedgerBehavior::Settle, AuthorityMode::Governed, true),
         |observed| {
             if observed.value != Some(ReplacementValue::Int(255)) {
                 return Some(format!(
@@ -1554,7 +1727,7 @@ fn case_provider_allowed_invocation() -> ComparisonOutcome {
 /// A governed denial emits a denied receipt, reports a source-owned diagnostic, and never reaches the provider.
 fn case_provider_governed_denial() -> ComparisonOutcome {
     provider_outcome(
-        observe_provider_path(LedgerBehavior::Settle, AuthorityMode::Governed, &[]),
+        observe_provider_path(LedgerBehavior::Settle, AuthorityMode::Governed, false),
         |observed| {
             if !observed.invocations.is_empty() {
                 return Some(format!(
@@ -1588,7 +1761,7 @@ fn case_provider_governed_denial() -> ComparisonOutcome {
 /// A provider failure keeps its allowing authority decision and reports its own diagnostic, not a denial's.
 fn case_provider_operation_failure() -> ComparisonOutcome {
     provider_outcome(
-        observe_provider_path(LedgerBehavior::Decline, AuthorityMode::Governed, &[PROVIDER_GRANT]),
+        observe_provider_path(LedgerBehavior::Decline, AuthorityMode::Governed, true),
         |observed| {
             if observed.error_code != Some("INCAN-R1156-PROVIDER") {
                 return Some(format!(
@@ -1616,11 +1789,7 @@ fn case_provider_operation_failure() -> ComparisonOutcome {
 /// A withheld attribute classifies the receipt as redacted without changing what the operation returned.
 fn case_provider_redaction_classification() -> ComparisonOutcome {
     provider_outcome(
-        observe_provider_path(
-            LedgerBehavior::SettleWithSecretAccount,
-            AuthorityMode::Governed,
-            &[PROVIDER_GRANT],
-        ),
+        observe_provider_path(LedgerBehavior::SettleWithSecretAccount, AuthorityMode::Governed, true),
         |observed| {
             if observed.receipt_status != Some(ReceiptStatus::Redacted) {
                 return Some(format!(
@@ -1658,7 +1827,7 @@ fn case_provider_redaction_classification() -> ComparisonOutcome {
 /// An invocation that failed still releases what it acquired, exactly once and after the failure.
 fn case_provider_lifecycle_cleanup() -> ComparisonOutcome {
     provider_outcome(
-        observe_provider_path(LedgerBehavior::Decline, AuthorityMode::Governed, &[PROVIDER_GRANT]),
+        observe_provider_path(LedgerBehavior::Decline, AuthorityMode::Governed, true),
         |observed| {
             if observed.lifecycle != vec!["invoked", "failed", "released"] {
                 return Some(format!(
@@ -1678,12 +1847,1229 @@ fn case_provider_lifecycle_cleanup() -> ComparisonOutcome {
 }
 
 // ============================================================================
+// RFC 120 identity-conformance corpus
+// ============================================================================
+
+const IDENTITY_PROVIDER_SRC: &str = r#"
+pub def imported_lexical(value: int) -> int:
+    return value
+
+pub def aliased_lexical(value: int) -> int:
+    return value
+
+pub def relayed_lexical(value: int) -> int:
+    return value
+
+pub model ImportedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub model AliasedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub model RelayedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub def imported_path(value: int) -> int:
+    return value
+
+pub def aliased_path(value: int) -> int:
+    return value
+
+"#;
+
+const IDENTITY_FACADE_SRC: &str = r#"
+pub from identity_provider import RelayedMember, relayed_lexical
+"#;
+
+const IDENTITY_MATRIX_SRC: &str = r#"
+from identity_provider import ImportedMember, imported_lexical
+from identity_provider import AliasedMember as MemberAlias, aliased_lexical as lexical_alias
+from identity_facade import RelayedMember as MemberReexport, relayed_lexical as lexical_reexport
+import identity_provider
+import identity_provider as provider_alias
+
+def local_lexical(value: int) -> int:
+    return value
+
+model LocalMember:
+    value: int
+
+    def read(self) -> int:
+        return self.value
+
+def local_lexical_function_scope() -> int:
+    return local_lexical(1)
+
+def local_lexical_block_scope() -> int:
+    if true:
+        return local_lexical(1)
+    return 0
+
+def imported_lexical_function_scope() -> int:
+    return imported_lexical(3)
+
+def imported_lexical_block_scope() -> int:
+    if true:
+        return imported_lexical(3)
+    return 0
+
+def aliased_lexical_function_scope() -> int:
+    return lexical_alias(5)
+
+def aliased_lexical_block_scope() -> int:
+    if true:
+        return lexical_alias(5)
+    return 0
+
+def reexported_lexical_function_scope() -> int:
+    return lexical_reexport(7)
+
+def reexported_lexical_block_scope() -> int:
+    if true:
+        return lexical_reexport(7)
+    return 0
+
+def local_member_function_scope() -> int:
+    local = LocalMember(value=9)
+    return local.read()
+
+def local_member_block_scope() -> int:
+    local = LocalMember(value=10)
+    if true:
+        return local.read()
+    return 0
+
+def imported_member_function_scope() -> int:
+    imported = ImportedMember(value=11)
+    return imported.read()
+
+def imported_member_block_scope() -> int:
+    imported = ImportedMember(value=12)
+    if true:
+        return imported.read()
+    return 0
+
+def aliased_member_function_scope() -> int:
+    aliased = MemberAlias(value=13)
+    return aliased.read()
+
+def aliased_member_block_scope() -> int:
+    aliased = MemberAlias(value=14)
+    if true:
+        return aliased.read()
+    return 0
+
+def reexported_member_function_scope() -> int:
+    relayed = MemberReexport(value=15)
+    return relayed.read()
+
+def reexported_member_block_scope() -> int:
+    relayed = MemberReexport(value=16)
+    if true:
+        return relayed.read()
+    return 0
+
+def imported_path_function_scope() -> int:
+    return identity_provider.imported_path(17)
+
+def imported_path_block_scope() -> int:
+    if true:
+        return identity_provider.imported_path(17)
+    return 0
+
+def aliased_path_function_scope() -> int:
+    return provider_alias.aliased_path(19)
+
+def aliased_path_block_scope() -> int:
+    if true:
+        return provider_alias.aliased_path(19)
+    return 0
+
+"#;
+
+/// Every matrix cell the replacement route executes across the module boundary, with the value it must return.
+///
+/// The returned values are deliberately distinct so a call that reached the wrong declaration is a wrong number
+/// rather than a coincidence: were `lexical_alias` resolved to `imported_lexical`, this row would return 3 where 5
+/// is required, and both are real declarations that execute.
+///
+/// Member cells are absent on purpose and are declared in [`IDENTITY_MATRIX_DEFERRED`] instead.
+const IDENTITY_MATRIX_ENTRYPOINTS: &[IdentityGraphEntrypoint] = &[
+    IdentityGraphEntrypoint {
+        function: "local_lexical_function_scope",
+        expected: 1,
+    },
+    IdentityGraphEntrypoint {
+        function: "local_lexical_block_scope",
+        expected: 1,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_lexical_function_scope",
+        expected: 3,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_lexical_block_scope",
+        expected: 3,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_lexical_function_scope",
+        expected: 5,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_lexical_block_scope",
+        expected: 5,
+    },
+    IdentityGraphEntrypoint {
+        function: "reexported_lexical_function_scope",
+        expected: 7,
+    },
+    IdentityGraphEntrypoint {
+        function: "reexported_lexical_block_scope",
+        expected: 7,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_path_function_scope",
+        expected: 17,
+    },
+    IdentityGraphEntrypoint {
+        function: "imported_path_block_scope",
+        expected: 17,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_path_function_scope",
+        expected: 19,
+    },
+    IdentityGraphEntrypoint {
+        function: "aliased_path_block_scope",
+        expected: 19,
+    },
+];
+
+/// Matrix cells the replacement route refuses today, each bound to the issue that owns closing the gap.
+///
+/// Every member cell in the matrix reads a field through a model method, and the direct profile retains a model
+/// declaration only when it has no methods (`is_direct_replacement_plain_model`), so the constructor is refused
+/// before the method is ever reached. That is a language-matrix gap owned by #1291, not an import one: the same
+/// refusal occurs for `LocalMember`, which crosses no module boundary at all. #1260 and #1261 supply what these
+/// cells still need after that lands -- the imported, aliased, and re-exported identities they construct through.
+///
+/// The runner requires each of these to actually be refused. A deferral that quietly starts working fails this row
+/// rather than passing unnoticed, so the day #1291 lands, someone has to come back and promote these cells.
+const IDENTITY_MATRIX_DEFERRED: &[IdentityGraphDeferral] = &[
+    IdentityGraphDeferral {
+        function: "local_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "local_member_block_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "imported_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "imported_member_block_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "aliased_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "aliased_member_block_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "reexported_member_function_scope",
+        owning_issue: 1291,
+    },
+    IdentityGraphDeferral {
+        function: "reexported_member_block_scope",
+        owning_issue: 1291,
+    },
+];
+
+const IDENTITY_MATRIX_MODULES: &[IdentitySourceModule] = &[
+    IdentitySourceModule {
+        name: "identity_provider",
+        path: &["identity_provider"],
+        source: IDENTITY_PROVIDER_SRC,
+        dependencies: &[],
+    },
+    IdentitySourceModule {
+        name: "identity_facade",
+        path: &["identity_facade"],
+        source: IDENTITY_FACADE_SRC,
+        dependencies: &["identity_provider"],
+    },
+    IdentitySourceModule {
+        name: "identity_matrix",
+        path: &["identity_matrix"],
+        source: IDENTITY_MATRIX_SRC,
+        dependencies: &["identity_provider", "identity_facade"],
+    },
+];
+
+struct LexicalIdentityRow<'a> {
+    label: &'a str,
+    binding: IdentityBindingForm,
+    target_module: &'a str,
+    target_name: &'a str,
+    root_binding: &'a str,
+    call: &'a str,
+    function_body: &'a str,
+    block_body: &'a str,
+}
+
+#[derive(Clone, Copy)]
+struct DeclarationSpanSelector<'a> {
+    anchor: &'a str,
+    occurrence: usize,
+}
+
+struct MemberIdentityRow<'a> {
+    label: &'a str,
+    binding: IdentityBindingForm,
+    target_module: &'a str,
+    owner_name: &'a str,
+    owner: DeclarationSpanSelector<'a>,
+    member: DeclarationSpanSelector<'a>,
+    root_binding: &'a str,
+    receiver_call: &'a str,
+    function_body: &'a str,
+    block_body: &'a str,
+}
+
+struct PathIdentityRow<'a> {
+    label: &'a str,
+    binding: IdentityBindingForm,
+    expected_module_path: &'a [&'a str],
+    expected_module_name: &'a str,
+    target_name: &'a str,
+    module_binding: &'a str,
+    call: &'a str,
+    function_body: &'a str,
+    block_body: &'a str,
+}
+
+fn require_same_identity(
+    label: &str,
+    expected: &CanonicalSymbolId,
+    actual: &CanonicalSymbolId,
+    evidence: &mut Vec<String>,
+) -> Result<(), String> {
+    if actual != expected {
+        return Err(format!(
+            "{label} reconstructed or selected the wrong identity: expected {}, got {}",
+            expected.render_compact(),
+            actual.render_compact()
+        ));
+    }
+    evidence.push(format!("{label}: {}", actual.render_compact()));
+    Ok(())
+}
+
+fn require_body_consumer(
+    graph: &CheckedIdentityGraph,
+    body: &str,
+    expected: &CanonicalSymbolId,
+    evidence: &mut Vec<String>,
+    label: &str,
+) -> Result<(), String> {
+    let identities = graph.body_consumer_identities("identity_matrix", body)?;
+    if !identities.iter().any(|identity| identity == expected) {
+        return Err(format!(
+            "{label} Body IR lost {}, retaining {identities:?}",
+            expected.render_compact()
+        ));
+    }
+    evidence.push(format!("{label}: {}", expected.render_compact()));
+    Ok(())
+}
+
+fn verify_lexical_matrix_row(
+    graph: &CheckedIdentityGraph,
+    row: &LexicalIdentityRow<'_>,
+    assertions: &mut IdentityAssertions,
+) -> Result<(), String> {
+    let target = graph.declaration_identity(
+        row.target_module,
+        row.target_name,
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let module_binding = graph.hir_identity("identity_matrix", row.root_binding)?;
+    require_same_identity(
+        &format!("{} lexical/module", row.label),
+        &target,
+        &module_binding,
+        &mut assertions.checked_relations,
+    )?;
+    assertions
+        .hir_consumers
+        .push(format!("{} lexical/module HIR: {}", row.label, target.render_compact()));
+
+    let function_reference = graph.resolved_identity("identity_matrix", row.call, 0)?;
+    require_same_identity(
+        &format!("{} lexical/function", row.label),
+        &target,
+        &function_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.function_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} lexical/function", row.label),
+    )?;
+
+    let block_reference = graph.resolved_identity("identity_matrix", row.call, 1)?;
+    require_same_identity(
+        &format!("{} lexical/block", row.label),
+        &target,
+        &block_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.block_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} lexical/block", row.label),
+    )?;
+    let target_projection = graph.require_emitted_projection(row.target_module, &target)?;
+    let root_projection = graph.require_emitted_projection("identity_matrix", &target)?;
+    let projection_evidence = format!("{target_projection}; {root_projection}");
+    assertions.legacy_projections.push(target_projection);
+    assertions.legacy_projections.push(root_projection);
+    assertions.coverage_cells.extend([
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Lexical,
+            scope: IdentityScope::Module,
+            checked_identity: target.render_compact(),
+            hir_identity: Some(module_binding.render_compact()),
+            body_ir_identity: None,
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Lexical,
+            scope: IdentityScope::Function,
+            checked_identity: function_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(target.render_compact()),
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Lexical,
+            scope: IdentityScope::Block,
+            checked_identity: block_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(target.render_compact()),
+            emitted_projection: Some(projection_evidence),
+        },
+    ]);
+    Ok(())
+}
+
+fn verify_member_matrix_row(
+    graph: &CheckedIdentityGraph,
+    row: &MemberIdentityRow<'_>,
+    assertions: &mut IdentityAssertions,
+) -> Result<(), String> {
+    let owner = graph.declaration_identity_at_source_anchor(
+        row.target_module,
+        row.owner.anchor,
+        row.owner.occurrence,
+        SemanticSourceTargetKind::Model,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    if owner.declaration_name != row.owner_name {
+        return Err(format!(
+            "{} owner span selected `{}` instead of `{}`",
+            row.label, owner.declaration_name, row.owner_name
+        ));
+    }
+    let declared_member = graph.declaration_identity_at_source_anchor(
+        row.target_module,
+        row.member.anchor,
+        row.member.occurrence,
+        SemanticSourceTargetKind::Method,
+        SymbolNamespace::Member,
+    )?;
+    if declared_member.declaration_name != "read"
+        || declared_member.kind != SemanticSourceTargetKind::Method
+        || declared_member.namespace != SymbolNamespace::Member
+    {
+        return Err(format!(
+            "{} member declaration selected a non-method identity: {}",
+            row.label,
+            declared_member.render_compact()
+        ));
+    }
+    if declared_member.declaration_span.start < owner.declaration_span.start
+        || declared_member.declaration_span.end > owner.declaration_span.end
+    {
+        return Err(format!(
+            "{} member declaration {} is outside owner {}",
+            row.label,
+            declared_member.render_compact(),
+            owner.render_compact()
+        ));
+    }
+    let module_binding = graph.hir_identity("identity_matrix", row.root_binding)?;
+    require_same_identity(
+        &format!("{} member/module owner", row.label),
+        &owner,
+        &module_binding,
+        &mut assertions.checked_relations,
+    )?;
+    assertions.hir_consumers.push(format!(
+        "{} member/module HIR owner={} declared-member={}",
+        row.label,
+        owner.render_compact(),
+        declared_member.render_compact()
+    ));
+
+    let function_reference = graph.resolved_identity("identity_matrix", row.receiver_call, 0)?;
+    require_same_identity(
+        &format!("{} member/function", row.label),
+        &declared_member,
+        &function_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.function_body,
+        &declared_member,
+        &mut assertions.body_ir_consumers,
+        &format!("{} member/function", row.label),
+    )?;
+
+    let block_reference = graph.resolved_identity("identity_matrix", row.receiver_call, 1)?;
+    require_same_identity(
+        &format!("{} member/block", row.label),
+        &declared_member,
+        &block_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.block_body,
+        &declared_member,
+        &mut assertions.body_ir_consumers,
+        &format!("{} member/block", row.label),
+    )?;
+    let target_projection = graph.require_emitted_projection(row.target_module, &declared_member)?;
+    let root_projection = graph.require_emitted_projection("identity_matrix", &declared_member)?;
+    let projection_evidence = format!("{target_projection}; {root_projection}");
+    assertions.legacy_projections.push(target_projection);
+    assertions.legacy_projections.push(root_projection);
+    assertions.coverage_cells.extend([
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Member,
+            scope: IdentityScope::Owner,
+            checked_identity: declared_member.render_compact(),
+            hir_identity: None,
+            body_ir_identity: None,
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Member,
+            scope: IdentityScope::Function,
+            checked_identity: function_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(declared_member.render_compact()),
+            emitted_projection: Some(projection_evidence.clone()),
+        },
+        IdentityCoverageCell {
+            binding: row.binding,
+            namespace: IdentityNamespace::Member,
+            scope: IdentityScope::Block,
+            checked_identity: block_reference.render_compact(),
+            hir_identity: None,
+            body_ir_identity: Some(declared_member.render_compact()),
+            emitted_projection: Some(projection_evidence),
+        },
+    ]);
+    Ok(())
+}
+
+fn verify_path_matrix_row(
+    graph: &CheckedIdentityGraph,
+    row: &PathIdentityRow<'_>,
+    assertions: &mut IdentityAssertions,
+) -> Result<(), String> {
+    let module_binding = graph.hir_identity("identity_matrix", row.module_binding)?;
+    let expected_module = CanonicalSymbolId {
+        namespace: SymbolNamespace::ModulePath,
+        origin: SymbolOrigin::Module(
+            row.expected_module_path
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect(),
+        ),
+        declaration_name: row.expected_module_name.to_string(),
+        kind: SemanticSourceTargetKind::Module,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    };
+    require_same_identity(
+        &format!("{} path/module", row.label),
+        &expected_module,
+        &module_binding,
+        &mut assertions.checked_relations,
+    )?;
+    assertions.hir_consumers.push(format!(
+        "{} path/module HIR: {}",
+        row.label,
+        module_binding.render_compact()
+    ));
+    assertions.coverage_cells.push(IdentityCoverageCell {
+        binding: row.binding,
+        namespace: IdentityNamespace::ModulePath,
+        scope: IdentityScope::Module,
+        checked_identity: module_binding.render_compact(),
+        hir_identity: Some(module_binding.render_compact()),
+        body_ir_identity: None,
+        emitted_projection: None,
+    });
+
+    let target = graph.declaration_identity(
+        "identity_provider",
+        row.target_name,
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let function_reference = graph.resolved_identity("identity_matrix", row.call, 0)?;
+    require_same_identity(
+        &format!("{} path/function", row.label),
+        &target,
+        &function_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.function_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} path/function", row.label),
+    )?;
+
+    let block_reference = graph.resolved_identity("identity_matrix", row.call, 1)?;
+    require_same_identity(
+        &format!("{} path/block", row.label),
+        &target,
+        &block_reference,
+        &mut assertions.checked_relations,
+    )?;
+    require_body_consumer(
+        graph,
+        row.block_body,
+        &target,
+        &mut assertions.body_ir_consumers,
+        &format!("{} path/block", row.label),
+    )?;
+    assertions
+        .legacy_projections
+        .push(graph.require_emitted_projection("identity_provider", &target)?);
+    assertions
+        .legacy_projections
+        .push(graph.require_emitted_projection("identity_matrix", &target)?);
+    Ok(())
+}
+
+fn verify_wrong_path_target_selection(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let mut assertions = IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations: Vec::new(),
+        hir_consumers: Vec::new(),
+        body_ir_consumers: Vec::new(),
+        legacy_projections: Vec::new(),
+        artifact_observations: Vec::new(),
+    };
+    verify_path_matrix_row(
+        graph,
+        &PathIdentityRow {
+            label: "wrong-target negative",
+            binding: IdentityBindingForm::Import,
+            expected_module_path: &["identity_facade"],
+            expected_module_name: "identity_facade",
+            target_name: "imported_path",
+            module_binding: "identity_provider",
+            call: "identity_provider.imported_path(17)",
+            function_body: "imported_path_function_scope",
+            block_body: "imported_path_block_scope",
+        },
+        &mut assertions,
+    )?;
+    Err("wrong-target module-path selection was incorrectly accepted".to_string())
+}
+
+fn validate_identity_matrix_coverage(cells: &[IdentityCoverageCell]) -> Result<(), String> {
+    let mut expected = BTreeSet::new();
+    for binding in [
+        IdentityBindingForm::Local,
+        IdentityBindingForm::Import,
+        IdentityBindingForm::Alias,
+        IdentityBindingForm::ReExport,
+    ] {
+        for scope in [IdentityScope::Module, IdentityScope::Function, IdentityScope::Block] {
+            expected.insert((binding, IdentityNamespace::Lexical, scope));
+        }
+        for scope in [IdentityScope::Owner, IdentityScope::Function, IdentityScope::Block] {
+            expected.insert((binding, IdentityNamespace::Member, scope));
+        }
+    }
+    for binding in [IdentityBindingForm::Import, IdentityBindingForm::Alias] {
+        expected.insert((binding, IdentityNamespace::ModulePath, IdentityScope::Module));
+    }
+    let actual = cells
+        .iter()
+        .map(|cell| (cell.binding, cell.namespace, cell.scope))
+        .collect::<BTreeSet<_>>();
+    if actual != expected || cells.len() != expected.len() {
+        return Err(format!(
+            "RFC 120 typed coverage differs from the semantically valid contract: missing={:?}, unexpected={:?}",
+            expected.difference(&actual).collect::<Vec<_>>(),
+            actual.difference(&expected).collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
+fn verify_wrong_owner_member_selection(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let mut assertions = IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations: Vec::new(),
+        hir_consumers: Vec::new(),
+        body_ir_consumers: Vec::new(),
+        legacy_projections: Vec::new(),
+        artifact_observations: Vec::new(),
+    };
+    verify_member_matrix_row(
+        graph,
+        &MemberIdentityRow {
+            label: "wrong-owner negative",
+            binding: IdentityBindingForm::Import,
+            target_module: "identity_provider",
+            owner_name: "ImportedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model ImportedMember:",
+                occurrence: 0,
+            },
+            // Occurrence 1 is `AliasedMember.read`, deliberately outside the selected owner declaration span.
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 1,
+            },
+            root_binding: "ImportedMember",
+            receiver_call: "imported.read()",
+            function_body: "imported_member_function_scope",
+            block_body: "imported_member_block_scope",
+        },
+        &mut assertions,
+    )?;
+    Err("wrong-owner member selection was incorrectly accepted".to_string())
+}
+
+fn verify_identity_matrix(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let mut assertions = IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations: Vec::new(),
+        hir_consumers: Vec::new(),
+        body_ir_consumers: Vec::new(),
+        legacy_projections: Vec::new(),
+        artifact_observations: Vec::new(),
+    };
+    for row in [
+        LexicalIdentityRow {
+            label: "local",
+            binding: IdentityBindingForm::Local,
+            target_module: "identity_matrix",
+            target_name: "local_lexical",
+            root_binding: "local_lexical",
+            call: "local_lexical(1)",
+            function_body: "local_lexical_function_scope",
+            block_body: "local_lexical_block_scope",
+        },
+        LexicalIdentityRow {
+            label: "import",
+            binding: IdentityBindingForm::Import,
+            target_module: "identity_provider",
+            target_name: "imported_lexical",
+            root_binding: "imported_lexical",
+            call: "imported_lexical(3)",
+            function_body: "imported_lexical_function_scope",
+            block_body: "imported_lexical_block_scope",
+        },
+        LexicalIdentityRow {
+            label: "alias",
+            binding: IdentityBindingForm::Alias,
+            target_module: "identity_provider",
+            target_name: "aliased_lexical",
+            root_binding: "lexical_alias",
+            call: "lexical_alias(5)",
+            function_body: "aliased_lexical_function_scope",
+            block_body: "aliased_lexical_block_scope",
+        },
+        LexicalIdentityRow {
+            label: "re-export",
+            binding: IdentityBindingForm::ReExport,
+            target_module: "identity_provider",
+            target_name: "relayed_lexical",
+            root_binding: "lexical_reexport",
+            call: "lexical_reexport(7)",
+            function_body: "reexported_lexical_function_scope",
+            block_body: "reexported_lexical_block_scope",
+        },
+    ] {
+        verify_lexical_matrix_row(graph, &row, &mut assertions)?;
+    }
+    for row in [
+        MemberIdentityRow {
+            label: "local",
+            binding: IdentityBindingForm::Local,
+            target_module: "identity_matrix",
+            owner_name: "LocalMember",
+            owner: DeclarationSpanSelector {
+                anchor: "model LocalMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 0,
+            },
+            root_binding: "LocalMember",
+            receiver_call: "local.read()",
+            function_body: "local_member_function_scope",
+            block_body: "local_member_block_scope",
+        },
+        MemberIdentityRow {
+            label: "import",
+            binding: IdentityBindingForm::Import,
+            target_module: "identity_provider",
+            owner_name: "ImportedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model ImportedMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 0,
+            },
+            root_binding: "ImportedMember",
+            receiver_call: "imported.read()",
+            function_body: "imported_member_function_scope",
+            block_body: "imported_member_block_scope",
+        },
+        MemberIdentityRow {
+            label: "alias",
+            binding: IdentityBindingForm::Alias,
+            target_module: "identity_provider",
+            owner_name: "AliasedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model AliasedMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 1,
+            },
+            root_binding: "MemberAlias",
+            receiver_call: "aliased.read()",
+            function_body: "aliased_member_function_scope",
+            block_body: "aliased_member_block_scope",
+        },
+        MemberIdentityRow {
+            label: "re-export",
+            binding: IdentityBindingForm::ReExport,
+            target_module: "identity_provider",
+            owner_name: "RelayedMember",
+            owner: DeclarationSpanSelector {
+                anchor: "pub model RelayedMember:",
+                occurrence: 0,
+            },
+            member: DeclarationSpanSelector {
+                anchor: "def read(self) -> int:",
+                occurrence: 2,
+            },
+            root_binding: "MemberReexport",
+            receiver_call: "relayed.read()",
+            function_body: "reexported_member_function_scope",
+            block_body: "reexported_member_block_scope",
+        },
+    ] {
+        verify_member_matrix_row(graph, &row, &mut assertions)?;
+    }
+    for row in [
+        PathIdentityRow {
+            label: "import",
+            binding: IdentityBindingForm::Import,
+            expected_module_path: &["identity_provider"],
+            expected_module_name: "identity_provider",
+            target_name: "imported_path",
+            module_binding: "identity_provider",
+            call: "identity_provider.imported_path(17)",
+            function_body: "imported_path_function_scope",
+            block_body: "imported_path_block_scope",
+        },
+        PathIdentityRow {
+            label: "alias",
+            binding: IdentityBindingForm::Alias,
+            expected_module_path: &["identity_provider"],
+            expected_module_name: "identity_provider",
+            target_name: "aliased_path",
+            module_binding: "provider_alias",
+            call: "provider_alias.aliased_path(19)",
+            function_body: "aliased_path_function_scope",
+            block_body: "aliased_path_block_scope",
+        },
+    ] {
+        verify_path_matrix_row(graph, &row, &mut assertions)?;
+    }
+    validate_identity_matrix_coverage(&assertions.coverage_cells)?;
+    Ok(assertions)
+}
+
+const LET_SHADOW_SRC: &str = r#"
+def shadow_let() -> int:
+    mut total = 0
+    x = 1
+    if true:
+        let x = 2
+        total += x
+    return total + x
+"#;
+
+const LET_SHADOW_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_let_shadow",
+    path: &["identity_let_shadow"],
+    source: LET_SHADOW_SRC,
+    dependencies: &[],
+}];
+
+const MUT_SHADOW_SRC: &str = r#"
+def shadow_mut() -> int:
+    mut total = 0
+    mut x = 4
+    if true:
+        mut x = 7
+        total += x
+    return total + x
+"#;
+
+const MUT_SHADOW_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_mut_shadow",
+    path: &["identity_mut_shadow"],
+    source: MUT_SHADOW_SRC,
+    dependencies: &[],
+}];
+
+const GENERIC_BINDER_SRC: &str = r#"
+def generic_identity[T](value: T) -> T:
+    return value
+
+def generic_entry() -> int:
+    return generic_identity[int](42)
+"#;
+
+const GENERIC_BINDER_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_generic",
+    path: &["identity_generic"],
+    source: GENERIC_BINDER_SRC,
+    dependencies: &[],
+}];
+
+const BUILTIN_REBINDING_SRC: &str = r#"
+def len(value: int) -> int:
+    return value + 1
+
+def builtin_entry() -> int:
+    return len(4) + std.builtins.len([1, 2, 3])
+"#;
+
+const BUILTIN_REBINDING_MODULES: &[IdentitySourceModule] = &[IdentitySourceModule {
+    name: "identity_builtin",
+    path: &["identity_builtin"],
+    source: BUILTIN_REBINDING_SRC,
+    dependencies: &[],
+}];
+
+fn no_replacement_arguments() -> Vec<ReplacementValue> {
+    Vec::new()
+}
+
+fn expected_three() -> ReplacementValue {
+    ReplacementValue::Int(3)
+}
+
+fn expected_eleven() -> ReplacementValue {
+    ReplacementValue::Int(11)
+}
+
+fn expected_forty_two() -> ReplacementValue {
+    ReplacementValue::Int(42)
+}
+
+fn expected_eight() -> ReplacementValue {
+    ReplacementValue::Int(8)
+}
+
+fn verify_shadow_binding(
+    graph: &CheckedIdentityGraph,
+    module: &str,
+    body: &str,
+    declaration_name: &str,
+) -> Result<IdentityAssertions, String> {
+    // Binding tokens introduce declarations and are intentionally absent from the checked-reference map. Read the
+    // identities selected by the two use sites, then require Body IR to carry those same declaration identities.
+    let inner_read = graph.resolved_identity(module, "x", 2)?;
+    let outer_read = graph.resolved_identity(module, "x", 3)?;
+    if outer_read == inner_read {
+        return Err("same-spelled shadow declarations collapsed to one canonical identity".to_string());
+    }
+    let mut checked_relations = Vec::new();
+    checked_relations.push(format!(
+        "shadow declarations distinct: {} != {}",
+        outer_read.render_compact(),
+        inner_read.render_compact()
+    ));
+
+    let locals = graph.body_local_identities(module, body, "x")?;
+    if locals.len() != 2
+        || !locals.iter().any(|identity| identity == &outer_read)
+        || !locals.iter().any(|identity| identity == &inner_read)
+    {
+        return Err(format!(
+            "Body IR did not retain both canonical shadow locals, got {locals:?}"
+        ));
+    }
+    let function = graph.declaration_identity(
+        module,
+        declaration_name,
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let hir_function = graph.hir_identity(module, declaration_name)?;
+    require_same_identity("shadow entry HIR", &function, &hir_function, &mut checked_relations)?;
+    Ok(IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations,
+        hir_consumers: vec![format!("shadow entry HIR: {}", hir_function.render_compact())],
+        body_ir_consumers: locals
+            .iter()
+            .map(|identity| format!("shadow local: {}", identity.render_compact()))
+            .collect(),
+        legacy_projections: vec![graph.require_emitted_projection(module, &function)?],
+        artifact_observations: Vec::new(),
+    })
+}
+
+fn verify_let_shadow(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    verify_shadow_binding(graph, "identity_let_shadow", "shadow_let", "shadow_let")
+}
+
+fn verify_mut_shadow(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    verify_shadow_binding(graph, "identity_mut_shadow", "shadow_mut", "shadow_mut")
+}
+
+fn verify_generic_binder(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    // The binder token introduces a declaration, so it deliberately does not appear in the
+    // checker-owned reference map. Its annotations are references to that declaration and carry
+    // the canonical GenericBinder identity into downstream consumers.
+    let parameter = graph.resolved_identity("identity_generic", "T", 1)?;
+    let return_type = graph.resolved_identity("identity_generic", "T", 2)?;
+    if parameter.kind != SemanticSourceTargetKind::GenericBinder {
+        return Err(format!(
+            "generic parameter annotation did not retain its GenericBinder identity: {}",
+            parameter.render_compact()
+        ));
+    }
+    let mut checked_relations = Vec::new();
+    require_same_identity(
+        "generic binder annotations",
+        &parameter,
+        &return_type,
+        &mut checked_relations,
+    )?;
+    let concrete_int = graph.resolved_identity("identity_generic", "int", 1)?;
+    if concrete_int == parameter || concrete_int.kind == SemanticSourceTargetKind::GenericBinder {
+        return Err(format!(
+            "generic binder collapsed into concrete `int`: binder={}, concrete={}",
+            parameter.render_compact(),
+            concrete_int.render_compact()
+        ));
+    }
+    checked_relations.push(format!(
+        "generic binder/concrete distinct: {} != {}",
+        parameter.render_compact(),
+        concrete_int.render_compact()
+    ));
+    let generic_function = graph.declaration_identity(
+        "identity_generic",
+        "generic_identity",
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let call = graph.resolved_identity("identity_generic", "generic_identity[int](42)", 0)?;
+    require_same_identity(
+        "generic callable selection",
+        &generic_function,
+        &call,
+        &mut checked_relations,
+    )?;
+    let body_consumers = graph.body_consumer_identities("identity_generic", "generic_entry")?;
+    if !body_consumers.iter().any(|identity| identity == &generic_function) {
+        return Err("generic call target did not survive into replacement-facing Body IR".to_string());
+    }
+    let hir_function = graph.hir_identity("identity_generic", "generic_identity")?;
+    require_same_identity(
+        "generic function HIR",
+        &generic_function,
+        &hir_function,
+        &mut checked_relations,
+    )?;
+    Ok(IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations,
+        hir_consumers: vec![format!("generic function HIR: {}", hir_function.render_compact())],
+        body_ir_consumers: body_consumers
+            .iter()
+            .map(|identity| format!("generic Body IR consumer: {}", identity.render_compact()))
+            .collect(),
+        legacy_projections: vec![graph.require_emitted_projection("identity_generic", &generic_function)?],
+        artifact_observations: Vec::new(),
+    })
+}
+
+fn verify_builtin_rebinding(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
+    let local = graph.declaration_identity(
+        "identity_builtin",
+        "len",
+        SemanticSourceTargetKind::Function,
+        SymbolNamespace::OrdinaryLexical,
+    )?;
+    let local_call = graph.resolved_identity("identity_builtin", "len(4)", 0)?;
+    let builtin_call = graph.resolved_identity("identity_builtin", "std.builtins.len([1, 2, 3])", 0)?;
+    if builtin_call.kind != SemanticSourceTargetKind::Builtin
+        || builtin_call.namespace != SymbolNamespace::OrdinaryLexical
+        || builtin_call == local
+    {
+        return Err(format!(
+            "builtin qualification did not stay distinct from the ordinary lexical binding: local={}, builtin={}",
+            local.render_compact(),
+            builtin_call.render_compact()
+        ));
+    }
+    let mut checked_relations = Vec::new();
+    require_same_identity(
+        "ordinary builtin-name rebinding",
+        &local,
+        &local_call,
+        &mut checked_relations,
+    )?;
+    checked_relations.push(format!(
+        "ordinary/builtin distinct: {} != {}",
+        local.render_compact(),
+        builtin_call.render_compact()
+    ));
+    let body_consumers = graph.body_consumer_identities("identity_builtin", "builtin_entry")?;
+    if !body_consumers.iter().any(|identity| identity == &local)
+        || !body_consumers.iter().any(|identity| identity == &builtin_call)
+    {
+        return Err(format!(
+            "Body IR did not retain both local and builtin targets: {body_consumers:?}"
+        ));
+    }
+    let hir_local = graph.hir_identity("identity_builtin", "len")?;
+    require_same_identity(
+        "ordinary builtin-name binding HIR",
+        &local,
+        &hir_local,
+        &mut checked_relations,
+    )?;
+    Ok(IdentityAssertions {
+        coverage_cells: Vec::new(),
+        checked_relations,
+        hir_consumers: vec![format!("local len HIR: {}", hir_local.render_compact())],
+        body_ir_consumers: body_consumers
+            .iter()
+            .map(|identity| format!("builtin row Body IR consumer: {}", identity.render_compact()))
+            .collect(),
+        legacy_projections: vec![graph.require_emitted_projection("identity_builtin", &local)?],
+        artifact_observations: Vec::new(),
+    })
+}
+
+fn verify_release_artifact() -> Result<ReleaseArtifactAssertions, String> {
+    static EVIDENCE: OnceLock<Result<ReleaseArtifactAssertions, String>> = OnceLock::new();
+    EVIDENCE
+        .get_or_init(|| {
+            let evidence = emitted_symbol_artifact::verify_pinned_release_artifact()
+                .map_err(|error| format!("pinned release artifact verification failed: {error}"))?;
+            if evidence.recovered_identities.len() != 4
+                || !evidence.saw_generic_u64_specialization
+                || !evidence.saw_non_incan_host_symbol
+            {
+                return Err(format!(
+                    "pinned release artifact returned incomplete evidence: {evidence:?}"
+                ));
+            }
+            Ok(ReleaseArtifactAssertions {
+                assertions: IdentityAssertions {
+                    coverage_cells: Vec::new(),
+                    checked_relations: Vec::new(),
+                    hir_consumers: Vec::new(),
+                    body_ir_consumers: Vec::new(),
+                    legacy_projections: evidence
+                        .recovered_identities
+                        .iter()
+                        .map(|identity| format!("recovered incan-v1: {}", identity.render_compact()))
+                        .collect(),
+                    artifact_observations: vec![
+                        format!("rustc {} optimized v0 artifact", emitted_symbol_artifact::SELECTED_RUST),
+                        "generic specialization u64 recovered".to_string(),
+                        "host_bridge classified as non-Incan".to_string(),
+                        format!(
+                            "artifact bytes baseline={} projected={}",
+                            evidence.baseline_bytes, evidence.projected_bytes
+                        ),
+                        format!(
+                            "identifier bytes baseline={} projected={}",
+                            evidence.baseline_identifier_bytes, evidence.projected_identifier_bytes
+                        ),
+                    ],
+                },
+                fixture_input_identity: evidence.fixture_input_identity,
+                artifact_content_identity: evidence.artifact_content_identity,
+                recovered_observation_identity: evidence.recovered_observation_identity,
+            })
+        })
+        .clone()
+}
+
+// ============================================================================
 // Seed corpus
 // ============================================================================
 
-/// The narrow, source-only seed corpus (#987 plan step 3). Package/import, Rust-interop, vocab, and downstream
-/// rows are deferred to plan step 4 until their compiler/ABI contracts are available; the public parity-corpus
-/// reference and #987 record that expansion boundary.
+/// The stable #987 corpus, including RFC 120's executable checked-identity and artifact-projection rows.
+/// Package/import execution remains a named #989 boundary rather than an inferred success.
 fn seed_corpus() -> Vec<ParityCase> {
     vec![
         ParityCase {
@@ -1695,6 +3081,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_1_SRC,
             evaluate: Some(case_supported_match_exhaustiveness),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1706,6 +3093,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_2_SRC,
             evaluate: Some(case_diagnostic_chained_comparison_rejected),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1717,6 +3105,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_3_SRC,
             evaluate: Some(case_stdlib_runtime_string_membership),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1728,6 +3117,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_4_SRC,
             evaluate: Some(case_generated_artifact_valid_rust_shape),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1739,6 +3129,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_5_SRC,
             evaluate: Some(case_supported_builtin_len_shadowing),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1760,6 +3151,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: CASE_6_SRC,
             evaluate: Some(case_diagnostic_unreachable_code_after_return),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1784,6 +3176,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: CASE_7_SRC,
             evaluate: Some(case_diagnostic_statement_tuple_unpack_of_non_tuple),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1795,6 +3188,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_8_SRC,
             evaluate: Some(case_supported_named_construction_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1806,6 +3200,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_9_SRC,
             evaluate: Some(case_supported_named_call_arguments_reach_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1817,6 +3212,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_10_SRC,
             evaluate: Some(case_supported_await_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1828,6 +3224,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_11_SRC,
             evaluate: Some(case_supported_race_for_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1839,6 +3236,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_12_SRC,
             evaluate: Some(case_supported_literal_spreads_reach_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1850,6 +3248,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_13_SRC,
             evaluate: Some(case_supported_call_spreads_reach_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1861,6 +3260,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_3_SRC,
             evaluate: Some(case_supported_string_membership_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1872,6 +3272,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_15_SRC,
             evaluate: Some(case_supported_bytes_literal_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1883,6 +3284,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_16_SRC,
             evaluate: Some(case_supported_range_value_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1894,6 +3296,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_18_SRC,
             evaluate: Some(case_supported_statement_loop_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1923,6 +3326,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: CASE_19_SRC,
             evaluate: Some(case_unsafe_region_is_a_stated_refusal),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1935,6 +3339,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_20_SRC,
             evaluate: Some(case_pattern_assertion_binding_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1947,6 +3352,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_22_SRC,
             evaluate: Some(case_collection_membership_names_its_container),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1959,6 +3365,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_23_SRC,
             evaluate: Some(case_list_concatenation_is_not_a_primitive_addition),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1971,6 +3378,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_21_SRC,
             evaluate: Some(case_raises_assertion_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1983,6 +3391,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: CASE_17_SRC,
             evaluate: Some(case_inactive_feature_body_never_reaches_body_ir),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -1995,12 +3404,12 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_001_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "add",
                 arguments: replacement_body_v0_001_arguments,
                 expected: replacement_body_v0_001_expected,
-                // The one row #1146 proves end to end: its module holds a single named free function with scalar
-                // parameters, so the legacy route can call it from a generated entrypoint and print the result.
+                // The original #1146 scalar case now uses the separate typed-result report, never a program stream.
                 shadow_comparison: true,
             }),
         },
@@ -2013,6 +3422,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_002_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "greet",
                 arguments: replacement_body_v0_002_arguments,
@@ -2029,6 +3439,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_003_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "return_owned",
                 arguments: replacement_body_v0_003_arguments,
@@ -2045,6 +3456,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_004_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "control_flow",
                 arguments: replacement_body_v0_004_arguments,
@@ -2061,6 +3473,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_005_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "guarded_floor_div",
                 arguments: replacement_body_v0_005_arguments,
@@ -2077,6 +3490,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_006_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "select_second_pair",
                 arguments: replacement_body_v0_006_arguments,
@@ -2093,6 +3507,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_007_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "collect_lazy_values",
                 arguments: replacement_body_v0_007_arguments,
@@ -2109,6 +3524,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_008_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "stored_closure",
                 arguments: replacement_body_v0_008_arguments,
@@ -2125,6 +3541,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_009_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "partial_defaults",
                 arguments: replacement_body_v0_009_arguments,
@@ -2141,6 +3558,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_010_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "generator_function",
                 arguments: replacement_body_v0_010_arguments,
@@ -2157,6 +3575,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_011_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "generator_adapters",
                 arguments: replacement_body_v0_011_arguments,
@@ -2173,6 +3592,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_012_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "structural_values",
                 arguments: replacement_body_v0_012_arguments,
@@ -2189,6 +3609,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_013_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "nominal_values",
                 arguments: replacement_body_v0_013_arguments,
@@ -2205,6 +3626,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_014_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "value_enum_values",
                 arguments: replacement_body_v0_014_arguments,
@@ -2221,6 +3643,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_015_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "fieldless_enum_values",
                 arguments: replacement_body_v0_015_arguments,
@@ -2237,6 +3660,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_016_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "direct_patterns",
                 arguments: replacement_body_v0_016_arguments,
@@ -2253,6 +3677,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_017_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "direct_result_routing",
                 arguments: replacement_body_v0_017_arguments,
@@ -2269,6 +3694,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_018_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "direct_async_await",
                 arguments: replacement_body_v0_018_arguments,
@@ -2285,11 +3711,200 @@ fn seed_corpus() -> Vec<ParityCase> {
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_019_SRC,
             evaluate: None,
+            identity_conformance: None,
             replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
                 function: "source_order_race",
                 arguments: replacement_body_v0_019_arguments,
                 expected: replacement_body_v0_019_expected,
                 shadow_comparison: false,
+            }),
+        },
+        ParityCase {
+            id: HASHED_SHADOW_CASE_ID,
+            title: "Hashed scalar-key set and dictionary membership agrees across independent routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1247; tests/replacement_hashed_shadow_tests.rs::hashed_membership_matches_the_receipt_backed_native_route; all four key kinds and membership helpers, typed-empty constructors, exact stdout and a separate boolean result",
+            disposition: Disposition::Preserved,
+            source: HASHED_MEMBERSHIP_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "membership",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Bool(true),
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: STRING_HELPER_SHADOW_CASE_ID,
+            title: "Canonical selected string helpers agree across independent routes",
+            category: BehaviorCategory::StdlibRuntimeBehavior,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1256; tests/replacement_string_helper_shadow_tests.rs::selected_string_helpers_match_the_receipt_backed_native_route; seven retained helper identities, shared Unicode and separator behavior, exact stdout and a separate boolean result",
+            disposition: Disposition::Preserved,
+            source: STRING_HELPER_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "string_helpers",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Bool(true),
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: "replacement-body-v0-022",
+            title: "Checked scalar conversions preserve typed results and program output through both routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1249; tests/replacement_scalar_conversion_tests.rs::replacement_executes_checked_unary_scalar_conversions; tests/replacement_scalar_conversion_shadow_tests.rs::scalar_conversion_failure_keeps_its_canonical_class_before_legacy_substring_heuristics",
+            disposition: Disposition::Preserved,
+            source: REPLACEMENT_BODY_V0_022_SRC,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "scalar_conversions",
+                arguments: replacement_body_v0_022_arguments,
+                expected: replacement_body_v0_022_expected,
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: ENUMERATE_ZIP_SHADOW_CASE_ID,
+            title: "Canonical stored Enumerate and direct Zip preserve source order through both routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1249; tests/fixtures/replacement/enumerate_zip.incn; \
+                       tests/parity_corpus_tests.rs::the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
+            disposition: Disposition::Preserved,
+            source: REPLACEMENT_BODY_V0_023_SRC,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "enumerate_zip_profile",
+                arguments: replacement_body_v0_023_arguments,
+                expected: replacement_body_v0_023_expected,
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: STRING_LEN_SHADOW_CASE_ID,
+            title: "Global and method string length agree on Unicode-scalar semantics across independent routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1249; tests/replacement_string_len_shadow_tests.rs::string_len_matches_the_receipt_backed_native_route; global builtin and checked method-helper identities, five Unicode rows, exact stdout and a separate boolean result",
+            disposition: Disposition::Preserved,
+            source: STRING_LEN_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "string_len",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Bool(true),
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: JSON_STRINGIFY_SHADOW_CASE_ID,
+            title: "Scalar JSON stringification agrees across independent routes",
+            category: BehaviorCategory::StdlibRuntimeBehavior,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1249; src/backend/shadow/json_stringify_tests.rs::scalar_json_stringify_matches_the_receipt_backed_native_route; int/bool/str/None exact bytes, empty streams, and independent route receipts",
+            disposition: Disposition::Preserved,
+            source: JSON_STRINGIFY_SCALARS_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "observe",
+                arguments: Vec::new,
+                expected: replacement_body_v0_025_expected,
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: COLLECTION_LEN_SHADOW_CASE_ID,
+            title: "Hashed set and dict length returns duplicate-normalized entry counts across independent routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1249; tests/replacement_collection_len_shadow_tests.rs::collection_len_matches_the_receipt_backed_native_route; canonical builtin identity, populated/duplicate/typed-empty counts, exact stdout and a separate integer result",
+            disposition: Disposition::Preserved,
+            source: COLLECTION_LEN_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "collection_len",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Int(2200),
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: BOOL_TRUTHINESS_SHADOW_CASE_ID,
+            title: "Canonical bool preserves bounded scalar and container truthiness across independent routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1249; tests/replacement_bool_truthiness_shadow_tests.rs::bool_truthiness_matches_the_receipt_backed_native_route; canonical builtin identity, empty/nonempty scalar and container behavior, exact stdout and a separate boolean result",
+            disposition: Disposition::Preserved,
+            source: BOOL_TRUTHINESS_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "bool_truthiness",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Bool(true),
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: SORTED_INT_LIST_SHADOW_CASE_ID,
+            title: "Canonical sorted preserves a fresh ascending nonempty integer list across independent routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1249; tests/replacement_sorted_int_list_shadow_tests.rs::sorted_int_list_matches_the_receipt_backed_native_route; canonical builtin identity, negative/duplicate ordering, source-list preservation, exact stdout and a separate integer result",
+            disposition: Disposition::Preserved,
+            source: SORTED_INT_LIST_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "sorted_int_list",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Int(29_320_233),
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: TYPED_NUMERIC_SHADOW_CASE_ID,
+            title: "Exact-width and decimal carriers preserve checked values across independent routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1279; tests/replacement_typed_numeric_tests.rs; tests/replacement_scalar_conversion_shadow_tests.rs; representative u8/i128/u128 endpoints, f32 rounding, decimal scale, exact stdout, typed cast edges, and an f32 result",
+            disposition: Disposition::Preserved,
+            source: REPLACEMENT_BODY_V0_029_SRC,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "typed_numeric_profile",
+                arguments: Vec::new,
+                expected: replacement_body_v0_029_expected,
+                shadow_comparison: true,
+            }),
+        },
+        ParityCase {
+            id: ISINSTANCE_TARGETS_SHADOW_CASE_ID,
+            title: "Checked primitive isinstance targets preserve true and false union narrowing across independent routes",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "#1281; tests/replacement_isinstance_shadow_tests.rs::checked_isinstance_targets_match_the_receipt_backed_native_route; retained compiler-owned target type/span, int/bool/str/float targets, true/false union branches, exact stdout/stderr and a separate boolean result; closed #1154 delivered the current direct nominal/value substrate and open #988 owns broader replacement execution",
+            disposition: Disposition::Preserved,
+            source: ISINSTANCE_TARGETS_SOURCE,
+            evaluate: None,
+            identity_conformance: None,
+            replacement_execution: Some(parity_corpus::ReplacementExecutionPlan {
+                function: "isinstance_targets",
+                arguments: Vec::new,
+                expected: || ReplacementValue::Bool(true),
+                shadow_comparison: true,
             }),
         },
         ParityCase {
@@ -2310,6 +3925,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_allowed_invocation),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2329,6 +3945,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_governed_denial),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2346,6 +3963,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_operation_failure),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2364,6 +3982,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_redaction_classification),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2381,9 +4000,514 @@ fn seed_corpus() -> Vec<ParityCase> {
             },
             source: PROVIDER_CASE_SRC,
             evaluate: Some(case_provider_lifecycle_cleanup),
+            identity_conformance: None,
+            replacement_execution: None,
+        },
+        // ---- #989 public-boundary rows the replacement route cannot yet reach ----
+        //
+        // These are declared rather than evaluated on purpose. A package consumer needs a baked dependency and an
+        // executable representation of its public surface, and neither exists yet; declaring the rows keeps the
+        // boundary counted and owned instead of absent, which is what #989's disposition model asks for. Each names
+        // the issue that makes it executable, so the row fails review the day that issue closes and nothing here
+        // changes.
+        ParityCase {
+            id: "parity-987-989-package-consumer-call",
+            title: "A call into a package dependency executes on a route that does not link Rust",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::PackageImportBoundary,
+            evidence: "#989; RFC 123; #1339 owns the executable representation this row needs",
+            disposition: Disposition::Unsupported {
+                owning_issue: 1339,
+                migration_note: "A package publishes signatures, checked API and canonical identities -- enough to \
+                                  typecheck a call into it, and nothing a non-linking route can execute. The direct \
+                                  route therefore refuses every `pub::` import, so moving a declaration into a \
+                                  package removes execution routes it had as a local module. RFC 123 is Planned and \
+                                  #1339 implements the representation that closes this. Until then the boundary is \
+                                  unavailable rather than passing, and no result may claim package parity.",
+            },
+            source: PACKAGE_CONSUMER_SRC,
+            evaluate: Some(case_package_consumer_call_is_refused),
+            identity_conformance: None,
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-989-package-representation-refusal",
+            title: "A missing or uninterpretable package representation refuses in packaging terms, before any result",
+            category: BehaviorCategory::DiagnosticBehavior,
+            lane: EvidenceLane::PackageImportBoundary,
+            evidence: "#989; RFC 123 reference-level rules; #1339",
+            disposition: Disposition::Unsupported {
+                owning_issue: 1339,
+                migration_note: "RFC 123 requires a consumer that cannot obtain a usable representation to refuse \
+                                  before producing any result, naming the package, the version and the requirement \
+                                  it did not meet -- and never to report the condition as an unsupported language \
+                                  construct. Today a `pub::` import reports `import declaration`, which is the same \
+                                  misdiagnosis #1262 fixed for `rust::`: it sends a reader to the language when the \
+                                  problem is packaging. Owned by #1339.",
+            },
+            source: PACKAGE_CONSUMER_SRC,
+            evaluate: Some(case_package_representation_refusal_is_not_a_language_refusal),
+            identity_conformance: None,
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-01-identity-matrix",
+            title: "RFC 120 identities survive every semantically valid binding, namespace, and scope cell",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::PackageImportBoundary,
+            evidence: "RFC 120 typed Cutover conformance coverage; tests/parity_corpus_tests.rs::verify_identity_matrix",
+            disposition: Disposition::Preserved,
+            source: IDENTITY_MATRIX_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: IDENTITY_MATRIX_MODULES,
+                root_module: "identity_matrix",
+                verify: verify_identity_matrix,
+                replacement: IdentityReplacementPlan::Graph {
+                    root_module: "identity_matrix",
+                    entrypoints: IDENTITY_MATRIX_ENTRYPOINTS,
+                    deferred: IDENTITY_MATRIX_DEFERRED,
+                },
+                comparison_reason: "the checked graph and the cross-module replacement route both executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-02-let-shadow",
+            title: "Explicit let shadowing preserves distinct checked and replacement local identities",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_let_shadow; tests/replacement_backend_execution_tests.rs::replacement_executes_let_shadowing_by_local_identity",
+            disposition: Disposition::Preserved,
+            source: LET_SHADOW_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: LET_SHADOW_MODULES,
+                root_module: "identity_let_shadow",
+                verify: verify_let_shadow,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_let_shadow",
+                    function: "shadow_let",
+                    arguments: no_replacement_arguments,
+                    expected: expected_three,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-03-mut-shadow",
+            title: "Explicit mut shadowing preserves distinct checked and replacement local identities",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_mut_shadow; tests/replacement_backend_execution_tests.rs::replacement_executes_mut_shadowing_by_local_identity",
+            disposition: Disposition::Preserved,
+            source: MUT_SHADOW_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: MUT_SHADOW_MODULES,
+                root_module: "identity_mut_shadow",
+                verify: verify_mut_shadow,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_mut_shadow",
+                    function: "shadow_mut",
+                    arguments: no_replacement_arguments,
+                    expected: expected_eleven,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-04-generic-binder",
+            title: "Generic binders and their callable target retain distinct canonical identities",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_generic_binder",
+            disposition: Disposition::Preserved,
+            source: GENERIC_BINDER_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: GENERIC_BINDER_MODULES,
+                root_module: "identity_generic",
+                verify: verify_generic_binder,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_generic",
+                    function: "generic_entry",
+                    arguments: no_replacement_arguments,
+                    expected: expected_forty_two,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-05-builtin-rebinding",
+            title: "Ordinary builtin-name rebinding stays distinct from explicit std.builtins lookup",
+            category: BehaviorCategory::SupportedLanguageContract,
+            lane: EvidenceLane::DirectReplacementBodyIr,
+            evidence: "RFC 120 Cutover conformance; tests/parity_corpus_tests.rs::verify_builtin_rebinding",
+            disposition: Disposition::Preserved,
+            source: BUILTIN_REBINDING_SRC,
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+                modules: BUILTIN_REBINDING_MODULES,
+                root_module: "identity_builtin",
+                verify: verify_builtin_rebinding,
+                replacement: IdentityReplacementPlan::Direct {
+                    module: "identity_builtin",
+                    function: "builtin_entry",
+                    arguments: no_replacement_arguments,
+                    expected: expected_eight,
+                },
+                comparison_reason: "the checked graph and replacement route executed, but no independent legacy execution was run for a source-observable comparison",
+            })),
+            replacement_execution: None,
+        },
+        ParityCase {
+            id: "parity-987-120-06-release-artifact",
+            title: "Pinned release artifacts recover four Incan identity categories and reject host frames",
+            category: BehaviorCategory::GeneratedArtifactBehavior,
+            lane: EvidenceLane::GeneratedProjectRun,
+            evidence: "RFC 120 Cutover conformance; tests/support/emitted_symbol_artifact.rs::verify_pinned_release_artifact",
+            disposition: Disposition::Preserved,
+            source: "RFC 120 pinned Rust 1.98.0 release artifact",
+            evaluate: None,
+            identity_conformance: Some(IdentityConformancePlan::ReleaseArtifact {
+                verify: verify_release_artifact,
+                comparison_reason: "the optimized artifact was built and its symbol table inspected, but no source-observable backend execution comparison was run",
+            }),
             replacement_execution: None,
         },
     ]
+}
+
+#[test]
+fn rfc_120_member_coverage_rejects_a_consistent_wrong_owner_selection() {
+    let case = ParityCase {
+        id: "parity-987-120-negative-wrong-owner",
+        title: "Wrong-owner member identity must fail conformance",
+        category: BehaviorCategory::SupportedLanguageContract,
+        lane: EvidenceLane::PackageImportBoundary,
+        evidence: "tests/parity_corpus_tests.rs::verify_wrong_owner_member_selection",
+        disposition: Disposition::Preserved,
+        source: IDENTITY_MATRIX_SRC,
+        evaluate: None,
+        identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+            modules: IDENTITY_MATRIX_MODULES,
+            root_module: "identity_matrix",
+            verify: verify_wrong_owner_member_selection,
+            replacement: IdentityReplacementPlan::Unavailable {
+                owning_issue: 1332,
+                reason: "a negative fixture is rejected during conformance, so no route runs it; #1332 owns the paired reference route these rows would need if they ever did",
+            },
+            comparison_reason: "negative conformance fixture must fail before execution",
+        })),
+        replacement_execution: None,
+    };
+    let report = parity_corpus::evaluate_case(&case);
+    assert_eq!(report.overall_state, OverallState::NonGreenBehavior);
+    assert!(
+        matches!(
+            report.behavior_outcome,
+            ComparisonOutcome::Mismatch { ref detail } if detail.contains("outside owner")
+        ),
+        "wrong-owner member selection must fail on exact declaration spans: {:?}",
+        report.behavior_outcome
+    );
+}
+
+#[test]
+fn rfc_120_module_path_coverage_rejects_a_consistent_wrong_target_selection() {
+    let case = ParityCase {
+        id: "parity-987-120-negative-wrong-path-target",
+        title: "Wrong-target module-path identity must fail conformance",
+        category: BehaviorCategory::SupportedLanguageContract,
+        lane: EvidenceLane::PackageImportBoundary,
+        evidence: "tests/parity_corpus_tests.rs::verify_wrong_path_target_selection",
+        disposition: Disposition::Preserved,
+        source: IDENTITY_MATRIX_SRC,
+        evaluate: None,
+        identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+            modules: IDENTITY_MATRIX_MODULES,
+            root_module: "identity_matrix",
+            verify: verify_wrong_path_target_selection,
+            replacement: IdentityReplacementPlan::Unavailable {
+                owning_issue: 1332,
+                reason: "a negative fixture is rejected during conformance, so no route runs it; #1332 owns the paired reference route these rows would need if they ever did",
+            },
+            comparison_reason: "negative conformance fixture must fail before execution",
+        })),
+        replacement_execution: None,
+    };
+    let report = parity_corpus::evaluate_case(&case);
+    assert_eq!(report.overall_state, OverallState::NonGreenBehavior);
+    assert!(
+        matches!(
+            report.behavior_outcome,
+            ComparisonOutcome::Mismatch { ref detail }
+                if detail.contains("path/module reconstructed or selected the wrong identity")
+        ),
+        "module-path selection must fail on the exact expected origin and name: {:?}",
+        report.behavior_outcome
+    );
+}
+
+#[test]
+fn rfc_120_emitted_projection_requires_an_exact_rust_identifier_token() -> Result<(), Box<dyn std::error::Error>> {
+    let projection = "__incan_v1_001122";
+    let lookalikes =
+        format!("fn {projection}_suffix() {{}}\n// fn {projection}() {{}}\nconst TEXT: &str = \"{projection}\";");
+    assert!(
+        exact_rust_identifier(&lookalikes, projection).is_err(),
+        "prefixes, comments, and string literals must not prove an emitted projection"
+    );
+    let emitted = format!("fn {projection}() {{}}");
+    assert_eq!(exact_rust_identifier(&emitted, projection)?, projection);
+    Ok(())
+}
+
+#[test]
+fn rfc_120_typed_coverage_rejects_invalid_scope_and_missing_carriers() {
+    let invalid_scope = IdentityCoverageCell {
+        binding: IdentityBindingForm::Local,
+        namespace: IdentityNamespace::Member,
+        scope: IdentityScope::Module,
+        checked_identity: "member".to_string(),
+        hir_identity: None,
+        body_ir_identity: None,
+        emitted_projection: Some("projection".to_string()),
+    };
+    assert!(
+        matches!(
+            validate_identity_coverage(&[invalid_scope]),
+            Err(detail) if detail.contains("not a semantically valid namespace/scope combination")
+        ),
+        "member declarations must use owner scope"
+    );
+
+    let missing_hir = IdentityCoverageCell {
+        binding: IdentityBindingForm::Import,
+        namespace: IdentityNamespace::Lexical,
+        scope: IdentityScope::Module,
+        checked_identity: "callable".to_string(),
+        hir_identity: None,
+        body_ir_identity: None,
+        emitted_projection: Some("projection".to_string()),
+    };
+    assert!(
+        matches!(
+            validate_identity_coverage(&[missing_hir]),
+            Err(detail) if detail.contains("invalid HIR carrier presence")
+        ),
+        "a module-scope lexical cell must prove its HIR carrier"
+    );
+
+    let missing_projection = IdentityCoverageCell {
+        binding: IdentityBindingForm::ReExport,
+        namespace: IdentityNamespace::Member,
+        scope: IdentityScope::Owner,
+        checked_identity: "member".to_string(),
+        hir_identity: None,
+        body_ir_identity: None,
+        emitted_projection: None,
+    };
+    assert!(
+        matches!(
+            validate_identity_coverage(&[missing_projection]),
+            Err(detail) if detail.contains("invalid emitted projection carrier presence")
+        ),
+        "an owner-scope member cell must prove the linker's source-declaration projection"
+    );
+}
+
+#[test]
+fn rfc_120_rows_publish_real_conformance_evidence_without_fabricating_legacy_execution()
+-> Result<(), Box<dyn std::error::Error>> {
+    let summary = parity_corpus::summarize(&seed_corpus());
+    let rows = summary
+        .cases
+        .iter()
+        .filter(|row| row.id.starts_with("parity-987-120-"))
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 6, "the stable RFC 120 corpus rows must remain complete");
+    for row in &rows {
+        assert_eq!(
+            row.overall_state,
+            OverallState::NonGreenShadowUnavailable,
+            "{} produced the wrong state from {:?}",
+            row.id,
+            row.behavior_outcome
+        );
+        let ReceiptRef::IdentityConformanceObserved {
+            replacement_receipt_identity,
+            evidence_identity,
+            comparison_reason,
+        } = &row.receipt
+        else {
+            return Err(format!(
+                "{} lost its identity-conformance observation: {:?}",
+                row.id, row.receipt
+            )
+            .into());
+        };
+        assert!(!comparison_reason.is_empty());
+        let evidence = row
+            .identity_conformance
+            .as_ref()
+            .ok_or_else(|| format!("{} omitted its conformance evidence", row.id))?;
+        match (&evidence.subject, row.id) {
+            (IdentityConformanceSubject::SourceGraph { graph_identity }, id)
+                if id != "parity-987-120-06-release-artifact" =>
+            {
+                assert!(!graph_identity.is_empty());
+            }
+            (
+                IdentityConformanceSubject::ReleaseArtifact {
+                    fixture_input_identity,
+                    artifact_content_identity,
+                    recovered_observation_identity,
+                },
+                "parity-987-120-06-release-artifact",
+            ) => {
+                for identity in [
+                    fixture_input_identity,
+                    artifact_content_identity,
+                    recovered_observation_identity,
+                ] {
+                    assert!(identity.starts_with("sha256:"));
+                }
+            }
+            (subject, id) => return Err(format!("{id} reported the wrong conformance subject: {subject:?}").into()),
+        }
+        assert_eq!(
+            identity_conformance_evidence_identity(evidence),
+            *evidence_identity,
+            "{} published an evidence identity that cannot be recomputed from its report",
+            row.id
+        );
+        assert_eq!(
+            evidence.evidence_identity, *evidence_identity,
+            "{} split the receipt and report evidence identities",
+            row.id
+        );
+        let mut tampered = evidence.clone();
+        tampered.checked_relations.push("tampered checked relation".to_string());
+        assert_ne!(
+            identity_conformance_evidence_identity(&tampered),
+            *evidence_identity,
+            "{} evidence digest ignored a serialized checked relation",
+            row.id
+        );
+        let mut tampered_subject = evidence.clone();
+        match &mut tampered_subject.subject {
+            IdentityConformanceSubject::SourceGraph { graph_identity } => graph_identity.push_str("-tampered"),
+            IdentityConformanceSubject::ReleaseArtifact {
+                artifact_content_identity,
+                ..
+            } => artifact_content_identity.push_str("-tampered"),
+        }
+        assert_ne!(
+            identity_conformance_evidence_identity(&tampered_subject),
+            *evidence_identity,
+            "{} evidence digest ignored its typed conformance subject",
+            row.id
+        );
+        if matches!(
+            row.id,
+            "parity-987-120-01-identity-matrix"
+                | "parity-987-120-02-let-shadow"
+                | "parity-987-120-03-mut-shadow"
+                | "parity-987-120-04-generic-binder"
+                | "parity-987-120-05-builtin-rebinding"
+        ) {
+            assert!(
+                replacement_receipt_identity
+                    .as_deref()
+                    .is_some_and(|identity| identity.starts_with("sha256:"))
+            );
+            assert!(evidence.replacement_output_identity.is_some());
+        } else {
+            assert_eq!(replacement_receipt_identity, &None);
+            assert_eq!(evidence.replacement_output_identity, None);
+        }
+    }
+
+    let matrix = rows
+        .iter()
+        .find(|row| row.id == "parity-987-120-01-identity-matrix")
+        .and_then(|row| row.identity_conformance.as_ref())
+        .ok_or("RFC 120 identity matrix evidence is missing")?;
+    assert_eq!(matrix.coverage_cells.len(), 26);
+    // The matrix used to record #989 as owning an unavailable replacement route. #1260 and #1261 made cross-module
+    // execution real, so the row now carries an executed output identity instead of an owner for its absence.
+    assert_eq!(matrix.replacement_unavailable_issue, None);
+
+    let artifact = rows
+        .iter()
+        .find(|row| row.id == "parity-987-120-06-release-artifact")
+        .and_then(|row| row.identity_conformance.as_ref())
+        .ok_or("RFC 120 release-artifact evidence is missing")?;
+    assert_eq!(artifact.legacy_projections.len(), 4);
+    assert!(
+        artifact
+            .artifact_observations
+            .iter()
+            .any(|item| item.contains("non-Incan"))
+    );
+    Ok(())
+}
+
+#[test]
+fn rfc_120_expected_value_mismatch_retains_the_observed_replacement_receipt_and_evidence() {
+    let case = ParityCase {
+        id: "parity-987-120-negative-expected-value",
+        title: "A completed replacement mismatch retains its execution evidence",
+        category: BehaviorCategory::SupportedLanguageContract,
+        lane: EvidenceLane::DirectReplacementBodyIr,
+        evidence: "tests/parity_corpus_tests.rs::rfc_120_expected_value_mismatch_retains_the_observed_replacement_receipt_and_evidence",
+        disposition: Disposition::Preserved,
+        source: GENERIC_BINDER_SRC,
+        evaluate: None,
+        identity_conformance: Some(IdentityConformancePlan::SourceGraph(SourceIdentityConformancePlan {
+            modules: GENERIC_BINDER_MODULES,
+            root_module: "identity_generic",
+            verify: verify_generic_binder,
+            replacement: IdentityReplacementPlan::Direct {
+                module: "identity_generic",
+                function: "generic_entry",
+                arguments: no_replacement_arguments,
+                expected: expected_three,
+            },
+            comparison_reason: "negative fixture executed one replacement route only",
+        })),
+        replacement_execution: None,
+    };
+    let report = parity_corpus::evaluate_case(&case);
+    assert_eq!(report.overall_state, OverallState::NonGreenBehavior);
+    assert!(
+        matches!(
+            report.behavior_outcome,
+            ComparisonOutcome::Mismatch { ref detail }
+                if detail.contains("returned Int(42), expected Int(3)")
+        ),
+        "unexpected mismatch outcome: {:?}",
+        report.behavior_outcome
+    );
+    assert!(matches!(
+        report.receipt,
+        ReceiptRef::IdentityConformanceObserved {
+            replacement_receipt_identity: Some(ref identity),
+            ..
+        } if identity.starts_with("sha256:")
+    ));
+    assert!(
+        report
+            .identity_conformance
+            .as_ref()
+            .is_some_and(|evidence| evidence.replacement_output_identity.is_some()),
+        "completed mismatch must retain the output identity that its receipt finalized"
+    );
 }
 
 /// The #1156 provider paths each carry a stable disposition and none of them claims a comparison it cannot support.
@@ -2448,9 +4572,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
             evidence: "tests/parity_corpus_tests.rs (red-state fixture)",
             disposition: Disposition::Preserved,
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2461,9 +4586,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
             evidence: "tests/parity_corpus_tests.rs (red-state fixture)",
             disposition: Disposition::Preserved,
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2474,9 +4600,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
             evidence: "tests/parity_corpus_tests.rs (red-state fixture)",
             disposition: Disposition::Preserved,
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
@@ -2490,9 +4617,10 @@ fn malformed_cases_for_red_state_proof() -> Vec<ParityCase> {
                 migration_note: "",
             },
             // Never reaches `evaluate_case` — `red_state_validate_corpus_...` calls
-            // `validate_corpus` directly, so this placeholder source is never hashed into a real receipt.
+            // `validate_corpus` directly, so this placeholder source is never evaluated into an observation.
             source: "",
             evaluate: Some(|| ComparisonOutcome::Match),
+            identity_conformance: None,
             replacement_execution: None,
         },
     ]
@@ -2561,8 +4689,9 @@ fn seed_corpus_ids_are_stable_and_globally_unique() {
 }
 
 #[test]
-fn seed_corpus_every_case_confirms_its_documented_current_behavior() {
-    let summary = parity_corpus::summarize(&seed_corpus());
+fn seed_corpus_every_case_confirms_its_documented_current_behavior() -> Result<(), Box<dyn std::error::Error>> {
+    let corpus = seed_corpus();
+    let summary = parity_corpus::summarize(&corpus);
     let regressions: Vec<&parity_corpus::CaseReport> = summary
         .cases
         .iter()
@@ -2574,20 +4703,65 @@ fn seed_corpus_every_case_confirms_its_documented_current_behavior() {
          compiler's actual behavior drifted from what this corpus recorded — update the case or investigate the \
          regression, do not silently accept it): {regressions:#?}"
     );
+    for case in corpus.iter().filter(|case| case.evaluate.is_some()) {
+        let report = summary
+            .cases
+            .iter()
+            .find(|report| report.id == case.id)
+            .ok_or_else(|| format!("summary omitted callback row `{}`", case.id))?;
+        let ReceiptRef::BehaviorObserved {
+            evidence_identity,
+            comparison_reason,
+        } = &report.receipt
+        else {
+            return Err(format!(
+                "callback row `{}` fabricated or borrowed an execution receipt: {:?}",
+                case.id, report.receipt
+            )
+            .into());
+        };
+        assert_eq!(
+            behavior_observation_identity(case.id, case.evidence, case.source, &report.behavior_outcome),
+            *evidence_identity,
+            "callback row `{}` did not bind its actual outcome into evidence",
+            case.id
+        );
+        assert_ne!(
+            behavior_observation_identity(
+                case.id,
+                case.evidence,
+                case.source,
+                &ComparisonOutcome::Mismatch {
+                    detail: "tampered callback outcome".to_string(),
+                },
+            ),
+            *evidence_identity,
+            "callback row `{}` evidence ignored its observed outcome",
+            case.id
+        );
+        assert!(!comparison_reason.is_empty());
+    }
+    Ok(())
 }
 
 #[test]
-fn only_a_row_with_a_real_two_route_comparison_can_be_green() -> Result<(), Box<dyn std::error::Error>> {
+fn only_rows_with_real_two_route_comparisons_can_be_green() -> Result<(), Box<dyn std::error::Error>> {
     // This is the corpus's core promise: direct replacement execution does not become green parity merely because
-    // it has a receipt, and generated Rust never counts as proof. Exactly one row declares the bounded #1146
-    // comparison profile; it is green only when that comparison actually ran through Oven and agreed.
+    // it has a receipt, and generated Rust never counts as proof. Only rows that declare the bounded #1146
+    // comparison profile are green, and each is green only when that comparison actually ran through Oven and
+    // agreed.
     //
     // The branch is taken on what the summary reports, not on whether a capability could be *resolved*: a staged
     // capability whose Oven build then fails has run no comparison, and must not be treated as if it had.
     let summary = parity_corpus::summarize(&seed_corpus());
     assert!(
-        summary.receipt_schema_available,
-        "the summary must say the #986 receipt schema is available now that PR #1120 landed it"
+        summary.execution_receipt_schema_available,
+        "the summary must say the #986 execution-receipt schema is available now that PR #1120 landed it"
+    );
+    assert!(summary.cases_with_execution_receipts > 0);
+    assert!(
+        summary.cases_with_execution_receipts < summary.total_cases,
+        "callback and artifact-only observations must not be counted as execution receipts"
     );
     assert_eq!(summary.non_green_shadow_diverged, 0);
     assert_eq!(summary.non_green_behavior, 0);
@@ -2601,14 +4775,16 @@ fn only_a_row_with_a_real_two_route_comparison_can_be_green() -> Result<(), Box<
 
     if summary.source_observable_comparison_available {
         assert_eq!(
-            green,
-            vec![SHADOW_COMPARED_CASE_ID],
-            "exactly the one row with a proven two-route comparison may be green"
+            green, SHADOW_COMPARED_CASE_IDS,
+            "each selected row needs its own proven comparison; one matched row must not hide another unavailable row"
         );
-        assert_eq!(summary.green, 1);
-        assert_eq!(summary.non_green_shadow_unavailable, summary.total_cases - 1);
+        assert_eq!(summary.green, SHADOW_COMPARED_CASE_IDS.len());
+        assert_eq!(
+            summary.non_green_shadow_unavailable,
+            summary.total_cases - SHADOW_COMPARED_CASE_IDS.len()
+        );
     } else {
-        // No comparison ran, so nothing may be green — including the row that declares one.
+        // No comparison ran, so nothing may be green — including rows that declare one.
         require_staging_when_demanded(&summary)?;
         assert!(
             green.is_empty(),
@@ -2639,9 +4815,69 @@ fn require_staging_when_demanded(summary: &parity_corpus::CorpusSummary) -> Resu
     Ok(())
 }
 
-/// The one row that declares the bounded #1146 comparison profile.
+/// The original scalar row that declares the bounded #1146 comparison profile.
 fn compared_row(summary: &parity_corpus::CorpusSummary) -> Option<&parity_corpus::CaseReport> {
     summary.cases.iter().find(|case| case.id == SHADOW_COMPARED_CASE_ID)
+}
+
+/// Canonical Enumerate/Zip bind exact source output and an integer result to two independent route receipts.
+#[test]
+fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == ENUMERATE_ZIP_SHADOW_CASE_ID)
+        .ok_or("missing Enumerate/Zip comparison row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        profile_kind,
+        profile_identity,
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+    } = &row.receipt
+    else {
+        return Err(format!("Enumerate/Zip needs matched two-route evidence, got {:?}", row.receipt).into());
+    };
+    let stdout = b"left\nleft\nright\npair\npair\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(profile_kind, incan::backend::shadow::SHADOW_COMPARISON_PROFILE_ID);
+    assert!(profile_identity.starts_with("sha256:"));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Int, \"49\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(
+        !legacy_authority.cargo_process_started,
+        "the native observation must be attributable to Oven rather than a Cargo process"
+    );
+    Ok(())
 }
 
 /// The compared row's evidence must name both routes' receipts and the Oven authority behind the legacy one.
@@ -2674,7 +4910,13 @@ fn the_compared_row_carries_two_route_receipts_and_its_oven_authority() -> Resul
     // #1153 links on the stable kind and cites the instance identity; a receipt must carry both.
     assert_eq!(profile_kind, incan::backend::shadow::SHADOW_COMPARISON_PROFILE_ID);
     assert!(profile_identity.starts_with("sha256:"));
-    assert_eq!(observable, "completed(\"42\")");
+    let empty_stream_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Int, \"42\"); stdout=0 bytes ({empty_stream_digest}); stderr=0 bytes ({empty_stream_digest})"
+        )
+    );
     assert!(legacy_receipt_identity.starts_with("sha256:"));
     assert!(replacement_receipt_identity.starts_with("sha256:"));
     assert_ne!(
@@ -2694,6 +4936,570 @@ fn the_compared_row_carries_two_route_receipts_and_its_oven_authority() -> Resul
         !legacy_authority.cargo_process_started,
         "Oven-owned legacy execution must not start a Cargo process"
     );
+    Ok(())
+}
+
+/// Hash membership binds exact program output and its typed result to two independent route receipts.
+#[test]
+fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == HASHED_SHADOW_CASE_ID)
+        .ok_or("missing hashed membership row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        profile_kind,
+        profile_identity,
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+    } = &row.receipt
+    else {
+        return Err(format!(
+            "hashed membership needs matched two-route evidence, got {:?}",
+            row.receipt
+        )
+        .into());
+    };
+    assert_eq!(profile_kind, incan::backend::shadow::SHADOW_COMPARISON_PROFILE_ID);
+    assert_eq!(
+        observable,
+        "completed(Bool, \"true\"); stdout=18 bytes (sha256:25eebc99ccbd29d7f5bb03931768c3c19a466df57a8c3deddcd7a7e1830ab04a); stderr=0 bytes (sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)"
+    );
+    for identity in [
+        profile_identity,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// The selected string row binds the typed result and both exact streams to independent no-fallback receipts.
+#[test]
+fn the_string_helper_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == STRING_HELPER_SHADOW_CASE_ID)
+        .ok_or("missing selected string-helper row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!("string helpers need matched two-route evidence, got {:?}", row.receipt).into());
+    };
+    let stdout = b"string helper checks\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Bool, \"true\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// Scalar JSON binds its exact returned bytes and empty program streams to two independently verified receipts.
+#[test]
+fn the_scalar_json_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == JSON_STRINGIFY_SHADOW_CASE_ID)
+        .ok_or("missing scalar JSON row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        profile_kind,
+        profile_identity,
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+    } = &row.receipt
+    else {
+        return Err(format!("scalar JSON needs matched two-route evidence, got {:?}", row.receipt).into());
+    };
+    let empty_stream_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert_eq!(profile_kind, incan::backend::shadow::SHADOW_COMPARISON_PROFILE_ID);
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Str, {:?}); stdout=0 bytes ({empty_stream_digest}); stderr=0 bytes ({empty_stream_digest})",
+            JSON_STRINGIFY_SCALARS_EXPECTED
+        )
+    );
+    for identity in [
+        profile_identity,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// Hashed entry count binds duplicate normalization and exact streams to two independently verified receipts.
+#[test]
+fn the_collection_len_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == COLLECTION_LEN_SHADOW_CASE_ID)
+        .ok_or("missing collection-length row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!(
+            "collection length needs matched two-route evidence, got {:?}",
+            row.receipt
+        )
+        .into());
+    };
+    let stdout = b"collection len\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Int, \"2200\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// Canonical truthiness binds its bounded carrier result and exact streams to independently verified receipts.
+#[test]
+fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == BOOL_TRUTHINESS_SHADOW_CASE_ID)
+        .ok_or("missing bool-truthiness row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!(
+            "bool truthiness needs matched two-route evidence, got {:?}",
+            row.receipt
+        )
+        .into());
+    };
+    let stdout = b"bool truthiness\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Bool, \"true\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// Integer-list sorting binds order, source preservation, and exact streams to independently verified receipts.
+#[test]
+fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == SORTED_INT_LIST_SHADOW_CASE_ID)
+        .ok_or("missing sorted-integer-list row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!(
+            "sorted integer list needs matched two-route evidence, got {:?}",
+            row.receipt
+        )
+        .into());
+    };
+    let stdout = b"sorted int list\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Int, \"29320233\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// The typed-numeric row binds exact carrier identity, decimal scale, f32 rounding, and streams to both receipts.
+#[test]
+fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == TYPED_NUMERIC_SHADOW_CASE_ID)
+        .ok_or("missing typed-numeric row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        profile_kind,
+        profile_identity,
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+    } = &row.receipt
+    else {
+        return Err(format!("typed numerics need matched two-route evidence, got {:?}", row.receipt).into());
+    };
+    let stdout = b"0 255 -170141183460469231731687303715884105728 340282366920938463463374607431768211455 19.90\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(profile_kind, incan::backend::shadow::SHADOW_COMPARISON_PROFILE_ID);
+    assert!(profile_identity.starts_with("sha256:"));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Numeric(F32), \"1.2345679\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// Checked `isinstance` targets bind their exact type-test output to independently verified route receipts.
+#[test]
+fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == ISINSTANCE_TARGETS_SHADOW_CASE_ID)
+        .ok_or("missing checked-isinstance-target row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!(
+            "checked isinstance targets need matched two-route evidence, got {:?}",
+            row.receipt
+        )
+        .into());
+    };
+    let stdout = b"isinstance targets\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Bool, \"true\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// The string-length row binds Unicode behavior and both exact streams to independent no-fallback receipts.
+#[test]
+fn the_string_len_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == STRING_LEN_SHADOW_CASE_ID)
+        .ok_or("missing string-length row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!("string length needs matched two-route evidence, got {:?}", row.receipt).into());
+    };
+    let stdout = b"string len\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Bool, \"true\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
+    Ok(())
+}
+
+/// Scalar conversions bind a typed `str` result and their visible output to two independent route receipts.
+#[test]
+fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output() -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+
+    let summary = parity_corpus::summarize(&seed_corpus());
+    if !summary.source_observable_comparison_available {
+        return require_staging_when_demanded(&summary);
+    }
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == SCALAR_CONVERSIONS_SHADOW_CASE_ID)
+        .ok_or("missing scalar-conversions comparison row")?;
+    assert_eq!(row.overall_state, OverallState::Green);
+    let ReceiptRef::ShadowMatched {
+        profile_kind,
+        profile_identity,
+        observable,
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        legacy_authority,
+    } = &row.receipt
+    else {
+        return Err(format!(
+            "scalar conversions need matched two-route evidence, got {:?}",
+            row.receipt
+        )
+        .into());
+    };
+    let stdout = b"converted: 42 3.14 10\n";
+    let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
+    let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
+    assert_eq!(profile_kind, incan::backend::shadow::SHADOW_COMPARISON_PROFILE_ID);
+    assert!(profile_identity.starts_with("sha256:"));
+    assert_eq!(
+        observable,
+        &format!(
+            "completed(Str, \"42 3.14 10\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            stdout.len()
+        )
+    );
+    for identity in [
+        legacy_receipt_identity,
+        replacement_receipt_identity,
+        legacy_output_identity,
+        replacement_output_identity,
+        &legacy_authority.oven_receipt_identity,
+        &legacy_authority.oven_build_unit_identity,
+        &legacy_authority.direct_rustc_plan_identity,
+    ] {
+        assert!(identity.starts_with("sha256:"), "{identity}");
+    }
+    assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
+    assert_ne!(legacy_output_identity, replacement_output_identity);
+    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -2730,6 +5536,47 @@ fn an_unavailable_comparison_keeps_the_rows_replacement_evidence() -> Result<(),
     Ok(())
 }
 
+/// An unstaged Enumerate/Zip comparison remains explicitly non-green while retaining its direct receipt evidence.
+#[test]
+fn an_unavailable_enumerate_zip_comparison_keeps_its_replacement_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let summary = parity_corpus::summarize(&seed_corpus());
+    let row = summary
+        .cases
+        .iter()
+        .find(|row| row.id == ENUMERATE_ZIP_SHADOW_CASE_ID)
+        .ok_or("the Enumerate/Zip comparison row must be present in the corpus")?;
+    if matches!(&row.receipt, ReceiptRef::ShadowMatched { .. }) {
+        eprintln!(
+            "skipping: the Enumerate/Zip comparison ran, so this row reports agreement rather than degraded evidence"
+        );
+        return Ok(());
+    }
+    assert_eq!(row.overall_state, OverallState::NonGreenShadowUnavailable);
+    let ReceiptRef::ReplacementExecuted {
+        receipt_identity,
+        body_snapshot,
+        comparison_reason,
+        ..
+    } = &row.receipt
+    else {
+        return Err(format!(
+            "an unavailable Enumerate/Zip comparison must retain direct replacement evidence, got {:?}",
+            row.receipt
+        )
+        .into());
+    };
+    assert!(receipt_identity.starts_with("sha256:"));
+    assert!(
+        body_snapshot.contains("body enumerate_zip_profile"),
+        "the retained evidence must be the real Enumerate/Zip Body-IR execution: {body_snapshot}"
+    );
+    assert!(
+        !comparison_reason.is_empty(),
+        "the row must name why its requested native comparison did not run"
+    );
+    Ok(())
+}
+
 /// Bind each selected direct-replacement source case to its own receipt and complete Body-IR proof evidence.
 #[test]
 fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -> Result<(), Box<dyn std::error::Error>>
@@ -2742,8 +5589,8 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
         .collect();
     assert_eq!(
         replacement_rows.len(),
-        19,
-        "the six #988 cases, #1123's lazy-generator case, #1152's four callable/runtime cases, #1154's structural/value cases, and #1155's direct async cases must stay stable in #987"
+        30,
+        "the nineteen original direct cases plus hashed membership, selected string helpers, scalar conversions, canonical Enumerate/Zip, string length, scalar JSON, hashed collection length, bounded bool truthiness, nonempty integer-list sorting, typed numeric carriers and checked isinstance targets must stay stable in #987"
     );
     let nominal_row = replacement_rows
         .iter()
@@ -2812,9 +5659,9 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
 
     for row in replacement_rows {
         assert_eq!(row.lane, EvidenceLane::DirectReplacementBodyIr);
-        if row.id == SHADOW_COMPARED_CASE_ID && summary.source_observable_comparison_available {
-            // When the comparison ran, this row's evidence is the comparison itself, covered by
-            // `the_compared_row_carries_two_route_receipts_and_its_oven_authority`.
+        if SHADOW_COMPARED_CASE_IDS.contains(&row.id) && summary.source_observable_comparison_available {
+            // When the comparison ran, this row's evidence is the comparison itself. The dedicated receipt tests
+            // above verify each compared row's typed result, exact streams, and independent route authority.
             continue;
         }
         assert_eq!(row.overall_state, OverallState::NonGreenShadowUnavailable);
@@ -2858,7 +5705,7 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
                 // Rows that never declared a comparison say so; the declaring row, when its comparison could
                 // not run, names the boundary that stopped it instead. Neither may imply generated Rust proved
                 // anything.
-                let expected_reason = if row.id == SHADOW_COMPARED_CASE_ID {
+                let expected_reason = if SHADOW_COMPARED_CASE_IDS.contains(&row.id) {
                     "the legacy route did not execute"
                 } else {
                     "does not declare the bounded #1146 source-observable"
@@ -2911,7 +5758,8 @@ fn ci_summary_serializes_with_the_fields_655_needs_and_is_written_to_a_stable_pa
         "non_green_shadow_unavailable",
         "non_green_shadow_diverged",
         "non_green_behavior",
-        "receipt_schema_available",
+        "execution_receipt_schema_available",
+        "cases_with_execution_receipts",
         "source_observable_comparison_available",
         "cases",
     ] {
@@ -2920,6 +5768,10 @@ fn ci_summary_serializes_with_the_fields_655_needs_and_is_written_to_a_stable_pa
             "CI summary is missing required top-level field `{field}`: {value}"
         );
     }
+    assert!(
+        value.get("receipt_schema_available").is_none(),
+        "schema v7 must not retain the ambiguous field that implied every row had a receipt"
+    );
 
     let cases = value
         .get("cases")
@@ -2936,6 +5788,7 @@ fn ci_summary_serializes_with_the_fields_655_needs_and_is_written_to_a_stable_pa
             "disposition_kind",
             "behavior_outcome",
             "receipt",
+            "identity_conformance",
             "overall_state",
         ] {
             assert!(
