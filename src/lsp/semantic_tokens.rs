@@ -216,11 +216,6 @@ struct Region {
 }
 
 impl Region {
-    /// Whether `offset` falls inside this region.
-    fn contains(&self, offset: usize) -> bool {
-        self.start <= offset && offset < self.end
-    }
-
     /// Byte width, used to prefer the most specific region covering an offset.
     fn width(&self) -> usize {
         self.end.saturating_sub(self.start)
@@ -1144,6 +1139,7 @@ mod tests {
         Ok(classified_ranges(source, Some(&program)))
     }
 
+    /// Pin each category's discriminant to its position in the published legend.
     #[test]
     fn legend_indices_match_the_category_discriminants() {
         // The client resolves `tokenType` by indexing into the published legend, so a category whose discriminant
@@ -1162,6 +1158,7 @@ mod tests {
         );
     }
 
+    /// A declaration's name takes the kind of the thing it declares, not a generic identifier colour.
     #[test]
     fn a_declaration_name_is_the_thing_it_declares() -> TestResult {
         // The problem statement's first complaint: a regex grammar cannot tell a declaration name from a local.
@@ -1172,6 +1169,7 @@ mod tests {
         Ok(())
     }
 
+    /// Type positions are decided by where the parser put them, never by how the name is capitalised.
     #[test]
     fn type_positions_come_from_the_ast_rather_than_from_spelling() -> TestResult {
         // `str` is lowercase and `Total` is PascalCase, so any spelling heuristic gets both of these backwards.
@@ -1184,6 +1182,7 @@ mod tests {
         Ok(())
     }
 
+    /// A model, a trait and an enum each highlight as their own kind rather than as one shared category.
     #[test]
     fn nominal_declarations_take_their_own_kinds() -> TestResult {
         let source = "model User:\n    id: int\n\ntrait Loggable:\n    pass\n\nenum Mode:\n    Fast\n";
@@ -1194,6 +1193,7 @@ mod tests {
         Ok(())
     }
 
+    /// Member access distinguishes a called method from a property that is only read.
     #[test]
     fn member_access_separates_a_called_method_from_a_read_property() -> TestResult {
         let source =
@@ -1204,6 +1204,7 @@ mod tests {
         Ok(())
     }
 
+    /// Every segment of a dotted path takes the meaning of whatever introduced the path.
     #[test]
     fn a_dotted_path_takes_the_meaning_of_what_introduced_it() -> TestResult {
         // Only the token to the immediate left is visible to the member-access rule, so every segment after the
@@ -1215,6 +1216,7 @@ mod tests {
         Ok(())
     }
 
+    /// Comment recovery claims only bytes no other layer owns, so a `#` inside a literal stays string content.
     #[test]
     fn a_hash_inside_a_string_does_not_start_a_comment() -> TestResult {
         // Comment recovery asks which bytes no other layer claimed rather than re-implementing string scanning,
@@ -1226,6 +1228,7 @@ mod tests {
         Ok(())
     }
 
+    /// An f-string's interpolated expressions are classified as code, not as string content.
     #[test]
     fn an_fstring_hole_is_classified_as_ordinary_incan() -> TestResult {
         // An f-string is how most Incan code produces output. Treating one as a flat string blob would leave the
@@ -1237,6 +1240,7 @@ mod tests {
         Ok(())
     }
 
+    /// A document mid-edit still receives highlighting from the token stream alone.
     #[test]
     fn a_document_that_does_not_parse_is_still_classified() -> TestResult {
         // The ordinary state of a document being edited. Without an AST the type and fragment layers are gone, but
@@ -1249,6 +1253,7 @@ mod tests {
         Ok(())
     }
 
+    /// Columns are reported in UTF-16 code units, as the protocol's default position encoding requires.
     #[test]
     fn columns_are_counted_in_utf16_units_not_bytes() -> TestResult {
         // The balloon is four bytes but two UTF-16 code units, so `suffix` sits at byte column 21 and UTF-16
@@ -1274,6 +1279,7 @@ mod tests {
         Ok(())
     }
 
+    /// Decoding the delta stream reproduces every classified position exactly.
     #[test]
     fn each_token_is_encoded_relative_to_the_one_before_it() -> TestResult {
         // Delta encoding is the protocol's wire format, so an absolute column leaking into the stream would shift
@@ -1305,6 +1311,7 @@ mod tests {
         Ok(())
     }
 
+    /// A range covering a newline becomes one token per line, since the protocol forbids a token that spans lines.
     #[test]
     fn a_multi_line_range_is_split_into_one_token_per_line() -> TestResult {
         // The protocol forbids a token that spans lines, so a triple-quoted string has to be emitted per line.
@@ -1328,6 +1335,7 @@ mod tests {
         Ok(())
     }
 
+    /// Composed ranges are disjoint and ordered, which delta encoding depends on.
     #[test]
     fn classified_ranges_never_overlap_and_stay_in_order() -> TestResult {
         // Composition happens over a byte map precisely so this holds. A client given overlapping tokens renders
@@ -1344,6 +1352,7 @@ mod tests {
         }
         Ok(())
     }
+    /// Classification stays a single pass; a per-range rescan fails this by a wide margin.
     #[test]
     fn classification_cost_grows_with_the_document_rather_than_its_square() -> TestResult {
         // Both defects this guards against were `O(ranges × document)` rescans, and both were invisible to every
