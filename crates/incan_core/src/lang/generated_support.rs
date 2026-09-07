@@ -12,6 +12,8 @@ pub struct GeneratedModuleSupport {
     pub generated_module: &'static str,
     /// Fully qualified macro path without the trailing `!`.
     pub macro_path: &'static str,
+    /// Source functions passed to the macro by their exact compiler-owned emitted projections.
+    pub macro_function_args: &'static [&'static str],
     /// Local generated items that must stay reachable because the macro expands against them.
     pub required_items: &'static [&'static str],
 }
@@ -68,6 +70,7 @@ const ORDINAL_MAP_MODULE_SUPPORTS: &[GeneratedModuleSupport] = &[GeneratedModule
     source_module: "std.collections",
     generated_module: "__incan_std.collections",
     macro_path: "incan_stdlib::__incan_ordinal_map_string_fast_impls",
+    macro_function_args: &["_missing_ordinal", "_ordinal_map_error"],
     required_items: &[
         "OrdinalMap",
         "OrdinalMapError",

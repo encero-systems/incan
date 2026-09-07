@@ -80,7 +80,31 @@ impl<'a> Lexer<'a> {
     ///
     /// Returns a vector of tokens on success, or a vector of errors on failure.
     /// The token stream always ends with an `Eof` token.
-    pub fn tokenize(mut self) -> Result<Vec<Token>, Vec<CompileError>> {
+    pub fn tokenize(self) -> Result<Vec<Token>, Vec<CompileError>> {
+        let (tokens, errors) = self.tokenize_tolerant();
+        if errors.is_empty() { Ok(tokens) } else { Err(errors) }
+    }
+
+    /// Tokenize the whole source, returning the produced tokens even when lexical errors occurred.
+    ///
+    /// [`Lexer::tokenize`] discards the token stream entirely on any error, which is the right contract for
+    /// ordinary compilation (a lex error means the file cannot proceed). RFC 081 (`#1023`) embedded fragments break
+    /// that assumption: a claimed submode's raw content (`;` in a style declaration, `` ` ``/`$` in a template
+    /// string, `!`/bare punctuation in markup text) is not meant to be tokenized as ordinary Incan at all, so the
+    /// *whole-file* upfront lex pass this compiler still runs before any parser/descriptor state exists (see
+    /// `parser::Parser::source`'s rustdoc) may collect spurious "unexpected character" errors purely from bytes
+    /// that a claimed embedded fragment will re-tokenize itself, directly from the raw source slice.
+    ///
+    /// Crucially, indentation (`Indent`/`Dedent`) tracking is column/whitespace-based and unaffected by unknown
+    /// characters mid-line, so the returned token stream still has *fully correct* suite boundaries even when it
+    /// has gaps where an unrecognized character produced no token. That is exactly what the embedded-fragment
+    /// mechanism needs: real `Indent`/`Dedent` spans to locate a fragment's raw byte range, and nothing else from
+    /// the interior of a claimed fragment's tokens.
+    ///
+    /// Callers that do not need embedded-fragment support should keep using [`Lexer::tokenize`]/[`lex`]: this
+    /// tolerant variant intentionally discards diagnostic information a caller must not silently drop for ordinary
+    /// Incan source.
+    pub(crate) fn tokenize_tolerant(mut self) -> (Vec<Token>, Vec<CompileError>) {
         while !self.is_at_end() {
             self.scan_token();
         }
@@ -99,11 +123,7 @@ impl<'a> Lexer<'a> {
             Span::new(self.current_pos, self.current_pos),
         ));
 
-        if self.errors.is_empty() {
-            Ok(self.tokens)
-        } else {
-            Err(self.errors)
-        }
+        (self.tokens, self.errors)
     }
 
     // ========================================================================
@@ -295,7 +315,7 @@ impl<'a> Lexer<'a> {
             }
 
             // Numbers
-            '0'..='9' => self.scan_number(start, c),
+            '0'..='9' => self.scan_number(start),
 
             // Identifiers and keywords
             _ if is_ident_start(c) => self.scan_identifier(start, c),
@@ -466,6 +486,21 @@ fn is_ident_continue(c: char) -> bool {
 #[tracing::instrument(skip_all, fields(source_len = source.len()))]
 pub fn lex(source: &str) -> Result<Vec<Token>, Vec<CompileError>> {
     Lexer::new(source).tokenize()
+}
+
+/// Lex `source`, returning the full token stream even if lexical errors occurred elsewhere in the file.
+///
+/// This exists for RFC 081 (`#1023`) descriptor-gated embedded fragments: see
+/// [`Lexer::tokenize_tolerant`] for why a caller that wants embedded-fragment support (via
+/// `parser::parse_with_source`) needs a token stream that survives interior "unexpected character" errors from a
+/// claimed fragment's raw content, rather than [`lex`]'s all-or-nothing contract. `Indent`/`Dedent` boundaries
+/// remain correct even where other tokens are missing.
+///
+/// Prefer [`lex`] for ordinary compilation: this variant intentionally discards diagnostic information a caller
+/// must not silently drop for source that has no embedded-fragment descriptors active.
+#[tracing::instrument(skip_all, fields(source_len = source.len()))]
+pub fn lex_tolerant(source: &str) -> (Vec<Token>, Vec<CompileError>) {
+    Lexer::new(source).tokenize_tolerant()
 }
 
 // ============================================================================
@@ -687,16 +722,36 @@ mod tests {
     #[test]
     #[allow(clippy::approx_constant)]
     fn test_numbers() {
-        let tokens = lex_ok("42 3.14 1_000_000 1e10 19.99d 1_000d 340282366920938463463374607431768211455");
+        let tokens = lex_ok("42 3.14 1_000_000 1e1_0 19.99d 1_000.5_0d 340282366920938463463374607431768211455");
         assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 42));
         assert!(matches!(&tokens[1].kind, TokenKind::Float(fl) if (fl.value - 3.14).abs() < 0.001));
         assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 1_000_000 && il.repr == "1_000_000"));
-        assert!(matches!(tokens[3].kind, TokenKind::Float(_)));
+        assert!(matches!(&tokens[3].kind, TokenKind::Float(fl) if fl.repr == "1e1_0" && fl.value == 1e10));
         assert!(matches!(&tokens[4].kind, TokenKind::Decimal(dl) if dl.body == "19.99" && dl.repr == "19.99d"));
-        assert!(matches!(&tokens[5].kind, TokenKind::Decimal(dl) if dl.body == "1000" && dl.repr == "1_000d"));
+        assert!(matches!(&tokens[5].kind, TokenKind::Decimal(dl) if dl.body == "1000.50" && dl.repr == "1_000.5_0d"));
         assert!(
             matches!(&tokens[6].kind, TokenKind::Int(il) if il.magnitude == u128::MAX && il.repr == "340282366920938463463374607431768211455")
         );
+    }
+
+    #[test]
+    fn numeric_literals_reject_invalid_separator_placement() {
+        for (source, expected_kind) in [
+            ("1__000", "integer"),
+            ("1_", "integer"),
+            ("1_.0", "float"),
+            ("1e_2", "float"),
+            ("1e2_", "float"),
+            ("1__000d", "decimal"),
+        ] {
+            let errors = lex_err(source);
+            assert_eq!(errors.len(), 1, "source `{source}`: {errors:?}");
+            assert!(
+                errors[0].message.to_ascii_lowercase().contains(expected_kind),
+                "source `{source}` should report an invalid {expected_kind} literal: {:?}",
+                errors[0]
+            );
+        }
     }
 
     #[test]

@@ -293,7 +293,7 @@ resolver = "2"
 [workspace.package]
 version = "${version}"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.98"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/encero-systems/incan"

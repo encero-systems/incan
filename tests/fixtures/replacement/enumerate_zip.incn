@@ -1,0 +1,30 @@
+"""Exercise the selected global enumerate and zip list contracts through one visible program stream."""
+
+
+def left_values() -> list[int]:
+    """Return the left list while exposing exactly when it was evaluated."""
+    println("left")
+    return [4, 5]
+
+
+def right_values() -> list[int]:
+    """Return the right list after its visible evaluation marker."""
+    println("right")
+    return [10, 20]
+
+
+def enumerate_zip_profile() -> int:
+    """Combine stored enumeration with shortest-side zip and retain their written evaluation order."""
+    values = left_values()
+    enumerated = enumerate(values)
+    enumerated_alias = enumerated
+    mut total = 0
+
+    for index, value in enumerated_alias:
+        total += index + value
+
+    for left, right in zip(left_values(), right_values()):
+        println("pair")
+        total += left + right
+
+    return total

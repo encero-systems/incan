@@ -1,0 +1,10 @@
+"""
+Producer library for the pro-level scriptkit embedded-fragment example (RFC 081, #1023).
+
+The consumer imports this library through `pub::scriptkit`, which activates the sibling vocab companion metadata
+during `incan build --lib`.
+"""
+
+pub def scriptkit_name() -> str:
+    """Return this library's display name, proving the import activated before any `pattern:`/`shape:` block runs."""
+    return "scriptkit"

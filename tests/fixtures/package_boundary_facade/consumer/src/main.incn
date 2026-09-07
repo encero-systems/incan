@@ -1,0 +1,16 @@
+from pub::facade import build, Item, Mode
+
+
+def describe(mode: Mode) -> str:
+  match mode:
+    case Mode.Fast:
+      return "fast"
+    case Mode.Slow:
+      return "slow"
+
+
+def main() -> None:
+  item = Item(label="boundary")
+  print(item.label)
+  print(build(1))
+  print(describe(Mode.Fast))

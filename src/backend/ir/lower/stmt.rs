@@ -10,13 +10,13 @@ use super::super::expr::{
     VarAccess, VarRefKind,
 };
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
-use super::super::types::IrType;
+use super::super::types::{IrType, isinstance_type_matches, isinstance_union_variant_indices};
 use super::super::{IrSpan, Mutability, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::typechecker::ResolvedOperatorKind;
-use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
+use incan_core::lang::builtins::BuiltinFnId;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::SurfaceStmtLoweringAction;
 
@@ -38,8 +38,7 @@ struct UnionIsInstanceTest<'a> {
     value: &'a Spanned<ast::Expr>,
     binding: String,
     union_ty: IrType,
-    member_ty: IrType,
-    variant_index: usize,
+    matching_variants: Vec<(usize, IrType)>,
     false_remainder: Option<UnionRemainder>,
 }
 
@@ -58,8 +57,7 @@ struct OptionNoneTest<'a> {
 struct OptionIsInstanceTest<'a> {
     value: &'a Spanned<ast::Expr>,
     binding: String,
-    member_ty: IrType,
-    true_pattern: IrPattern,
+    matching_variants: Vec<(IrPattern, IrType)>,
     false_remainder: Option<OptionRemainder>,
 }
 
@@ -83,6 +81,7 @@ struct IndependentIsInstanceChain {
 }
 
 impl AstLowering {
+    /// Resolve a named assignment to the nearest local, static binding, or source static target.
     fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
         let direct_static = self
             .type_info
@@ -98,20 +97,33 @@ impl AstLowering {
                 return AssignTarget::StaticBinding(name.to_string());
             }
             if scope_idx == 0 && direct_static {
-                return AssignTarget::Static(name.to_string());
+                return AssignTarget::Static {
+                    name: name.to_string(),
+                    reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+                };
             }
             return AssignTarget::Var(name.to_string());
         }
 
         if direct_static {
-            AssignTarget::Static(name.to_string())
+            AssignTarget::Static {
+                name: name.to_string(),
+                reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+            }
         } else {
             AssignTarget::Var(name.to_string())
         }
     }
 
+    /// Build a typed read of a source static binding.
     fn make_static_binding_expr(&self, name: String, ty: IrType) -> TypedExpr {
-        TypedExpr::new(IrExprKind::StaticBinding { name }, ty)
+        TypedExpr::new(
+            IrExprKind::StaticBinding {
+                name,
+                reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+            },
+            ty,
+        )
     }
 
     /// Register all loop bindings before lowering the loop body so body reads resolve to local variables.
@@ -187,11 +199,21 @@ impl AstLowering {
             .transpose()
     }
 
-    /// Resolve the type argument from an `isinstance(value, Type)` condition.
-    fn resolve_isinstance_target_type(&self, expr: &Spanned<ast::Expr>) -> Option<IrType> {
-        match &expr.node {
-            ast::Expr::Ident(name) => Some(self.lower_type(&ast::Type::Simple(name.clone()))),
-            ast::Expr::Paren(inner) => self.resolve_isinstance_target_type(inner),
+    /// Read the typechecker's retained target for one compiler-owned `isinstance` condition.
+    fn resolved_isinstance_target_type(&self, condition: &Spanned<ast::Expr>) -> Option<IrType> {
+        let type_info = self.type_info.as_ref()?;
+        if type_info.resolved_builtin_call(condition.span) != Some(BuiltinFnId::IsInstance) {
+            return None;
+        }
+        type_info
+            .isinstance_target(condition.span)
+            .map(|target| self.lower_resolved_type(&target.ty))
+    }
+
+    /// Return the value arguments of either source spelling for one checked builtin call.
+    fn checked_isinstance_condition_args(condition: &Spanned<ast::Expr>) -> Option<&[ast::CallArg]> {
+        match &condition.node {
+            ast::Expr::Call(_, _, args) | ast::Expr::MethodCall(_, _, _, args) => Some(args),
             _ => None,
         }
     }
@@ -207,22 +229,13 @@ impl AstLowering {
 
     /// Return whether a known concrete value can satisfy an `isinstance(..., T)` target.
     fn isinstance_member_matches(member: &IrType, target_ty: &IrType) -> bool {
-        member == target_ty
-            || matches!(
-                (member, target_ty),
-                (IrType::String, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
-            )
+        isinstance_type_matches(member, target_ty)
     }
 
     /// Extract a union-aware `isinstance` test from an `if` condition.
     fn union_isinstance_test<'a>(&self, condition: &'a Spanned<ast::Expr>) -> Option<UnionIsInstanceTest<'a>> {
-        let ast::Expr::Call(callee, _, args) = &condition.node else {
-            return None;
-        };
-        let ast::Expr::Ident(call_name) = &callee.node else {
-            return None;
-        };
-        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+        let args = Self::checked_isinstance_condition_args(condition)?;
+        if args.len() != 2 {
             return None;
         }
 
@@ -233,19 +246,22 @@ impl AstLowering {
         let ast::Expr::Ident(binding) = &value.node else {
             return None;
         };
-        let target = match &args[1] {
-            ast::CallArg::Positional(target) => target,
+        match &args[1] {
+            ast::CallArg::Positional(_) => {}
             _ => return None,
-        };
-        let target_ty = self.resolve_isinstance_target_type(target)?;
+        }
+        let target_ty = self.resolved_isinstance_target_type(condition)?;
         let union_ty = self.lookup_var(binding);
-        let variant_index = union_ty.union_variant_index_for_member(&target_ty)?;
+        let variant_indices = isinstance_union_variant_indices(&union_ty, &target_ty)?;
         let members = union_ty.union_members()?;
-        let member_ty = members.get(variant_index).cloned().unwrap_or(target_ty);
+        let matching_variants = variant_indices
+            .iter()
+            .filter_map(|index| members.get(*index).cloned().map(|member_ty| (*index, member_ty)))
+            .collect::<Vec<_>>();
         let remaining: Vec<_> = members
             .iter()
             .enumerate()
-            .filter(|(index, _)| *index != variant_index)
+            .filter(|(index, _)| !variant_indices.contains(index))
             .map(|(index, member_ty)| (index, member_ty.clone()))
             .collect();
         let false_remainder = if remaining.is_empty() {
@@ -262,8 +278,7 @@ impl AstLowering {
             value,
             binding: binding.clone(),
             union_ty,
-            member_ty,
-            variant_index,
+            matching_variants,
             false_remainder,
         })
     }
@@ -275,14 +290,10 @@ impl AstLowering {
     }
 
     /// Return the narrowed binding name from a source-level `isinstance(binding, T)` condition.
-    fn isinstance_condition_binding(condition: &Spanned<ast::Expr>) -> Option<&str> {
-        let ast::Expr::Call(callee, _, args) = &condition.node else {
-            return None;
-        };
-        let ast::Expr::Ident(call_name) = &callee.node else {
-            return None;
-        };
-        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+    fn isinstance_condition_binding<'a>(&self, condition: &'a Spanned<ast::Expr>) -> Option<&'a str> {
+        self.resolved_isinstance_target_type(condition)?;
+        let args = Self::checked_isinstance_condition_args(condition)?;
+        if args.len() != 2 {
             return None;
         }
         let ast::CallArg::Positional(value) = &args[0] else {
@@ -347,7 +358,7 @@ impl AstLowering {
         {
             return None;
         }
-        let binding = Self::isinstance_condition_binding(first_condition)?;
+        let binding = self.isinstance_condition_binding(first_condition)?;
         let mut elif_branches = Vec::new();
         let mut consumed = 1;
 
@@ -361,7 +372,7 @@ impl AstLowering {
             let ast::Condition::Expr(next_condition) = &next_if.condition else {
                 break;
             };
-            if Self::isinstance_condition_binding(next_condition) != Some(binding) {
+            if self.isinstance_condition_binding(next_condition) != Some(binding) {
                 break;
             }
             if !Self::statements_definitely_return(&next_if.then_body) {
@@ -408,13 +419,8 @@ impl AstLowering {
 
     /// Extract `isinstance(value, T)` for an option-typed local whose payload is a union or direct member.
     fn option_isinstance_test<'a>(&self, condition: &'a Spanned<ast::Expr>) -> Option<OptionIsInstanceTest<'a>> {
-        let ast::Expr::Call(callee, _, args) = &condition.node else {
-            return None;
-        };
-        let ast::Expr::Ident(call_name) = &callee.node else {
-            return None;
-        };
-        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+        let args = Self::checked_isinstance_condition_args(condition)?;
+        if args.len() != 2 {
             return None;
         }
 
@@ -425,23 +431,42 @@ impl AstLowering {
         let ast::Expr::Ident(binding) = &value.node else {
             return None;
         };
-        let target = match &args[1] {
-            ast::CallArg::Positional(target) => target,
+        match &args[1] {
+            ast::CallArg::Positional(_) => {}
             _ => return None,
-        };
-        let target_ty = self.resolve_isinstance_target_type(target)?;
+        }
+        let target_ty = self.resolved_isinstance_target_type(condition)?;
         let IrType::Option(inner_ty) = self.lookup_var(binding) else {
             return None;
         };
 
-        if let Some(variant_index) = inner_ty.union_variant_index_for_member(&target_ty) {
+        if let Some(variant_indices) = isinstance_union_variant_indices(inner_ty.as_ref(), &target_ty) {
             let members = inner_ty.union_members()?;
             let union_name = inner_ty.union_type_name()?;
-            let member_ty = members.get(variant_index).cloned().unwrap_or(target_ty);
+            let matching_variants = variant_indices
+                .iter()
+                .filter_map(|index| {
+                    let member_ty = members.get(*index)?.clone();
+                    Some((
+                        IrPattern::Enum {
+                            name: "Option".to_string(),
+                            variant: constructors::as_str(ConstructorId::Some).to_string(),
+                            fields: vec![IrPattern::Enum {
+                                name: union_name.clone(),
+                                variant: inner_ty.union_variant_path(*index).unwrap_or_else(|| {
+                                    format!("{}::{}", union_name, IrType::union_variant_name(*index))
+                                }),
+                                fields: vec![IrPattern::Var(binding.clone())],
+                            }],
+                        },
+                        member_ty,
+                    ))
+                })
+                .collect::<Vec<_>>();
             let remaining: Vec<_> = members
                 .iter()
                 .enumerate()
-                .filter(|(index, _)| *index != variant_index)
+                .filter(|(index, _)| !variant_indices.contains(index))
                 .map(|(index, member_ty)| {
                     (
                         IrPattern::Enum {
@@ -475,18 +500,7 @@ impl AstLowering {
             return Some(OptionIsInstanceTest {
                 value,
                 binding: binding.clone(),
-                member_ty,
-                true_pattern: IrPattern::Enum {
-                    name: "Option".to_string(),
-                    variant: constructors::as_str(ConstructorId::Some).to_string(),
-                    fields: vec![IrPattern::Enum {
-                        name: union_name.clone(),
-                        variant: inner_ty.union_variant_path(variant_index).unwrap_or_else(|| {
-                            format!("{}::{}", union_name, IrType::union_variant_name(variant_index))
-                        }),
-                        fields: vec![IrPattern::Var(binding.clone())],
-                    }],
-                },
+                matching_variants,
                 false_remainder,
             });
         }
@@ -495,8 +509,7 @@ impl AstLowering {
             return Some(OptionIsInstanceTest {
                 value,
                 binding: binding.clone(),
-                member_ty: inner_ty.as_ref().clone(),
-                true_pattern: Self::some_pattern(binding.clone()),
+                matching_variants: vec![(Self::some_pattern(binding.clone()), inner_ty.as_ref().clone())],
                 false_remainder: Some(OptionRemainder {
                     ty: IrType::Unit,
                     some_variants: Vec::new(),
@@ -596,13 +609,8 @@ impl AstLowering {
         binding: &str,
         member_ty: &IrType,
     ) -> Option<bool> {
-        let ast::Expr::Call(callee, _, args) = &condition.node else {
-            return None;
-        };
-        let ast::Expr::Ident(call_name) = &callee.node else {
-            return None;
-        };
-        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+        let args = Self::checked_isinstance_condition_args(condition)?;
+        if args.len() != 2 {
             return None;
         }
         let ast::CallArg::Positional(value) = &args[0] else {
@@ -614,10 +622,10 @@ impl AstLowering {
         if value_name != binding {
             return None;
         }
-        let ast::CallArg::Positional(target) = &args[1] else {
+        let ast::CallArg::Positional(_) = &args[1] else {
             return None;
         };
-        let target_ty = self.resolve_isinstance_target_type(target)?;
+        let target_ty = self.resolved_isinstance_target_type(condition)?;
         Some(Self::isinstance_member_matches(member_ty, &target_ty))
     }
 
@@ -766,37 +774,37 @@ impl AstLowering {
 
         if let Some(test) = self.union_isinstance_test(condition) {
             let scrutinee = self.lower_expr_spanned(test.value)?;
-            let then_body = {
-                self.push_scope();
-                self.define_local_binding(test.binding.clone(), test.member_ty.clone(), false);
-                let lowered = self.lower_statements(then_body)?;
-                self.pop_scope();
-                lowered
-            };
             let union_name = test
                 .union_ty
                 .union_type_name()
                 .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
-            let variant = test
-                .union_ty
-                .union_variant_path(test.variant_index)
-                .unwrap_or_else(|| format!("{}::{}", union_name, IrType::union_variant_name(test.variant_index)));
-            let mut arms = vec![MatchArm {
-                pattern: IrPattern::Enum {
-                    name: union_name.clone(),
-                    variant,
-                    fields: vec![IrPattern::Var(test.binding.clone())],
-                },
-                bindings: Vec::new(),
-                guard: None,
-                body: TypedExpr::new(
-                    IrExprKind::Block {
-                        stmts: then_body,
-                        value: None,
+            let mut arms = Vec::with_capacity(test.matching_variants.len());
+            for (variant_index, member_ty) in &test.matching_variants {
+                self.push_scope();
+                self.define_local_binding(test.binding.clone(), member_ty.clone(), false);
+                let lowered_then_body = self.lower_statements(then_body)?;
+                self.pop_scope();
+                let variant = test
+                    .union_ty
+                    .union_variant_path(*variant_index)
+                    .unwrap_or_else(|| format!("{}::{}", union_name, IrType::union_variant_name(*variant_index)));
+                arms.push(MatchArm {
+                    pattern: IrPattern::Enum {
+                        name: union_name.clone(),
+                        variant,
+                        fields: vec![IrPattern::Var(test.binding.clone())],
                     },
-                    IrType::Unit,
-                ),
-            }];
+                    bindings: Vec::new(),
+                    guard: None,
+                    body: TypedExpr::new(
+                        IrExprKind::Block {
+                            stmts: lowered_then_body,
+                            value: None,
+                        },
+                        IrType::Unit,
+                    ),
+                });
+            }
 
             if let Some(false_remainder) = &test.false_remainder {
                 for (variant_index, member_ty) in &false_remainder.variants {
@@ -816,25 +824,25 @@ impl AstLowering {
 
         if let Some(test) = self.option_isinstance_test(condition) {
             let scrutinee = self.lower_expr_spanned(test.value)?;
-            let then_body = {
+            let mut arms = Vec::with_capacity(test.matching_variants.len());
+            for (pattern, member_ty) in &test.matching_variants {
                 self.push_scope();
-                self.define_local_binding(test.binding.clone(), test.member_ty.clone(), false);
-                let lowered = self.lower_statements(then_body)?;
+                self.define_local_binding(test.binding.clone(), member_ty.clone(), false);
+                let lowered_then_body = self.lower_statements(then_body)?;
                 self.pop_scope();
-                lowered
-            };
-            let mut arms = vec![MatchArm {
-                pattern: test.true_pattern,
-                bindings: Vec::new(),
-                guard: None,
-                body: TypedExpr::new(
-                    IrExprKind::Block {
-                        stmts: then_body,
-                        value: None,
-                    },
-                    IrType::Unit,
-                ),
-            }];
+                arms.push(MatchArm {
+                    pattern: pattern.clone(),
+                    bindings: Vec::new(),
+                    guard: None,
+                    body: TypedExpr::new(
+                        IrExprKind::Block {
+                            stmts: lowered_then_body,
+                            value: None,
+                        },
+                        IrType::Unit,
+                    ),
+                });
+            }
 
             if let Some(false_remainder) = &test.false_remainder {
                 for (pattern, member_ty) in &false_remainder.some_variants {
@@ -1011,7 +1019,7 @@ impl AstLowering {
 
                         if var_exists_in_scope {
                             let target = self.resolve_named_assign_target(&a.name);
-                            if matches!(target, AssignTarget::Static(_)) {
+                            if matches!(target, AssignTarget::Static { .. }) {
                                 self.update_local_callable_signature(&a.name, local_callable_signature);
                                 return Ok(IrStmt::new(IrStmtKind::Assign {
                                     target,
@@ -1117,11 +1125,18 @@ impl AstLowering {
                     .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
                     && resolved_operator.kind == ResolvedOperatorKind::IndexAssign
                 {
+                    let dispatch = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.resolved_method_call(stmt_span).cloned())
+                        .map(|resolved| self.lower_resolved_method_dispatch(resolved.dispatch, &object));
+                    let (method, dispatch) =
+                        self.project_resolved_method_target(stmt_span, &resolved_operator.method, &object, dispatch);
                     IrStmtKind::Expr(TypedExpr::new(
                         IrExprKind::MethodCall {
                             receiver: Box::new(object),
-                            method: resolved_operator.method,
-                            dispatch: None,
+                            method,
+                            dispatch,
                             type_args: Vec::new(),
                             args: vec![
                                 IrCallArg {
@@ -1465,9 +1480,13 @@ impl AstLowering {
                 let assign_target = self.resolve_named_assign_target(&ca.name);
                 let lhs_ty = self.lookup_var(&ca.name);
                 let lhs_expr = match &assign_target {
-                    AssignTarget::Static(_) => {
-                        TypedExpr::new(IrExprKind::StaticRead { name: ca.name.clone() }, lhs_ty.clone())
-                    }
+                    AssignTarget::Static { reference_kind, .. } => TypedExpr::new(
+                        IrExprKind::StaticRead {
+                            name: ca.name.clone(),
+                            reference_kind: *reference_kind,
+                        },
+                        lhs_ty.clone(),
+                    ),
                     AssignTarget::StaticBinding(_) => TypedExpr::new(
                         IrExprKind::Var {
                             name: ca.name.clone(),
@@ -1494,11 +1513,18 @@ impl AstLowering {
                     .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
                     && resolved_operator.kind == ResolvedOperatorKind::Binary
                 {
+                    let dispatch = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.resolved_method_call(stmt_span).cloned())
+                        .map(|resolved| self.lower_resolved_method_dispatch(resolved.dispatch, &lhs_expr));
+                    let (method, dispatch) =
+                        self.project_resolved_method_target(stmt_span, &resolved_operator.method, &lhs_expr, dispatch);
                     let method_call = TypedExpr::new(
                         IrExprKind::MethodCall {
                             receiver: Box::new(lhs_expr),
-                            method: resolved_operator.method,
-                            dispatch: None,
+                            method,
+                            dispatch,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,
@@ -1954,7 +1980,7 @@ impl AstLowering {
     ) -> Option<AssertIsPattern<'a>> {
         match &pattern.node {
             ast::Pattern::Constructor(name, args)
-                if name == constructors::as_str(ConstructorId::None) && args.is_empty() =>
+                if name.node == constructors::as_str(ConstructorId::None) && args.is_empty() =>
             {
                 Some(AssertIsPattern {
                     kind: AssertIsPatternKind::None,
@@ -1963,7 +1989,7 @@ impl AstLowering {
                 })
             }
             ast::Pattern::Constructor(name, args) => {
-                let kind = match name.as_str() {
+                let kind = match name.node.as_str() {
                     n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
                     n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
                     n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,
@@ -2013,6 +2039,27 @@ impl AstLowering {
                 | ast::CallArg::KeywordUnpack(expr) => self.count_expr_ident_reads(&expr.node, counts),
             }
         }
+    }
+
+    /// Count identifier reads in one `match` arm without conflating it with mutually exclusive sibling arms.
+    ///
+    /// The enclosing statement-block counter deliberately includes every arm as a conservative syntactic total.
+    /// Match lowering uses this per-arm view to decide whether a value may move inside the selected arm while still
+    /// restoring the all-arms total before lowering source that follows the match.
+    pub(super) fn count_match_arm_ident_reads(&self, arm: &ast::MatchArm) -> HashMap<String, usize> {
+        let mut counts = HashMap::new();
+        if let Some(guard) = &arm.guard {
+            self.count_expr_ident_reads(&guard.node, &mut counts);
+        }
+        match &arm.body {
+            ast::MatchBody::Expr(expr) => self.count_expr_ident_reads(&expr.node, &mut counts),
+            ast::MatchBody::Block(stmts) => {
+                for stmt in stmts {
+                    self.count_statement_ident_reads(&stmt.node, &mut counts);
+                }
+            }
+        }
+        counts
     }
 
     /// Count the number of ident reads in a statement.
@@ -2311,6 +2358,52 @@ impl AstLowering {
                 }
                 for stmt in &block.body {
                     self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
+            ast::Expr::Embedded(fragment) => {
+                for node in &fragment.nodes {
+                    self.count_embedded_node_ident_reads(&node.node, counts);
+                }
+            }
+        }
+    }
+
+    /// Count identifier reads inside the expression holes nested in one embedded-fragment node (RFC 081, `#1023`).
+    ///
+    /// Mirrors `count_expr_ident_reads`'s recursive traversal shape for `EmbeddedNode`: structural node kinds with
+    /// no possible nested hole are no-ops, `Hole` recurses into ordinary `count_expr_ident_reads`, and container
+    /// kinds (`Element`, `StyleRule`, `Declaration`) recurse into their children/attrs/selectors/declarations. This
+    /// keeps move/borrow/clone planning correct for identifiers referenced only from inside a fragment's holes.
+    fn count_embedded_node_ident_reads(&self, node: &ast::EmbeddedNode, counts: &mut HashMap<String, usize>) {
+        match node {
+            ast::EmbeddedNode::Text(_)
+            | ast::EmbeddedNode::EntityRef(_)
+            | ast::EmbeddedNode::Comment(_)
+            | ast::EmbeddedNode::Value(_)
+            | ast::EmbeddedNode::Regex { .. }
+            | ast::EmbeddedNode::TypeShape(_) => {}
+            ast::EmbeddedNode::Hole(expr) => self.count_expr_ident_reads(&expr.node, counts),
+            ast::EmbeddedNode::Element(element) => {
+                for attr in &element.attrs {
+                    if let Some(value) = &attr.value {
+                        self.count_embedded_node_ident_reads(&value.node, counts);
+                    }
+                }
+                for child in &element.children {
+                    self.count_embedded_node_ident_reads(&child.node, counts);
+                }
+            }
+            ast::EmbeddedNode::StyleRule(rule) => {
+                for selector in &rule.selectors {
+                    self.count_embedded_node_ident_reads(&selector.node, counts);
+                }
+                for declaration in &rule.declarations {
+                    self.count_embedded_node_ident_reads(&declaration.node, counts);
+                }
+            }
+            ast::EmbeddedNode::Declaration(declaration) => {
+                for value in &declaration.value {
+                    self.count_embedded_node_ident_reads(&value.node, counts);
                 }
             }
         }

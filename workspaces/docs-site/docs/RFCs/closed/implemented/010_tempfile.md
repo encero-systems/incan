@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 019 (runner testing), RFC 023 (stdlib namespacing and compiler handoff), RFC 055 (`std.fs` path-centric filesystem APIs), RFC 056 (`std.io` in-memory byte streams)
 - **Issue:** [#79](https://github.com/encero-systems/incan/issues/79)
-- **RFC PR:** —
+- **RFC PR:** [#517](https://github.com/encero-systems/incan/pull/517)
 - **Written against:** v0.1
 - **Shipped in:** v0.3
 

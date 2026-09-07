@@ -52,6 +52,8 @@ pub enum ErrorArgs<'a> {
     CannotConvertToInt { input: &'a str },
     /// `ValueError: cannot convert '{input}' to float`
     CannotConvertToFloat { input: &'a str },
+    /// `ValueError: non-finite float cannot initialize exact {target}`
+    NonFiniteExactFloat { target: &'static str },
     /// `TypeError: Object of type {type_name} is not JSON serializable`
     ///
     /// Mirrors Python's `json.dumps(...)` error.
@@ -144,6 +146,12 @@ impl<'a> IncanError<'a> {
         Self::new(ErrorKind::ValueError, ErrorArgs::CannotConvertToFloat { input })
     }
 
+    /// `ValueError: non-finite float cannot initialize exact {target}`
+    #[inline]
+    pub const fn non_finite_exact_float(target: &'static str) -> Self {
+        Self::new(ErrorKind::ValueError, ErrorArgs::NonFiniteExactFloat { target })
+    }
+
     /// `TypeError: Object of type {type_name} is not JSON serializable`
     ///
     /// Mirrors Python's `json.dumps(...)` error.
@@ -177,6 +185,9 @@ impl fmt::Display for IncanError<'_> {
             }
             ErrorArgs::CannotConvertToInt { input } => write!(f, "{kind}: cannot convert '{input}' to int"),
             ErrorArgs::CannotConvertToFloat { input } => write!(f, "{kind}: cannot convert '{input}' to float"),
+            ErrorArgs::NonFiniteExactFloat { target } => {
+                write!(f, "{kind}: non-finite float cannot initialize exact {target}")
+            }
             ErrorArgs::JsonNotSerializable { type_name } => {
                 write!(f, "{kind}: Object of type {type_name} is not JSON serializable")
             }
@@ -290,6 +301,10 @@ mod tests {
         assert_eq!(
             IncanError::cannot_convert_to_float("123x").to_string(),
             "ValueError: cannot convert '123x' to float"
+        );
+        assert_eq!(
+            IncanError::non_finite_exact_float("f64").to_string(),
+            "ValueError: non-finite float cannot initialize exact f64"
         );
     }
 

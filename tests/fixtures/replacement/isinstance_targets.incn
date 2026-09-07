@@ -1,0 +1,89 @@
+"""Exercise the checked primitive `isinstance` target profile through one visible program stream."""
+
+
+type Text = str
+
+
+def int_or_str(use_first: bool) -> Union[int, str]:
+    """Choose one member of the checked integer-or-string union."""
+    if use_first:
+        return 7
+    return "text"
+
+
+def bool_or_str(use_first: bool) -> Union[bool, str]:
+    """Choose one member of the checked boolean-or-string union."""
+    if use_first:
+        return true
+    return "text"
+
+
+def float_or_str(use_first: bool) -> Union[float, str]:
+    """Choose one member of the checked float-or-string union."""
+    if use_first:
+        return 1.5
+    return "text"
+
+
+def direct_int(value: Union[int, str]) -> bool:
+    """Check the integer target through the explicit standard-library spelling."""
+    return std.builtins.isinstance(value, int)
+
+
+def literal_str_is_str() -> bool:
+    """Check a directly written string against an alias-expanded primitive target."""
+    return isinstance("static text", Text)
+
+
+def isinstance_targets() -> bool:
+    """Count the admitted true and false target checks and emit one marker."""
+    mut matched = 0
+
+    int_value = int_or_str(true)
+    if isinstance(int_value, int):
+        matched += 1
+    if isinstance(int_value, str):
+        return false
+    if direct_int(int_value):
+        matched += 1
+
+    str_value = int_or_str(false)
+    if isinstance(str_value, str):
+        matched += 1
+    if isinstance(str_value, int):
+        return false
+    if direct_int(str_value):
+        return false
+    matched += 1
+
+    if literal_str_is_str():
+        matched += 1
+    else:
+        return false
+
+    bool_value = bool_or_str(true)
+    if isinstance(bool_value, bool):
+        matched += 1
+    if isinstance(bool_value, str):
+        return false
+
+    bool_false_value = bool_or_str(false)
+    if isinstance(bool_false_value, str):
+        matched += 1
+    if isinstance(bool_false_value, bool):
+        return false
+
+    float_value = float_or_str(true)
+    if isinstance(float_value, float):
+        matched += 1
+    if isinstance(float_value, str):
+        return false
+
+    float_false_value = float_or_str(false)
+    if isinstance(float_false_value, str):
+        matched += 1
+    if isinstance(float_false_value, float):
+        return false
+
+    println("isinstance targets")
+    return matched == 9

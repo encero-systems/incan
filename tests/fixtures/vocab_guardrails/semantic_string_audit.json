@@ -189,14 +189,14 @@
     {
       "path": "src/backend/ir/lower/decl/mod.rs",
       "category": "derive and checked registry lowering compatibility",
-      "expected_count": 3,
-      "expected_fingerprint": "0xcfe26b0d4677ee08"
+      "expected_count": 2,
+      "expected_fingerprint": "0x5f09539278cec8e5"
     },
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
       "category": "public dependency call, checked C string construction, default lowering, and assert-raises policy",
-      "expected_count": 5,
-      "expected_fingerprint": "0x4302ea99a4296bec"
+      "expected_count": 7,
+      "expected_fingerprint": "0xdad31d3b8cc3bb76"
     },
     {
       "path": "src/backend/ir/lower/expr/mod.rs",
@@ -259,34 +259,40 @@
       "expected_fingerprint": "0x4d4acefa2e275e14"
     },
     {
+      "path": "src/frontend/typechecker/canonical_identity_tests.rs",
+      "category": "RFC 120 canonical identity conformance assertions",
+      "expected_count": 35,
+      "expected_fingerprint": "0x6564955906f965ce"
+    },
+    {
       "path": "src/frontend/typechecker/check_decl.rs",
       "category": "declaration-level stdlib, derive, and checked registry compatibility",
-      "expected_count": 20,
-      "expected_fingerprint": "0x4d8a9ca24e3309e1"
+      "expected_count": 24,
+      "expected_fingerprint": "0xb3c5a0a6bf8d7881"
     },
     {
       "path": "src/frontend/typechecker/check_expr/access.rs",
       "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, and C output-slot boundary classification",
-      "expected_count": 49,
-      "expected_fingerprint": "0xfe36716b852b4358"
+      "expected_count": 51,
+      "expected_fingerprint": "0x880792af30221e0b"
     },
     {
       "path": "src/frontend/typechecker/check_expr/basics.rs",
       "category": "basic expression Rust/stdlib escape compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0xffdd8d7881dba8e2"
+      "expected_count": 4,
+      "expected_fingerprint": "0xf0b6fe14e6b2b9a8"
     },
     {
       "path": "src/frontend/typechecker/check_expr/calls.rs",
       "category": "enum constructor, public-module member, and checked C output/string-constructor compatibility",
-      "expected_count": 15,
-      "expected_fingerprint": "0xa64fc634b9a8b2cb"
+      "expected_count": 16,
+      "expected_fingerprint": "0x9a95063b42aca948"
     },
     {
       "path": "src/frontend/typechecker/check_expr/calls/constructors.rs",
       "category": "constructor named-argument compatibility",
       "expected_count": 3,
-      "expected_fingerprint": "0xa6598f835bad7c2e"
+      "expected_fingerprint": "0x90ea26ed761933dc"
     },
     {
       "path": "src/frontend/typechecker/check_expr/calls/rust_boundary.rs",
@@ -321,8 +327,8 @@
     {
       "path": "src/frontend/typechecker/collect/decorators.rs",
       "category": "decorator and Rust module collection compatibility",
-      "expected_count": 3,
-      "expected_fingerprint": "0x380186b8c04e5753"
+      "expected_count": 2,
+      "expected_fingerprint": "0xcfcbc25e50c8fd42"
     },
     {
       "path": "src/frontend/typechecker/collect/stdlib_imports.rs",
@@ -339,14 +345,14 @@
     {
       "path": "src/frontend/typechecker/mod.rs",
       "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
-      "expected_count": 41,
-      "expected_fingerprint": "0xee39ad49bb04c5da"
+      "expected_count": 42,
+      "expected_fingerprint": "0x1b2bbba180ba3e3d"
     },
     {
       "path": "src/frontend/typechecker/stdlib_loader.rs",
       "category": "stdlib loader primitive compatibility",
-      "expected_count": 6,
-      "expected_fingerprint": "0x12908cd63ee9cda3"
+      "expected_count": 7,
+      "expected_fingerprint": "0x892edd99ae071c7f"
     },
     {
       "path": "src/frontend/typechecker/validate_rust_module.rs",

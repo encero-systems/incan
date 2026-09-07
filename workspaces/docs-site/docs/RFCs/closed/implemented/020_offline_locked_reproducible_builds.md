@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 013 (dependency + lockfile direction), RFC 015 (project lifecycle CLI), RFC 019 (test runner + CLI)
 - **Issue:** https://github.com/encero-systems/incan/issues/38
-- **RFC PR:** —
+- **RFC PR:** [#469](https://github.com/encero-systems/incan/pull/469)
 - **Written against:** v0.1
 - **Shipped in:** v0.3
 

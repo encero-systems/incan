@@ -68,7 +68,7 @@ make release
 
 ## Rust backend provisioning fails
 
-The direct installer and pipx adapter provision stable Rust through `rustup` when `rustup`, `cargo`, or `rustc` are missing, then run `rustup target add wasm32-wasip1`. The npm adapter does not run lifecycle scripts or bootstrap Rust during package installation. If installer-backed provisioning fails on a fresh machine, check whether your network can reach the rustup bootstrap script and Rust distribution servers:
+The direct installer and pipx adapter provision the release's pinned Rust 1.98.0 toolchain through `rustup` when `rustup`, `cargo`, or `rustc` are missing, then run `rustup target add wasm32-wasip1`. The npm adapter does not run lifecycle scripts or bootstrap Rust during package installation. If installer-backed provisioning fails on a fresh machine, check whether your network can reach the rustup bootstrap script and Rust distribution servers:
 
 ```bash
 command -v rustup || true

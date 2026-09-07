@@ -82,7 +82,7 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
 
 5. **Tooling baked in**
    - `rustfmt` and `clippy` are non-negotiable in CI; tune lints to project needs.
-   - Dependency hygiene: `cargo-audit`, `cargo-deny`, `cargo-udeps`; pin MSRV.
+   - Dependency hygiene: `cargo-audit`, `cargo-deny`, `cargo-udeps`; pin the supported Rust release.
    - Tests include unit, integration, **doctests**, property-based (`proptest`) for parsers.
 
 6. **Safety & invariants**
@@ -105,7 +105,7 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
 - ✅ **Ownership**: Minimal clones; predictable lifetimes; borrowing favored.
 - ✅ **Tests**: Unit + integration + doctests exist; critical logic property-tested.
 - ✅ **Docs**: `rustdoc` examples compile; `README` shows usage; `SAFETY:` annotations present where needed.
-- ✅ **CI**: Audit, deny, udeps, MSRV checks run; semantic versioning for releases.
+- ✅ **CI**: Audit, deny, and udeps checks run on the pinned Rust release; semantic versioning for releases.
 - ✅ **Async/concurrency**: Structured, cancellable; no hidden global mutable state.
 
 ---
@@ -224,7 +224,7 @@ max_width = 120
 ```toml
 [package]
 edition = "2024"
-rust-version = "1.85" # MSRV pinned (keep in sync with CI)
+rust-version = "1.98" # Keep the workspace declaration aligned with pinned Rust 1.98.0 CI.
 
 [dependencies]
 thiserror = "1"
@@ -244,7 +244,7 @@ cargo deny check
 cargo +nightly udeps --all-targets
 ```
 
-Note: MSRV is enforced via CI running build/test with a pinned toolchain.
+Note: Incan supports Rust 1.98.0 for compiler builds. CI pins that exact release; Cargo's `rust-version` field records the matching `1.98` language/toolchain floor because Cargo models a minimum rather than an exact-only version.
 
 ---
 

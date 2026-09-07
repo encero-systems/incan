@@ -61,8 +61,7 @@ pub use selection::{
 // Bounded source-observable shadow comparison between the two backends (#1146)
 pub use shadow::{
     LegacyExecutionAuthority, RuntimeFailureClass, SHADOW_COMPARISON_PROFILE_ID, ShadowComparison,
-    ShadowComparisonProfile, ShadowUnavailable, SourceObservable, compare_source_observable,
-    legacy_oven::LegacyOvenCapability,
+    ShadowComparisonProfile, ShadowUnavailable, SourceObservable, legacy_oven::LegacyOvenCapability,
 };
 
 // Project generation (public API)

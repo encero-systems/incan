@@ -1,0 +1,34 @@
+"""Exercise ordinary string methods and their Unicode, empty-input, and separator behavior."""
+
+
+def string_helpers() -> bool:
+    """Check the shared string semantics while leaving one ordinary program line for comparison."""
+    assert "Straße".upper() == "STRASSE"
+    assert "HÉLLO".lower() == "héllo"
+    assert " hello ".strip() == "hello"
+    assert "abcabc".replace("ab", "xy") == "xycxyc"
+    assert "é".replace("", "-") == "-é-"
+    assert ", ".join(["α", "β"]) == "α, β"
+
+    empty_names: list[str] = []
+    assert ", ".join(empty_names) == ""
+    assert "|".join("α,β,,γ".split(",")) == "α|β||γ"
+
+    # An omitted separator keeps the original string; it is not whitespace splitting.
+    assert "|".join(" a b ".split()) == " a b "
+    assert "|".join("é".split("")) == "|é|"
+    assert "héllo".contains("éll")
+    assert "héllo".contains("")
+    assert not "héllo".contains("éllx")
+    assert "éll" in "héllo"
+    assert "" in ""
+    assert not ("éllx" in "héllo")
+    first = "é".upper()
+    second = "猫".lower()
+    assert first != second
+    assert first < second
+    assert first <= second
+    assert second > first
+    assert second >= first
+    println("string helper checks")
+    return true
