@@ -19025,6 +19025,7 @@ impl ChildId {
         // than by file naming or ordering. This proves exactly that: the identity is taken from the manifest the
         // build published, hydrated, and looked up in the surface. Nothing here reconstructs an identity or matches
         // on a spelling, because a consumer is forbidden from doing either.
+        use incan_semantics_core::SymbolOrigin;
         use incan_semantics_core::executable_representation::SurfaceReader;
 
         let tmp = tempfile::tempdir()?;
@@ -19068,8 +19069,14 @@ impl ChildId {
             .next()
             .ok_or("the manifest must publish a canonical identity for the exported function")?;
 
+        // The module path comes from the published identity, never from the source file's name. A consumer has only
+        // the identity, so a test that hardcodes a path tests something no consumer can do — and would still pass
+        // against a producer that wrote the file somewhere else entirely.
+        let SymbolOrigin::Package { module_path, .. } = &published.origin else {
+            return Err("a published library export must carry a package origin".into());
+        };
         let surface_path =
-            crate::library_manifest::published_layout::executable_surface_path(&manifest_path, &["lib".to_string()])
+            crate::library_manifest::published_layout::executable_surface_path(&manifest_path, module_path)
                 .ok_or("the surface path must be derivable from the manifest path")?;
         assert!(
             surface_path.is_file(),
