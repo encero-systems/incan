@@ -668,6 +668,18 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
+                    // A projection names one declaration, so reaching it through several facades binds the same
+                    // Rust identifier every time. Keep the first `use` and drop the repeats, which Rust would
+                    // otherwise reject as a redefinition.
+                    if binding == emitted_name
+                        && emitted_name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                        && !self
+                            .emitted_projection_import_bindings
+                            .borrow_mut()
+                            .insert(emitted_name.clone())
+                    {
+                        return quote! {};
+                    }
                     if item.alias.is_none()
                         && is_overload_emitted_name(&item.name)
                         && !self

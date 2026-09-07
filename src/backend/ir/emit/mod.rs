@@ -463,6 +463,12 @@ pub struct IrEmitter<'a> {
     /// both source names, but Rust still has one concrete implementation symbol, so a facade importing the canonical
     /// name and the alias must not emit the same `use`/`pub use` binding twice.
     emitted_overload_import_bindings: RefCell<HashSet<String>>,
+    /// Projections this module has already bound with a plain `use`.
+    ///
+    /// A projection names one declaration, so importing it through any facade that re-exports that declaration binds
+    /// the same Rust identifier. A module reaching one declaration through several facades emitted one `use` per
+    /// path, and Rust rejects the repeats as a redefinition.
+    emitted_projection_import_bindings: RefCell<HashSet<String>>,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
     /// Whether serde is needed for emitted Rust derives or helpers.
@@ -673,6 +679,7 @@ impl<'a> IrEmitter<'a> {
             externally_reachable_items: HashSet::new(),
             generated_use_analysis: RefCell::new(GeneratedUseAnalysis::default()),
             emitted_overload_import_bindings: RefCell::new(HashSet::new()),
+            emitted_projection_import_bindings: RefCell::new(HashSet::new()),
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
