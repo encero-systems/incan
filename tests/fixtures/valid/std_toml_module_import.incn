@@ -1,0 +1,38 @@
+"""Prove module-only std.toml SDK ownership and qualified codecs."""
+
+from std import toml
+
+
+@derive(toml)
+model Settings:
+    """A typed document using only the root module import."""
+
+    name: str
+
+
+def main() -> None:
+    """Round-trip both codec forms through the selected SDK provider."""
+
+    match toml.deserialize[Settings]("name = \"café\"\n"):
+        Err(error) =>
+            assert false, error.message()
+        Ok(settings) =>
+            match toml.serialize(settings):
+                Err(error) =>
+                    assert false, error.message()
+                Ok(encoded) =>
+                    match toml.deserialize[Settings](encoded):
+                        Err(error) =>
+                            assert false, error.message()
+                        Ok(restored) =>
+                            assert restored.name == "café"
+            match toml.serialize_pretty(settings):
+                Err(error) =>
+                    assert false, error.message()
+                Ok(encoded) =>
+                    match toml.deserialize[Settings](encoded):
+                        Err(error) =>
+                            assert false, error.message()
+                        Ok(restored) =>
+                            assert restored.name == "café"
+    println("TOML root module-only roundtrip passed")
