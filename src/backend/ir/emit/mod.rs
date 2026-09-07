@@ -1818,7 +1818,20 @@ impl<'a> IrEmitter<'a> {
         if name.contains("::") || self.ambiguous_value_names.contains(name) {
             return None;
         }
-        let module_path = self.value_module_paths.get(name)?;
+        // The map is keyed by each dependency declaration's source spelling, read from its AST, while a reference
+        // reaching here carries the projection lowering gave it. Follow the registry's compiler-created pairing
+        // between the two rather than reading meaning out of the emitted name, and keep emitting the projection --
+        // that is the name the owning module defines.
+        let module_path = match self.value_module_paths.get(name) {
+            Some(module_path) => module_path,
+            None => {
+                let source_name = self.canonical_function_registry().source_name(name)?;
+                if self.ambiguous_value_names.contains(source_name) {
+                    return None;
+                }
+                self.value_module_paths.get(source_name)?
+            }
+        };
         self.emit_dependency_item_path(module_path, name)
     }
 
