@@ -614,3 +614,118 @@ fn a_rejected_fragment_reports_its_own_grammar_and_nothing_else() -> TestResult 
     }
     Ok(())
 }
+
+// ============================================================================
+// Leg 8: semantic highlighting makes the ownership boundary visible
+// ============================================================================
+
+/// Whether a category is one an ordinary Incan *name* can take (#1400).
+///
+/// This is the property RFC 081 actually constrains. A fragment's tag names, selectors and declaration properties
+/// are spelled like Incan identifiers, and the RFC is explicit that "resolving a name here against ordinary Incan
+/// scope would be wrong" — so the one thing highlighting must never do is present DSL-owned syntax as a local, a
+/// parameter, a field or a call. Which *non*-name category a submode picks is a presentation choice that node
+/// kinds legitimately refine: a template string's literal run reads as string content, a comment as a comment.
+#[cfg(feature = "lsp")]
+fn resolves_as_an_incan_name(category: incan::lsp::semantic_tokens::Category) -> bool {
+    use incan::lsp::semantic_tokens::Category;
+    matches!(
+        category,
+        Category::Variable
+            | Category::Parameter
+            | Category::Property
+            | Category::Method
+            | Category::Function
+            | Category::Namespace
+            | Category::EnumMember
+    )
+}
+
+#[cfg(feature = "lsp")]
+#[test]
+fn every_submode_highlights_dsl_bytes_apart_from_its_holes() -> TestResult {
+    // Leg 8. RFC 081's Drawbacks make this tooling's obligation: "Tooling must make ownership visible enough that
+    // readers can tell where ordinary Incan ends and the DSL-owned surface begins." Hover answers that for one
+    // cursor position; highlighting is the surface a reader actually looks at, and it has to agree with hover
+    // rather than form a second opinion. So this asserts the classification against `ownership_at` — the same
+    // authority leg 3 checks — over every byte of every fragment in the matrix.
+    use incan::frontend::ast::EmbeddedOwnership;
+    use incan::lsp::semantic_tokens::{Category, classified_ranges};
+
+    for case in conformance_cases() {
+        let (keyword_map, surface_map) = fixture_maps(case.keyword, case.submode, false);
+        let program = parse_fixture(case.source, &keyword_map, &surface_map)?;
+        let ranges = classified_ranges(case.source, Some(&program));
+        let fragment = fragment_of(&program)?;
+
+        let category_at = |offset: usize| -> Option<Category> {
+            ranges
+                .iter()
+                .find(|range| range.start <= offset && offset < range.end)
+                .map(|range| range.category)
+        };
+
+        // ---- The DSL-owned sample is highlighted, and not as an Incan name ----
+        let dsl_offset = case
+            .source
+            .find(case.dsl_owned_text)
+            .ok_or_else(|| format!("{:?}: fixture is missing its DSL-owned sample", case.submode))?;
+        let dsl_sample = category_at(dsl_offset)
+            .ok_or_else(|| format!("{:?}: `{}` must be classified", case.submode, case.dsl_owned_text))?;
+        assert!(
+            !resolves_as_an_incan_name(dsl_sample),
+            "{:?}: `{}` is DSL-owned syntax and must not be highlighted as an Incan name (got {dsl_sample:?})",
+            case.submode,
+            case.dsl_owned_text
+        );
+
+        // ---- Every hole is ordinary Incan, and is highlighted as such ----
+        for hole in fragment.holes() {
+            let Expr::Ident(name) = &hole.node else {
+                continue;
+            };
+            let category = category_at(hole.span.start)
+                .ok_or_else(|| format!("{:?}: the hole `{name}` must be classified", case.submode))?;
+            assert_eq!(
+                category,
+                Category::Variable,
+                "{:?}: the hole `{name}` reads a local and must be highlighted as one",
+                case.submode
+            );
+        }
+
+        // ---- Highlighting and `ownership_at` agree byte for byte ----
+        let Some(extent) = fragment.node_extent() else {
+            continue;
+        };
+        for offset in extent.start..extent.end {
+            if !case.source.is_char_boundary(offset) {
+                continue;
+            }
+            let Some(ownership) = fragment.ownership_at(offset) else {
+                continue;
+            };
+            let Some(category) = category_at(offset) else {
+                continue;
+            };
+            match ownership {
+                // `ownership_at` answers for a *cursor position*, where the offset just past a name still resolves
+                // to it — the right convention for hover. Highlighting paints *bytes*, and the byte at a hole's end
+                // is its closing delimiter, which is DSL-owned punctuation rather than part of the expression. The
+                // two agree everywhere except that one offset, which is skipped rather than papered over.
+                EmbeddedOwnership::Hole(hole) if offset < hole.span.end => assert!(
+                    !matches!(category, Category::Macro | Category::Regexp),
+                    "{:?}: byte {offset} is inside a hole, so it must not be highlighted as DSL syntax",
+                    case.submode
+                ),
+                EmbeddedOwnership::Hole(_) => {}
+                EmbeddedOwnership::DslOwned => assert!(
+                    !resolves_as_an_incan_name(category),
+                    "{:?}: byte {offset} is DSL-owned, so it must not resolve as an Incan name (got {category:?})",
+                    case.submode
+                ),
+            }
+        }
+    }
+    Ok(())
+}
