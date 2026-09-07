@@ -107,7 +107,9 @@ def greet(name: str) -> str:
     /// guard doing its job, and the two `not a fixed point` entries produce output that still parses and still has
     /// the same declarations — a comment moves between passes rather than any code changing. Three genuinely
     /// destructive defects that this walk found were fixed rather than listed: an `enum`'s dropped `with <Trait>`
-    /// adoption, an unescaped quote in a byte literal, and a match guard rewritten into unparseable arrow form.
+    /// adoption, an unescaped quote in a byte literal, and a match guard written before an arrow the parser then
+    /// rejected — the last fixed in the grammar, by letting both arm spellings carry a guard, rather than by
+    /// teaching the formatter to avoid one of them.
     ///
     /// Comment reattachment stability is the remaining work and is tracked separately; it is a different subsystem
     /// (`src/format/comments/`) from the declaration and literal writers fixed here.

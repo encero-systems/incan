@@ -273,10 +273,10 @@ fn a_byte_literal_keeps_its_escapes() -> Result<(), String> {
 }
 
 #[test]
-fn a_guarded_match_arm_stays_in_case_form() -> Result<(), String> {
-    // Only `case <pattern> if <cond>:` can carry a guard: the arrow form's parser hardcodes `guard: None`. Writing
-    // the guard before an arrow produced `_ if n <= 0 => ...`, which the parser rejects, so `examples/simple/fib.incn`
-    // was reformatted into a syntax error.
+fn a_guarded_match_arm_keeps_its_guard_and_still_parses() -> Result<(), String> {
+    // `incan fmt` used to write the guard before an arrow -- `_ if n <= 0 => ...` -- which the parser then rejected,
+    // so `examples/simple/fib.incn` was reformatted into a syntax error. The guard is no longer the arrow form's
+    // problem: both spellings share one arm grammar, so it survives formatting either way (#1401).
     let source = "def fib(n: int) -> int:
     match n:
         case _ if n <= 0:
@@ -286,13 +286,34 @@ fn a_guarded_match_arm_stays_in_case_form() -> Result<(), String> {
 ";
     let once = formatted(source)?;
     assert!(
-        once.contains("case _ if n <= 0:"),
-        "the guard lost its case form:
+        once.contains("if n <= 0"),
+        "the guard was dropped:
 {once}"
     );
+    // `formatted` parses its input, so a second pass succeeding is also proof the first pass stayed parseable.
+    assert_eq!(
+        once,
+        formatted(&once)?,
+        "formatting is not a fixed point:
+{once}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_arrow_arm_written_with_a_guard_round_trips() -> Result<(), String> {
+    // The arrow spelling carries a guard of its own now, so a file written that way must survive formatting without
+    // being rewritten into the other spelling.
+    let source = "def classify(n: int) -> str:
+    return match n:
+        x if x < 0 => \"negative\"
+        0 => \"zero\"
+        _ => \"positive\"
+";
+    let once = formatted(source)?;
     assert!(
-        !once.contains("if n <= 0 =>"),
-        "a guard was written before an arrow:
+        once.contains("x if x < 0 =>"),
+        "the guarded arrow arm was rewritten into another spelling:
 {once}"
     );
     assert_eq!(

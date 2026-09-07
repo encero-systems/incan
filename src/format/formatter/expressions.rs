@@ -668,33 +668,15 @@ impl Formatter {
         self.writer.blank_lines(arm.leading_blank_lines as usize);
         let arm = &arm.node;
 
-        // A guard is only expressible in `case <pattern> if <cond>:` form. The arrow form's parser hardcodes
-        // `guard: None` and refuses `<pattern> if <cond> =>`, so writing the guard before an arrow produced source
-        // that no longer parses — `examples/simple/fib.incn` was reformatted into a syntax error (#1401).
+        self.format_pattern(&arm.pattern.node);
+        // A guard belongs to the arm, not to one of its two spellings, so it is written the same way before a `:`
+        // and before a `=>`. Writing it only in `case` form used to be a workaround for the arrow form's parser
+        // rejecting `<pattern> if <cond> =>`; that grammar gap is closed, so the arm keeps the shape it was
+        // written in (#1401).
         if let Some(guard) = &arm.guard {
-            self.writer.write("case ");
-            self.format_pattern(&arm.pattern.node);
             self.writer.write(" if ");
             self.format_expr(&guard.node);
-            self.writer.write(":");
-            self.writer.newline();
-            self.writer.indent();
-            match &arm.body {
-                MatchBody::Expr(expr) => {
-                    self.format_expr(&expr.node);
-                    self.writer.newline();
-                }
-                MatchBody::Block(stmts) => {
-                    for stmt in stmts {
-                        self.format_statement(stmt);
-                    }
-                }
-            }
-            self.writer.dedent();
-            return;
         }
-
-        self.format_pattern(&arm.pattern.node);
         match &arm.body {
             MatchBody::Expr(expr) => {
                 self.writer.write(" => ");
