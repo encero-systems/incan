@@ -342,6 +342,7 @@ fn resolve_helper_export_name(
 
 #[cfg(test)]
 mod tests {
+    use incan_core::lang::surface::constructors;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -355,7 +356,7 @@ mod tests {
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: crate::library_manifest::TypeRef::Named {
-                name: "None".to_string(),
+                name: constructors::as_str(constructors::ConstructorId::None).to_string(),
             },
             is_async: false,
         }
@@ -412,7 +413,7 @@ mod tests {
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: crate::library_manifest::TypeRef::Named {
-                name: "None".to_string(),
+                name: constructors::as_str(constructors::ConstructorId::None).to_string(),
             },
             is_async: false,
         }
