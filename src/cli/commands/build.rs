@@ -71,7 +71,7 @@ use crate::library_manifest::{
 use crate::lockfile::{
     CargoFeatureSelection, IncanLock, LOCK_FILENAME, provider_semantic_identities, semantic_lock_state,
 };
-use crate::manifest::{DependencySource, DependencySpec, GitReference, MANIFEST_FILENAME, ProjectManifest};
+use crate::manifest::{DependencySource, DependencySpec, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
 use crate::oven::interop::{
     OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, default_interop_execution_receipt_path, interop_execution_build_unit_inputs,
     load_interop_execution_receipt, validate_interop_execution_receipt,
@@ -4088,7 +4088,7 @@ fn caller_owned_library_receipt(
         }
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
-                && !project_root.join(crate::manifest::MANIFEST_FILENAME).is_file() =>
+                && !project_root.join(crate::manifest::LOAF_MANIFEST_FILENAME).is_file() =>
         {
             mint_artifact_only_library_receipt(artifact, project_root, profile, &artifacts.intent, &receipt_path)?
         }
@@ -8445,7 +8445,7 @@ fn select_baked_project_output(
 /// facts checked by the selector. Exact source authority prevents a same-named unrelated project from reusing a
 /// different completed output; project-local receipts separately govern stale-output diagnostics.
 fn baked_project_owner_identity(project_root: &Path) -> CliResult<String> {
-    let manifest_path = project_root.join(MANIFEST_FILENAME);
+    let manifest_path = project_root.join(LOAF_MANIFEST_FILENAME);
     let manifest = ProjectManifest::load(&manifest_path).map_err(|error| CliError::failure(error.to_string()))?;
     let project_name = manifest
         .project
@@ -8532,7 +8532,7 @@ fn select_baked_project_output_with_source_authority(
         return Ok(None);
     };
     let target_identity = oven_bake_project_target_identity(project_root, target, entrypoint)?;
-    if !project_root.join(MANIFEST_FILENAME).is_file() {
+    if !project_root.join(LOAF_MANIFEST_FILENAME).is_file() {
         return Ok(None);
     }
     let Some(native_target) = native_project_output_target() else {
@@ -9506,7 +9506,7 @@ fn select_default_project_output(
     let Some(project_root) = project_root_for_completed_output(&entrypoint)? else {
         return Ok(None);
     };
-    let manifest = ProjectManifest::load(&project_root.join(MANIFEST_FILENAME))
+    let manifest = ProjectManifest::load(&project_root.join(LOAF_MANIFEST_FILENAME))
         .map_err(|error| CliError::failure(error.to_string()))?;
     validate_completed_output_lock_policy(&project_root, &manifest, &entrypoint, policy)?;
     let store = open_default_oven_store()?;
@@ -10299,7 +10299,7 @@ fn prepare_library_project(
     };
     let Some(manifest) = discover_effective_project_manifest(&project_root)? else {
         return Err(CliError::failure(
-            "No incan.toml found for `incan build --lib` (run `incan init` first)",
+            "No loaf.toml found for `incan build --lib` (run `incan init` first)",
         ));
     };
     enforce_project_toolchain_constraint(&manifest)?;
@@ -12309,7 +12309,7 @@ impl ProjectSourceAuthorityDigester {
         let mut library_dependencies = manifest.library_dependencies().iter().collect::<Vec<_>>();
         library_dependencies.sort_by_key(|(name, _)| *name);
         for (name, dependency) in library_dependencies {
-            let child_manifest = dependency.path.join(MANIFEST_FILENAME);
+            let child_manifest = dependency.path.join(LOAF_MANIFEST_FILENAME);
             let child_digest = match fs::symlink_metadata(&child_manifest) {
                 Ok(_) => self.digest_project_node(&dependency.path, visiting)?,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -12622,7 +12622,7 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
 
     let mut records = BTreeMap::new();
     let mut already_recorded = HashSet::new();
-    let manifest_path = project_root.join(MANIFEST_FILENAME);
+    let manifest_path = project_root.join(LOAF_MANIFEST_FILENAME);
     append_file(project_root, &manifest_path, &mut records)?;
     already_recorded.insert(manifest_path);
     let lockfile = canonical_baked_project_lock_path(project_root)?;
@@ -13400,7 +13400,7 @@ fn read_packaged_library_loaf_manifest(
     };
     validate_packaged_library_metadata_files(artifact, &manifest)?;
     if let Some(project_root) = artifact.crate_root.parent().and_then(Path::parent)
-        && project_root.join(MANIFEST_FILENAME).is_file()
+        && project_root.join(LOAF_MANIFEST_FILENAME).is_file()
     {
         let source_authority_digest = digest_baked_project_source_authority(project_root)?;
         if manifest.source_authority_digest != source_authority_digest {
@@ -13590,7 +13590,7 @@ impl OvenProjectBakeAuthorityContext {
                 .crate_root
                 .parent()
                 .and_then(Path::parent)
-                .filter(|root| root.join(MANIFEST_FILENAME).is_file())
+                .filter(|root| root.join(LOAF_MANIFEST_FILENAME).is_file())
                 .map(|root| {
                     fs::canonicalize(root).map_err(|error| {
                         CliError::failure(format!(
@@ -13944,7 +13944,7 @@ fn discover_oven_executable_entrypoints(manifest: &ProjectManifest) -> CliResult
 fn discover_oven_bake_project_targets(project_root: &Path) -> CliResult<Vec<(OvenBakeProjectTarget, PathBuf)>> {
     let Some(manifest) = discover_effective_project_manifest(project_root)? else {
         return Err(CliError::failure(format!(
-            "`incan oven bake --project` requires an incan.toml project at {}",
+            "`incan oven bake --project` requires an loaf.toml project at {}",
             project_root.display()
         )));
     };
@@ -15274,11 +15274,11 @@ mod tests {
         fs::create_dir_all(project.path().join("src"))?;
         fs::create_dir_all(provider.join("src"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nprovider = { path = \"provider\" }\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
-        fs::write(provider.join("incan.toml"), "[project]\nname = \"provider\"\n")?;
+        fs::write(provider.join("loaf.toml"), "[project]\nname = \"provider\"\n")?;
         fs::write(provider.join("src/lib.incn"), "pub def value() -> int:\n    return 1\n")?;
         let initial = digest_baked_project_source_authority(project.path())?;
 
@@ -15309,7 +15309,7 @@ mod tests {
         fs::create_dir_all(rust_crate.join("src"))?;
         fs::create_dir_all(rust_leaf.join("src"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[rust-dependencies.rust_helper]\npath = \"rust-workspace/rust-helper\"\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
@@ -15365,7 +15365,7 @@ mod tests {
         fs::create_dir_all(left.join("src"))?;
         fs::create_dir_all(right.join("src"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nleft = { path = \"deps/left\" }\nright = { path = \"deps/right\" }\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
@@ -15373,15 +15373,15 @@ mod tests {
         let right_manifest = "[project]\nname = \"right_provider\"\n";
         let left_source = "pub def value() -> int:\n    return 1\n";
         let right_source = "pub def value() -> int:\n    return 2\n";
-        fs::write(left.join("incan.toml"), left_manifest)?;
+        fs::write(left.join("loaf.toml"), left_manifest)?;
         fs::write(left.join("src/lib.incn"), left_source)?;
-        fs::write(right.join("incan.toml"), right_manifest)?;
+        fs::write(right.join("loaf.toml"), right_manifest)?;
         fs::write(right.join("src/lib.incn"), right_source)?;
         let initial = digest_baked_project_source_authority(project.path())?;
 
-        fs::write(left.join("incan.toml"), right_manifest)?;
+        fs::write(left.join("loaf.toml"), right_manifest)?;
         fs::write(left.join("src/lib.incn"), right_source)?;
-        fs::write(right.join("incan.toml"), left_manifest)?;
+        fs::write(right.join("loaf.toml"), left_manifest)?;
         fs::write(right.join("src/lib.incn"), left_source)?;
 
         assert_ne!(
@@ -15399,7 +15399,7 @@ mod tests {
         fs::create_dir_all(project.path().join("src"))?;
         fs::create_dir_all(project.path().join("contracts"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[tool.incan.metadata]\nmodel-bundles = [\"contracts/a.json\", \"contracts/b.json\"]\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
@@ -15421,7 +15421,7 @@ mod tests {
         fs::create_dir_all(project.path().join("src"))?;
         fs::create_dir_all(project.path().join("vocab_companion/src"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
         fs::write(
@@ -15451,7 +15451,7 @@ mod tests {
         fs::create_dir_all(project.path().join("src"))?;
         fs::create_dir_all(project.path().join("library"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[build]\nsource-root = \"library\"\n",
         )?;
         fs::write(project.path().join("src/ignored.incn"), "pub const IGNORED: int = 1\n")?;
@@ -15481,7 +15481,7 @@ mod tests {
         fs::create_dir(project.path().join("library"))?;
         fs::create_dir(project.path().join("scripts"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[project.scripts]\ncli = \"scripts/cli.incn\"\ncli_alias = \"scripts/cli.incn\"\n\n[build]\nsource-root = \"library\"\n",
         )?;
         fs::write(
@@ -15509,7 +15509,7 @@ mod tests {
         fs::create_dir_all(project.path().join("src"))?;
         fs::create_dir_all(project.path().join("interop/include"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             r#"[project]
 name = "consumer"
 
@@ -15525,7 +15525,7 @@ headers = ["interop/include/bridge.h"]
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let header = project.path().join("interop/include/bridge.h");
         fs::write(&header, "int incan_bridge(void);\n")?;
-        let manifest = ProjectManifest::load(&project.path().join("incan.toml"))?;
+        let manifest = ProjectManifest::load(&project.path().join("loaf.toml"))?;
         let locked = locked_oven_interop_targets(&manifest)?;
         let target = locked.first().ok_or("expected one locked interop target")?;
         let first_receipt = receipt_interop_execution(
@@ -15563,7 +15563,7 @@ headers = ["interop/include/bridge.h"]
             digest_baked_project_source_authority(project.path()).is_err(),
             "fresh interop input identities must reject the now-stale selected receipt"
         );
-        let changed_manifest = ProjectManifest::load(&project.path().join("incan.toml"))?;
+        let changed_manifest = ProjectManifest::load(&project.path().join("loaf.toml"))?;
         let changed_locked = locked_oven_interop_targets(&changed_manifest)?;
         let changed_target = changed_locked
             .first()
@@ -15729,15 +15729,15 @@ headers = ["interop/include/bridge.h"]
         fs::create_dir_all(provider.join("src"))?;
         fs::create_dir_all(rust_helper.join("src"))?;
         fs::write(
-            workspace.path().join("incan.toml"),
+            workspace.path().join("loaf.toml"),
             "[workspace]\nmembers = [\"member\"]\n\n[workspace.dependencies]\nprovider = { path = \"provider\" }\n\n[workspace.rust-dependencies]\nrust_helper = { path = \"rust-helper\" }\n",
         )?;
         fs::write(
-            member.join("incan.toml"),
+            member.join("loaf.toml"),
             "[project]\nname = \"member\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nprovider = { workspace = true }\n\n[rust-dependencies]\nrust_helper = { workspace = true }\n",
         )?;
         fs::write(member.join("src/main.incn"), "def main() -> None:\n    pass\n")?;
-        fs::write(provider.join("incan.toml"), "[project]\nname = \"provider\"\n")?;
+        fs::write(provider.join("loaf.toml"), "[project]\nname = \"provider\"\n")?;
         fs::write(provider.join("src/lib.incn"), "pub def value() -> int:\n    return 1\n")?;
         fs::write(
             rust_helper.join("Cargo.toml"),
@@ -15807,7 +15807,7 @@ headers = ["interop/include/bridge.h"]
         let project = tempfile::tempdir()?;
         fs::create_dir_all(project.path().join("src"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"lock_migration_fixture\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
@@ -15837,7 +15837,7 @@ headers = ["interop/include/bridge.h"]
         let project = tempfile::tempdir()?;
         fs::create_dir_all(project.path().join("src"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"sdk_cohort_fixture\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
@@ -16014,7 +16014,7 @@ headers = ["interop/include/bridge.h"]
         let relocated = tempfile::tempdir()?;
         let lexical_external = project.path().join("../set_library");
         fs::create_dir(project.path().join("src"))?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let (receipt, mut payload, files) = fixture_project_output_publication(project.path(), "release", "report")?;
         let authored_sentinel = "$INCAN_PROJECT_ROOT/ordinary-authored-string";
@@ -16184,7 +16184,7 @@ headers = ["interop/include/bridge.h"]
     -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         fs::create_dir(project.path().join("src"))?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let (receipt, payload, files) = fixture_project_output_publication(project.path(), "debug", "current")?;
         write_receipt(
@@ -16289,7 +16289,7 @@ headers = ["interop/include/bridge.h"]
         // the generations; the scan must pick the one authority every target can satisfy.
         let project = tempfile::tempdir()?;
         fs::create_dir(project.path().join("src"))?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
         fs::write(project.path().join("src/lib.incn"), "def helper() -> None:\n    pass\n")?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let authority = |identity: &str| OvenProjectInspectionAuthorityRef {
@@ -16390,7 +16390,7 @@ headers = ["interop/include/bridge.h"]
     {
         let project = tempfile::tempdir()?;
         fs::create_dir(project.path().join("src"))?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let debug = fixture_project_output_publication(project.path(), "debug", "debug")?;
         let release = fixture_project_output_publication(project.path(), "release", "release")?;
@@ -16449,7 +16449,7 @@ headers = ["interop/include/bridge.h"]
         fs::create_dir_all(entrypoint.parent().ok_or("entrypoint has no parent")?)?;
         fs::create_dir_all(generated_source.parent().ok_or("generated source has no parent")?)?;
         fs::create_dir_all(native_output.parent().ok_or("native output has no parent")?)?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
         fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
         fs::write(&generated_source, "fn main() {}\n")?;
         fs::write(&native_output, "fixture native output")?;
@@ -16737,7 +16737,7 @@ headers = ["interop/include/bridge.h"]
                 .parent()
                 .ok_or("unrelated entrypoint has no parent")?,
         )?;
-        fs::write(unrelated.path().join("incan.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(unrelated.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
         fs::write(&unrelated_entrypoint, "def main() -> None:\n    return\n")?;
         assert!(
             !has_stale_baked_project_output(
@@ -16762,7 +16762,7 @@ headers = ["interop/include/bridge.h"]
         fs::create_dir_all(entrypoint.parent().ok_or("entrypoint has no parent")?)?;
         fs::create_dir_all(generated_source.parent().ok_or("generated source has no parent")?)?;
         fs::create_dir_all(native_output.parent().ok_or("native output has no parent")?)?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
         fs::write(&entrypoint, "pub def value() -> int:\n    return 42\n")?;
         fs::write(&generated_source, "pub fn value() -> i64 { 42 }\n")?;
         fs::write(&native_output, "fixture native output")?;
@@ -16943,7 +16943,7 @@ headers = ["interop/include/bridge.h"]
         fs::create_dir_all(project.path().join("src"))?;
         fs::create_dir_all(generated_source.parent().ok_or("generated source has no parent")?)?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(
@@ -17070,7 +17070,7 @@ toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "macosx", version = ">=18, <19" }
 headers = ["interop/include/bridge.h"]
 "#;
-        let manifest_path = project.path().join("incan.toml");
+        let manifest_path = project.path().join("loaf.toml");
         fs::write(&manifest_path, manifest_source)?;
         let manifest = ProjectManifest::from_str(manifest_source, &manifest_path)?;
         let locked = locked_oven_interop_targets(&manifest)?;
@@ -18109,7 +18109,7 @@ headers = ["interop/include/bridge.h"]
         let declared_unused_rust_dependencies = ["itoa", "ryu"];
         std::fs::create_dir_all(&scripts_dir)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"unused_rust_dep_run_repro\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nitoa = \"1\"\nryu = \"1\"\n",
         )?;
         std::fs::write(
@@ -18329,7 +18329,7 @@ impl ChildId {
     #[test]
     fn library_entrypoint_precondition_fails_when_missing() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let manifest_path = tmp.path().join("incan.toml");
+        let manifest_path = tmp.path().join("loaf.toml");
         let manifest_content = "[project]\nname = \"mylib\"\n";
         fs::write(&manifest_path, manifest_content)?;
         let manifest = ProjectManifest::from_str(manifest_content, &manifest_path)?;
@@ -18345,7 +18345,7 @@ impl ChildId {
         let src_dir = tmp.path().join("src");
         fs::create_dir_all(&src_dir)?;
         fs::write(src_dir.join("lib.incn"), "\"\"\"lib\"\"\"\n")?;
-        let manifest_path = tmp.path().join("incan.toml");
+        let manifest_path = tmp.path().join("loaf.toml");
         let manifest_content = "[project]\nname = \"mylib\"\n";
         fs::write(&manifest_path, manifest_content)?;
         let manifest = ProjectManifest::from_str(manifest_content, &manifest_path)?;
@@ -18359,7 +18359,7 @@ impl ChildId {
     fn oven_bake_discovers_an_initialized_executable_project() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         fs::create_dir_all(project.path().join("src"))?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"app\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"app\"\n")?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
 
         let targets = discover_oven_bake_project_targets(project.path())?;
@@ -18429,7 +18429,7 @@ impl ChildId {
     fn oven_bake_discovers_library_and_executable_targets_in_stable_order() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         fs::create_dir_all(project.path().join("src"))?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"mixed\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"mixed\"\n")?;
         fs::write(
             project.path().join("src/lib.incn"),
             "pub def value() -> int:\n    return 1\n",
@@ -18459,7 +18459,7 @@ impl ChildId {
         let project = tempfile::tempdir()?;
         fs::create_dir_all(project.path().join("src"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"scripts\"\n\n[project.scripts]\nmain = \"src/main.incn\"\nextra = \"src/extra.incn\"\nextra_alias = \"src/extra.incn\"\n",
         )?;
         let main = project.path().join("src/main.incn");
@@ -18505,7 +18505,7 @@ impl ChildId {
     #[test]
     fn oven_bake_refuses_a_manifest_without_a_conventional_target() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        fs::write(project.path().join("incan.toml"), "[project]\nname = \"empty\"\n")?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"empty\"\n")?;
 
         let result = discover_oven_bake_project_targets(project.path());
         let Err(error) = result else {
@@ -18887,7 +18887,7 @@ impl ChildId {
         std::fs::create_dir_all(src_dir.join("dataset"))?;
 
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"nestedlib\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -18958,7 +18958,7 @@ impl ChildId {
         std::fs::create_dir_all(&src_dir)?;
 
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"privateimpl\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -19046,7 +19046,7 @@ pub def answer() -> int:
         std::fs::create_dir_all(&src_dir)?;
 
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"registrylib\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -19318,7 +19318,7 @@ pub model Nested:
         let source_root = project.path().join("src");
         fs::create_dir_all(&source_root)?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"provider_features\"\n\n[project.features]\ndefault = []\nouter = []\n",
         )?;
         let entry_path = source_root.join("lib.incn");
@@ -19502,7 +19502,7 @@ pub model Nested:
                 .ok_or("generated provider source has no parent")?,
         )?;
         fs::write(
-            package.path().join(MANIFEST_FILENAME),
+            package.path().join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(&authored_source, "pub def provider() -> int:\n    return 1\n")?;
@@ -19577,7 +19577,7 @@ pub model Nested:
         let consumer = package.path().join("consumer");
         fs::create_dir_all(consumer.join("src"))?;
         fs::write(
-            consumer.join(MANIFEST_FILENAME),
+            consumer.join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nprovider = { path = \"..\" }\n",
         )?;
         fs::write(consumer.join("src/main.incn"), "def main() -> None:\n    pass\n")?;
@@ -19628,7 +19628,7 @@ pub model Nested:
         fs::create_dir_all(entrypoint.parent().ok_or("entrypoint has no parent")?)?;
         fs::create_dir_all(generated_source.parent().ok_or("generated source has no parent")?)?;
         fs::write(
-            project.path().join(MANIFEST_FILENAME),
+            project.path().join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"fixture\"\n",
         )?;
         fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
@@ -20088,7 +20088,7 @@ pub model Nested:
         fs::create_dir_all(source.parent().ok_or("provider source has no parent")?)?;
         fs::create_dir_all(output.parent().ok_or("provider output has no parent")?)?;
         fs::write(
-            package.path().join(MANIFEST_FILENAME),
+            package.path().join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(&authored_source, "pub def provider() -> int:\n    return 1\n")?;
@@ -20294,13 +20294,13 @@ pub model Nested:
         let consumer = package.path().join("consumer");
         fs::create_dir_all(consumer.join("src"))?;
         fs::write(
-            consumer.join(MANIFEST_FILENAME),
+            consumer.join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nprovider = { path = \"..\" }\n",
         )?;
         fs::write(consumer.join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let source_backed_consumer_authority = digest_baked_project_source_authority(&consumer)?;
 
-        fs::remove_file(package.path().join(MANIFEST_FILENAME))?;
+        fs::remove_file(package.path().join(LOAF_MANIFEST_FILENAME))?;
         fs::remove_dir_all(package.path().join("src"))?;
         assert!(
             packaged_library_loaf_profile(&artifact, "debug", "aarch64-apple-darwin", "rustc fixture")?.is_some(),
@@ -20452,7 +20452,7 @@ pub model Nested:
         let entrypoint = project.path().join("src/main.incn");
         fs::create_dir_all(entrypoint.parent().ok_or("fixture entrypoint has no parent")?)?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"replacement_features\"\n\n[project.features]\nbeta = []\n",
         )?;
         fs::write(
@@ -20473,10 +20473,7 @@ pub model Nested:
     fn the_replacement_report_retains_exact_numeric_result_type() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         let entrypoint = project.path().join("main.incn");
-        fs::write(
-            project.path().join("incan.toml"),
-            "[project]\nname = \"typed_report\"\n",
-        )?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"typed_report\"\n")?;
         fs::write(&entrypoint, "def main() -> f32:\n    return 1.23456789\n")?;
 
         let report = build_replacement_file_report(
@@ -20501,7 +20498,7 @@ pub model Nested:
         let entrypoint = project.path().join("src/main.incn");
         fs::create_dir_all(entrypoint.parent().ok_or("fixture entrypoint has no parent")?)?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"replacement_one_analysis\"\n",
         )?;
         fs::write(
@@ -20533,7 +20530,7 @@ pub model Nested:
         let project = tempfile::tempdir()?;
         let entrypoint = project.path().join("main.incn");
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"replacement_inactive_feature\"\n\n[project.features]\nbeta = []\n",
         )?;
         fs::write(

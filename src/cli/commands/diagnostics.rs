@@ -221,12 +221,12 @@ fn select_interop_c_abi_verification_plan(
     };
     let Some(interop) = manifest.interop_c() else {
         return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` requires an [interop.c] declaration in incan.toml"
+            "`--interop-target {requested_target}` requires an [interop.c] declaration in loaf.toml"
         )));
     };
     let Some(interop_target) = interop.targets.iter().find(|target| target.target == requested_target) else {
         return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` is not declared by [[interop.c.targets]] in incan.toml"
+            "`--interop-target {requested_target}` is not declared by [[interop.c.targets]] in loaf.toml"
         )));
     };
     CAbiVerificationPlan::from_interop_target(interop_target).map_err(CliError::failure)

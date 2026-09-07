@@ -137,7 +137,7 @@ The top-level JSON object is a metadata package:
 | Field            | Type           | Meaning                                                    |
 | ---------------- | -------------- | ---------------------------------------------------------- |
 | `schema_version` | number         | Metadata package schema version                            |
-| `package`        | object or null | Project identity from `incan.toml`, when available         |
+| `package`        | object or null | Project identity from `loaf.toml`, when available         |
 | `modules`        | array          | Checked metadata documents for the entry and local imports |
 
 Each module document contains:

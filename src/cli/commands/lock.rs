@@ -221,7 +221,7 @@ pub fn lock_project(
         .unwrap_or_else(|| PathBuf::from("."));
     let manifest = ProjectManifest::discover(&start_dir)
         .map_err(|e| CliError::failure(e.to_string()))?
-        .ok_or_else(|| CliError::failure("No incan.toml found (run `incan init`)"))?;
+        .ok_or_else(|| CliError::failure("No loaf.toml found (run `incan init`)"))?;
     enforce_project_toolchain_constraint(&manifest)?;
 
     let cargo_features = CargoFeatureSelection {
@@ -1071,7 +1071,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
 #[cfg(feature = "rust_inspect")]
 fn project_inspection_selection_mismatch(requested_surface: &str) -> CliError {
     CliError::failure(format!(
-        "Oven Alpha project inspection authority does not cover {requested_surface}. The command selected registry roots outside the completed project Loaf's baked dependency surface. A command-local `--sdk-profile` or package-feature selection cannot reuse a Loaf baked for different roots. Use the baked selection; for a different SDK profile, persist it in `[sdk]` in `incan.toml` and rebake; for different package features, rerun `incan oven bake --project .` with the same feature flags."
+        "Oven Alpha project inspection authority does not cover {requested_surface}. The command selected registry roots outside the completed project Loaf's baked dependency surface. A command-local `--sdk-profile` or package-feature selection cannot reuse a Loaf baked for different roots. Use the baked selection; for a different SDK profile, persist it in `[sdk]` in `loaf.toml` and rebake; for different package features, rerun `incan oven bake --project .` with the same feature flags."
     ))
 }
 
@@ -1448,14 +1448,14 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
                      \x20 expected deps-fingerprint: {fingerprint}\n\
                      \x20   actual deps-fingerprint: {actual}\n\n\
                      This usually means your dependency inputs changed since the lock was generated:\n\n\
-                     \x20 - incan.toml dependency entries changed, and/or\n\
+                     \x20 - loaf.toml dependency entries changed, and/or\n\
                      \x20 - inline rust::... annotations changed, and/or\n\
                      \x20 - toolchain known-good defaults changed (if you rely on defaults)\n\
                      \x20 - Incan package-feature or SDK-profile selection changed, and/or\n\
                      \x20 - Cargo feature selection changed\n\n\
                      Fix:\n\n\
                      \x20   incan lock\n\n\
-                     Tip: Pin crate versions/features explicitly in incan.toml for stability \
+                     Tip: Pin crate versions/features explicitly in loaf.toml for stability \
                      across toolchain upgrades.",
                     actual = lock.deps_fingerprint,
                 )));
@@ -1801,7 +1801,7 @@ pub(crate) fn publish_oven_project_lock(
 ) -> CliResult<PublishedOvenProjectLock> {
     let manifest = ProjectManifest::discover(project_root)
         .map_err(|error| CliError::failure(error.to_string()))?
-        .ok_or_else(|| CliError::failure("explicit Oven project bake requires an incan.toml project"))?;
+        .ok_or_else(|| CliError::failure("explicit Oven project bake requires an loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
     let cargo_features = CargoFeatureSelection::default().normalized();
     let context =
@@ -2927,7 +2927,7 @@ mod tests {
         let diagnostic = project_inspection_selection_mismatch("the requested registry dependencies").to_string();
 
         assert!(diagnostic.contains("command-local `--sdk-profile` or package-feature selection"));
-        assert!(diagnostic.contains("persist it in `[sdk]` in `incan.toml` and rebake"));
+        assert!(diagnostic.contains("persist it in `[sdk]` in `loaf.toml` and rebake"));
         assert!(diagnostic.contains("with the same feature flags"));
     }
 
@@ -2939,7 +2939,7 @@ mod tests {
         fs::create_dir_all(project.path().join("library"))?;
         fs::create_dir_all(project.path().join("bin"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"custom-layout\"\n\n[project.scripts]\nworker = \"bin/worker.incn\"\n\n[build]\nsource-root = \"library\"\n",
         )?;
         fs::write(
@@ -3026,7 +3026,7 @@ mod tests {
         fs::create_dir_all(project_root.join("src"))?;
         fs::create_dir_all(project_root.join("tests"))?;
         fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "single_lock_collection"
 version = "0.1.0"
@@ -3102,7 +3102,7 @@ regex = "1"
     {
         let temp_dir = tempfile::tempdir()?;
         let project_root = temp_dir.path();
-        let manifest_path = project_root.join("incan.toml");
+        let manifest_path = project_root.join("loaf.toml");
         let entry_path = project_root.join("src/main.incn");
         fs::create_dir_all(entry_path.parent().ok_or("entry path has no parent")?)?;
         fs::write(
@@ -3186,7 +3186,7 @@ regex = "1"
         fs::create_dir_all(root.join("tests/nested"))?;
         fs::create_dir_all(consumer_root.join("tests"))?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"
 [project]
 name = "root"
@@ -3196,7 +3196,7 @@ members = ["packages/consumer"]
 "#,
         )?;
         fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             r#"
 [project]
 name = "consumer"

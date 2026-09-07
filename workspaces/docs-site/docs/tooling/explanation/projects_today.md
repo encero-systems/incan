@@ -40,7 +40,7 @@ If an `oven.lock` exists, its relevant dependency and source evidence contribute
 
 Rust crate dependencies are resolved through a three-tier system:
 
-1. **`incan.toml`** (highest priority): Project manifest declares explicit dependencies with versions, features, and sources.
+1. **`loaf.toml`** (highest priority): Project manifest declares explicit dependencies with versions, features, and sources.
 2. **Inline annotations**: `import rust::foo @ "1.0"` specifies versions directly in source files.
 3. **Known-good defaults**: For common crates, the compiler provides tested version/feature defaults.
 
@@ -50,7 +50,7 @@ See: [Rust Interop](../../language/how-to/rust_interop.md) and [Managing depende
 
 ## Project configuration
 
-Projects can optionally have an `incan.toml` manifest at the project root:
+Projects can optionally have an `loaf.toml` manifest at the project root:
 
 ```text
 my_project/
@@ -58,7 +58,7 @@ my_project/
 │   └── main.incn
 ├── tests/
 │   └── test_main.incn
-├── incan.toml         # Project manifest (optional)
+├── loaf.toml         # Project manifest (optional)
 └── oven.lock         # Lock file (auto-generated, commit to VCS)
 ```
 

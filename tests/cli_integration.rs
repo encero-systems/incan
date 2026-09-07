@@ -346,7 +346,7 @@ fn write_minimal_project(root: &Path, name: &str, extra_manifest: &str) -> Resul
     let src_dir = root.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        root.join("incan.toml"),
+        root.join("loaf.toml"),
         format!(
             r#"[project]
 name = "{name}"
@@ -1175,7 +1175,7 @@ fn fallible_iterator_defaults_cross_compiled_package_boundary() -> Result<(), Bo
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         "[project]\nname = \"fallible_streams\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -1279,7 +1279,7 @@ fn set_constructor_survives_facade_package_and_test_batch_issue951() -> Result<(
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         "[project]\nname = \"set_library\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -1618,7 +1618,7 @@ def main() -> None:
 fn workspace_inspect_reports_deterministic_scope_and_stale_member_locks() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"
 [project]
 name = "root"
@@ -1631,10 +1631,7 @@ default-members = ["zebra", "alpha"]
     for name in ["alpha", "zebra"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
-        fs::write(
-            member_root.join("incan.toml"),
-            format!("[project]\nname = \"{name}\"\n"),
-        )?;
+        fs::write(member_root.join("loaf.toml"), format!("[project]\nname = \"{name}\"\n"))?;
     }
     fs::write(root.path().join("packages/zebra/oven.lock"), "obsolete member lock")?;
 
@@ -1679,7 +1676,7 @@ default-members = ["zebra", "alpha"]
 fn workspace_lock_is_published_once_at_the_root_from_any_member() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"
 [workspace]
 members = ["packages/*"]
@@ -1692,7 +1689,7 @@ itoa = "1"
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{name}\"\nversion = \"{version}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[project.features]\ndefault = [\"{name}\"]\n{name} = []\n{}",
                 if name == "alpha" {
@@ -1842,7 +1839,7 @@ fn workspace_root_library_without_a_script_publishes_the_canonical_lock_issue997
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root-library"
 version = "0.1.0"
@@ -1859,7 +1856,7 @@ members = ["packages/member"]
     let member = root.path().join("packages/member");
     fs::create_dir_all(member.join("src"))?;
     fs::write(
-        member.join("incan.toml"),
+        member.join("loaf.toml"),
         "[project]\nname = \"member-library\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -1895,7 +1892,7 @@ fn rooted_workspace_semantic_lock_is_relocation_stable_issue906() -> Result<(), 
     ) -> Result<incan::lockfile::IncanLock, Box<dyn std::error::Error>> {
         fs::create_dir_all(root.join("src"))?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -1918,7 +1915,7 @@ root_lib = { path = "." }
         let consumer = root.join("consumer");
         fs::create_dir_all(consumer.join("src"))?;
         fs::write(
-            consumer.join("incan.toml"),
+            consumer.join("loaf.toml"),
             r#"[project]
 name = "consumer"
 version = "0.1.0"
@@ -1944,7 +1941,7 @@ root_lib = { workspace = true }
     let producer = temp.path().join("prebuilt/root_lib");
     fs::create_dir_all(producer.join("src"))?;
     fs::write(
-        producer.join("incan.toml"),
+        producer.join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -1998,7 +1995,7 @@ fn rooted_workspace_member_build_uses_direct_rust_dependencies_issue907() -> Res
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -2016,7 +2013,7 @@ default-members = ["consumer"]
     let consumer = root.path().join("consumer");
     fs::create_dir_all(consumer.join("src"))?;
     fs::write(
-        consumer.join("incan.toml"),
+        consumer.join("loaf.toml"),
         r#"[project]
 name = "consumer"
 version = "0.1.0"
@@ -2059,7 +2056,7 @@ fn rooted_workspace_cold_lock_and_selected_member_preserve_identity_issues908_90
     )?;
 
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -2081,7 +2078,7 @@ itoa = "1"
     let consumer = root.path().join("consumer");
     fs::create_dir_all(consumer.join("src"))?;
     fs::write(
-        consumer.join("incan.toml"),
+        consumer.join("loaf.toml"),
         r#"[project]
 name = "consumer"
 version = "0.1.0"
@@ -2441,7 +2438,7 @@ fn locked_build_synthesizes_unreferenced_selected_workspace_member_cargo_root() 
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"[project]
 name = "root_lib"
 version = "0.1.0"
@@ -2480,7 +2477,7 @@ default-members = ["root_lib", "leaf", "sibling"]
     let leaf = root.path().join("leaf");
     fs::create_dir_all(leaf.join("src"))?;
     fs::write(
-        leaf.join("incan.toml"),
+        leaf.join("loaf.toml"),
         r#"[project]
 name = "leaf"
 version = "0.2.0"
@@ -2506,7 +2503,7 @@ path = "../vendor/foo-v1"
     let sibling = root.path().join("sibling");
     fs::create_dir_all(sibling.join("src"))?;
     fs::write(
-        sibling.join("incan.toml"),
+        sibling.join("loaf.toml"),
         r#"[project]
 name = "sibling"
 version = "0.3.0"
@@ -2574,14 +2571,14 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     let root = tempfile::tempdir()?;
     fs::write(root.path().join(".gitignore"), "target/\n.incan-home/\n")?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for name in ["alpha", "zebra"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
             ),
@@ -2673,16 +2670,13 @@ fn workspace_fmt_fans_out_in_member_order_without_changing_single_project_semant
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for name in ["zebra", "alpha"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
-        fs::write(
-            member_root.join("incan.toml"),
-            format!("[project]\nname = \"{name}\"\n"),
-        )?;
+        fs::write(member_root.join("loaf.toml"), format!("[project]\nname = \"{name}\"\n"))?;
         fs::write(
             member_root.join("src/main.incn"),
             "def main() -> None:\n  println(\"formatted\")\n",
@@ -2709,7 +2703,7 @@ fn workspace_fmt_fans_out_in_member_order_without_changing_single_project_semant
 fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for (name, source) in [
@@ -2719,7 +2713,7 @@ fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), B
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!("[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"),
         )?;
         fs::write(member_root.join("src/main.incn"), source)?;
@@ -2752,14 +2746,14 @@ fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), B
 fn workspace_run_and_version_require_one_explicit_member() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
     )?;
     for name in ["zebra", "alpha"] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
-            member_root.join("incan.toml"),
+            member_root.join("loaf.toml"),
             format!(
                 "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
             ),
@@ -2786,8 +2780,8 @@ fn workspace_run_and_version_require_one_explicit_member() -> Result<(), Box<dyn
 
     let version_output = run_incan(root.path(), &["version", "patch", "--member", "alpha"])?;
     assert_success(&version_output, "workspace version --member alpha");
-    let alpha_manifest = fs::read_to_string(root.path().join("packages/alpha/incan.toml"))?;
-    let zebra_manifest = fs::read_to_string(root.path().join("packages/zebra/incan.toml"))?;
+    let alpha_manifest = fs::read_to_string(root.path().join("packages/alpha/loaf.toml"))?;
+    let zebra_manifest = fs::read_to_string(root.path().join("packages/zebra/loaf.toml"))?;
     assert!(alpha_manifest.contains("version = \"0.1.1\""));
     assert!(zebra_manifest.contains("version = \"0.1.0\""));
     Ok(())
@@ -2798,7 +2792,7 @@ fn workspace_env_fragments_are_inherited_only_through_explicit_member_extends() 
 {
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         r#"
 [workspace]
 members = ["packages/member"]
@@ -2813,7 +2807,7 @@ test = ["incan", "test"]
     let member_root = root.path().join("packages/member");
     fs::create_dir_all(member_root.join("src"))?;
     fs::write(
-        member_root.join("incan.toml"),
+        member_root.join("loaf.toml"),
         r#"
 [project]
 name = "member"
@@ -3365,7 +3359,7 @@ fn semantic_inspection_surfaces_share_project_identity() -> Result<(), Box<dyn s
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "semantic_probe"
 version = "0.1.0"
@@ -3487,7 +3481,7 @@ fn inspect_bindings_projects_checked_declaration_facts() -> Result<(), Box<dyn s
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "binding_inspection"
 version = "0.1.0"
@@ -3779,7 +3773,7 @@ def main() -> None:
     let relocated_root = relocated_temp.path().join("binding-inspection-relocated");
     fs::create_dir_all(relocated_root.join("src"))?;
     for relative_path in [
-        "incan.toml",
+        "loaf.toml",
         "oven.lock",
         "fixture.h",
         "src/fixture.incn",
@@ -3809,7 +3803,7 @@ def main() -> None:
         "a relocated locked package changed its redacted binding receipt"
     );
 
-    let manifest_path = tmp.path().join("incan.toml");
+    let manifest_path = tmp.path().join("loaf.toml");
     let manifest = fs::read_to_string(&manifest_path)?;
     let dangling_manifest = manifest.replacen(
         "module = [\"fixture\"]\nname = \"Fixture\"",
@@ -4317,7 +4311,7 @@ fn rust_std_result_and_contextual_f32_interop_compile_together_issues801_802() -
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "result_interop_probe"
 version = "0.1.0"
@@ -4341,7 +4335,7 @@ def accepts_f32(value: f32) -> None:
   print("ok")
 
 def main() -> None:
-  result = file_len("incan.toml")
+  result = file_len("loaf.toml")
   zero: f32 = 0.0
   accepts_f32(1.5)
   print("checked")
@@ -4400,7 +4394,7 @@ fn check_json_reports_import_diagnostics() -> Result<(), Box<dyn std::error::Err
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "diag_import"
 version = "0.1.0"
@@ -4548,7 +4542,7 @@ fn build_report_output_file_describes_library_build() -> Result<(), Box<dyn std:
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "report_lib"
 version = "0.1.0"
@@ -4635,7 +4629,7 @@ fn hyphenated_library_package_preserves_identity_and_emits_a_valid_rust_target_i
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[project]\nname = \"hyphenated-library\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -4691,7 +4685,7 @@ fn inspect_rust_reports_current_generated_rust_files() -> Result<(), Box<dyn std
     let src_dir = project.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project.path().join("incan.toml"),
+        project.path().join("loaf.toml"),
         r#"[project]
 name = "inspect_lib"
 version = "0.1.0"
@@ -4763,7 +4757,7 @@ fn inspect_codegraph_exports_multifile_imports_and_public_symbols() -> Result<()
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "graph_demo"
 version = "0.1.0"
@@ -4992,7 +4986,7 @@ fn inspect_codegraph_keeps_one_identity_through_alias_reexport_and_without_a_loc
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "identity_graph"
 version = "0.1.0"
@@ -5131,7 +5125,7 @@ fn inspect_codegraph_exports_checked_registry_facts() -> Result<(), Box<dyn std:
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "registry_graph"
 version = "0.1.0"
@@ -5192,7 +5186,7 @@ fn inspect_codegraph_attaches_facade_paths_to_checked_registry_facts() -> Result
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         "[project]\nname = \"registry_graph_facade\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -5582,7 +5576,7 @@ fn codegraph_importer_example_consumes_compiler_jsonl_issue776() -> Result<(), B
     let source_dir = tmp.path().join("source");
     fs::create_dir_all(&source_dir)?;
     fs::write(
-        source_dir.join("incan.toml"),
+        source_dir.join("loaf.toml"),
         r#"[project]
 name = "codegraph_importer_source"
 version = "0.1.0"
@@ -5631,8 +5625,8 @@ def main() -> None:
     let importer_src = importer_dir.join("src");
     fs::create_dir_all(&importer_src)?;
     fs::write(
-        importer_dir.join("incan.toml"),
-        include_str!("../examples/pro/codegraph_importer/incan.toml"),
+        importer_dir.join("loaf.toml"),
+        include_str!("../examples/pro/codegraph_importer/loaf.toml"),
     )?;
     fs::write(
         importer_src.join("importer.incn"),
@@ -5829,7 +5823,7 @@ fn requires_incan_allows_compatible_project_commands() -> Result<(), Box<dyn std
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "compatible_toolchain_guard"
 version = "0.1.0"
@@ -5865,7 +5859,7 @@ fn requires_incan_rejects_project_aware_commands() -> Result<(), Box<dyn std::er
     fs::create_dir_all(&src_dir)?;
     fs::create_dir_all(&tests_dir)?;
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "toolchain_guard"
 version = "0.1.0"
@@ -5920,7 +5914,7 @@ fn env_requires_incan_is_reported_and_enforced_for_env_run() -> Result<(), Box<d
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path();
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "env_toolchain_guard"
 version = "0.1.0"
@@ -5993,7 +5987,7 @@ fn init_creates_project_scaffold_with_expected_content() -> Result<(), Box<dyn s
         "init summary should name the created project, got:\n{stdout}"
     );
 
-    let manifest = fs::read_to_string(project_dir.join("incan.toml"))?;
+    let manifest = fs::read_to_string(project_dir.join("loaf.toml"))?;
     assert!(
         manifest.contains(r#"name = "cli_init_app""#),
         "manifest should include explicit project name"
@@ -6400,7 +6394,7 @@ fn inspect_interop_plan_uses_the_selected_workspace_member_lock_projection() -> 
     // ---- Declare one Oven interop workspace member ----
     let root = tempfile::tempdir()?;
     fs::write(
-        root.path().join("incan.toml"),
+        root.path().join("loaf.toml"),
         "[workspace]\nmembers = [\"packages/mobile\"]\n",
     )?;
     let member = root.path().join("packages/mobile");
@@ -6531,7 +6525,7 @@ fn check_rejects_an_undeclared_interop_target() -> Result<(), Box<dyn std::error
     )?;
     assert_failure(&output, "undeclared Oven interop target selection");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("requires an [interop.c] declaration in incan.toml"),
+        String::from_utf8_lossy(&output.stderr).contains("requires an [interop.c] declaration in loaf.toml"),
         "unexpected undeclared-target diagnostic:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -6753,7 +6747,7 @@ bitflags = "=1.3.2"
         "normal lock generation must not resolve a Cargo package graph"
     );
 
-    let manifest_path = tmp.path().join("incan.toml");
+    let manifest_path = tmp.path().join("loaf.toml");
     let first_manifest = fs::read_to_string(&manifest_path)?;
     fs::write(&manifest_path, first_manifest.replace("=1.3.2", "=2.11.0"))?;
     let second_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
@@ -7006,7 +7000,7 @@ fn build_assert_string_inequality_in_list_loop_issue739() -> Result<(), Box<dyn 
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "list_str_loop_assert_compare"
 version = "0.1.0"
@@ -7040,7 +7034,7 @@ fn build_union_widening_converts_generated_wrappers_issue741() -> Result<(), Box
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "union_widening_conversion"
 version = "0.1.0"
@@ -7171,7 +7165,7 @@ pub def main() -> None:
     let imported_src = imported_root.join("src");
     fs::create_dir_all(&imported_src)?;
     fs::write(
-        imported_root.join("incan.toml"),
+        imported_root.join("loaf.toml"),
         r#"[project]
 name = "union_imported_alias"
 version = "0.1.0"
@@ -7238,7 +7232,7 @@ pub def main() -> None:
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "union_lib"
 version = "0.1.0"
@@ -7328,7 +7322,7 @@ fn build_pub_helper_wraps_union_call_result_as_option_payload_issue745() -> Resu
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "querykit"
 version = "0.1.0"
@@ -7431,7 +7425,7 @@ fn build_pub_method_accepts_dependency_owned_union_alias_payload_issue755() -> R
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "union_provider"
 version = "0.1.0"
@@ -8437,7 +8431,7 @@ fn test_runner_prefers_project_sibling_import_over_unimported_stdlib_stub_type()
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path();
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "stdhash_sibling_collision"
 version = "0.1.0"
@@ -8527,7 +8521,7 @@ fn test_runner_resolves_imported_stdlib_enum_patterns_from_enum_metadata() -> Re
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path();
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "stdlib_enum_pattern_metadata"
 version = "0.1.0"
@@ -8606,7 +8600,7 @@ fn build_locked_rejects_stale_lockfile() -> Result<(), Box<dyn std::error::Error
     assert_success(&lock_output, "incan lock before locked build");
 
     fs::write(
-        tmp.path().join("incan.toml"),
+        tmp.path().join("loaf.toml"),
         r#"[project]
 name = "cli_locked_project"
 version = "0.1.0"
@@ -8900,7 +8894,7 @@ fn tools_metadata_api_reports_docstring_drift() -> Result<(), Box<dyn std::error
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "metadata_docstring_drift_app"
 version = "0.1.0"
@@ -8975,7 +8969,7 @@ fn tools_metadata_api_reports_public_import_aliases() -> Result<(), Box<dyn std:
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "metadata_alias_app"
 version = "0.1.0"
@@ -9191,7 +9185,7 @@ fn tools_metadata_model_reads_built_library_artifact() -> Result<(), Box<dyn std
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "contract_model_lib"
 version = "0.1.0"
@@ -9244,7 +9238,7 @@ fn tools_metadata_model_reports_non_introspectable_artifact() -> Result<(), Box<
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_dir.join("incan.toml"),
+        project_dir.join("loaf.toml"),
         r#"[project]
 name = "contract_model_lib_without_models"
 version = "0.1.0"
@@ -9726,7 +9720,7 @@ fn run_pub_type_token_contracts_issue750() -> Result<(), Box<dyn std::error::Err
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "type_token_provider"
 version = "0.1.0"
@@ -10275,7 +10269,7 @@ fn build_pub_consumer_imports_public_alias_of_imported_item_issue617() -> Result
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "alias_lib"
 version = "0.1.0"
@@ -10348,7 +10342,7 @@ fn build_lib_materializes_facade_decorator_metadata_projection_issue695() -> Res
     let operators = src.join("functions").join("operators");
     fs::create_dir_all(&operators)?;
     fs::write(
-        producer_root.join("incan.toml"),
+        producer_root.join("loaf.toml"),
         r#"[project]
 name = "metadata_registry"
 version = "0.1.0"
@@ -10922,7 +10916,7 @@ fn test_qualified_partial_constructor_presets_cross_package_const_metadata_issue
     let provider_root = tmp.path().join("partialkit_provider");
     fs::create_dir_all(provider_root.join("src"))?;
     fs::write(
-        provider_root.join("incan.toml"),
+        provider_root.join("loaf.toml"),
         "[project]\nname = \"partialkit\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -10952,7 +10946,7 @@ pub policy = partial models.Policy(family="cross-package", enabled=true)
     let consumer_root = tmp.path().join("consumer");
     fs::create_dir_all(consumer_root.join("src"))?;
     fs::write(
-        consumer_root.join("incan.toml"),
+        consumer_root.join("loaf.toml"),
         "[project]\nname = \"consumer\"\n\n[dependencies]\npartialkit = { path = \"../partialkit_provider\" }\n",
     )?;
     let main_path = consumer_root.join("src/main.incn");
@@ -10992,7 +10986,7 @@ fn oven_baked_public_direct_rust_provider_composes_into_consumer_issue1053() -> 
     let provider_root = tmp.path().join("uuid_provider");
     fs::create_dir_all(provider_root.join("src"))?;
     fs::write(
-        provider_root.join("incan.toml"),
+        provider_root.join("loaf.toml"),
         r#"[project]
 name = "uuid_provider"
 version = "0.1.0"
@@ -11020,7 +11014,7 @@ pub def provider_token() -> str:
     let consumer_root = tmp.path().join("consumer");
     fs::create_dir_all(consumer_root.join("src"))?;
     fs::write(
-        consumer_root.join("incan.toml"),
+        consumer_root.join("loaf.toml"),
         "[project]\nname = \"consumer\"\n\n[dependencies]\nuuid_provider = { path = \"../uuid_provider\" }\n",
     )?;
     fs::write(
@@ -11055,7 +11049,7 @@ fn oven_baked_provider_and_direct_registry_consumer_bake_issue1054() -> Result<(
     let provider_root = tmp.path().join("provider");
     fs::create_dir_all(provider_root.join("src"))?;
     fs::write(
-        provider_root.join("incan.toml"),
+        provider_root.join("loaf.toml"),
         "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(

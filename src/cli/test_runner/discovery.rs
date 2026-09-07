@@ -130,7 +130,7 @@ fn enclosing_manifest_root(path: &Path) -> Option<PathBuf> {
         path.to_path_buf()
     };
     loop {
-        if cursor.join("incan.toml").is_file() {
+        if cursor.join("loaf.toml").is_file() {
             return Some(canonical_authority_root(&cursor));
         }
         if !cursor.pop() {
@@ -141,7 +141,7 @@ fn enclosing_manifest_root(path: &Path) -> Option<PathBuf> {
 
 /// Walk the requested path once, retaining candidates and the deepest project boundary that owns each one.
 ///
-/// A command already enclosed by an `incan.toml` never descends into a nested project. A manifest-less common
+/// A command already enclosed by an `loaf.toml` never descends into a nested project. A manifest-less common
 /// directory may discover sibling projects, but keeps them as separate authorities so command planning can reject the
 /// ambiguous invocation before selecting a session from whichever file happens to sort first.
 pub(crate) fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {
@@ -185,7 +185,7 @@ pub(crate) fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {
             }
 
             let canonical_dir = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-            let local_manifest_root = path.join("incan.toml").is_file().then_some(canonical_dir.as_path());
+            let local_manifest_root = path.join("loaf.toml").is_file().then_some(canonical_dir.as_path());
             let active_manifest_root = match (self.selected_manifest_root, active_manifest_root, local_manifest_root) {
                 (Some(selected), _, Some(local)) if local != selected => return,
                 (Some(selected), _, _) => Some(selected),
@@ -1265,11 +1265,11 @@ def helper() -> int:
         std::fs::create_dir_all(&root_tests)?;
         std::fs::create_dir_all(&nested_tests)?;
         std::fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"root_project\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
-            nested.join("incan.toml"),
+            nested.join("loaf.toml"),
             "[project]\nname = \"nested_project\"\nversion = \"0.1.0\"\n",
         )?;
         let root_test = root_tests.join("test_root.incn");

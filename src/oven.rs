@@ -317,7 +317,7 @@ pub struct OvenSourceEvidence {
     /// SHA-256 digest of normalized `Cargo.lock` content when a frozen Cargo package was explicitly imported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cargo_lock_digest: Option<String>,
-    /// SHA-256 digest of normalized `incan.toml` content when present.
+    /// SHA-256 digest of normalized `loaf.toml` content when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub incan_manifest_digest: Option<String>,
     /// Additional content-derived inputs from the source closure; local paths are deliberately excluded.
@@ -416,7 +416,7 @@ pub enum OvenError {
     #[error("Oven Alpha compatibility miss: Cargo.toml at {path} {message}")]
     UnsupportedCargoPackage { path: PathBuf, message: String },
     /// An optional Incan declaration could not support shared project identity validation.
-    #[error("Oven Alpha compatibility miss: failed to read incan.toml at {path}: {message}")]
+    #[error("Oven Alpha compatibility miss: failed to read loaf.toml at {path}: {message}")]
     InvalidIncanManifest { path: PathBuf, message: String },
     /// Cargo and Incan declarations disagreed on one shared identity field.
     #[error(
@@ -827,7 +827,7 @@ fn validate_optional_incan_identity(
     project_root: &Path,
     cargo_project: &OvenProjectIdentity,
 ) -> Result<Option<String>, OvenError> {
-    let path = project_root.join("incan.toml");
+    let path = project_root.join("loaf.toml");
     if !path.exists() {
         return Ok(None);
     }
@@ -1881,7 +1881,7 @@ mod tests {
         )?;
         fs::write(root.join("Cargo.lock"), "version = 4\n")?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             "[project]\nname = \"oven_fixture\"\nversion = \"0.1.0\"\n",
         )?;
         Ok(())

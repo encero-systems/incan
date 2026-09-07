@@ -27,7 +27,7 @@ From the project root, resolve dependencies and commit the result with the manif
 
 ```bash
 incan lock
-git add incan.toml oven.lock
+git add loaf.toml oven.lock
 ```
 
 `oven.lock` is the reproducibility authority for `--locked` commands. Regenerate it intentionally after dependency changes; do not let CI silently resolve a different graph.

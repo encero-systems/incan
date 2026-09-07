@@ -1,6 +1,6 @@
-//! Project manifest (`incan.toml`) discovery and parsing.
+//! Project manifest (`loaf.toml`) discovery and parsing.
 //!
-//! Implements the `incan.toml` schema from RFC 013 (Rust crate dependencies), RFC 015 (project discovery), and
+//! Implements the `loaf.toml` schema from RFC 013 (Rust crate dependencies), RFC 015 (project discovery), and
 //! RFC 031 Phase 1 (Incan library dependency table split). This module is responsible for locating the manifest and
 //! parsing dependency tables into structured specs that the dependency resolver and future library resolver can
 //! validate.
@@ -14,16 +14,18 @@ use toml_edit::{Array as EditArray, Document, DocumentMut, Item, Table, Value as
 
 use crate::oven_interop::{InteropCSection, InteropSection};
 
-/// The canonical manifest filename that the compiler searches for.
-pub const MANIFEST_FILENAME: &str = "incan.toml";
 /// The authored Loaf manifest filename RFC 117 makes the sole project manifest.
 ///
 /// Lowercase deliberately, as RFC 117's Design decisions record: a case-only difference between two spellings is
 /// meaningless on the case-insensitive filesystems Windows and macOS use by default and significant on Linux and in CI.
-///
-/// Discovery does not yet prefer this file. [`discovered_manifest_kind`] reports which manifest a directory holds so
-/// the cutover has one place to change, rather than a filename comparison spread across every discovery caller.
 pub const LOAF_MANIFEST_FILENAME: &str = "loaf.toml";
+/// The retired manifest filename, retained only so diagnostics can name what a directory actually holds.
+///
+/// RFC 117 lists preserving `incan.toml` as a compatibility format among its non-goals, so nothing parses a file with
+/// this name. It exists to recognize one, which is what lets [`discovered_manifest_kind`] answer "this directory holds
+/// the old manifest" rather than "this directory holds no project" — a distinction the two situations deserve, since
+/// only one of them is a mistake the author can fix by renaming.
+pub const LEGACY_MANIFEST_FILENAME: &str = "incan.toml";
 /// Internal manifest-path override used for nested `incan` subprocesses launched via `incan env run`.
 pub const INTERNAL_MANIFEST_OVERRIDE_ENV: &str = "INCAN_INTERNAL_MANIFEST_OVERRIDE";
 /// Internal project-root override used for nested `incan` subprocesses launched via `incan env run`.
@@ -33,7 +35,7 @@ pub const INTERNAL_PROJECT_ROOT_OVERRIDE_ENV: &str = "INCAN_INTERNAL_PROJECT_ROO
 // Error types
 // ============================================================================
 
-/// Errors that can occur when reading or parsing an `incan.toml` manifest.
+/// Errors that can occur when reading or parsing a `loaf.toml` manifest.
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
     /// The file exists but could not be read.
@@ -198,7 +200,7 @@ pub struct WorkspaceSharedDependencies {
 // Project manifest
 // ============================================================================
 
-/// `[project]` metadata from `incan.toml`.
+/// `[project]` metadata from `loaf.toml`.
 ///
 /// RFC 015 makes this table the canonical project identity and lifecycle metadata source. Fields are optional in the
 /// Rust representation because the compiler supports legacy manifests and commands validate only the fields they
@@ -461,7 +463,7 @@ fn is_false(value: &bool) -> bool {
 
 /// A manifest that can be serialized to TOML.
 ///
-/// Used by `incan init` and any future code that needs to write `incan.toml`.
+/// Used by `incan init` and any future code that needs to write `loaf.toml`.
 /// The canonical field definitions live in [`ProjectSection`] and [`BuildSection`], keeping read and write in sync.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct WritableManifest {
@@ -486,10 +488,10 @@ impl WritableManifest {
     }
 }
 
-/// A parsed project manifest (`incan.toml`).
+/// A parsed project manifest (`loaf.toml`).
 #[derive(Debug, Clone)]
 pub struct ProjectManifest {
-    /// Absolute (or as-discovered) path to the `incan.toml` file.
+    /// Absolute (or as-discovered) path to the `loaf.toml` file.
     path: PathBuf,
     /// `[project]` metadata (optional).
     pub project: Option<ProjectSection>,
@@ -520,17 +522,19 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
-    /// Discover and parse an `incan.toml` manifest by walking upward from `start_dir`.
+    /// Discover and parse a `loaf.toml` manifest by walking upward from `start_dir`.
     ///
-    /// Returns `Ok(None)` if no `incan.toml` is found (e.g., single-file mode).
-    /// Returns `Err` if a manifest is found but cannot be read or parsed.
+    /// Returns `Ok(None)` when no manifest is found at all, which is single-file mode rather than an error. Returns
+    /// `Err` when a manifest is found but cannot be read or parsed, and when the walk meets a directory holding only
+    /// the retired `incan.toml` — RFC 117 rule 10 makes that a targeted diagnostic rather than a parse or a silent
+    /// walk past it, because such a directory looks like a project root to whoever authored it.
     pub fn discover(start_dir: &Path) -> Result<Option<Self>, ManifestError> {
-        let manifest_path = match internal_project_root_override()
-            .map(|root| root.join(MANIFEST_FILENAME))
-            .or_else(|| find_manifest(start_dir))
-        {
+        let manifest_path = match internal_project_root_override().map(|root| root.join(LOAF_MANIFEST_FILENAME)) {
             Some(path) => path,
-            None => return Ok(None),
+            None => match find_manifest(start_dir)? {
+                Some(path) => path,
+                None => return Ok(None),
+            },
         };
 
         let content_path = internal_manifest_override_path().unwrap_or_else(|| manifest_path.clone());
@@ -543,7 +547,7 @@ impl ProjectManifest {
         Ok(Some(manifest))
     }
 
-    /// Parse an `incan.toml` from raw string content.
+    /// Parse a `loaf.toml` from raw string content.
     ///
     /// Useful for testing without touching the filesystem.
     pub fn from_str(content: &str, path: &Path) -> Result<Self, ManifestError> {
@@ -671,12 +675,12 @@ impl ProjectManifest {
         })
     }
 
-    /// Path to the `incan.toml` file.
+    /// Path to the `loaf.toml` file.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// The project root directory (parent of `incan.toml`).
+    /// The project root directory (parent of `loaf.toml`).
     pub fn project_root(&self) -> &Path {
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
         if parent.as_os_str().is_empty() {
@@ -763,23 +767,29 @@ pub fn discovered_manifest_kind(dir: &Path) -> DiscoveredManifest {
     if loaf.is_file() {
         return DiscoveredManifest::Loaf(loaf);
     }
-    let legacy = dir.join(MANIFEST_FILENAME);
+    let legacy = dir.join(LEGACY_MANIFEST_FILENAME);
     if legacy.is_file() {
         return DiscoveredManifest::LegacyIncanOnly(legacy);
     }
     DiscoveredManifest::None
 }
 
-/// Walk upward from `start_dir` to find an `incan.toml` file.
-pub fn find_manifest(start_dir: &Path) -> Option<PathBuf> {
+/// Walk upward from `start_dir` to find the authored `loaf.toml`.
+///
+/// The walk stops at the first directory that holds either manifest, not at the first `loaf.toml`. A directory holding
+/// only `incan.toml` ends the search with [`ManifestError::LegacyIncanOnly`] rather than being stepped over: whoever
+/// put it there meant it as a project root, and continuing upward would silently build a different project than the
+/// one they were standing in.
+pub fn find_manifest(start_dir: &Path) -> Result<Option<PathBuf>, ManifestError> {
     let mut current = start_dir.to_path_buf();
     loop {
-        let candidate = current.join(MANIFEST_FILENAME);
-        if candidate.is_file() {
-            return Some(candidate);
+        match discovered_manifest_kind(&current) {
+            DiscoveredManifest::Loaf(path) => return Ok(Some(path)),
+            DiscoveredManifest::LegacyIncanOnly(path) => return Err(ManifestError::LegacyIncanOnly { path }),
+            DiscoveredManifest::None => {}
         }
         if !current.pop() {
-            return None;
+            return Ok(None);
         }
     }
 }
@@ -810,7 +820,7 @@ pub fn render_dependency_overlay_manifest(
     Ok(document.to_string())
 }
 
-/// Build a lookup set for **Rust crate names** as written in `incan.toml` and common spellings used in source.
+/// Build a lookup set for **Rust crate names** as written in `loaf.toml` and common spellings used in source.
 ///
 /// Cargo package names often use **hyphens** (`serde-json`), while `use` paths and `rust::` imports typically use
 /// **underscores** (`serde_json`). For each manifest key we insert the key as-is plus both single-character-style
@@ -1046,7 +1056,7 @@ fn byte_offset_to_line_col(content: &str, index: usize) -> (usize, usize) {
     (line, column + column_offset)
 }
 
-/// Parse and validate one complete `incan.toml` document.
+/// Parse and validate one complete `loaf.toml` document.
 fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest, ManifestError> {
     let document: Document<String> = content
         .parse()
@@ -2057,9 +2067,12 @@ mod tests {
         // RFC 117 rule 10: a targeted diagnostic rather than legacy parsing.
         assert!(
             rendered.contains("/w/demo/incan.toml"),
-            "must name the file: {rendered}"
+            "must name the file it found: {rendered}"
         );
-        assert!(rendered.contains("loaf.toml"), "must name the replacement: {rendered}");
+        assert!(
+            rendered.contains("`loaf.toml` is the authored"),
+            "must name the replacement, not only the file it rejected: {rendered}"
+        );
         assert!(
             rendered.contains("not read as a compatibility format"),
             "must say the file is not parsed, not merely that it is wrong: {rendered}"
@@ -2087,7 +2100,7 @@ mod tests {
     fn the_c_interop_table_parses_under_its_loaf_level_root() -> TestResult {
         let manifest = ProjectManifest::from_str(
             "[project]\nname = \"demo\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"include/bridge.h\"]\n",
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         )?;
         let interop_c = manifest
             .interop_c()
@@ -2104,7 +2117,7 @@ mod tests {
         // `deny_unknown_fields` would otherwise produce -- and must never be parsed as if it had declared nothing.
         let rendered = match ProjectManifest::from_str(
             "[project]\nname = \"demo\"\n\n[oven.interop]\nschema = 1\n\n[[oven.interop.targets]]\ntarget = \"aarch64-apple-darwin\"\n",
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         ) {
             Ok(_) => return Err("a manifest authoring the retired interop root must be rejected".into()),
             Err(error) => error.to_string(),
@@ -2151,7 +2164,10 @@ mod tests {
     #[test]
     fn a_directory_holding_only_incan_toml_is_reported_as_legacy_rather_than_a_project() -> TestResult {
         let dir = tempfile::tempdir()?;
-        fs::write(dir.path().join(MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
+        fs::write(
+            dir.path().join(LEGACY_MANIFEST_FILENAME),
+            "[project]\nname = \"demo\"\n",
+        )?;
         match discovered_manifest_kind(dir.path()) {
             DiscoveredManifest::LegacyIncanOnly(path) => assert_eq!(path, dir.path().join("incan.toml")),
             other => return Err(format!("expected the legacy manifest, got {other:?}").into()),
@@ -2163,11 +2179,63 @@ mod tests {
     fn loaf_manifest_wins_over_a_neighbouring_legacy_manifest() -> TestResult {
         let dir = tempfile::tempdir()?;
         fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
-        fs::write(dir.path().join(MANIFEST_FILENAME), "[project]\nname = \"stale\"\n")?;
+        fs::write(
+            dir.path().join(LEGACY_MANIFEST_FILENAME),
+            "[project]\nname = \"stale\"\n",
+        )?;
         match discovered_manifest_kind(dir.path()) {
             DiscoveredManifest::Loaf(path) => assert_eq!(path, dir.path().join("loaf.toml")),
             other => return Err(format!("expected the Loaf manifest to win, got {other:?}").into()),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_walks_upward_to_the_nearest_loaf_manifest() -> TestResult {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
+        let nested = root.path().join("src/deep");
+        fs::create_dir_all(&nested)?;
+        let manifest = ProjectManifest::discover(&nested)?.ok_or("discovery found no manifest above a nested dir")?;
+        assert_eq!(manifest.path(), root.path().join(LOAF_MANIFEST_FILENAME));
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_stops_at_a_legacy_directory_instead_of_walking_past_it() -> TestResult {
+        // A `loaf.toml` above and a stale `incan.toml` below. Walking past the legacy directory would silently build
+        // the outer project while the author was standing in what they believe is their own project root, so RFC 117
+        // rule 10's diagnostic has to win over the ancestor rather than defer to it.
+        let root = tempfile::tempdir()?;
+        fs::write(
+            root.path().join(LOAF_MANIFEST_FILENAME),
+            "[project]\nname = \"outer\"\n",
+        )?;
+        let inner = root.path().join("packages/legacy");
+        fs::create_dir_all(&inner)?;
+        fs::write(inner.join(LEGACY_MANIFEST_FILENAME), "[project]\nname = \"inner\"\n")?;
+
+        match ProjectManifest::discover(&inner) {
+            Err(ManifestError::LegacyIncanOnly { path }) => {
+                assert_eq!(path, inner.join(LEGACY_MANIFEST_FILENAME));
+            }
+            Ok(found) => {
+                return Err(
+                    format!("discovery must not silently resolve past a legacy directory, got {found:?}").into(),
+                );
+            }
+            Err(other) => return Err(format!("expected the legacy diagnostic, got {other}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_reports_no_manifest_rather_than_an_error_outside_a_project() -> TestResult {
+        // Single-file mode. "No project here" and "the wrong project file is here" must stay distinguishable.
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("a/b");
+        fs::create_dir_all(&nested)?;
+        assert!(ProjectManifest::discover(&nested)?.is_none());
         Ok(())
     }
 
@@ -2188,7 +2256,7 @@ mod tests {
 
     #[test]
     fn parse_empty_manifest() -> Result<(), ManifestError> {
-        let manifest = ProjectManifest::from_str("", Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str("", Path::new("loaf.toml"))?;
         assert!(manifest.library_dependencies().is_empty());
         assert!(manifest.rust_dependencies().is_empty());
         assert!(manifest.rust_dev_dependencies().is_empty());
@@ -2198,13 +2266,13 @@ mod tests {
     #[test]
     fn malformed_manifest_reports_location() {
         let content = "[dependencies\nserde = \"1.0\"\n";
-        let err = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+        let err = match ProjectManifest::from_str(content, Path::new("loaf.toml")) {
             Err(err) => err,
             Ok(_) => panic!("expected malformed TOML to fail"),
         };
         let rendered = err.to_string();
         assert!(
-            rendered.contains("incan.toml:1"),
+            rendered.contains("loaf.toml:1"),
             "expected line-aware parse error, got: {rendered}"
         );
     }
@@ -2219,7 +2287,7 @@ serde = "1.0"
 [rust-dev-dependencies]
 pretty_assertions = "1.4"
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         assert_eq!(manifest.rust_dependencies().len(), 2);
         assert!(manifest.rust_dependencies().contains_key("tokio"));
         assert!(manifest.rust_dependencies().contains_key("serde"));
@@ -2236,7 +2304,7 @@ version = "1.0"
 [tool.incan.envs.unit.rust-dev-dependencies.proptest]
 version = "1"
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
         let unit = tool.envs.get("unit").ok_or("missing unit env")?;
 
@@ -2254,7 +2322,7 @@ version = "1.0"
 [tool.incan.envs.unit.dev-dependencies.proptest]
 version = "1"
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
         let unit = tool.envs.get("unit").ok_or("missing unit env")?;
 
@@ -2275,7 +2343,7 @@ main = "src/main.incn"
 [tool.incan.metadata]
 model-bundles = ["contracts/order_summary.json"]
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         assert_eq!(
             manifest.contract_model_bundle_paths(),
             vec!["contracts/order_summary.json".to_string()]
@@ -2297,7 +2365,7 @@ version = "1"
 extends = ["default"]
 env-vars = { INCAN_NO_BANNER = "1" }
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let envs = manifest.env_sections();
         let unit = envs.get("unit").ok_or("missing unit env")?;
 
@@ -2326,7 +2394,7 @@ env-vars = { INCAN_NO_BANNER = "1" }
 [dependencies]
 mylib = { path = "../mylib" }
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let mylib = manifest
             .library_dependencies()
             .get("mylib")
@@ -2353,7 +2421,7 @@ serde = { workspace = true, features = ["derive"], optional = true }
 [rust-dev-dependencies]
 proptest = { workspace = true, features = ["std"] }
 "#,
-            Path::new("packages/member/incan.toml"),
+            Path::new("packages/member/loaf.toml"),
         )?;
 
         assert!(manifest.library_dependencies().is_empty());
@@ -2402,7 +2470,7 @@ serde = { version = "1", features = ["alloc"], default-features = false }
 [workspace.rust-dev-dependencies]
 proptest = "1"
 "#,
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         )?;
         let shared = manifest.workspace_shared_dependencies()?;
 
@@ -2438,7 +2506,7 @@ proptest = "1"
 [rust-dependencies]
 serde = { workspace = true, version = "1" }
 "#,
-            Path::new("incan.toml"),
+            Path::new("loaf.toml"),
         ) {
             Ok(_) => panic!("workspace request should reject version ownership"),
             Err(error) => error.to_string(),
@@ -2455,7 +2523,7 @@ serde = { workspace = true, version = "1" }
 [dependencies]
 serde = "1.0"
 "#;
-        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        let err = ProjectManifest::from_str(content, Path::new("loaf.toml"));
         assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
@@ -2465,7 +2533,7 @@ serde = "1.0"
 [dependencies.optional]
 fancy = { version = "0.3" }
 "#;
-        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        let err = ProjectManifest::from_str(content, Path::new("loaf.toml"));
         assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
@@ -2475,7 +2543,7 @@ fancy = { version = "0.3" }
 [rust-dependencies]
 serde_json = { package = "serde-json", version = "1.0" }
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let dep = manifest
             .rust_dependencies()
             .get("serde_json")
@@ -2493,20 +2561,20 @@ serde = "1.0"
 [rust.dependencies]
 tokio = "1.0"
 "#;
-        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        let err = ProjectManifest::from_str(content, Path::new("loaf.toml"));
         assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
     #[test]
     fn rust_alias_tables_conflict_reports_location() {
         let content = "[rust-dependencies]\nserde = \"1.0\"\n\n[rust.dependencies]\ntokio = \"1.0\"\n";
-        let err = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+        let err = match ProjectManifest::from_str(content, Path::new("loaf.toml")) {
             Err(err) => err,
             Ok(_) => panic!("expected conflicting rust dependency tables to fail"),
         };
         let rendered = err.to_string();
         assert!(
-            rendered.contains("incan.toml:4:1"),
+            rendered.contains("loaf.toml:4:1"),
             "expected line+column manifest error, got: {rendered}"
         );
     }
@@ -2514,12 +2582,12 @@ tokio = "1.0"
     #[test]
     fn unknown_project_field_reports_location() {
         let content = "[project]\nname = \"x\"\nversion = \"0.1.0\"\nunknown = true\n";
-        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+        let rendered = match ProjectManifest::from_str(content, Path::new("loaf.toml")) {
             Err(err) => err.to_string(),
             Ok(_) => panic!("expected unknown project field to fail"),
         };
         assert!(
-            rendered.contains("incan.toml:4:1"),
+            rendered.contains("loaf.toml:4:1"),
             "expected line+column manifest error, got: {rendered}"
         );
         assert!(
@@ -2531,12 +2599,12 @@ tokio = "1.0"
     #[test]
     fn unknown_dependency_option_reports_location() {
         let content = "[rust-dependencies]\nserde = { version = \"1.0\", feat = [\"derive\"] }\n";
-        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+        let rendered = match ProjectManifest::from_str(content, Path::new("loaf.toml")) {
             Err(err) => err.to_string(),
             Ok(_) => panic!("expected unknown dependency option to fail"),
         };
         assert!(
-            rendered.contains("incan.toml:2:35"),
+            rendered.contains("loaf.toml:2:35"),
             "expected line+column manifest error, got: {rendered}"
         );
         assert!(
@@ -2551,7 +2619,7 @@ tokio = "1.0"
 [dev-dependencies]
 pretty_assertions = "1.4"
 "#;
-        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        let err = ProjectManifest::from_str(content, Path::new("loaf.toml"));
         assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
@@ -2561,7 +2629,7 @@ pretty_assertions = "1.4"
 [rust-dependencies]
 my_crate = { git = "https://example.com/repo", branch = "main", tag = "v1" }
 "#;
-        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        let err = ProjectManifest::from_str(content, Path::new("loaf.toml"));
         assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
@@ -2583,7 +2651,7 @@ parent_crate = "2.0"
 
     #[test]
     fn project_root_normalizes_empty_parent_to_dot() -> Result<(), ManifestError> {
-        let manifest = ProjectManifest::from_str("", Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str("", Path::new("loaf.toml"))?;
         assert_eq!(manifest.project_root(), Path::new("."));
         Ok(())
     }
@@ -2594,7 +2662,7 @@ parent_crate = "2.0"
 [vocab]
 crate = "crates/mylib_vocab"
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let vocab = manifest.vocab().ok_or("missing vocab section")?;
         assert_eq!(vocab.crate_path.as_deref(), Some("crates/mylib_vocab"));
         Ok(())
@@ -2606,12 +2674,12 @@ crate = "crates/mylib_vocab"
 [vocab]
 crate = "   "
 "#;
-        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+        let rendered = match ProjectManifest::from_str(content, Path::new("loaf.toml")) {
             Err(err) => err.to_string(),
             Ok(_) => panic!("expected empty crate field to fail"),
         };
         assert!(
-            rendered.contains("incan.toml:3:9"),
+            rendered.contains("loaf.toml:3:9"),
             "expected line+column manifest error, got: {rendered}"
         );
     }
@@ -2622,12 +2690,12 @@ crate = "   "
 [vocab]
 some_other_field = "value"
 "#;
-        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+        let rendered = match ProjectManifest::from_str(content, Path::new("loaf.toml")) {
             Err(err) => err.to_string(),
             Ok(_) => panic!("expected missing crate field to fail"),
         };
         assert!(
-            rendered.contains("incan.toml:3:1"),
+            rendered.contains("loaf.toml:3:1"),
             "expected line+column manifest error, got: {rendered}"
         );
         assert!(
@@ -2652,7 +2720,7 @@ optional-dependencies = ["http_server"]
 dependency-features = { http_server = ["tls"] }
 requires-sdk-components = ["stdlib-web"]
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let features = manifest.project_features();
 
         assert_eq!(
@@ -2680,7 +2748,7 @@ requires-sdk-components = ["stdlib-web"]
 [dependencies]
 reporting = { path = "../reporting", optional = true, default-features = false, features = ["json", "http"] }
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let reporting = manifest
             .library_dependencies()
             .get("reporting")
@@ -2700,7 +2768,7 @@ profile = "minimal"
 components = ["stdlib-data", "stdlib-system"]
 exclude-components = ["stdlib-web"]
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         let sdk = manifest.sdk().ok_or("missing sdk selection")?;
 
         assert_eq!(sdk.profile.as_deref(), Some("minimal"));
@@ -2714,7 +2782,7 @@ exclude-components = ["stdlib-web"]
 
     fn tempdir_with_manifest(content: &str) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        fs::write(dir.path().join(MANIFEST_FILENAME), content)?;
+        fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), content)?;
         Ok(dir)
     }
 }

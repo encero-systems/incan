@@ -1353,7 +1353,7 @@ mod tests {
             "int bridge(void) { return 7; }\n",
         )?;
         fs::write(workspace.path().join("interop/lib/libfixture.a"), b"fixture archive")?;
-        let manifest_path = workspace.path().join("incan.toml");
+        let manifest_path = workspace.path().join("loaf.toml");
         let manifest = ProjectManifest::from_str(
             r#"
 [interop.c]

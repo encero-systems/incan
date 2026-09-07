@@ -64,4 +64,4 @@ When adding a new example:
 2. Include a `def main():` entrypoint if the example should be runnable.
 3. Run `make examples` to verify it compiles and runs within the timeout.
 4. Examples without a `main()` function are still typechecked but not executed.
-5. If an example contains a library project (`incan.toml` + `src/lib.incn`), the examples runner pre-builds it with `incan build --lib` before checking consumer files.
+5. If an example contains a library project (`loaf.toml` + `src/lib.incn`), the examples runner pre-builds it with `incan build --lib` before checking consumer files.

@@ -77,7 +77,7 @@ Add to your CI pipeline to enforce consistent formatting:
 
 ## Configuration
 
-Currently, formatting options use sensible defaults. Configuration file support (for example `incan.toml`) is planned for a future release.
+Currently, formatting options use sensible defaults. Configuration file support (for example `loaf.toml`) is planned for a future release.
 
 Default settings:
 

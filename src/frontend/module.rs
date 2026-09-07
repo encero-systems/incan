@@ -512,7 +512,7 @@ fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf
 
 /// Returns the project's configured or conventional source root for resolving unqualified module imports.
 ///
-/// Walks up from `start_dir` to find `incan.toml`, then uses `[build] source-root` when set; otherwise `src/` if it
+/// Walks up from `start_dir` to find `loaf.toml`, then uses `[build] source-root` when set; otherwise `src/` if it
 /// exists, else the project root. Returns `None` if no manifest is found.
 fn resolve_source_root_for_imports(start_dir: &Path) -> Option<PathBuf> {
     let manifest = crate::manifest::ProjectManifest::discover(start_dir).ok().flatten()?;
@@ -804,7 +804,7 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
         std::fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"[project]
 name = "demo"
 version = "0.1.0"
@@ -827,7 +827,7 @@ version = "0.1.0"
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
         std::fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"[project]
 name = "demo"
 version = "0.1.0"
@@ -852,7 +852,7 @@ version = "0.1.0"
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
         std::fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"[project]
 name = "demo"
 version = "0.1.0"

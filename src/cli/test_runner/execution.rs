@@ -3080,7 +3080,7 @@ def captured_resource() -> int:
         let tests = project.path().join("tests");
         fs::create_dir_all(&tests)?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"frozen_oven_test\"\nversion = \"0.1.0\"\n",
         )?;
         let test_file = tests.join("test_lock.incn");
@@ -3108,7 +3108,7 @@ def captured_resource() -> int:
         let tests = project.path().join("tests");
         fs::create_dir_all(&tests)?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"shared_test_session\"\nversion = \"0.1.0\"\n",
         )?;
         let first_test = tests.join("test_first.incn");
@@ -3136,7 +3136,7 @@ def captured_resource() -> int:
             project_source_authorities: None,
         };
 
-        fs::write(project.path().join("incan.toml"), "this is no longer a valid manifest")?;
+        fs::write(project.path().join("loaf.toml"), "this is no longer a valid manifest")?;
         let first_session = command_session_for_execution_unit(&context, &first_test).map_err(std::io::Error::other)?;
         let second_session =
             command_session_for_execution_unit(&context, &second_test).map_err(std::io::Error::other)?;
@@ -3144,7 +3144,7 @@ def captured_resource() -> int:
 
         let other_project = tempfile::tempdir()?;
         fs::write(
-            other_project.path().join("incan.toml"),
+            other_project.path().join("loaf.toml"),
             "[project]\nname = \"other_test_session\"\nversion = \"0.1.0\"\n",
         )?;
         let other_test = other_project.path().join("test_other.incn");

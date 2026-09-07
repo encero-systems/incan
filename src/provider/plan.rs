@@ -1625,7 +1625,7 @@ mod tests {
     #[test]
     fn disabled_component_requirements_point_to_the_exact_package_feature_entry() -> TestResult {
         let project = tempfile::tempdir()?;
-        let manifest_path = project.path().join("incan.toml");
+        let manifest_path = project.path().join("loaf.toml");
         std::fs::write(
             &manifest_path,
             "[project]\nname = \"demo\"\n\n[project.features]\ndefault = []\n\n[project.features.web]\nrequires-sdk-components = [\"stdlib-web\"]\n",
@@ -1645,7 +1645,7 @@ mod tests {
             .ok_or("expected a disabled SDK component requirement")?;
 
         assert!(
-            error.to_string().contains("incan.toml:8:28"),
+            error.to_string().contains("loaf.toml:8:28"),
             "expected exact package-feature component location, got: {error}"
         );
         Ok(())

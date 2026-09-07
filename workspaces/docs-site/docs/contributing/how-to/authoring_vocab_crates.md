@@ -43,7 +43,7 @@ This is what the recommended layout looks like for an imaginary library called `
 
 ```text
 routekit/
-├── incan.toml
+├── loaf.toml
 ├── src/
 │   └── lib.incn
 └── vocab_companion/
@@ -55,11 +55,11 @@ routekit/
 
 `src/lib.incn` is your actual Incan library. `vocab_companion/` is the Rust crate that describes its DSL surface.
 
-## 1. Point `incan.toml` at the companion crate
+## 1. Point `loaf.toml` at the companion crate
 
 Add a `[vocab]` section to the library project:
 
-```toml title="routekit/incan.toml"
+```toml title="routekit/loaf.toml"
 [project]
 name = "routekit"
 version = "0.1.0"

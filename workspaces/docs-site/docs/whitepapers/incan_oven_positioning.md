@@ -104,7 +104,7 @@ Oven should adopt the parts of Rust that make the ecosystem interoperable, and r
 
 The adoption path should begin conservatively. An existing Rust repository keeps its Rust source and can keep its `Cargo.toml` and `Cargo.lock` intact. Oven reads them as declared compatibility inputs, resolves the equivalent project graph, and records an Incan-owned lock and receipt. No source rewrite, wrapper crate, or parallel package publishing system should be needed merely to adopt Incan. Over time, a project can express additional Incan packages, typed actions, capabilities, policy, and notebook sessions in that same graph.
 
-This also gives `incan.toml` and `oven.lock` a clearer destination. They should evolve from a manifest plus embedded Cargo lock payload into Incan's native declaration of project intent and resolved identity. Importing existing Cargo metadata is part of compatibility; materialising a generated Cargo project is not the end state.
+This also gives `loaf.toml` and `oven.lock` a clearer destination. They should evolve from a manifest plus embedded Cargo lock payload into Incan's native declaration of project intent and resolved identity. Importing existing Cargo metadata is part of compatibility; materialising a generated Cargo project is not the end state.
 
 ### The hard Rust boundary
 

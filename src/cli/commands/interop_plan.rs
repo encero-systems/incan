@@ -50,7 +50,7 @@ pub(crate) fn locked_interop_plan_target(path: &Path, target: &str) -> CliResult
     // ---- Discover the selected package and canonical lock owner ----
     let manifest = ProjectManifest::discover(path)
         .map_err(|error| CliError::failure(error.to_string()))?
-        .ok_or_else(|| CliError::failure("Oven interop baking requires an incan.toml manifest"))?;
+        .ok_or_else(|| CliError::failure("Oven interop baking requires an loaf.toml manifest"))?;
     let context = interop_plan_lock_context(&manifest)?;
 
     // ---- Require exact Oven interop lock freshness ----

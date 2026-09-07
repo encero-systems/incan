@@ -1153,7 +1153,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 source.display()
             ))
         })?;
-        fs::write(project_root.join("incan.toml"), specification.manifest).map_err(|error| {
+        fs::write(project_root.join("loaf.toml"), specification.manifest).map_err(|error| {
             CliError::failure(format!(
                 "could not write checked Loaf manifest {}: {error}",
                 specification.label
