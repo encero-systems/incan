@@ -1832,11 +1832,26 @@ impl CodegraphBuilder {
         }
     }
 
+    /// Return the leftmost identifier of a dotted expression chain, when it is one.
+    fn expr_root_ident(expr: &Expr) -> Option<&str> {
+        match expr {
+            Expr::Ident(name) => Some(name.as_str()),
+            Expr::Field(base, _) => Self::expr_root_ident(&base.node),
+            _ => None,
+        }
+    }
+
     /// Return whether a method-call receiver names a module this file imported as a whole.
     ///
     /// Only a plain `import <module>` binding qualifies. An item import (`from m import f`) binds the item, not the
     /// module, and a value named after a module is still a value.
     fn receiver_names_an_imported_module(module: &ParsedModule, receiver: &Spanned<Expr>) -> bool {
+        // `std.builtins.len(..)` reaches a module through a dotted path rather than a single binding. Its root is the
+        // stdlib namespace, which is always a module, so the chain names one wherever it stops. A receiver rooted at
+        // an ordinary name is not: `Signal.Ready()` reads the same way and names a type.
+        if let Expr::Field(base, _) = &receiver.node {
+            return Self::expr_root_ident(&base.node) == Some(incan_core::lang::stdlib::STDLIB_ROOT);
+        }
         let Expr::Ident(name) = &receiver.node else {
             return false;
         };
