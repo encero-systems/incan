@@ -333,12 +333,17 @@ pub fn run_native_test_batch(
 /// same verified inventory before any case starts. The cases then run sequentially from the same executable while
 /// retaining normal Cargo sanitization, output capture, and process-group deadlines. Their terminal summaries and
 /// timings are aggregated without manufacturing one root per selected case.
+///
+/// `root_label` names the root in progress output. The suite reaches this path with several roots in flight, so an
+/// unlabelled line here would be correct and unattributable in exactly the way the complete-root runner's label
+/// exists to prevent.
 pub fn run_native_tests_exact_in_directory_with_timeout(
     executable: &Path,
     exact_names: &[String],
     environment: &BTreeMap<String, String>,
     working_directory: Option<&Path>,
     timeout: Option<Duration>,
+    root_label: Option<&str>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
     let selection_started = Instant::now();
     let requested = normalized_exact_names(exact_names)?;
@@ -414,7 +419,7 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
             command,
             &executable,
             process_timeout,
-            Some(NativeTestProgressReporter::new(None)),
+            Some(NativeTestProgressReporter::new(root_label)),
         )?;
         report.timing.execution_elapsed_ms = report
             .timing
@@ -494,6 +499,7 @@ pub fn run_native_test_exact_in_directory_with_timeout(
         environment,
         working_directory,
         timeout,
+        None,
     )
 }
 
@@ -1727,6 +1733,7 @@ mod tests {
             &environment,
             Some(output.path()),
             Some(Duration::from_secs(5)),
+            None,
         );
         assert!(matches!(missing, Err(OvenNativeTestError::MissingExactTest { .. })));
         assert!(
@@ -1746,6 +1753,7 @@ mod tests {
             &environment,
             Some(output.path()),
             Some(Duration::from_secs(5)),
+            None,
         )?;
 
         assert!(!report.success, "{report:#?}");
@@ -1816,6 +1824,7 @@ mod tests {
             &environment,
             Some(output.path()),
             Some(Duration::from_secs(5)),
+            None,
         )?;
 
         assert!(!report.success, "{report:#?}");
@@ -1861,6 +1870,7 @@ mod tests {
             &environment,
             Some(output.path()),
             Some(Duration::from_millis(10)),
+            None,
         );
 
         assert!(

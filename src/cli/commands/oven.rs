@@ -3189,6 +3189,7 @@ fn run_prepared_compiler_suite_child(
                     &child.environment,
                     Some(&working_directory),
                     Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                    Some(&child.target.source_relative_path),
                 ),
                 None => run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
                     executable: &bake.output,
