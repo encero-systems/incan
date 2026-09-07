@@ -705,6 +705,13 @@ impl<'a> IrEmitter<'a> {
                             .canonical
                             .as_ref()
                             .is_some_and(|identity| identity.declaration_name != item.name);
+                    // A public alias in this module republishes this projection under its own `pub use`, and a
+                    // module binds one projection once. Stand aside so the binding is the public one: a private
+                    // import here would take the single slot and leave the alias unable to export it.
+                    if binding == emitted_name && self.public_alias_projection_targets.borrow().contains(&emitted_name)
+                    {
+                        return quote! {};
+                    }
                     // A projection names one declaration, so reaching it through several facades binds the same
                     // Rust identifier every time. Keep the first `use` and drop the repeats, which Rust would
                     // otherwise reject as a redefinition.
@@ -742,21 +749,33 @@ impl<'a> IrEmitter<'a> {
                             .as_ref()
                             .is_some_and(super::super::decl::is_projected_source_symbol)
                         && source_binding != emitted_name;
-                    let effective_alias_ident = item
-                        .alias
-                        .as_ref()
-                        .filter(|_| binding != emitted_name)
-                        .map(|alias| {
-                            if item.canonical.is_some() {
-                                Self::rust_ident(&binding)
+                    let effective_alias_ident = item.alias.as_ref().filter(|_| binding != emitted_name).map(|alias| {
+                        if item.canonical.is_some() {
+                            Self::rust_ident(&binding)
+                        } else {
+                            Self::rust_ident(alias)
+                        }
+                    });
+                    // The projection is what references resolve through, and the alias's own spelling is what a
+                    // type annotation still names, so a module importing such an alias needs both bindings. Two
+                    // `use` of one path under different names is legal; binding only the alias name lost every call
+                    // through the projection, and binding only the projection lost the type.
+                    let renamed_alias_binding = if renames_shared_projection && !reexport_carries_alias {
+                        let alias_ident = Self::rust_ident(source_binding);
+                        if should_reexport_item(item) {
+                            if absolute_path {
+                                quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
                             } else {
-                                Self::rust_ident(alias)
+                                quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
                             }
-                        })
-                        .or_else(|| {
-                            (renames_shared_projection && !reexport_carries_alias)
-                                .then(|| Self::rust_ident(source_binding))
-                        });
+                        } else if absolute_path {
+                            quote! { use :: #path_ts_clone :: #name_ident as #alias_ident; }
+                        } else {
+                            quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                        }
+                    } else {
+                        quote! {}
+                    };
                     let item_import = if reexport_carries_alias {
                         // The declaration this alias renames already binds the projection in this module, so
                         // importing it again would be a duplicate. Only the alias's own public name is still
@@ -815,7 +834,7 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
-                    quote! { #static_init_import #item_import #rust_facing_reexport }
+                    quote! { #static_init_import #item_import #renamed_alias_binding #rust_facing_reexport }
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })

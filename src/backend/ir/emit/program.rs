@@ -3554,6 +3554,23 @@ impl<'a> IrEmitter<'a> {
         // One emitter emits several modules in a batch, so carrying the record across them left the module that
         // actually needed the import without one.
         self.emitted_projection_import_bindings.borrow_mut().clear();
+        // When a public alias in this module republishes a projection, the module's single binding of it has to be
+        // that alias's `pub use`; an ordinary import of the same declaration stands aside for it.
+        {
+            let mut public_alias_targets = self.public_alias_projection_targets.borrow_mut();
+            public_alias_targets.clear();
+            for declaration in &program.declarations {
+                if let super::super::decl::IrDeclKind::SymbolAlias {
+                    visibility: super::super::decl::Visibility::Public,
+                    target_canonical: Some(identity),
+                    ..
+                } = &declaration.kind
+                    && super::super::decl::is_projected_source_symbol(identity)
+                {
+                    public_alias_targets.insert(encode_incan_symbol_identity(identity));
+                }
+            }
+        }
         self.iterator_sum_used.replace(false);
         self.const_bindings.clear();
         self.local_nominal_type_names = program
