@@ -8358,8 +8358,21 @@ async def main() -> None:
         let artifact_root = compiled_sdk_provider_artifact_root(generated_project, "incan_stdlib_data")?;
         let generated_collections = fs::read_to_string(artifact_root.join("src/collections.rs"))
             .map_err(|error| format!("failed to read compiled std.collections artifact: {error}"))?;
+        // The splice now passes the two support functions it needs, and RFC 120 projects their names, so the
+        // invocation reads `!(<projection>, <projection>);` rather than the argument-free form this assertion was
+        // written against. Require the splice and both arguments without pinning either spelling or a line break.
+        let compact_collections: String = generated_collections.split_whitespace().collect();
+        let spliced_with_support_functions = compact_collections
+            .split_once("incan_stdlib::__incan_ordinal_map_string_fast_impls!(")
+            .and_then(|(_, rest)| rest.split_once(");"))
+            .is_some_and(|(arguments, _)| {
+                arguments.matches(',').count() == 1
+                    && arguments
+                        .split(',')
+                        .all(|argument| argument.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX))
+            });
         assert!(
-            generated_collections.contains("incan_stdlib::__incan_ordinal_map_string_fast_impls!();"),
+            spliced_with_support_functions,
             "the compiled std.collections artifact should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
         );
         Ok(())
