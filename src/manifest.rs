@@ -26,6 +26,11 @@ pub const LOAF_MANIFEST_FILENAME: &str = "loaf.toml";
 /// the old manifest" rather than "this directory holds no project" — a distinction the two situations deserve, since
 /// only one of them is a mistake the author can fix by renaming.
 pub const LEGACY_MANIFEST_FILENAME: &str = "incan.toml";
+/// Cargo's manifest filename, recognized only so a Loaf project can report ignoring one.
+///
+/// Nothing here reads it. RFC 117 keeps Cargo compatibility as a deliberately explicit mode, so a `Cargo.toml` next to
+/// a `loaf.toml` contributes nothing to the Loaf build and is named in a diagnostic instead.
+pub const CARGO_MANIFEST_FILENAME: &str = "Cargo.toml";
 /// Internal manifest-path override used for nested `incan` subprocesses launched via `incan env run`.
 pub const INTERNAL_MANIFEST_OVERRIDE_ENV: &str = "INCAN_INTERNAL_MANIFEST_OVERRIDE";
 /// Internal project-root override used for nested `incan` subprocesses launched via `incan env run`.
@@ -592,6 +597,21 @@ impl ProjectManifest {
     /// Project-owned SDK profile and component refinements.
     pub fn sdk(&self) -> Option<&SdkSection> {
         self.sdk.as_ref()
+    }
+
+    /// The `Cargo.toml` beside this Loaf manifest, when one is present.
+    ///
+    /// RFC 117 rule 11 makes such a file ignored rather than merged: a directory containing `loaf.toml` is a Loaf
+    /// project, and Oven "must not parse, merge, or infer dependency, feature, source, workspace, build-script, or
+    /// target policy from the adjacent Cargo manifest."
+    ///
+    /// This reports the file and nothing more. Whether that becomes a warning, and at which point in a command's
+    /// life, is the caller's decision — this module has no output channel and acquiring one to satisfy a diagnostic
+    /// would put presentation behind manifest parsing, where the language server and every internal manifest read
+    /// would inherit it.
+    pub fn ignored_cargo_manifest(&self) -> Option<PathBuf> {
+        let candidate = self.project_root().join(CARGO_MANIFEST_FILENAME);
+        candidate.is_file().then_some(candidate)
     }
 
     /// Target-specific checked C interop requirements, if the project declares them.
@@ -2187,6 +2207,40 @@ mod tests {
             DiscoveredManifest::Loaf(path) => assert_eq!(path, dir.path().join("loaf.toml")),
             other => return Err(format!("expected the Loaf manifest to win, got {other:?}").into()),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_cargo_manifest_beside_the_loaf_manifest_is_reported_as_ignored() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
+        fs::write(dir.path().join(CARGO_MANIFEST_FILENAME), "[package]\nname = \"demo\"\n")?;
+        let manifest = ProjectManifest::discover(dir.path())?.ok_or("the Loaf manifest was not discovered")?;
+        assert_eq!(
+            manifest.ignored_cargo_manifest(),
+            Some(dir.path().join(CARGO_MANIFEST_FILENAME))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_loaf_project_without_cargo_reports_nothing_to_ignore() -> TestResult {
+        // The query must stay silent on the ordinary project, or rule 11's warning fires for everyone.
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
+        let manifest = ProjectManifest::discover(dir.path())?.ok_or("the Loaf manifest was not discovered")?;
+        assert_eq!(manifest.ignored_cargo_manifest(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_cargo_directory_is_not_mistaken_for_a_loaf_project() -> TestResult {
+        // RFC 117 rule 13 keeps a Cargo-only directory available to explicit Cargo-compatibility mode. It must not
+        // become a Loaf project by proximity, and it is not the legacy-manifest case either.
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join(CARGO_MANIFEST_FILENAME), "[package]\nname = \"demo\"\n")?;
+        assert_eq!(discovered_manifest_kind(dir.path()), DiscoveredManifest::None);
+        assert!(ProjectManifest::discover(dir.path())?.is_none());
         Ok(())
     }
 

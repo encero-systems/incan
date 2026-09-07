@@ -46,10 +46,11 @@ use crate::library_manifest::{
     digest_provider_artifact,
 };
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::{DependencySource, DependencySpec};
 use crate::manifest::{
-    INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, LOAF_MANIFEST_FILENAME, ProjectManifest,
+    CARGO_MANIFEST_FILENAME, DiscoveredManifest, INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV,
+    LOAF_MANIFEST_FILENAME, ManifestError, ProjectManifest, discovered_manifest_kind,
 };
+use crate::manifest::{DependencySource, DependencySpec};
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 use crate::provider::{
     BackendImplementationRequirement, FeatureSelection, PackageFeatureGraph, PackageFeaturePlan,
@@ -76,6 +77,14 @@ static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<S
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Project roots already told that their `Cargo.toml` is ignored, so one command warns once.
+///
+/// Oven prepares a project more than once per command — once per selected profile, and again for a caller-owned
+/// library graph — so emitting at the preparation boundary without this would repeat the same line several times for
+/// a single `incan build`. Keyed by project root rather than a global flag, so a workspace build still reports each
+/// member that has one.
+static IGNORED_CARGO_MANIFESTS_REPORTED: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 /// Shared immutable provider projections indexed by the canonical modules an invocation uses.
 type ProviderPlanCache = Arc<Mutex<BTreeMap<BTreeSet<Vec<String>>, Arc<ProviderPlan>>>>;
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
@@ -4499,6 +4508,42 @@ pub(crate) fn topologically_sort_modules(
     }
 
     Ok(sorted)
+}
+
+/// Report an ignored `Cargo.toml` beside a Loaf manifest, at most once per project root per invocation.
+///
+/// RFC 117 rule 11: a `loaf.toml` project containing `Cargo.toml` must warn and ignore the Cargo configuration, and
+/// the diagnostic must name the ignored file and explain that Cargo compatibility is selected explicitly. Both are
+/// carried by [`ManifestError::CargoIgnored`], which renders the text; this decides only when it reaches the user.
+///
+/// It warns rather than fails, and never inspects the Cargo file: the RFC requires Oven to "continue as a Loaf
+/// project" and say what it ignored, and reading the file to describe it better would be the parsing rule 11
+/// forbids. A directory that holds no `loaf.toml` is silent here — a Cargo-only project is Cargo-compatibility
+/// mode's subject, not an ignored file.
+///
+/// Callers are the project-scale command entry points rather than one deep shared helper, because Oven's cached
+/// paths return a completed output without preparing the project at all; a warning behind preparation would appear
+/// on a cold build and vanish on a warm one, which is worse than not having it.
+pub(crate) fn warn_once_about_ignored_cargo_manifest(project_root: &Path) {
+    let DiscoveredManifest::Loaf(_) = discovered_manifest_kind(project_root) else {
+        return;
+    };
+    let cargo_manifest = project_root.join(CARGO_MANIFEST_FILENAME);
+    if !cargo_manifest.is_file() {
+        return;
+    }
+    let key = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let Ok(mut reported) = IGNORED_CARGO_MANIFESTS_REPORTED.lock() else {
+        // A poisoned registry means another thread panicked mid-report. Losing the deduplication is the right
+        // failure here: a repeated warning is noise, a dropped one hides that Cargo configuration was ignored.
+        eprintln!("warning: {}", ManifestError::CargoIgnored { path: cargo_manifest });
+        return;
+    };
+    if reported.insert(key) {
+        eprintln!("warning: {}", ManifestError::CargoIgnored { path: cargo_manifest });
+    }
 }
 
 /// Resolve the project root from a source file path.

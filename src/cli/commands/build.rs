@@ -10123,6 +10123,7 @@ pub fn build_file(
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
     ensure_backend_request_available(&options.backend)?;
+    super::common::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
     if options.backend.requested == BackendKind::Replacement {
         let report = build_replacement_file_report(file_path, options, &report_options)?;
         emit_workspace_build_report(&report, &report_options)?;
@@ -13841,6 +13842,16 @@ pub fn build_library(
     }
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
     if !artifact_only {
+        // A nested dependency-library build is not the user's project, so it does not repeat the warning for a
+        // directory they did not invoke a command in. Without an explicit entry file the library root is the
+        // working directory, which is where `incan build --lib` was run.
+        let library_root = match file_path {
+            Some(path) => resolve_project_root(Path::new(path)),
+            None => PathBuf::from("."),
+        };
+        super::common::warn_once_about_ignored_cargo_manifest(&library_root);
+    }
+    if !artifact_only {
         reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
         let completed_output_policy = CompletedOutputPolicy {
             cargo_policy: &options.cargo_policy,
@@ -14696,6 +14707,7 @@ pub fn run_file(
     release: bool,
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&cargo_policy, None)?;
+    super::common::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
     let profile = if release { "release" } else { "debug" };
     let completed_output_policy = CompletedOutputPolicy {
         cargo_policy: &cargo_policy,
