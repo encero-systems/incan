@@ -10,6 +10,7 @@ from rust::toml import Value as RawValue, from_str, to_string, to_string_pretty
 from rust::toml::value import Datetime as RawDatetime
 from rust::toml::de import Error as DecodeError
 from rust::toml_edit import Document as SpannedDocument, TomlError as SpanParseError
+from rust::std::string import String as RustString
 from rust::serde import Serialize as RustSerialize, Deserialize as RustDeserialize
 from rust::serde::de import DeserializeOwned
 from rust::incan_stdlib::strings import str_slice_byte_range
@@ -219,7 +220,8 @@ pub def locate(source: str, path: list[str]) -> Result[Option[TomlLocation], Tom
     Example:
         locate(source, ["dependencies", "my_library", "unknown_option"])
     """
-    parsed: Result[SpannedDocument[str], SpanParseError] = SpannedDocument.parse(source)
+    # The parser owns its source; an explicit Rust string keeps SDK lowering from inserting a borrow (#1433).
+    parsed: Result[SpannedDocument[str], SpanParseError] = SpannedDocument.parse(RustString.from(source))
     document = parsed.map_err((error) => _span_parse_error(source, error))?
     mut item = document.as_item()
     for key in path:
