@@ -122,7 +122,14 @@ impl<'a> IrEmitter<'a> {
                 // A public alias of a projected declaration has to carry the projection itself, not only the alias
                 // spelling. A module re-exporting this one reaches the declaration the way every reference does --
                 // by its projection -- and an alias-only re-export left that name absent here.
-                let projection_reexport = matches!(visibility, super::super::decl::Visibility::Public)
+                //
+                // Only a target that lives somewhere else needs that. An alias of a declaration this module makes
+                // itself emits the projection as a bare identifier, and re-exporting a name already defined here is
+                // E0255 rather than a re-export.
+                let target_is_defined_here =
+                    emitted_target_path.len() == 1 && (target_origin.is_none() || target_qualifier.is_none());
+                let projection_reexport = (matches!(visibility, super::super::decl::Visibility::Public)
+                    && !target_is_defined_here)
                     .then(|| {
                         emitted_target_path
                             .last()
