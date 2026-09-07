@@ -1,6 +1,16 @@
 """Exercise typed manifest and generated lock TOML without a custom Rust format backend."""
 
-from std.toml import TomlValue, TomlError, TomlKind, TomlErrorKind, parse, deserialize, serialize, locate
+from std.toml import (
+    TomlValue,
+    TomlError,
+    TomlKind,
+    TomlErrorKind,
+    parse,
+    deserialize,
+    serialize,
+    serialize_pretty,
+    locate,
+)
 from std import toml
 
 
@@ -127,7 +137,7 @@ def run() -> Result[None, TomlError]:
 
     lock_source = "version = 1\n[[packages]]\nname = \"app\"\nversion = \"1.0.0\"\ndependencies = [\"core\"]\n[[packages]]\nname = \"core\"\nversion = \"0.6.0\"\ndependencies = []\n"
     lock = deserialize[Lock](lock_source)?
-    restored_lock = deserialize[Lock](serialize(lock, pretty=true)?)?
+    restored_lock = deserialize[Lock](serialize_pretty(lock)?)?
     assert len(restored_lock.packages) == 2
     assert restored_lock.packages[0].dependencies == ["core"]
     assert restored_lock.packages[1].name == "core"
@@ -141,7 +151,7 @@ def run() -> Result[None, TomlError]:
 
     oven_source = "[incan]\nformat = 2\nincan-version = \"0.6.0-dev.3\"\ndeps-fingerprint = \"sha256:example\"\ncargo-features = []\n[semantic.sdk]\nidentity = \"incan@0.6.0-dev.3\"\ninventory_digest = \"sha256:inventory\"\nprofile = \"default\"\n[[semantic.sdk.components]]\nid = \"stdlib-data\"\nversion = \"0.6.0-dev.3\"\nreason = \"profile:default\"\n[cargo]\nlock = \"\"\"\nversion = 4\n[[package]]\nname = \"example\"\nversion = \"1.0.0\"\n\"\"\"\n"
     oven_lock = deserialize[OvenLock](oven_source)?
-    restored_oven = deserialize[OvenLock](serialize(oven_lock, pretty=true)?)?
+    restored_oven = deserialize[OvenLock](serialize_pretty(oven_lock)?)?
     assert restored_oven.incan.incan_version == "0.6.0-dev.3"
     assert restored_oven.incan.deps_fingerprint == "sha256:example"
     assert restored_oven.semantic.sdk.components[0].id == "stdlib-data"

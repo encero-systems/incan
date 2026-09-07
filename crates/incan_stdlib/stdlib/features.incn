@@ -1219,7 +1219,7 @@ static std_json: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_json_references,
     ),
 )
-const std_toml_forms: FrozenList[str] = ["from std.toml import parse, deserialize, serialize", "deserialize[Manifest](source)", "serialize(lock)"]
+const std_toml_forms: FrozenList[str] = ["from std.toml import parse, deserialize, serialize, serialize_pretty", "deserialize[Manifest](source)", "serialize(lock)", "serialize_pretty(lock)"]
 const std_toml_references: FrozenList[CapabilityReference] = [CapabilityReference(label="std.toml", path="stdlib/toml.md")]
 static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdToml"),

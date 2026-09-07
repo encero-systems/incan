@@ -245,7 +245,7 @@ pub def deserialize[T with TomlDeserialize](source: str) -> Result[T, TomlError]
     return result.map_err((error) => _decode_error(source, error))
 
 
-pub def serialize[T with TomlSerialize](value: T, pretty: bool = false) -> Result[str, TomlError]:
+pub def serialize[T with TomlSerialize](value: T) -> Result[str, TomlError]:
     """
     Encode a serde-serializable model or TOML document.
 
@@ -253,9 +253,17 @@ pub def serialize[T with TomlSerialize](value: T, pretty: bool = false) -> Resul
     Unsupported shapes, including scalar document roots and heterogeneous values the serializer rejects, return an
     error instead of silently switching formats.
     """
-    if pretty:
-        return to_string_pretty(value).map_err((error) => _serialization_error(str(error)))
     return to_string(value).map_err((error) => _serialization_error(str(error)))
+
+
+pub def serialize_pretty[T with TomlSerialize](value: T) -> Result[str, TomlError]:
+    """
+    Encode a serde-serializable model or TOML document with expanded tables and arrays.
+
+    This has the same supported document shapes and error behavior as `serialize`. Pretty printing does not preserve
+    an authored manifest's comments or original formatting.
+    """
+    return to_string_pretty(value).map_err((error) => _serialization_error(str(error)))
 
 
 def _span_location(source: str, start: usize, end: usize) -> Option[TomlLocation]:

@@ -20425,7 +20425,7 @@ fn std_toml_manifest_and_lock_roundtrip_through_compiled_sdk() -> Result<(), Box
     )?;
     fs::write(
         source_dir.join("codec.incn"),
-        "pub from std.toml import TomlValue, TomlError, TomlKind, TomlErrorKind, parse, deserialize, serialize, locate\n",
+        "pub from std.toml import TomlValue, TomlError, TomlKind, TomlErrorKind, parse, deserialize, serialize, serialize_pretty, locate\n",
     )?;
     let source =
         include_str!("fixtures/valid/std_toml_surface.incn").replace("from std.toml import", "from codec import");

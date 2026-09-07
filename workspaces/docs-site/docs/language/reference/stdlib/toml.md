@@ -7,7 +7,7 @@ Read project manifests and write generated TOML documents with `std.toml`. The m
 Use `@derive(toml)` (the module’s `TomlSerialize` and `TomlDeserialize` traits) to adopt serialization and owned deserialization on your models, then decode directly from the original source. This retains source spans for structural errors such as a string where an integer is required.
 
 ```incan
-from std.toml import deserialize, serialize
+from std.toml import deserialize, serialize_pretty
 from std import toml
 
 @derive(toml)
@@ -16,10 +16,10 @@ model Project:
     version: str
 
 project = deserialize[Project]('name = "demo"\nversion = "0.1.0"')?
-text = serialize(project, pretty=True)?
+text = serialize_pretty(project)?
 ```
 
-`deserialize[T](source)` returns `Result[T, TomlError]`. `serialize(value, pretty=False)` returns `Result[str, TomlError]`. Unsupported document roots, including scalar values, return a serialization error. Generated lock models can contain nested models and lists of models; these serialize as tables and arrays of tables.
+`deserialize[T](source)` returns `Result[T, TomlError]`. `serialize(value)` writes compact TOML; `serialize_pretty(value)` writes expanded tables and arrays. Both return `Result[str, TomlError]`. Unsupported document roots, including scalar values, return a serialization error. Generated lock models can contain nested models and lists of models; these serialize as tables and arrays of tables.
 
 ## Dynamic values
 
