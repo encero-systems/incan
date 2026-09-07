@@ -475,7 +475,7 @@ fn validate_export_identity_binding(
                 // raw export names the intermediate alias while the identity carries the terminal declaration.
                 let reaches_identity_declaration = raw_alias.target_path.last() == Some(&identity.declaration_name)
                     || raw.contract_metadata.api.as_ref().is_some_and(|api| {
-                        checked_api_alias_chain_reaches(api, &raw_alias.target_path, &identity.declaration_name)
+                        checked_api_alias_chain_reaches(api, &[], &raw_alias.target_path, &identity.declaration_name)
                     });
                 if !reaches_identity_declaration {
                     return Err(LibraryManifestError::Invalid(format!(
@@ -611,7 +611,27 @@ fn validate_nested_identity_graph_backing(
             .members
             .iter()
             .filter(|member| member.name == entry.public_name)
-            .map(|member| member.source_path.join("."))
+            .map(|member| {
+                // An alias's own target is the field these two records disagree on most often, so name it here rather
+                // than leaving the reader to guess which spelling the checked API kept.
+                let target = member
+                    .source_path
+                    .split_last()
+                    .and_then(|(declaration_name, module_path)| {
+                        api.modules
+                            .iter()
+                            .find(|module| module.module_path == module_path)
+                            .and_then(|module| {
+                                module.declarations.iter().find_map(|declaration| match declaration {
+                                    ApiDeclaration::Alias(alias) if alias.name == *declaration_name => {
+                                        Some(format!(" aliasing `{}`", alias.target_path.join(".")))
+                                    }
+                                    _ => None,
+                                })
+                            })
+                    });
+                format!("{}{}", member.source_path.join("."), target.unwrap_or_default())
+            })
             .collect::<Vec<_>>();
         return Err(LibraryManifestError::Invalid(format!(
             "identity graph entry `{}` is not backed by a checked API namespace declaration: \
@@ -647,9 +667,19 @@ fn api_declaration_backs_identity_entry(
             // a same-module alias records `["helper"]` where the graph entry records `["provider", "helper"]`, and a
             // facade records the hop it was written on where the entry carries the entrypoint's. Compare what they
             // can honestly agree on -- the declaration each names -- and let the identity carry the rest.
+            //
+            // The graph resolves a target through the module's own import aliases while the checked API keeps the
+            // spelling as written: `pub public_target = alias target_impl` over `from helper import target as
+            // target_impl` records `["helper", "target"]` on one side and `["target_impl"]` on the other. Both are
+            // true, so follow the alias chain when the two spellings do not already agree.
             let target_matches = match &entry.projection {
                 ExportIdentityProjection::Alias { target_path }
-                | ExportIdentityProjection::Reexport { target_path } => target_path.last() == alias.target_path.last(),
+                | ExportIdentityProjection::Reexport { target_path } => {
+                    target_path.last() == alias.target_path.last()
+                        || target_path.last().is_some_and(|declaration| {
+                            checked_api_alias_chain_reaches(api, module_path, &alias.target_path, declaration)
+                        })
+                }
                 ExportIdentityProjection::Direct | ExportIdentityProjection::Partial { .. } => false,
             };
             if !target_matches || !matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Function) {
@@ -665,7 +695,7 @@ fn api_declaration_backs_identity_entry(
             // with `["registry", "scale_alias"]`. Accept the hop when it republishes this same projection.
             if let Some(projected) = &alias.projected_function
                 && !projected.source_path.ends_with(&alias.target_path)
-                && !alias_target_republishes_projection(api, &alias.target_path, projected)
+                && !alias_target_republishes_projection(api, module_path, &alias.target_path, projected)
             {
                 return false;
             }
@@ -724,6 +754,20 @@ fn api_declaration_backs_identity_entry(
     }
 }
 
+/// Qualify an alias target that was written unqualified against the module the alias lives in.
+///
+/// Source writes a same-module target as the bare name -- `pub run = alias helper` inside `provider` records
+/// `["helper"]` -- while every checked API path is a resolved declaration path. Walking a chain from the bare spelling
+/// looks for a module named by nothing, so requalify before the first hop.
+fn qualify_alias_target(owning_module: &[String], target_path: &[String]) -> Vec<String> {
+    if target_path.len() != 1 {
+        return target_path.to_vec();
+    }
+    let mut qualified = owning_module.to_vec();
+    qualified.extend(target_path.iter().cloned());
+    qualified
+}
+
 /// Return whether one checked API alias path resolves, through any number of hops, to the named declaration.
 ///
 /// Each link of a re-export chain records the hop it was written on, so the first hop names an intermediate alias
@@ -732,11 +776,12 @@ fn api_declaration_backs_identity_entry(
 /// step, and stop on a repeated path so a cyclic manifest cannot loop here.
 fn checked_api_alias_chain_reaches(
     api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+    owning_module: &[String],
     target_path: &[String],
     declaration_name: &str,
 ) -> bool {
     let mut seen = HashSet::new();
-    let mut path = target_path.to_vec();
+    let mut path = qualify_alias_target(owning_module, target_path);
     loop {
         let Some((name, module_path)) = path.split_last() else {
             return false;
@@ -774,10 +819,12 @@ fn checked_api_alias_chain_reaches(
 /// honestly agree on instead: the declaration whose projection they both carry.
 fn alias_target_republishes_projection(
     api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+    owning_module: &[String],
     target_path: &[String],
     projected: &ApiProjectedFunction,
 ) -> bool {
-    let Some((declaration_name, module_path)) = target_path.split_last() else {
+    let qualified = qualify_alias_target(owning_module, target_path);
+    let Some((declaration_name, module_path)) = qualified.split_last() else {
         return false;
     };
     api.modules
