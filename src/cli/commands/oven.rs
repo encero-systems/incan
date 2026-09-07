@@ -3248,6 +3248,7 @@ fn run_prepared_compiler_suite_child(
                     timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
                     test_threads: Some(libtest_threads),
                     root_label: Some(&child.target.source_relative_path),
+                    progress: None,
                 }),
             }
             .map_err(oven_error)?;
@@ -3475,6 +3476,7 @@ fn run_planned_compiler_suite_children(
                     timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
                     test_threads: None,
                     root_label: Some(&target.source_relative_path),
+                    progress: None,
                 })
                 .map_err(oven_error)?;
                 suite_report.native_test_count += report.inventory.names.len();

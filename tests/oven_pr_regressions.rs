@@ -36,6 +36,7 @@ fn native_timeout_terminates_descendants_that_retain_output_pipes() -> Result<()
         timeout: Some(Duration::from_millis(100)),
         test_threads: None,
         root_label: None,
+        progress: None,
     })?;
 
     assert!(report.timed_out, "stalled native test unexpectedly completed");
