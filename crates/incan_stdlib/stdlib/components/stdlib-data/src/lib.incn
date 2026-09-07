@@ -2,9 +2,9 @@
 
 import collections
 import graph
-import hash._core
+import hash._core as hash_core
 import hash._streaming
-import hash.prelude
+import hash.prelude as hash_prelude
 import json
 import math
 import uuid
@@ -13,11 +13,11 @@ import datetime.civil.intervals
 import datetime.civil.naive
 import datetime.civil.offset
 import datetime.error
-import datetime.prelude
+import datetime.prelude as datetime_prelude
 import datetime.runtime
-import regex._core
+import regex._core as regex_core
 import regex._replacement
-import regex.prelude
+import regex.prelude as regex_prelude
 import regex.types
-import serde.json
-import serde.prelude
+import serde.json as serde_json
+import serde.prelude as serde_prelude

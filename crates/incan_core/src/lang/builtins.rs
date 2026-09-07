@@ -197,6 +197,11 @@ pub const BUILTIN_FUNCTIONS: &[BuiltinFnInfo] = &[
     ),
 ];
 
+/// Builtin identities whose canonical spelling and registered aliases cannot be replaced by source bindings.
+///
+/// This is intentionally narrower than [`BUILTIN_FUNCTIONS`]: adding a builtin does not reserve its spelling.
+const PROTECTED_BINDING_BUILTINS: &[BuiltinFnId] = &[BuiltinFnId::Print];
+
 /// Return the canonical spelling for a builtin function.
 ///
 /// ## Parameters
@@ -282,6 +287,23 @@ pub fn from_str(name: &str) -> Option<BuiltinFnId> {
         .map(|b| b.id)
 }
 
+/// Return the protected builtin identity for a source binding spelling.
+///
+/// Protected bindings stay globally available: source declarations, imports, and lexical bindings cannot replace
+/// their canonical spelling or any registered alias. The policy is intentionally narrower than the builtin registry;
+/// adding a builtin does not protect its spelling unless its stable identifier is added here.
+///
+/// ## Parameters
+/// - `name`: Candidate source binding spelling.
+///
+/// ## Returns
+/// - `Some(BuiltinFnId)` when `name` names a protected builtin or one of its registry aliases.
+/// - `None` for ordinary source bindings and unprotected builtins.
+pub fn protected_binding_builtin(name: &str) -> Option<BuiltinFnId> {
+    let builtin = from_str(name)?;
+    PROTECTED_BINDING_BUILTINS.contains(&builtin).then_some(builtin)
+}
+
 const fn info(
     id: BuiltinFnId,
     canonical: &'static str,
@@ -299,5 +321,18 @@ const fn info(
         since,
         stability: Stability::Stable,
         examples: &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BuiltinFnId, protected_binding_builtin};
+
+    /// Protect the selected builtin's canonical spelling and aliases without changing unrelated builtins.
+    #[test]
+    fn protected_binding_policy_includes_print_and_its_registered_aliases() {
+        assert_eq!(protected_binding_builtin("print"), Some(BuiltinFnId::Print));
+        assert_eq!(protected_binding_builtin("println"), Some(BuiltinFnId::Print));
+        assert_eq!(protected_binding_builtin("len"), None);
     }
 }

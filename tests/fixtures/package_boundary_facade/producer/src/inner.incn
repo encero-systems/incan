@@ -1,0 +1,24 @@
+"""Declarations the facade republishes, one of each kind a `pub from` can carry."""
+
+pub const LIMIT: int = 10
+
+pub type Name = newtype str
+
+pub type Count = int
+
+@derive(Debug)
+pub model Item:
+    pub label: str
+
+pub class Holder:
+    value: int
+
+pub trait Describable:
+    def describe(self) -> str
+
+pub enum Mode:
+    Fast
+    Slow
+
+pub def build(value: int) -> int:
+    return value + 1

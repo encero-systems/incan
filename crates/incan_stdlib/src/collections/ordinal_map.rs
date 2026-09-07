@@ -12,7 +12,7 @@
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __incan_ordinal_map_string_fast_impls {
-    () => {
+    ($missing_ordinal:path, $ordinal_map_error:path) => {
         impl OrdinalMap<String> {
             /// Return whether an ordinal-map key matching the provided string exists.
             #[doc(hidden)]
@@ -27,7 +27,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
             pub fn __incan_ordinal_getitem_str(&self, key: &str) -> i64 {
                 match self.__incan_ordinal_require_str(key) {
                     Ok(value) => value,
-                    Err(_) => _missing_ordinal(),
+                    Err(_) => $missing_ordinal(),
                 }
             }
 
@@ -49,7 +49,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
             pub fn __incan_ordinal_require_str(&self, key: &str) -> Result<i64, OrdinalMapError> {
                 match self.__incan_ordinal_get_str(key) {
                     Some(value) => Ok(value),
-                    None => Err(_ordinal_map_error(
+                    None => Err($ordinal_map_error(
                         OrdinalMapErrorKind::MissingKey.clone(),
                         "OrdinalMap key is not present".to_string(),
                         -1i64,
@@ -63,7 +63,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
             pub fn __incan_ordinal_get_unchecked_str(&self, key: &str) -> i64 {
                 let index = self.__incan_ordinal_find_str(key, false);
                 if index < 0 {
-                    _missing_ordinal()
+                    $missing_ordinal()
                 } else {
                     self.__incan_ordinal_at_fast(index)
                 }
@@ -89,7 +89,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                     match self.__incan_ordinal_get_str(key.as_str()) {
                         Some(value) => out.push(value),
                         None => {
-                            return Err(_ordinal_map_error(
+                            return Err($ordinal_map_error(
                                 OrdinalMapErrorKind::MissingKey.clone(),
                                 "OrdinalMap key is not present".to_string(),
                                 index as i64,
@@ -147,7 +147,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
             #[inline]
             fn __incan_ordinal_at_fast(&self, record_index: i64) -> i64 {
                 if record_index < 0 {
-                    return _missing_ordinal();
+                    return $missing_ordinal();
                 }
                 let record_index = record_index as usize;
                 if let Some(value) = self.ordinal_values.get(record_index) {

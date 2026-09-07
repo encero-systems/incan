@@ -37,11 +37,21 @@ use super::expr::{
     MethodCallArgPolicy, VarRefKind,
 };
 use super::ownership::{
-    RegularMethodArgumentContext, ValueUseSite, regular_method_argument_use_site, value_use_requires_clone_bound,
-    value_use_site_target_ty,
+    RegularMethodArgumentContext, ValueUseSite, list_index_assignment_element_type, regular_method_argument_use_site,
+    value_use_requires_clone_bound, value_use_site_target_ty,
 };
-use super::stmt::{IrStmt, IrStmtKind};
+use super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::types::{IrType, SetConstructorIteration};
+
+/// Bound-bearing local trait implementation that a generic caller can select through checked method dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ImplementationBoundRequirement {
+    pub(super) target_type: String,
+    pub(super) type_params: Vec<IrTypeParam>,
+    pub(super) trait_source_name: String,
+    pub(super) trait_module_path: Option<Vec<String>>,
+    pub(super) trait_type_args: Vec<IrType>,
+}
 
 /// Run trait bound inference on an entire IR program.
 ///
@@ -63,8 +73,9 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     for decl in &program.declarations {
         match &decl.kind {
             IrDeclKind::Function(func) => {
+                let key = free_function_callable_key(program, &func.name);
                 collect_inferred_bounds_for_callable(
-                    &func.name,
+                    &key,
                     func,
                     &func.type_params,
                     &trait_decls,
@@ -116,16 +127,21 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     for _ in 0..max_iterations {
         let mut changed = false;
         let snapshot = function_bounds.clone();
+        let propagation_context = CallableBoundPropagationContext {
+            snapshot: &snapshot,
+            function_params: &function_params,
+            implementation_requirements: &[],
+        };
 
         for decl in &program.declarations {
             match &decl.kind {
                 IrDeclKind::Function(func) => {
+                    let key = free_function_callable_key(program, &func.name);
                     propagate_bounds_for_callable(
-                        &func.name,
+                        &key,
                         func,
                         &func.type_params,
-                        &snapshot,
-                        &function_params,
+                        &propagation_context,
                         &mut function_bounds,
                         &mut changed,
                     );
@@ -137,8 +153,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                             &key,
                             method,
                             &method.type_params,
-                            &snapshot,
-                            &function_params,
+                            &propagation_context,
                             &mut function_bounds,
                             &mut changed,
                         );
@@ -158,8 +173,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                             &key,
                             method,
                             &type_params,
-                            &snapshot,
-                            &function_params,
+                            &propagation_context,
                             &mut function_bounds,
                             &mut changed,
                         );
@@ -183,6 +197,11 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     // `return self` for `-> Self`). Those clones are invisible to the earlier IR-body scan, so generic impl/function
     // headers need a final pass that mirrors the backend's return-value ownership rules.
     infer_backend_clone_bounds(program);
+
+    // ---- Pass 5: implementation-bound propagation ----
+    // Trait dispatch selects an impl header rather than an ordinary generic function. Re-run transitive inference with
+    // those exact checked selections after backend-owned bounds have reached the impl headers.
+    propagate_local_implementation_bounds(program);
 }
 
 /// Infer `Clone` bounds required by backend-inserted ownership materialization.
@@ -194,6 +213,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
 fn infer_backend_clone_bounds(program: &mut IrProgram) {
     let clone_derived_self_params = collect_clone_derived_self_params(program);
     let clone_context = BackendCloneInferenceContext::from_program(program);
+    let unknown_impl_clone_params = HashSet::new();
 
     for decl in &mut program.declarations {
         match &mut decl.kind {
@@ -204,7 +224,14 @@ fn infer_backend_clone_bounds(program: &mut IrProgram) {
                 &clone_context,
             ),
             IrDeclKind::Impl(impl_block) => {
-                let self_clone_params = clone_derived_self_params.get(&impl_block.target_type);
+                // `Some(empty)` distinguishes an impl body whose erased nominal values can depend on owner generics
+                // from a free generic function whose concrete locals cannot. The existing `self` fallback already
+                // interprets an empty set conservatively as all owner parameters.
+                let self_clone_params = Some(
+                    clone_derived_self_params
+                        .get(&impl_block.target_type)
+                        .unwrap_or(&unknown_impl_clone_params),
+                );
                 for method in &impl_block.methods {
                     augment_callable_type_params_for_backend_return_clones(
                         &mut impl_block.type_params,
@@ -230,6 +257,56 @@ fn callable_inference_type_params(func: &IrFunction, owner_type_params: Option<&
     type_params
 }
 
+/// Propagate bounds from exact local trait implementations into the generic callers that select them.
+///
+/// Backend ownership inference can add an impl-only bound after ordinary call propagation has reached its first fixed
+/// point. This bounded outer loop rebuilds implementation requirements after every write-back, so an impl method that
+/// itself gains a transitive requirement can expose the updated header to its callers on the next iteration.
+fn propagate_local_implementation_bounds(program: &mut IrProgram) {
+    let external_bounds = HashMap::new();
+    let external_params = HashMap::new();
+    let max_iterations = 20;
+
+    for _ in 0..max_iterations {
+        let requirements = collect_local_implementation_bound_requirements(program);
+        if requirements.is_empty()
+            || !propagate_trait_bounds_from_signature_maps(program, &external_bounds, &external_params, &requirements)
+        {
+            break;
+        }
+    }
+}
+
+/// Collect bound-bearing trait impl headers with their checked source identities.
+pub(super) fn collect_local_implementation_bound_requirements(
+    program: &IrProgram,
+) -> Vec<ImplementationBoundRequirement> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let IrDeclKind::Impl(impl_block) = &declaration.kind else {
+                return None;
+            };
+            let trait_source_name = impl_block
+                .trait_source_name
+                .clone()
+                .or_else(|| impl_block.trait_name.clone())?;
+            impl_block
+                .type_params
+                .iter()
+                .any(|type_param| !type_param.bounds.is_empty())
+                .then(|| ImplementationBoundRequirement {
+                    target_type: impl_block.target_type.clone(),
+                    type_params: impl_block.type_params.clone(),
+                    trait_source_name,
+                    trait_module_path: impl_block.trait_module_path.clone(),
+                    trait_type_args: impl_block.trait_type_args.clone(),
+                })
+        })
+        .collect()
+}
+
 /// Propagate bounds into one program using already-inferred callable signatures from external programs.
 ///
 /// This is used after separate IR programs have already run local bound inference. Imported generic call targets can
@@ -238,10 +315,17 @@ fn callable_inference_type_params(func: &IrFunction, owner_type_params: Option<&
 pub fn propagate_trait_bounds_from_programs(program: &mut IrProgram, externals: &[&IrProgram]) {
     let mut external_bounds: HashMap<String, Vec<IrTypeParam>> = HashMap::new();
     let mut external_params: HashMap<String, Vec<FunctionParam>> = HashMap::new();
+    let mut implementation_requirements = collect_local_implementation_bound_requirements(program);
     for external in externals {
         collect_current_callable_signature_maps(external, &mut external_bounds, &mut external_params);
+        implementation_requirements.extend(collect_local_implementation_bound_requirements(external));
     }
-    propagate_trait_bounds_from_signature_maps(program, &external_bounds, &external_params);
+    let _ = propagate_trait_bounds_from_signature_maps(
+        program,
+        &external_bounds,
+        &external_params,
+        &implementation_requirements,
+    );
 }
 
 /// Propagate generic bounds using local callable signatures plus externally supplied callable signatures.
@@ -253,7 +337,8 @@ fn propagate_trait_bounds_from_signature_maps(
     program: &mut IrProgram,
     external_bounds: &HashMap<String, Vec<IrTypeParam>>,
     external_params: &HashMap<String, Vec<FunctionParam>>,
-) {
+    implementation_requirements: &[ImplementationBoundRequirement],
+) -> bool {
     let mut function_bounds: HashMap<String, Vec<IrTypeParam>> = HashMap::new();
     let mut function_params: HashMap<String, Vec<FunctionParam>> = HashMap::new();
     collect_current_callable_signature_maps(program, &mut function_bounds, &mut function_params);
@@ -271,19 +356,25 @@ fn propagate_trait_bounds_from_signature_maps(
     }
 
     let max_iterations = 20;
+    let mut any_changed = false;
     for _ in 0..max_iterations {
         let mut changed = false;
         let snapshot = function_bounds.clone();
+        let propagation_context = CallableBoundPropagationContext {
+            snapshot: &snapshot,
+            function_params: &function_params,
+            implementation_requirements,
+        };
 
         for decl in &program.declarations {
             match &decl.kind {
                 IrDeclKind::Function(func) => {
+                    let key = free_function_callable_key(program, &func.name);
                     propagate_bounds_for_callable(
-                        &func.name,
+                        &key,
                         func,
                         &func.type_params,
-                        &snapshot,
-                        &function_params,
+                        &propagation_context,
                         &mut function_bounds,
                         &mut changed,
                     );
@@ -295,8 +386,7 @@ fn propagate_trait_bounds_from_signature_maps(
                             &key,
                             method,
                             &method.type_params,
-                            &snapshot,
-                            &function_params,
+                            &propagation_context,
                             &mut function_bounds,
                             &mut changed,
                         );
@@ -316,8 +406,7 @@ fn propagate_trait_bounds_from_signature_maps(
                             &key,
                             method,
                             &type_params,
-                            &snapshot,
-                            &function_params,
+                            &propagation_context,
                             &mut function_bounds,
                             &mut changed,
                         );
@@ -327,12 +416,15 @@ fn propagate_trait_bounds_from_signature_maps(
             }
         }
 
-        if !changed {
+        if changed {
+            any_changed = true;
+        } else {
             break;
         }
     }
 
     write_back_callable_bounds(program, &mut function_bounds);
+    any_changed
 }
 
 /// Collect every local callable key, including non-generic functions.
@@ -344,7 +436,7 @@ fn collect_current_callable_keys(program: &IrProgram) -> HashSet<String> {
     for decl in &program.declarations {
         match &decl.kind {
             IrDeclKind::Function(func) => {
-                keys.insert(func.name.clone());
+                keys.insert(free_function_callable_key(program, &func.name));
             }
             IrDeclKind::Trait(trait_decl) => {
                 for (index, method) in trait_decl.methods.iter().enumerate() {
@@ -368,6 +460,18 @@ fn collect_current_callable_keys(program: &IrProgram) -> HashSet<String> {
     keys
 }
 
+/// Return the exact semantic key used by free-function bound propagation.
+///
+/// Source functions use the projection registered from their canonical identity, which is also what checked call
+/// lowering places in the callee expression. Compiler-generated and external helpers have no source identity and keep
+/// their explicit registry name.
+fn free_function_callable_key(program: &IrProgram, registry_name: &str) -> String {
+    program
+        .function_registry
+        .emitted_projection(registry_name)
+        .unwrap_or_else(|| registry_name.to_string())
+}
+
 /// Collect the callable signatures that are already present on an IR program.
 ///
 /// The propagation pass needs two parallel maps: type-parameter bounds for each generic callable, and parameter types
@@ -381,8 +485,9 @@ fn collect_current_callable_signature_maps(
     for decl in &program.declarations {
         match &decl.kind {
             IrDeclKind::Function(func) if !func.type_params.is_empty() => {
-                function_bounds.insert(func.name.clone(), func.type_params.clone());
-                function_params.insert(func.name.clone(), func.params.clone());
+                let key = free_function_callable_key(program, &func.name);
+                function_bounds.insert(key.clone(), func.type_params.clone());
+                function_params.insert(key, func.params.clone());
             }
             IrDeclKind::Trait(trait_decl) => {
                 for (index, method) in trait_decl.methods.iter().enumerate() {
@@ -418,10 +523,14 @@ fn collect_current_callable_signature_maps(
 /// directly. Impl methods can see both owner-level and method-owned type parameters, so each inferred bound is merged
 /// into the matching owner or method parameter instead of replacing either signature wholesale.
 fn write_back_callable_bounds(program: &mut IrProgram, function_bounds: &mut HashMap<String, Vec<IrTypeParam>>) {
+    let function_registry = program.function_registry.clone();
     for decl in &mut program.declarations {
         match &mut decl.kind {
             IrDeclKind::Function(func) => {
-                if let Some(inferred) = function_bounds.remove(&func.name) {
+                let key = function_registry
+                    .emitted_projection(&func.name)
+                    .unwrap_or_else(|| func.name.clone());
+                if let Some(inferred) = function_bounds.remove(&key) {
                     func.type_params = inferred;
                 }
             }
@@ -693,7 +802,58 @@ fn collect_backend_clone_bounds_in_stmt(
                 clone_params,
             );
         }
-        IrStmtKind::Let { value, .. } | IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
+        IrStmtKind::Let {
+            ty,
+            type_annotation,
+            value,
+            ..
+        } => {
+            // Keep this target choice aligned with let emission, where a source annotation overrides the inferred
+            // local type for the Assignment use-site plan.
+            let target_ty = type_annotation.as_ref().unwrap_or(ty);
+            collect_backend_clone_bounds_for_value_use(
+                value,
+                ValueUseSite::Assignment {
+                    target_ty: Some(target_ty),
+                },
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
+        IrStmtKind::Assign {
+            target: AssignTarget::Index { object, .. },
+            value,
+        } => {
+            if let Some(target_ty) = list_index_assignment_element_type(&object.ty) {
+                collect_backend_clone_bounds_for_value_use(
+                    value,
+                    ValueUseSite::Assignment {
+                        target_ty: Some(target_ty),
+                    },
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            }
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
+        IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
             collect_backend_clone_bounds_in_expr(
                 value,
                 type_param_names,
@@ -1069,7 +1229,13 @@ fn collect_backend_clone_bounds_in_expr(
                         arg_policy: *arg_policy,
                         receiver_ref_kind: receiver_ref_kind(receiver),
                         has_incan_method_signature: matches!(arg_policy, MethodCallArgPolicy::SourceOwned)
-                            || matches!(dispatch, Some(super::expr::IrMethodDispatch::Trait { .. })),
+                            || matches!(
+                                dispatch,
+                                Some(
+                                    super::expr::IrMethodDispatch::Trait(_)
+                                        | super::expr::IrMethodDispatch::SourceProjection(_)
+                                )
+                            ),
                         is_incan_owned_nominal_receiver: clone_context.is_incan_owned_nominal_receiver(&receiver.ty),
                         is_rusttype_alias_receiver: clone_context.is_rusttype_alias_receiver(&receiver.ty),
                         preserves_lookup_arg_shape: matches!(arg_policy, MethodCallArgPolicy::PreserveShape),
@@ -1599,6 +1765,17 @@ fn collect_backend_clone_bounds_in_expr(
                 clone_params,
             );
         }
+        IrExprKind::EmbeddedFragment { holes, .. } => {
+            for hole in holes {
+                collect_backend_clone_bounds_in_expr(
+                    hole,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            }
+        }
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
@@ -1681,6 +1858,21 @@ fn tuple_item_use_site<'a>(site: ValueUseSite<'a>, target_ty: Option<&'a IrType>
     }
 }
 
+/// Clone-bound dependencies for one backend-materialized expression.
+///
+/// The inferred parameters are deliberately separate from the callable's accumulated bounds: seeing the same
+/// parameter twice still proves a concrete dependency, whereas a fully unknown IR type requires the established
+/// conservative fallback.
+#[derive(Default)]
+struct CloneExpressionDependencies {
+    /// Type parameters explicitly required by the cloned representation.
+    explicit_params: HashSet<String>,
+    /// Whether lowering lost the cloned representation entirely.
+    has_unknown_dependency: bool,
+    /// Whether an impl-body nominal may hide its owner generic arguments in a legacy lowered shape.
+    has_opaque_nominal_dependency: bool,
+}
+
 /// Record generic type parameters that need `Clone` because `expr` is cloned by backend ownership planning.
 ///
 /// `self` is special: cloning `self` can imply all or a subset of the impl's type parameters, depending on the derived
@@ -1707,16 +1899,99 @@ fn add_backend_clone_bounds_for_cloned_expr(
         }
     }
 
-    let before = clone_params.len();
+    let mut dependencies = CloneExpressionDependencies::default();
     if let Some(inner_ty) = borrowed_method_inner_ty(expr) {
-        collect_generic_type_param_names(inner_ty, type_param_names, clone_params);
+        collect_clone_expression_dependencies(inner_ty, type_param_names, &mut dependencies);
     }
-    collect_generic_type_param_names(&expr.ty, type_param_names, clone_params);
-    if clone_params.len() == before
+    collect_clone_expression_dependencies(&expr.ty, type_param_names, &mut dependencies);
+    let has_explicit_dependency = !dependencies.explicit_params.is_empty();
+    clone_params.extend(dependencies.explicit_params);
+    if !has_explicit_dependency
+        && (dependencies.has_unknown_dependency
+            || dependencies.has_opaque_nominal_dependency && self_clone_params.is_some())
         && matches!(&expr.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
         && !type_param_names.is_empty()
     {
         clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
+    }
+}
+
+/// Collect only the generic bounds required by a backend-inserted clone expression.
+///
+/// This differs from [`collect_generic_type_param_names`], which supports conservative derived-Clone owner analysis.
+/// Rust function pointers are `Clone` independently of their argument and return types, so expression-level clone
+/// inference records no dependency for `fn(T) -> U`. A concrete nominal type likewise cannot depend on unrelated
+/// callable parameters; only `Unknown` retains the prior conservative fallback because its representation was lost.
+fn collect_clone_expression_dependencies(
+    ty: &IrType,
+    type_param_names: &HashSet<&str>,
+    dependencies: &mut CloneExpressionDependencies,
+) {
+    match ty {
+        IrType::Generic(name) => {
+            if type_param_names.contains(name.as_str()) {
+                dependencies.explicit_params.insert(name.clone());
+            }
+        }
+        IrType::List(inner)
+        | IrType::Set(inner)
+        | IrType::Option(inner)
+        | IrType::Ref(inner)
+        | IrType::RefMut(inner)
+        | IrType::TypeToken(inner) => {
+            collect_clone_expression_dependencies(inner, type_param_names, dependencies);
+        }
+        IrType::Dict(key, value) | IrType::Result(key, value) => {
+            collect_clone_expression_dependencies(key, type_param_names, dependencies);
+            collect_clone_expression_dependencies(value, type_param_names, dependencies);
+        }
+        IrType::Tuple(items) => {
+            for item in items {
+                collect_clone_expression_dependencies(item, type_param_names, dependencies);
+            }
+        }
+        IrType::NamedGeneric(_, items) => {
+            for item in items {
+                collect_clone_expression_dependencies(item, type_param_names, dependencies);
+            }
+        }
+        IrType::ExternalUnion { union, .. } => {
+            collect_clone_expression_dependencies(union, type_param_names, dependencies);
+        }
+        IrType::ImplTrait(bound) => {
+            for arg in &bound.type_args {
+                collect_clone_expression_dependencies(arg, type_param_names, dependencies);
+            }
+            for (_, ty) in &bound.assoc_types {
+                collect_clone_expression_dependencies(ty, type_param_names, dependencies);
+            }
+        }
+        // Rust `fn` pointers implement Clone independently of their parameter and return types.
+        IrType::Function { .. } => {}
+        // Some legacy lowering paths still encode an in-scope type parameter as a nominal/Rust-display name instead
+        // of `IrType::Generic`. Preserve that exact dependency without falling back to every unrelated parameter.
+        IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) | IrType::RustDisplay(name) => {
+            if type_param_names.contains(name.as_str()) {
+                dependencies.explicit_params.insert(name.clone());
+            } else {
+                dependencies.has_opaque_nominal_dependency = true;
+            }
+        }
+        IrType::SelfType => {}
+        IrType::Unknown => dependencies.has_unknown_dependency = true,
+        IrType::Unit
+        | IrType::Bool
+        | IrType::Int
+        | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
+        | IrType::String
+        | IrType::Bytes
+        | IrType::StaticStr
+        | IrType::StaticBytes
+        | IrType::FrozenStr
+        | IrType::FrozenBytes
+        | IrType::StrRef => {}
     }
 }
 
@@ -1808,6 +2083,13 @@ fn collect_inferred_bounds_for_callable(
     function_params.insert(key.to_string(), func.params.clone());
 }
 
+/// Read-only signature and implementation evidence shared while propagating one fixed-point iteration.
+struct CallableBoundPropagationContext<'a> {
+    snapshot: &'a HashMap<String, Vec<IrTypeParam>>,
+    function_params: &'a HashMap<String, Vec<FunctionParam>>,
+    implementation_requirements: &'a [ImplementationBoundRequirement],
+}
+
 /// Propagate bounds for a callable by transitive inference from called generic functions.
 ///
 /// Checks if the callable uses any generic functions and propagates their trait bounds to the caller's type
@@ -1816,8 +2098,7 @@ fn propagate_bounds_for_callable(
     key: &str,
     func: &IrFunction,
     type_params: &[IrTypeParam],
-    snapshot: &HashMap<String, Vec<IrTypeParam>>,
-    function_params: &HashMap<String, Vec<FunctionParam>>,
+    context: &CallableBoundPropagationContext<'_>,
     function_bounds: &mut HashMap<String, Vec<IrTypeParam>>,
     changed: &mut bool,
 ) {
@@ -1825,12 +2106,16 @@ fn propagate_bounds_for_callable(
         return;
     }
 
-    let called_generics = collect_called_generic_functions(func, type_params, snapshot, function_params);
+    let required_bounds = collect_propagated_bound_requirements(
+        func,
+        type_params,
+        context.snapshot,
+        context.function_params,
+        context.implementation_requirements,
+    );
     if let Some(current_bounds) = function_bounds.get_mut(key) {
-        for (callee_name, type_arg_mapping) in &called_generics {
-            if let Some(callee_bounds) = snapshot.get(callee_name)
-                && propagate_transitive_bounds(current_bounds, callee_bounds, type_arg_mapping)
-            {
+        for (source_bounds, type_arg_mapping) in &required_bounds {
+            if propagate_transitive_bounds(current_bounds, source_bounds, type_arg_mapping) {
                 *changed = true;
             }
         }
@@ -2313,6 +2598,13 @@ fn scan_expr_for_bounds(
             }
         }
 
+        // ---- Embedded fragment (RFC 081, #1023): scan its lowered expression holes ----
+        IrExprKind::EmbeddedFragment { holes, .. } => {
+            for hole in holes {
+                scan_expr_for_bounds(hole, type_params, params, bounds_map);
+            }
+        }
+
         // ---- Leaf nodes: no sub-expressions to scan ----
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
@@ -2710,47 +3002,181 @@ fn substitute_ir_type(ty: &IrType, subst: &HashMap<&str, &IrType>) -> IrType {
     }
 }
 
-/// Collect calls to generic functions and their type argument mappings.
+/// Collect bound-bearing call targets and their type-parameter mappings.
 ///
-/// Returns a list of (callee name, type arg mapping) pairs. Each mapping connects the callee's type parameter names to
-/// the caller's type parameter names when the argument is a direct type parameter pass-through.
-fn collect_called_generic_functions(
+/// Ordinary generic calls contribute their callable signature. Checked trait dispatch also contributes the exact local
+/// implementation header selected for its receiver. Each mapping connects the source requirement's type parameters to
+/// caller parameters when the receiver or argument is a direct generic pass-through.
+fn collect_propagated_bound_requirements(
     func: &IrFunction,
     type_params: &[IrTypeParam],
     function_bounds: &HashMap<String, Vec<IrTypeParam>>,
     function_params: &HashMap<String, Vec<FunctionParam>>,
-) -> Vec<(String, HashMap<String, String>)> {
+    implementation_requirements: &[ImplementationBoundRequirement],
+) -> Vec<(Vec<IrTypeParam>, HashMap<String, String>)> {
     let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
+    let context = BoundCollectionContext {
+        type_params: &type_param_names,
+        function_bounds,
+        function_params,
+        implementation_requirements,
+    };
     let mut result = Vec::new();
 
     for stmt in &func.body {
-        collect_calls_in_stmt(
-            stmt,
-            &type_param_names,
-            &func.params,
-            function_bounds,
-            function_params,
-            &mut result,
-        );
+        collect_calls_in_stmt(stmt, &context, &mut result);
     }
 
     result
 }
 
+type PropagatedBoundRequirement = (Vec<IrTypeParam>, HashMap<String, String>);
+
+/// Shared read-only state for the recursive call scan.
+///
+/// Keeping this behind one reference prevents deeply nested expressions from copying a wide argument frame at every
+/// recursive step.
+struct BoundCollectionContext<'context, 'type_name> {
+    type_params: &'context HashSet<&'type_name str>,
+    function_bounds: &'context HashMap<String, Vec<IrTypeParam>>,
+    function_params: &'context HashMap<String, Vec<FunctionParam>>,
+    implementation_requirements: &'context [ImplementationBoundRequirement],
+}
+
+/// Add the exact local implementation requirement selected by one checked trait-method dispatch.
+fn collect_implementation_bound_requirements(
+    receiver: &IrExpr,
+    trait_source_name: &str,
+    trait_module_path: Option<&[String]>,
+    trait_type_args: &[IrType],
+    caller_type_params: &HashSet<&str>,
+    implementation_requirements: &[ImplementationBoundRequirement],
+    result: &mut Vec<PropagatedBoundRequirement>,
+) {
+    let Some((receiver_name, receiver_type_args)) = nominal_receiver_type(&receiver.ty) else {
+        return;
+    };
+
+    for requirement in implementation_requirements {
+        if requirement.target_type != receiver_name
+            || requirement.trait_source_name != trait_source_name
+            || requirement.trait_module_path.as_deref() != trait_module_path
+            || requirement.type_params.len() != receiver_type_args.len()
+        {
+            continue;
+        }
+
+        let substitution = requirement
+            .type_params
+            .iter()
+            .zip(receiver_type_args)
+            .map(|(type_param, receiver_arg)| (type_param.name.as_str(), receiver_arg))
+            .collect::<HashMap<_, _>>();
+        let selected_trait_args = requirement
+            .trait_type_args
+            .iter()
+            .map(|arg| substitute_ir_type(arg, &substitution))
+            .collect::<Vec<_>>();
+        if selected_trait_args != trait_type_args {
+            continue;
+        }
+
+        let mut mapping = HashMap::new();
+        for (type_param, receiver_arg) in requirement.type_params.iter().zip(receiver_type_args) {
+            if let Some(caller_type_param) = type_param_name_from_ir_type(receiver_arg, caller_type_params) {
+                mapping.insert(type_param.name.clone(), caller_type_param);
+            }
+        }
+        if mapping.is_empty() {
+            continue;
+        }
+
+        let source_bounds = requirement
+            .type_params
+            .iter()
+            .map(|type_param| IrTypeParam {
+                name: type_param.name.clone(),
+                bounds: type_param
+                    .bounds
+                    .iter()
+                    .map(|bound| substitute_trait_bound(bound, &substitution))
+                    .collect(),
+            })
+            .collect();
+        result.push((source_bounds, mapping));
+    }
+}
+
+/// Return the exact nominal receiver and its concrete generic arguments after removing borrow wrappers.
+fn nominal_receiver_type(ty: &IrType) -> Option<(&str, &[IrType])> {
+    match ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => nominal_receiver_type(inner),
+        IrType::NamedGeneric(name, type_args) => Some((name.as_str(), type_args)),
+        IrType::Struct(name) | IrType::Enum(name) => Some((name.as_str(), &[])),
+        _ => None,
+    }
+}
+
+/// Collect implementation-header requirements without widening every recursive expression-scan frame.
+fn collect_method_implementation_bound_requirements(
+    receiver: &IrExpr,
+    dispatch: Option<&super::expr::IrMethodDispatch>,
+    context: &BoundCollectionContext<'_, '_>,
+    result: &mut Vec<PropagatedBoundRequirement>,
+) {
+    let Some(
+        super::expr::IrMethodDispatch::Trait(dispatch) | super::expr::IrMethodDispatch::SourceProjection(dispatch),
+    ) = dispatch
+    else {
+        return;
+    };
+    let trait_source_name = &dispatch.trait_source_name;
+    let trait_module_path = &dispatch.trait_module_path;
+    let implementation_type_params = &dispatch.implementation_type_params;
+    let trait_type_args = &dispatch.type_args;
+
+    if !implementation_type_params.is_empty()
+        && let Some((target_type, _)) = nominal_receiver_type(&receiver.ty)
+    {
+        let checked_requirement = ImplementationBoundRequirement {
+            target_type: target_type.to_string(),
+            type_params: implementation_type_params.clone(),
+            trait_source_name: trait_source_name.clone(),
+            trait_module_path: trait_module_path.clone(),
+            trait_type_args: trait_type_args.clone(),
+        };
+        collect_implementation_bound_requirements(
+            receiver,
+            trait_source_name,
+            trait_module_path.as_deref(),
+            trait_type_args,
+            context.type_params,
+            std::slice::from_ref(&checked_requirement),
+            result,
+        );
+    }
+    collect_implementation_bound_requirements(
+        receiver,
+        trait_source_name,
+        trait_module_path.as_deref(),
+        trait_type_args,
+        context.type_params,
+        context.implementation_requirements,
+        result,
+    );
+}
+
 /// Recursively collect generic function calls from a statement.
 fn collect_calls_in_stmt(
     stmt: &IrStmt,
-    type_params: &HashSet<&str>,
-    params: &[FunctionParam],
-    function_bounds: &HashMap<String, Vec<IrTypeParam>>,
-    function_params: &HashMap<String, Vec<FunctionParam>>,
-    result: &mut Vec<(String, HashMap<String, String>)>,
+    context: &BoundCollectionContext<'_, '_>,
+    result: &mut Vec<PropagatedBoundRequirement>,
 ) {
-    let recurse_expr = |e: &IrExpr, r: &mut Vec<(String, HashMap<String, String>)>| {
-        collect_calls_in_expr(e, type_params, params, function_bounds, function_params, r);
+    let recurse_expr = |e: &IrExpr, r: &mut Vec<PropagatedBoundRequirement>| {
+        collect_calls_in_expr(e, context, r);
     };
-    let recurse_stmt = |s: &IrStmt, r: &mut Vec<(String, HashMap<String, String>)>| {
-        collect_calls_in_stmt(s, type_params, params, function_bounds, function_params, r);
+    let recurse_stmt = |s: &IrStmt, r: &mut Vec<PropagatedBoundRequirement>| {
+        collect_calls_in_stmt(s, context, r);
     };
 
     match &stmt.kind {
@@ -2823,17 +3249,14 @@ fn collect_calls_in_stmt(
 /// Recursively collect generic function calls from an expression.
 fn collect_calls_in_expr(
     expr: &IrExpr,
-    type_params: &HashSet<&str>,
-    params: &[FunctionParam],
-    function_bounds: &HashMap<String, Vec<IrTypeParam>>,
-    function_params: &HashMap<String, Vec<FunctionParam>>,
-    result: &mut Vec<(String, HashMap<String, String>)>,
+    context: &BoundCollectionContext<'_, '_>,
+    result: &mut Vec<PropagatedBoundRequirement>,
 ) {
-    let recurse_expr = |e: &IrExpr, r: &mut Vec<(String, HashMap<String, String>)>| {
-        collect_calls_in_expr(e, type_params, params, function_bounds, function_params, r);
+    let recurse_expr = |e: &IrExpr, r: &mut Vec<PropagatedBoundRequirement>| {
+        collect_calls_in_expr(e, context, r);
     };
-    let recurse_stmt = |s: &IrStmt, r: &mut Vec<(String, HashMap<String, String>)>| {
-        collect_calls_in_stmt(s, type_params, params, function_bounds, function_params, r);
+    let recurse_stmt = |s: &IrStmt, r: &mut Vec<PropagatedBoundRequirement>| {
+        collect_calls_in_stmt(s, context, r);
     };
 
     match &expr.kind {
@@ -2846,15 +3269,16 @@ fn collect_calls_in_expr(
         } => {
             // ---- Check if the called function is a generic function we know about ----
             if let IrExprKind::Var { name, .. } = &func.kind
-                && let Some(callee_key) = resolve_called_generic_key(name, canonical_path.as_deref(), function_bounds)
+                && let Some(callee_key) =
+                    resolve_called_generic_key(name, canonical_path.as_deref(), context.function_bounds)
             {
                 let mut mapping = HashMap::new();
 
                 // Explicit call-site type arguments are the strongest signal for how callee generics map back to
                 // the caller.
-                if let Some(callee_type_params) = function_bounds.get(callee_key.as_str()) {
+                if let Some(callee_type_params) = context.function_bounds.get(callee_key.as_str()) {
                     for (callee_tp, caller_ty) in callee_type_params.iter().zip(type_args.iter()) {
-                        if let Some(caller_tp) = type_param_name_from_ir_type(caller_ty, type_params) {
+                        if let Some(caller_tp) = type_param_name_from_ir_type(caller_ty, context.type_params) {
                             mapping.insert(callee_tp.name.clone(), caller_tp);
                         }
                     }
@@ -2862,7 +3286,7 @@ fn collect_calls_in_expr(
 
                 // Use the callee's parameter types to determine which type parameter each argument corresponds to.
                 // Named arguments (`foo(b=x)`) are matched by name; positional arguments by index.
-                if let Some(callee_params) = function_params.get(callee_key.as_str()) {
+                if let Some(callee_params) = context.function_params.get(callee_key.as_str()) {
                     for (i, arg) in args.iter().enumerate() {
                         // Resolve the callee parameter: by name if the arg is named, by position otherwise.
                         let callee_param = if let Some(arg_name) = &arg.name {
@@ -2871,13 +3295,15 @@ fn collect_calls_in_expr(
                             callee_params.get(i)
                         };
                         if let Some(cp) = callee_param {
-                            collect_type_param_mapping(&cp.ty, &arg.expr.ty, type_params, &mut mapping);
+                            collect_type_param_mapping(&cp.ty, &arg.expr.ty, context.type_params, &mut mapping);
                         }
                     }
                 }
 
-                if !mapping.is_empty() {
-                    result.push((callee_key, mapping));
+                if !mapping.is_empty()
+                    && let Some(callee_bounds) = context.function_bounds.get(callee_key.as_str())
+                {
+                    result.push((callee_bounds.clone(), mapping));
                 }
             }
 
@@ -2888,17 +3314,19 @@ fn collect_calls_in_expr(
             }
         }
         IrExprKind::FunctionItem { name, type_args } => {
-            if let Some(callee_key) = resolve_called_generic_key(name, None, function_bounds) {
+            if let Some(callee_key) = resolve_called_generic_key(name, None, context.function_bounds) {
                 let mut mapping = HashMap::new();
-                if let Some(callee_type_params) = function_bounds.get(callee_key.as_str()) {
+                if let Some(callee_type_params) = context.function_bounds.get(callee_key.as_str()) {
                     for (callee_tp, caller_ty) in callee_type_params.iter().zip(type_args.iter()) {
-                        if let Some(caller_tp) = type_param_name_from_ir_type(caller_ty, type_params) {
+                        if let Some(caller_tp) = type_param_name_from_ir_type(caller_ty, context.type_params) {
                             mapping.insert(callee_tp.name.clone(), caller_tp);
                         }
                     }
                 }
-                if !mapping.is_empty() {
-                    result.push((callee_key, mapping));
+                if !mapping.is_empty()
+                    && let Some(callee_bounds) = context.function_bounds.get(callee_key.as_str())
+                {
+                    result.push((callee_bounds.clone(), mapping));
                 }
             }
         }
@@ -2909,7 +3337,13 @@ fn collect_calls_in_expr(
         IrExprKind::UnaryOp { operand, .. } => {
             recurse_expr(operand, result);
         }
-        IrExprKind::MethodCall { receiver, args, .. } => {
+        IrExprKind::MethodCall {
+            receiver,
+            dispatch,
+            args,
+            ..
+        } => {
+            collect_method_implementation_bound_requirements(receiver, dispatch.as_ref(), context, result);
             recurse_expr(receiver, result);
             for arg in args {
                 recurse_expr(&arg.expr, result);
@@ -3115,8 +3549,197 @@ fn propagate_transitive_bounds(
 mod tests {
     use super::*;
     use crate::backend::ir::decl::{FunctionParam, IrDecl, IrDeclKind, IrImpl, Visibility};
-    use crate::backend::ir::expr::{FormatStyle, IrCallArgKind, Literal, MethodCallArgPolicy, VarAccess};
+    use crate::backend::ir::expr::{
+        FormatStyle, IrCallArgKind, IrMethodDispatch, IrTraitDispatch, Literal, MethodCallArgPolicy, VarAccess,
+    };
     use crate::backend::ir::{FunctionRegistry, FunctionSignature, Mutability, TypedExpr};
+
+    /// Implementation-bound propagation must match the checked trait declaration and instantiation, not a spelling.
+    #[test]
+    fn implementation_bound_matching_is_canonical_and_instantiation_exact() -> Result<(), Box<dyn std::error::Error>> {
+        let requirement = ImplementationBoundRequirement {
+            target_type: "Stream".to_string(),
+            type_params: vec![IrTypeParam {
+                name: "R".to_string(),
+                bounds: vec![IrTraitBound::simple(tb::CLONE)],
+            }],
+            trait_source_name: "Walk".to_string(),
+            trait_module_path: Some(vec!["pkg".to_string(), "first".to_string()]),
+            trait_type_args: vec![IrType::Int],
+        };
+        let receiver = TypedExpr::new(
+            IrExprKind::Var {
+                name: "stream".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::NamedGeneric("Stream".to_string(), vec![IrType::Generic("T".to_string())]),
+        );
+        let caller_type_params = HashSet::from(["T"]);
+        let canonical_module = vec!["pkg".to_string(), "first".to_string()];
+        let different_module = vec!["pkg".to_string(), "second".to_string()];
+
+        let mut matched = Vec::new();
+        collect_implementation_bound_requirements(
+            &receiver,
+            "Walk",
+            Some(canonical_module.as_slice()),
+            &[IrType::Int],
+            &caller_type_params,
+            std::slice::from_ref(&requirement),
+            &mut matched,
+        );
+        let (required_bounds, mapping) = matched
+            .first()
+            .ok_or_else(|| std::io::Error::other("the exact checked implementation identity should match"))?;
+        assert_eq!(mapping.get("R").map(String::as_str), Some("T"));
+        assert!(required_bounds.iter().any(|type_param| {
+            type_param.name == "R" && type_param.bounds.iter().any(|bound| bound.trait_path == tb::CLONE)
+        }));
+
+        for (module, type_args) in [
+            (Some(different_module.as_slice()), &[IrType::Int][..]),
+            (Some(canonical_module.as_slice()), &[IrType::String][..]),
+            (None, &[IrType::Int][..]),
+        ] {
+            let mut mismatched = Vec::new();
+            collect_implementation_bound_requirements(
+                &receiver,
+                "Walk",
+                module,
+                type_args,
+                &caller_type_params,
+                std::slice::from_ref(&requirement),
+                &mut mismatched,
+            );
+            assert!(
+                mismatched.is_empty(),
+                "a different canonical owner or trait instantiation must not inherit implementation bounds"
+            );
+        }
+        Ok(())
+    }
+
+    /// Cloning a concrete value or function pointer does not clone its surrounding generic parameters.
+    #[test]
+    fn clone_dependencies_exclude_callable_signatures_and_concrete_values() {
+        let parameters = HashSet::from(["T", "U"]);
+        let callable = IrType::Function {
+            params: vec![IrType::Generic("T".to_string())],
+            ret: Box::new(IrType::Generic("U".to_string())),
+        };
+        for ty in [IrType::String, callable.clone(), IrType::List(Box::new(callable))] {
+            let expr = TypedExpr::new(
+                IrExprKind::Var {
+                    name: "value".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty.clone(),
+            );
+            let mut bounds = HashSet::new();
+            add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+            assert!(
+                bounds.is_empty(),
+                "cloning {ty:?} introduced unrelated bounds: {bounds:?}"
+            );
+        }
+    }
+
+    /// Finding a dependency already in the set is not evidence that the cloned type was erased.
+    #[test]
+    fn repeated_clone_dependency_does_not_add_unrelated_parameters() {
+        let parameters = HashSet::from(["T", "U"]);
+        let expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: "value".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Generic("T".to_string()),
+        );
+        let mut bounds = HashSet::from(["T".to_string()]);
+        add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+        assert_eq!(bounds, HashSet::from(["T".to_string()]));
+    }
+
+    /// A fully unknown clone dependency must retain the conservative enclosing-bound fallback.
+    #[test]
+    fn erased_clone_dependencies_retain_conservative_bounds() {
+        let parameters = HashSet::from(["T", "U"]);
+        let expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: "value".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Unknown,
+        );
+        let mut bounds = HashSet::new();
+        add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+        assert_eq!(bounds, HashSet::from(["T".to_string(), "U".to_string()]));
+    }
+
+    /// Cloning a concrete nominal value inside a generic function must not narrow unrelated public parameters.
+    #[test]
+    fn concrete_nominal_clone_does_not_bind_enclosing_generic_parameters() {
+        let parameters = HashSet::from(["T", "U"]);
+        for ty in [
+            IrType::Struct("Algorithm".to_string()),
+            IrType::Enum("Mode".to_string()),
+            IrType::NamedGeneric("Marker".to_string(), Vec::new()),
+        ] {
+            let expr = TypedExpr::new(
+                IrExprKind::Var {
+                    name: "value".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty.clone(),
+            );
+            let mut bounds = HashSet::new();
+            add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+            assert!(
+                bounds.is_empty(),
+                "cloning concrete {ty:?} introduced unrelated bounds: {bounds:?}"
+            );
+        }
+    }
+
+    /// Legacy nominally encoded type parameters still infer their exact bound, never every callable parameter.
+    #[test]
+    fn nominally_encoded_generic_clone_binds_only_the_matching_parameter() {
+        let parameters = HashSet::from(["T", "U"]);
+        let expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: "value".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("T".to_string()),
+        );
+        let mut bounds = HashSet::new();
+        add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+        assert_eq!(bounds, HashSet::from(["T".to_string()]));
+    }
+
+    /// An impl-owned opaque nominal retains the conservative owner bound until lowering carries its arguments.
+    #[test]
+    fn opaque_nominal_clone_in_impl_context_preserves_owner_bounds() {
+        let parameters = HashSet::from(["T"]);
+        let expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: "value".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("GraphNode".to_string()),
+        );
+        let unknown_owner_dependencies = HashSet::new();
+        let mut bounds = HashSet::new();
+        add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, Some(&unknown_owner_dependencies), &mut bounds);
+        assert_eq!(bounds, HashSet::from(["T".to_string()]));
+    }
 
     fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
         IrFunction {
@@ -3130,6 +3753,7 @@ mod tests {
             visibility: Visibility::Public,
             type_params,
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         }
@@ -3145,6 +3769,7 @@ mod tests {
             source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
+            member_projections: Vec::new(),
             function_reexports: Vec::new(),
             rust_module_path: None,
             newtype_construction: Default::default(),
@@ -3183,6 +3808,7 @@ mod tests {
             visibility: Visibility::Public,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         };
@@ -3196,11 +3822,14 @@ mod tests {
                 trait_type_args: Vec::new(),
                 associated_types: Vec::new(),
                 methods: vec![method],
+                method_projections: Vec::new(),
+                source_method_projections: Vec::new(),
             }))],
             module_init: Vec::new(),
             source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
+            member_projections: Vec::new(),
             function_reexports: Vec::new(),
             rust_module_path: None,
             newtype_construction: Default::default(),
@@ -3424,6 +4053,71 @@ mod tests {
             func.type_params[0].bounds.contains(&IrTraitBound::simple(tb::CLONE)),
             "source-owned method boundaries should keep clone-bound inference aligned with emission, got {:?}",
             func.type_params[0].bounds
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_implementation_bounds_propagate_through_checked_trait_dispatch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let trait_module_path = vec!["std".to_string(), "derives".to_string(), "collection".to_string()];
+        let mut consume = function("consume", vec![IrTypeParam::bare("R")]);
+        consume.body = vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "chunks".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("ReaderChunks".to_string(), vec![IrType::Generic("R".to_string())]),
+                )),
+                method: "__iter__".to_string(),
+                dispatch: Some(IrMethodDispatch::Trait(Box::new(IrTraitDispatch {
+                    trait_source_name: "FallibleIterator".to_string(),
+                    trait_module_path: Some(trait_module_path.clone()),
+                    implementation_type_params: Vec::new(),
+                    trait_path: "crate::__incan_std::derives::collection::FallibleIterator".to_string(),
+                    type_args: vec![IrType::List(Box::new(IrType::Int)), IrType::String],
+                    receiver_is_mutable: false,
+                }))),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        )))];
+        let mut local = program(vec![consume]);
+        let mut external = program(Vec::new());
+        external.declarations.push(IrDecl::new(IrDeclKind::Impl(IrImpl {
+            target_type: "ReaderChunks".to_string(),
+            type_params: vec![IrTypeParam {
+                name: "R".to_string(),
+                bounds: vec![IrTraitBound::simple(tb::CLONE)],
+            }],
+            trait_name: Some("FallibleIterator".to_string()),
+            trait_module_path: Some(trait_module_path),
+            trait_source_name: Some("FallibleIterator".to_string()),
+            trait_type_args: vec![IrType::List(Box::new(IrType::Int)), IrType::String],
+            associated_types: Vec::new(),
+            methods: Vec::new(),
+            method_projections: Vec::new(),
+            source_method_projections: Vec::new(),
+        })));
+
+        propagate_trait_bounds_from_programs(&mut local, &[&external]);
+
+        let declaration = local
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected function declaration"))?;
+        let IrDeclKind::Function(consume) = &declaration.kind else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        assert!(
+            consume.type_params[0].bounds.contains(&IrTraitBound::simple(tb::CLONE)),
+            "the selected external impl header must constrain the generic caller"
         );
         Ok(())
     }

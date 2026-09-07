@@ -13,7 +13,9 @@ use super::super::expr::{
     BuiltinFn, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern, TypedExpr,
     VarAccess,
 };
-use super::super::ownership::{LoopIterationPlan, ValueUseSite, plan_for_loop_iteration, plan_value_use};
+use super::super::ownership::{
+    LoopIterationPlan, ValueUseSite, list_index_assignment_element_type, plan_for_loop_iteration, plan_value_use,
+};
 use super::super::scanners::{binding_use_scan, expr_uses_binding_name};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
@@ -38,7 +40,7 @@ fn target_mutates_var(target: &AssignTarget, var: &str) -> bool {
     match target {
         AssignTarget::Var(name) => name == var,
         AssignTarget::StaticBinding(name) => name == var,
-        AssignTarget::Static(_) => false,
+        AssignTarget::Static { .. } => false,
         AssignTarget::Field { object, .. } => root_var_name(object).is_some_and(|n| n == var),
         AssignTarget::Index { object, .. } => root_var_name(object).is_some_and(|n| n == var),
     }
@@ -315,15 +317,6 @@ fn is_diverging_rust_error_call(expr: &TypedExpr) -> bool {
         && stdlib::is_diverging_rust_error_helper_name(&path[3])
 }
 
-/// Return the element target type for assignment into a list index.
-fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType> {
-    match object_ty {
-        IrType::Ref(inner) | IrType::RefMut(inner) => list_index_assignment_element_type(inner),
-        IrType::List(elem_ty) => Some(elem_ty.as_ref()),
-        _ => None,
-    }
-}
-
 /// Return the local `StaticBinding` name at the root of a storage-rooted expression.
 ///
 /// This is used by statement-slice analysis to detect aliases like `live` in
@@ -559,7 +552,7 @@ fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
                         names.insert(name.to_string());
                     }
                 }
-                AssignTarget::Var(_) | AssignTarget::Static(_) => {}
+                AssignTarget::Var(_) | AssignTarget::Static { .. } => {}
             }
             expr_mutates_storage_binding(value, names);
         }
@@ -1123,9 +1116,9 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             IrStmtKind::Assign { target, value } => {
-                if let AssignTarget::Static(name) = target {
-                    let n = Self::rust_static_ident(name);
-                    let init_call = self.emit_static_init_call_for_static(name);
+                if let AssignTarget::Static { name, reference_kind } = target {
+                    let n = self.rust_static_reference_ident(name, *reference_kind)?;
+                    let init_call = self.emit_static_init_call_for_reference(name, *reference_kind);
                     let v = self.emit_assignment_value(value, None)?;
                     return Ok(quote! {
                         #init_call
@@ -1559,6 +1552,14 @@ impl<'a> IrEmitter<'a> {
                 IrExprKind::Range { start, end, inclusive } => {
                     return self.emit_range_expr(start.as_deref(), end.as_deref(), *inclusive);
                 }
+                IrExprKind::BuiltinCall {
+                    func: BuiltinFn::Enumerate,
+                    args,
+                } => {
+                    if let Some(arg) = args.first() {
+                        return self.emit_enumerate_iter(arg);
+                    }
+                }
                 _ => {}
             }
             if let Some(iter) = self.emit_incan_iterator_source(iterable)? {
@@ -1577,7 +1578,8 @@ mod tests {
     use crate::backend::ir::FunctionRegistry;
     use crate::backend::ir::TypedExpr;
     use crate::backend::ir::expr::{
-        CollectionMethodKind, IrCallArg, IrCallArgKind, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
+        CollectionMethodKind, IrCallArg, IrCallArgKind, IrStaticReferenceKind, MethodCallArgPolicy, MethodKind,
+        VarAccess, VarRefKind,
     };
     use crate::backend::ir::types::Mutability;
 
@@ -1593,6 +1595,7 @@ mod tests {
             value: TypedExpr::new(
                 IrExprKind::StaticBinding {
                     name: "ACTIVE_FLAGS".to_string(),
+                    reference_kind: IrStaticReferenceKind::CompilerGenerated,
                 },
                 IrType::List(Box::new(IrType::Bool)),
             ),
@@ -1773,6 +1776,7 @@ mod tests {
                 value: TypedExpr::new(
                     IrExprKind::StaticBinding {
                         name: "ITEMS".to_string(),
+                        reference_kind: IrStaticReferenceKind::CompilerGenerated,
                     },
                     IrType::List(Box::new(IrType::Int)),
                 ),
