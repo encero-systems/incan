@@ -26,8 +26,8 @@ Commands:
 - `fmt` - Format Incan source files
 - `test` - Run tests (pytest-style)
 - `new` - Create a new Incan project directory
-- `init` - Add a starter `incan.toml` and project skeleton to an existing directory
-- `version` - Update the project version in `incan.toml`
+- `init` - Add a starter `loaf.toml` and project skeleton to an existing directory
+- `version` - Update the project version in `loaf.toml`
 - `env` - List, inspect, or run configured project environments
 - `lock` - Generate or update `oven.lock`
 - `tools` - Inspect local toolchain, editor integration state, and checked metadata
@@ -456,7 +456,7 @@ Run inline code:
 incan run -c "import this"
 ```
 
-If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest `incan.toml`. Outside a project, you must pass `FILE` or `-c`.
+If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest `loaf.toml`. Outside a project, you must pass `FILE` or `-c`.
 
 Dependency flags (same as `build`):
 
@@ -585,7 +585,7 @@ Usage:
 incan new [OPTIONS] [NAME]
 ```
 
-Creates a new project directory with `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter source includes a small public `greeting()` function plus a test that imports and checks it, so `incan run`, `incan test`, and `incan build --release` work immediately after project creation. When run in an interactive terminal without `--yes`, it prompts for project metadata. In non-interactive contexts, pass `NAME` or `--dir`.
+Creates a new project directory with `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter source includes a small public `greeting()` function plus a test that imports and checks it, so `incan run`, `incan test`, and `incan build --release` work immediately after project creation. When run in an interactive terminal without `--yes`, it prompts for project metadata. In non-interactive contexts, pass `NAME` or `--dir`.
 
 Options:
 
@@ -618,7 +618,7 @@ Usage:
 incan init [OPTIONS] [PATH]
 ```
 
-Adds Incan project files to an existing directory. Use this when you already have a directory and want to add `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. New projects usually start with `incan new` instead.
+Adds Incan project files to an existing directory. Use this when you already have a directory and want to add `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. New projects usually start with `incan new` instead.
 
 Options:
 
@@ -649,15 +649,15 @@ Usage:
 incan version [OPTIONS] [BUMP]
 ```
 
-Updates `[project].version` in `incan.toml`. `BUMP` is one of `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or `dev`. Use `--set` when you need an exact SemVer value instead of a bump.
+Updates `[project].version` in `loaf.toml`. `BUMP` is one of `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or `dev`. Use `--set` when you need an exact SemVer value instead of a bump.
 
 Options:
 
 - `BUMP`: Version bump to apply.
 - `--set <VERSION>`: Explicit SemVer version to write.
-- `--dry-run`: Print the planned change without writing `incan.toml`.
+- `--dry-run`: Print the planned change without writing `loaf.toml`.
 - `--keep-prerelease`: Keep prerelease metadata when applying `major`, `minor`, or `patch`.
-- `--project <PATH>`: Project root containing `incan.toml`.
+- `--project <PATH>`: Project root containing `loaf.toml`.
 - `--workspace`, `--member <NAME_OR_PATH>`: Select a scope that must resolve to exactly one member. These conflict with `--project`.
 
 Examples:
@@ -672,7 +672,7 @@ incan version patch --member packages/api
 
 ### `incan env`
 
-Project environments are declared in `[tool.incan.envs]` in `incan.toml`. The ambient `default` environment is always available, and the `env` command lists available environments, shows a Hatch-style overview table, prints a compact resolved summary for one environment, or runs a named script from an environment.
+Project environments are declared in `[tool.incan.envs]` in `loaf.toml`. The ambient `default` environment is always available, and the `env` command lists available environments, shows a Hatch-style overview table, prints a compact resolved summary for one environment, or runs a named script from an environment.
 
 Treat envs as named command contexts for repeatable workflows such as local testing, CI, docs, or release checks. They are not shell sessions or virtual environments.
 
@@ -687,7 +687,7 @@ incan env run [OPTIONS] <ENV> <SCRIPT> [-- <ARGS>...]
 Shared options:
 
 - `--format text|json`: Output format for `list` and `show` (default: `text`).
-- `--project <PATH>`: Project root containing `incan.toml`.
+- `--project <PATH>`: Project root containing `loaf.toml`.
 
 Run options:
 
@@ -718,7 +718,7 @@ incan lock [OPTIONS] [FILE]
 
 Resolves all dependencies (manifest + inline + test files) and generates or updates `oven.lock`.
 
-If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
+If `FILE` is omitted, uses the `[project.scripts].main` entry from `loaf.toml`.
 
 Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `oven.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable advisory lock under compiler-owned `target/incan_lock` state and replace the completed root lock atomically after synchronizing its staged contents. The guard identity is derived from the published lock's own filename, so an `oven.lock` project coordinates on `.oven.lock.incan.lock` — a path no compiler predating the hidden guard ever wrote. Concurrent old and new compilers are no longer a hazard for this file: a compiler from before the rename publishes `incan.lock` and never contends for `oven.lock` at all. That earlier lock is inert once a project is on `oven.lock`; nothing reads it, and you can delete it.
 
@@ -831,7 +831,7 @@ Options:
 The JSON package contains:
 
 - `schema_version`: numeric schema version for the package payload
-- `package`: project name and version from `incan.toml`, when available
+- `package`: project name and version from `loaf.toml`, when available
 - `modules`: checked metadata documents for the entry module and imported local modules
 - `declarations`: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, public import aliases, and public partial callable presets
 - `anchor`: stable declaration ids plus source byte spans

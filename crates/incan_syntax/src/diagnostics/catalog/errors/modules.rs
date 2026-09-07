@@ -175,7 +175,7 @@ pub fn duplicate_library_export(name: &str, first_span: Span, duplicate_span: Sp
     .with_hint("Rename one of the exports with `as`, or remove the duplicate")
 }
 
-/// `from pub::... import ...` references a library not declared in `incan.toml [dependencies]`.
+/// `from pub::... import ...` references a library not declared in `loaf.toml [dependencies]`.
 pub fn unknown_pub_library(library: &str, known_libraries: &[String], span: Span) -> CompileError {
     let mut known = known_libraries.to_vec();
     known.sort();
@@ -186,7 +186,7 @@ pub fn unknown_pub_library(library: &str, known_libraries: &[String], span: Span
     };
 
     CompileError::new(format!("Unknown `pub::` library `{library}`"), span)
-        .with_hint("Declare it in `incan.toml [dependencies]` and build the dependency library first")
+        .with_hint("Declare it in `loaf.toml [dependencies]` and build the dependency library first")
         .with_hint(format!("Known libraries: {known}"))
 }
 
@@ -322,7 +322,7 @@ pub fn pub_library_symbol_requires_features(
         let manifest_features = render_manifest_feature_set(features);
         (
             format!("`{symbol}` from `pub::{library}` requires disabled package feature(s): {rendered}"),
-            format!("Add `features = {manifest_features}` to dependency `{library}` in `incan.toml`"),
+            format!("Add `features = {manifest_features}` to dependency `{library}` in `loaf.toml`"),
         )
     } else {
         let rendered = alternatives
@@ -343,7 +343,7 @@ pub fn pub_library_symbol_requires_features(
             .join(" or ");
         (
             format!("`{symbol}` from `pub::{library}` requires one disabled package feature set: {rendered}"),
-            format!("Enable one of {manifest_sets} on dependency `{library}` in `incan.toml`"),
+            format!("Enable one of {manifest_sets} on dependency `{library}` in `loaf.toml`"),
         )
     };
 

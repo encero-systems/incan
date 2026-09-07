@@ -5,7 +5,7 @@ set -euo pipefail
 #Use: `bash scripts/run_examples.sh` or `make examples`.
 
 # Smoke-test examples:
-# - Pre-build nested example library projects (`incan.toml` + `src/lib.incn`)
+# - Pre-build nested example library projects (`loaf.toml` + `src/lib.incn`)
 # - Typecheck every example file under examples/ (recursively)
 # - Run only entrypoints (files that define `def main(...)`)
 # - Skip long-running examples (web examples) and anything that times out
@@ -181,7 +181,7 @@ prebake_example_providers() {
   done < <(
     find examples \
       \( -type d -name target -o -type d -name __pycache__ \) -prune -o \
-      -type f -name 'incan.toml' -print | sort
+      -type f -name 'loaf.toml' -print | sort
   )
 }
 
@@ -228,7 +228,7 @@ prebuild_example_libraries() {
   done < <(
     find examples \
       \( -type d -name target -o -type d -name __pycache__ \) -prune -o \
-      -type f -name 'incan.toml' -print | sort
+      -type f -name 'loaf.toml' -print | sort
   )
 }
 

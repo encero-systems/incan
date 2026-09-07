@@ -12,9 +12,9 @@ Source → Lexer → Parser/AST → Typechecker → Lowering (AST→IR) → Emis
 src/
 ├── main.rs                           # CLI entrypoint
 ├── lib.rs                            # Library root, re-exports
-├── manifest.rs                       # incan.toml project manifest parsing
+├── manifest.rs                       # loaf.toml project manifest parsing
 ├── lockfile.rs                       # oven.lock lockfile handling
-├── library_manifest.rs               # Library manifest (lib.incan.toml)
+├── library_manifest.rs               # Library manifest (provider.incnlib)
 ├── dependency_resolver.rs            # Dependency resolution for multi-crate builds
 ├── semantics_registry.rs             # Shared semantic definitions
 ├── numeric.rs / numeric_adapters.rs  # Numeric type handling

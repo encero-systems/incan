@@ -36,16 +36,14 @@ pub fn invalid_rust_module_path(path: &str, span: Span) -> CompileError {
     .with_note("Path must match: identifier (`::` identifier)* — no whitespace, semicolons, or special characters")
 }
 
-/// `rust.module()` path references an unknown crate (not `incan_stdlib` and not in `incan.toml`).
+/// `rust.module()` path references an unknown crate (not `incan_stdlib` and not in `loaf.toml`).
 pub fn unresolved_rust_module_crate(crate_name: &str, path: &str, span: Span) -> CompileError {
     CompileError::new(
         format!("`rust.module(\"{}\")` references unknown crate `{}`", path, crate_name),
         span,
     )
-    .with_hint(
-        "The first segment of the path must be `incan_stdlib` or a crate declared in `incan.toml [dependencies]`",
-    )
-    .with_note("Add the crate to your project's `incan.toml` under `[dependencies]`")
+    .with_hint("The first segment of the path must be `incan_stdlib` or a crate declared in `loaf.toml [dependencies]`")
+    .with_note("Add the crate to your project's `loaf.toml` under `[dependencies]`")
 }
 
 /// `rust.module()` directive with no `@rust.extern` items in the module (warning).

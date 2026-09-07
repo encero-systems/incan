@@ -15,7 +15,7 @@
 //! - `new [name]` - Create a new Incan project directory, prompting when no name is provided
 //! - `fmt <file|dir>` - Format Incan source files
 //! - `test [path]` - Run tests (pytest-style)
-//! - `version <bump>|--set <version>` - Update `[project].version` in `incan.toml`
+//! - `version <bump>|--set <version>` - Update `[project].version` in `loaf.toml`
 //! - `env <subcommand>` - Inspect and run named project environments
 //! - `tools doctor` - Inspect local CLI/LSP/editor toolchain resolution
 //!
@@ -508,7 +508,7 @@ pub enum Command {
         members: Vec<String>,
     },
 
-    /// Update the project version in incan.toml
+    /// Update the project version in loaf.toml
     Version {
         /// Version bump to apply
         #[arg(value_enum)]
@@ -516,13 +516,13 @@ pub enum Command {
         /// Explicit SemVer version to set
         #[arg(long = "set", value_name = "VERSION")]
         set: Option<String>,
-        /// Print the planned change without writing incan.toml
+        /// Print the planned change without writing loaf.toml
         #[arg(long)]
         dry_run: bool,
         /// Keep prerelease metadata when applying major/minor/patch bumps
         #[arg(long)]
         keep_prerelease: bool,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
         /// Select every member in the active workspace (only valid when it resolves to one member)
@@ -700,9 +700,9 @@ pub enum Command {
         yes: bool,
     },
 
-    /// Initialize a new incan.toml manifest
+    /// Initialize a new loaf.toml manifest
     Init {
-        /// Directory to create incan.toml in
+        /// Directory to create loaf.toml in
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
         /// Project name (defaults to directory name)
@@ -887,7 +887,7 @@ pub enum EnvCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: EnvOutputFormat,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
     },
@@ -898,7 +898,7 @@ pub enum EnvCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: EnvOutputFormat,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
     },
@@ -914,7 +914,7 @@ pub enum EnvCommand {
         /// Extra arguments passed to the configured script
         #[arg(last = true)]
         args: Vec<String>,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
     },
@@ -1014,7 +1014,7 @@ pub enum CacheCommand {
 pub enum OvenCommand {
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
-        /// Project root containing incan.toml and src/lib.incn and/or src/main.incn
+        /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Select Incan package features for the baked project Loaf
@@ -1201,7 +1201,7 @@ pub enum OvenCommand {
 pub enum OvenInteropCommand {
     /// Select declared native tools, compile locked shims, and publish one complete direct-rustc interop plan
     Bake {
-        /// Package root containing incan.toml and the locked interop inputs
+        /// Package root containing loaf.toml and the locked interop inputs
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Exact locked target triple to bake
@@ -1240,7 +1240,7 @@ pub enum OvenInteropCommand {
     },
     /// Atomically stage a baked interop plan's bundled runtime files without starting a platform build tool
     Stage {
-        /// Package root containing incan.toml, oven.lock, and the selected interop receipt
+        /// Package root containing loaf.toml, oven.lock, and the selected interop receipt
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Exact locked target triple whose already baked plan will be staged

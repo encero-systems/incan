@@ -29,15 +29,15 @@ The complete producer and consumer live at `examples/advanced/library_package`.
 Create this workspace layout:
 
 ```text
-incan.toml
+loaf.toml
 producer/
-├── incan.toml
+├── loaf.toml
 └── src/
     ├── lib.incn
     └── pricing.incn
 ```
 
-The root `incan.toml` defines both projects as workspace members:
+The root `loaf.toml` defines both projects as workspace members:
 
 ```toml
 [workspace]
@@ -45,7 +45,7 @@ members = ["producer", "consumer"]
 default-members = ["pricing_app"]
 ```
 
-`producer/incan.toml` identifies the package:
+`producer/loaf.toml` identifies the package:
 
 ```toml
 [project]
@@ -102,12 +102,12 @@ Create a sibling project:
 
 ```text
 consumer/
-├── incan.toml
+├── loaf.toml
 └── src/
     └── main.incn
 ```
 
-Declare the local dependency in `consumer/incan.toml`:
+Declare the local dependency in `consumer/loaf.toml`:
 
 ```toml
 [project]

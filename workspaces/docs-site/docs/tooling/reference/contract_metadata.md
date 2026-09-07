@@ -4,7 +4,7 @@ Checked contract metadata is the tooling surface for canonical model bundles, co
 
 ## Project Configuration
 
-Declare model bundle JSON files in `incan.toml`:
+Declare model bundle JSON files in `loaf.toml`:
 
 ```toml
 [tool.incan.metadata]

@@ -242,7 +242,7 @@ const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     ],
     fixes: &[
         "Check the import path and public exports.",
-        "For `pub::` imports, build the dependency library and verify `incan.toml` dependencies.",
+        "For `pub::` imports, build the dependency library and verify `loaf.toml` dependencies.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/modules/"),
 };
@@ -294,7 +294,7 @@ const PACKAGE_FEATURE_DISABLED: DiagnosticCatalogEntry = DiagnosticCatalogEntry 
         "The dependency disabled default features and did not request the required feature.",
         "The requested declaration belongs to another additive feature set.",
     ],
-    fixes: &["Add the suggested public feature set to the dependency declaration in `incan.toml`."],
+    fixes: &["Add the suggested public feature set to the dependency declaration in `loaf.toml`."],
     docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/sdk_components_and_package_features/"),
 };
 

@@ -196,9 +196,9 @@ Clang checks each requested field offset, size, and alignment for the selected h
 
 ## Freeze Oven interop requirements for a target
 
-The binding remains the authority for the Incan-facing ABI. When a package needs physical interop inputs, declare its target-specific requirements under `[interop.c]` in the package's `incan.toml`. The declaration names only package-owned files and compatible toolchain or SDK capabilities; it never claims that Oven has selected a local installation or asks the compiler to search the host for headers, libraries, or a C++ installation.
+The binding remains the authority for the Incan-facing ABI. When a package needs physical interop inputs, declare its target-specific requirements under `[interop.c]` in the package's `loaf.toml`. The declaration names only package-owned files and compatible toolchain or SDK capabilities; it never claims that Oven has selected a local installation or asks the compiler to search the host for headers, libraries, or a C++ installation.
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [interop.c]
 schema = 1
 

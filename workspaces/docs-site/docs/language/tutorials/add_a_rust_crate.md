@@ -52,7 +52,7 @@ Only this helper needs to know the Rust crate's constructor and methods. Callers
 
 `main()` now owns the one-time Rust-facing construction, while `contains_number(...)` remains a small ordinary predicate over a prepared value.
 
-For a project, move the version into `incan.toml` and make the source import versionless:
+For a project, move the version into `loaf.toml` and make the source import versionless:
 
 ```toml
 [rust-dependencies]

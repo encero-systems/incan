@@ -139,7 +139,7 @@ fn collect_library_vocab_metadata_with_mode(
     let declared_crate_path = vocab
         .crate_path
         .clone()
-        .ok_or_else(|| CliError::failure("`[vocab]` section requires a `crate` field in incan.toml".to_string()))?;
+        .ok_or_else(|| CliError::failure("`[vocab]` section requires a `crate` field in loaf.toml".to_string()))?;
     let declared_crate_path = declared_crate_path.trim().to_string();
     if declared_crate_path.is_empty() {
         return Err(CliError::failure("`[vocab].crate` cannot be empty".to_string()));
@@ -1583,7 +1583,7 @@ mod tests {
         )?;
         fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
 
-        let manifest_path = project_root.join("incan.toml");
+        let manifest_path = project_root.join("loaf.toml");
         fs::write(
             &manifest_path,
             "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
@@ -1605,7 +1605,7 @@ mod tests {
         fs::create_dir_all(&project_root)?;
         write_vocab_companion_crate(&project_root, "vocab_companion", "widgets_vocab_companion")?;
 
-        let manifest_path = project_root.join("incan.toml");
+        let manifest_path = project_root.join("loaf.toml");
         fs::write(
             &manifest_path,
             "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",

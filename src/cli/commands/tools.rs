@@ -1777,7 +1777,7 @@ mod tests {
         let src = tmp.path().join("src");
         fs::create_dir_all(&src)?;
         fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             r#"
 [project]
 name = "registry_demo"
@@ -1869,7 +1869,7 @@ def private_function() -> None:
         let src = tmp.path().join("src");
         fs::create_dir_all(&src)?;
         fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"registry_facade\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(
@@ -1936,7 +1936,7 @@ pub from crate.feature import normalize as public_normalize
         let producer_src = producer_root.join("src");
         fs::create_dir_all(&producer_src)?;
         fs::write(
-            producer_root.join("incan.toml"),
+            producer_root.join("loaf.toml"),
             "[project]\nname = \"registrylib\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(
@@ -1981,7 +1981,7 @@ def private_function() -> None:
         let consumer_src = consumer_root.join("src");
         fs::create_dir_all(&consumer_src)?;
         fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nregistrylib = { path = \"../registrylib\" }\n",
         )?;
         fs::write(
@@ -2028,7 +2028,7 @@ def private_function() -> None:
         let src = tmp.path().join("src");
         fs::create_dir_all(&src)?;
         fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             r#"
 [project]
 name = "metadata_demo"
@@ -2083,7 +2083,7 @@ pub quick_label = partial label(prefix=LABEL)
         let operators = src.join("functions").join("operators");
         fs::create_dir_all(&operators)?;
         fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             r#"
 [project]
 name = "metadata_registry"

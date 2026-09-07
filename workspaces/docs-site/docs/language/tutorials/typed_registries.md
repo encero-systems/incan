@@ -6,7 +6,7 @@ This tutorial builds a small catalogue of text functions with `std.registry`. Yo
 
 Create a project with this manifest:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [project]
 name = "registry-tour"
 version = "0.1.0"

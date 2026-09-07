@@ -1767,7 +1767,7 @@ mod tests {
         let tests = project.path().join("tests");
         std::fs::create_dir_all(&tests)?;
         std::fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"one_test_session\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -1837,7 +1837,7 @@ mod tests {
         std::fs::create_dir_all(&src)?;
         std::fs::create_dir_all(&tests)?;
         std::fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"list_without_bake\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(src.join("main.incn"), "def main() -> None:\n    pass\n")?;
@@ -1868,7 +1868,7 @@ mod tests {
             let tests = project.join("tests");
             std::fs::create_dir_all(&tests)?;
             std::fs::write(
-                project.join("incan.toml"),
+                project.join("loaf.toml"),
                 format!("[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n"),
             )?;
             std::fs::write(

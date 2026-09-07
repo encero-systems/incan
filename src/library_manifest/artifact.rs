@@ -1339,7 +1339,7 @@ mod tests {
             fs::create_dir_all(root.join("src"))?;
             fs::create_dir_all(workspace.join("shared"))?;
             fs::write(
-                root.join("incan.toml"),
+                root.join("loaf.toml"),
                 "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n",
             )?;
             fs::write(root.join("src/lib.incn"), "pub def value() -> int:\n    return 1\n")?;
@@ -1358,13 +1358,13 @@ mod tests {
         let second_root = second.path().join("component");
         let first_digest = digest_provider_source_inputs(
             &first_root,
-            &first_root.join("incan.toml"),
+            &first_root.join("loaf.toml"),
             &source_inputs(first.path()),
             &[first.path().join("shared")],
         )?;
         let second_digest = digest_provider_source_inputs(
             &second_root,
-            &second_root.join("incan.toml"),
+            &second_root.join("loaf.toml"),
             &source_inputs(second.path()),
             &[second.path().join("shared")],
         )?;
@@ -1378,7 +1378,7 @@ mod tests {
             first_digest,
             digest_provider_source_inputs(
                 &second_root,
-                &second_root.join("incan.toml"),
+                &second_root.join("loaf.toml"),
                 &source_inputs(second.path()),
                 &[second.path().join("shared")],
             )?
@@ -1388,7 +1388,7 @@ mod tests {
         fs::write(&outside, "pub const LABEL: str = \"outside\"\n")?;
         let error = digest_provider_source_inputs(
             &second_root,
-            &second_root.join("incan.toml"),
+            &second_root.join("loaf.toml"),
             &[("outside".to_string(), outside)],
             &[],
         )
@@ -1406,13 +1406,13 @@ mod tests {
         let workspace = tempfile::tempdir()?;
         let root = workspace.path().join("component");
         fs::create_dir_all(root.join("src"))?;
-        fs::write(root.join("incan.toml"), "[project]\nname = \"provider\"\n")?;
+        fs::write(root.join("loaf.toml"), "[project]\nname = \"provider\"\n")?;
         fs::write(root.join("src/real.incn"), "pub const LABEL: str = \"real\"\n")?;
         symlink(root.join("src/real.incn"), root.join("src/link.incn"))?;
 
         let error = digest_provider_source_inputs(
             &root,
-            &root.join("incan.toml"),
+            &root.join("loaf.toml"),
             &[("link".to_string(), root.join("src/link.incn"))],
             &[],
         )
