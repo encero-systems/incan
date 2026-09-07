@@ -4895,7 +4895,7 @@ pub def entrypoint() -> int:
         record["record"] == serde_json::json!("call")
             && record["callee"] == serde_json::json!("Signal.Ready")
             && record["canonical_identity"]["declaration_name"] == serde_json::json!("Ready")
-            && record["canonical_identity"]["kind"] == serde_json::json!("variant")
+            && record["canonical_identity"]["declaration_kind"] == serde_json::json!("variant")
             && record["canonical_identity"]["origin"]["kind"] == serde_json::json!("module")
             && record["target_id"] == serde_json::Value::Null
             && record["provenance"] == serde_json::json!("checked")
