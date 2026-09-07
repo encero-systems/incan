@@ -764,22 +764,29 @@ impl<'a> IrEmitter<'a> {
                     // type annotation still names, so a module importing such an alias needs both bindings. Two
                     // `use` of one path under different names is legal; binding only the alias name lost every call
                     // through the projection, and binding only the projection lost the type.
-                    let renamed_alias_binding = if renames_shared_projection && !reexport_carries_alias {
-                        let alias_ident = Self::rust_ident(source_binding);
-                        if should_reexport_item(item) {
-                            if absolute_path {
-                                quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
+                    // Several facades reach one declaration, so the same rename arrives once per hop. Its name is a
+                    // Rust binding like any other and may be created only once per module.
+                    let first_rename_of_this_name = self
+                        .emitted_projection_import_bindings
+                        .borrow_mut()
+                        .insert(format!("as:{source_binding}"));
+                    let renamed_alias_binding =
+                        if renames_shared_projection && !reexport_carries_alias && first_rename_of_this_name {
+                            let alias_ident = Self::rust_ident(source_binding);
+                            if should_reexport_item(item) {
+                                if absolute_path {
+                                    quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
+                                } else {
+                                    quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                                }
+                            } else if absolute_path {
+                                quote! { use :: #path_ts_clone :: #name_ident as #alias_ident; }
                             } else {
-                                quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                                quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
                             }
-                        } else if absolute_path {
-                            quote! { use :: #path_ts_clone :: #name_ident as #alias_ident; }
                         } else {
-                            quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
-                        }
-                    } else {
-                        quote! {}
-                    };
+                            quote! {}
+                        };
                     let item_import = if reexport_carries_alias || repeats_projection_binding {
                         // The declaration this alias renames already binds the projection in this module, so
                         // importing it again would be a duplicate. Only the alias's own public name is still
