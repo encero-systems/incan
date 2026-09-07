@@ -11211,6 +11211,11 @@
 </code></pre></div>
 <p>Panics at runtime with <code>ValueError: cannot convert 'abc' to float</code>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="nb">int</span><span class="p">(</span><span class="s2">&quot;1_000&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1000</span>
+    <span class="k">assert</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;1_000.50&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mf">1000.5</span>
+</code></pre></div>
+<p>Numeric strings accept <code>_</code> only between digits. Invalid placement raises the canonical <code>ValueError</code> with the original input spelling.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="c1"># range step cannot be zero (Python-like)</span>
     <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">0</span><span class="p">):</span>
         <span class="nb">print</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>

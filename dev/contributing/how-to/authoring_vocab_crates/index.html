@@ -7680,10 +7680,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-add-an-optional-desugarer" class="md-nav__link">
+  <a href="#6-add-descriptor-gated-embedded-fragments-rfc-081" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Add an optional desugarer
+        6. Add descriptor-gated embedded fragments (RFC 081)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Add descriptor-gated embedded fragments (RFC 081)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-submode-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The submode catalog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-compiler-hands-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the compiler hands back
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#formatter-and-layout-sensitivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formatter and layout sensitivity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-add-an-optional-desugarer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Add an optional desugarer
       
     </span>
   </a>
@@ -7691,10 +7741,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-build-the-library-artifact" class="md-nav__link">
+  <a href="#8-build-the-library-artifact" class="md-nav__link">
     <span class="md-ellipsis">
       
-        7. Build the library artifact
+        8. Build the library artifact
       
     </span>
   </a>
@@ -7702,10 +7752,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-consume-the-dsl-from-another-project" class="md-nav__link">
+  <a href="#9-consume-the-dsl-from-another-project" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Consume the DSL from another project
+        9. Consume the DSL from another project
       
     </span>
   </a>
@@ -9454,10 +9504,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-add-an-optional-desugarer" class="md-nav__link">
+  <a href="#6-add-descriptor-gated-embedded-fragments-rfc-081" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Add an optional desugarer
+        6. Add descriptor-gated embedded fragments (RFC 081)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Add descriptor-gated embedded fragments (RFC 081)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-submode-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The submode catalog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-compiler-hands-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the compiler hands back
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#formatter-and-layout-sensitivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formatter and layout sensitivity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-add-an-optional-desugarer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Add an optional desugarer
       
     </span>
   </a>
@@ -9465,10 +9565,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-build-the-library-artifact" class="md-nav__link">
+  <a href="#8-build-the-library-artifact" class="md-nav__link">
     <span class="md-ellipsis">
       
-        7. Build the library artifact
+        8. Build the library artifact
       
     </span>
   </a>
@@ -9476,10 +9576,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-consume-the-dsl-from-another-project" class="md-nav__link">
+  <a href="#9-consume-the-dsl-from-another-project" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Consume the DSL from another project
+        9. Consume the DSL from another project
       
     </span>
   </a>
@@ -9749,7 +9849,7 @@ orders |&gt; paid_orders
 <span class="w">    </span><span class="p">)</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>The descriptor <code>key</code> must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as <code>pairwise_chain()</code>. RFC 040 supports selected descriptor-gated non-core glyphs such as <code>|&gt;</code>, <code>%&gt;%</code>, <code>:=</code>, and <code>===</code>; broader language-shaped token forms remain RFC 081 work.</p>
+<p>The descriptor <code>key</code> must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as <code>pairwise_chain()</code>. RFC 040 supports selected descriptor-gated non-core glyphs such as <code>|&gt;</code>, <code>%&gt;%</code>, <code>:=</code>, and <code>===</code>. Language-shaped lexical submodes -- markup, style, raw text, regex/template literals, and type-position syntax -- are RFC 081 work, covered next.</p>
 <h2 id="5-add-scoped-symbols">5. Add scoped symbols<a class="headerlink" href="#5-add-scoped-symbols" title="Permanent link">&para;</a></h2>
 <p>Scoped symbols are identifier calls owned by a DSL position. They are useful when a DSL needs concise names such as <code>sum(...)</code> or <code>count(...)</code> without changing ordinary Incan resolution in the rest of the file.</p>
 <p>Inside an eligible DSL position, a matching scoped symbol descriptor is the local meaning. It wins over lexical names, imports, module names, and builtin fallback, the same way an inner variable binding wins over an outer binding. Outside the owning DSL scope, the same spelling remains an ordinary call.</p>
@@ -9823,7 +9923,96 @@ orders |&gt; paid_orders
 <li>each <code>exported_name</code> must point at a real public export from the library artifact</li>
 <li>empty keys or export names are rejected before the <code>.incnlib</code> artifact is written</li>
 </ul>
-<h2 id="6-add-an-optional-desugarer">6. Add an optional desugarer<a class="headerlink" href="#6-add-an-optional-desugarer" title="Permanent link">&para;</a></h2>
+<h2 id="6-add-descriptor-gated-embedded-fragments-rfc-081">6. Add descriptor-gated embedded fragments (RFC 081)<a class="headerlink" href="#6-add-descriptor-gated-embedded-fragments-rfc-081" title="Permanent link">&para;</a></h2>
+<p>Scoped surfaces (section 4) reinterpret ordinary Incan tokens; embedded fragments are for content that looks like an entirely different language -- markup, style rules, regex/template literals, and type-shaped syntax that has no faithful spelling as ordinary Incan operators and identifiers. RFC 081 defines a <strong>fixed, compiler-owned catalog</strong> of six lexical submodes. A descriptor selects which submode kind it claims for which position; it never authors its own grammar, and the compiler never claims compatibility with any real external language. Unrecognized syntax inside a claimed position is always a parse error, never a silent reinterpretation.</p>
+<p>Start with the consumer syntax you want to enable:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">webkit</span> <span class="kn">import</span><span class="w"> </span><span class="nn">webkit_name</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">render_card</span><span class="p">(</span><span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">html</span><span class="p">:</span>
+        <span class="o">&lt;</span><span class="n">section</span> <span class="k">class</span><span class="o">=</span><span class="s2">&quot;card&quot;</span><span class="o">&gt;</span>
+            <span class="o">&lt;</span><span class="n">h1</span><span class="o">&gt;</span><span class="p">{</span><span class="n">title</span><span class="p">}</span><span class="o">&lt;/</span><span class="n">h1</span><span class="o">&gt;</span>
+        <span class="o">&lt;/</span><span class="n">section</span><span class="o">&gt;</span>
+</code></pre></div>
+<p><code>html:</code> introduces the owning DSL block; everything inside it is the <code>Markup</code> submode's grammar, not ordinary Incan syntax reinterpreted after the fact. <code>{title}</code> is an expression hole: it re-enters ordinary Incan parsing and typechecks <code>title</code> as the real parameter it is.</p>
+<h3 id="the-submode-catalog">The submode catalog<a class="headerlink" href="#the-submode-catalog" title="Permanent link">&para;</a></h3>
+<p>Each submode accepts exactly the constructs listed here -- nothing more. This is the entire accepted surface; do not describe any of these as "CSS-compatible," "HTML-compatible," or similar in your own library's documentation, since the mechanism makes no such guarantee.</p>
+<table>
+<thead>
+<tr>
+<th>Submode</th>
+<th>Accepts</th>
+<th>Does not accept</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Markup</code></td>
+<td>Open/close and self-closing tags, attributes (<code>name</code>, <code>name="literal"</code>, <code>name={expr}</code>), text runs, <code>&amp;name;</code> entity references, <code>&lt;!-- ... --&gt;</code> comments, <code>{expr}</code> holes</td>
+<td>Namespaces, doctype/processing instructions, unquoted attribute values</td>
+</tr>
+<tr>
+<td><code>Style</code></td>
+<td>Comma-separated selector lists (captured as flat token runs, not parsed further), a <code>{ property: value; ... }</code> declaration block, <code>--custom-property</code> declarations, <code>/* ... */</code> comments</td>
+<td>Nested rules, at-rules (<code>@media</code>, ...), selector combinator structure</td>
+</tr>
+<tr>
+<td><code>RawText</code></td>
+<td>Verbatim text runs interleaved with <code>{expr}</code> holes, and nothing else</td>
+<td>Any structural parsing beyond hole recognition</td>
+</tr>
+<tr>
+<td><code>RegexTemplate</code></td>
+<td>Exactly one of: a bare <code>/pattern/flags</code> regex literal, or a <code>`...${expr}...`</code> template string with holes</td>
+<td>Mixing both forms in one fragment; regex flags beyond ASCII letters</td>
+</tr>
+<tr>
+<td><code>SelectorDeclarationValue</code></td>
+<td>Exactly one value token: dimension (<code>16px</code>), color (<code>#1166ff</code>), <code>var(--name)</code> reference, identifier, string, number, or <code>{expr}</code> hole</td>
+<td>Multiple values, arithmetic between values</td>
+</tr>
+<tr>
+<td><code>TypePosition</code></td>
+<td><code>name</code>, <code>a.b.Name</code> qualified names, <code>Name&lt;Arg, ...&gt;</code> generics, <code>T?</code> nullable, <code>T[]</code> array, <code>A \| B</code> union</td>
+<td>Bounds, variance, wildcards, function types</td>
+</tr>
+</tbody>
+</table>
+<p>Register the submode with <code>EmbeddedFragmentDescriptor</code>:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span>
+<span class="w">    </span><span class="n">DeclarationSurface</span><span class="p">,</span><span class="w"> </span><span class="n">DslSurface</span><span class="p">,</span><span class="w"> </span><span class="n">EmbeddedFragmentDescriptor</span><span class="p">,</span><span class="w"> </span><span class="n">EmbeddedFragmentSubmode</span><span class="p">,</span><span class="w"> </span><span class="n">LibraryManifest</span><span class="p">,</span>
+<span class="w">    </span><span class="n">VocabRegistration</span><span class="p">,</span>
+<span class="p">};</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">library_vocab</span><span class="p">()</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">VocabRegistration</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">VocabRegistration</span><span class="p">::</span><span class="n">new</span><span class="p">()</span>
+<span class="w">        </span><span class="p">.</span><span class="n">with_surface</span><span class="p">(</span>
+<span class="w">            </span><span class="n">DslSurface</span><span class="p">::</span><span class="n">on_import</span><span class="p">(</span><span class="s">&quot;webkit&quot;</span><span class="p">)</span>
+<span class="w">                </span><span class="p">.</span><span class="n">with_declaration</span><span class="p">(</span><span class="n">DeclarationSurface</span><span class="p">::</span><span class="n">named</span><span class="p">(</span><span class="s">&quot;html&quot;</span><span class="p">).</span><span class="n">with_statement_body</span><span class="p">())</span>
+<span class="w">                </span><span class="p">.</span><span class="n">with_embedded_fragment</span><span class="p">(</span>
+<span class="w">                    </span><span class="n">EmbeddedFragmentDescriptor</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="s">&quot;html.fragment&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">EmbeddedFragmentSubmode</span><span class="p">::</span><span class="n">Markup</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;markup_nodes&quot;</span><span class="p">)</span>
+<span class="w">                        </span><span class="p">.</span><span class="n">in_declaration_body</span><span class="p">(</span><span class="s">&quot;html&quot;</span><span class="p">),</span>
+<span class="w">                </span><span class="p">),</span>
+<span class="w">        </span><span class="p">)</span>
+<span class="w">        </span><span class="p">.</span><span class="n">with_library_manifest</span><span class="p">(</span><span class="n">LibraryManifest</span><span class="p">::</span><span class="n">default</span><span class="p">())</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><code>EmbeddedFragmentDescriptor::new(key, submode, artifact_key)</code> takes the same stable <code>key</code> convention as scoped surfaces, the fixed <code>EmbeddedFragmentSubmode</code> variant it claims, and an <code>artifact_key</code> naming the typed-artifact contribution your desugarer or lowering hook should expect. Eligibility (<code>in_declaration_body</code>, <code>in_clause_body</code>, <code>in_call_argument</code>) reuses the same <code>ScopedSurfaceEligibility</code> builder methods scoped surfaces use, but only <code>in_declaration_body</code> is currently wired into embedded-fragment parsing -- registering <code>in_clause_body</code>/<code>in_call_argument</code> on an embedded-fragment descriptor compiles but never activates today. If two same-depth descriptors claim the same submode for the same position, the compiler rejects the combination as ambiguous rather than guessing which one wins.</p>
+<h3 id="what-the-compiler-hands-back">What the compiler hands back<a class="headerlink" href="#what-the-compiler-hands-back" title="Permanent link">&para;</a></h3>
+<p>Accepted fragments are never rediscovered by matching raw source text later. The parser produces a typed <code>EmbeddedFragmentExpr</code> artifact: the claimed submode, a structural node tree in source order, and the fragment's verbatim source text (for tooling that needs the untouched original). Every expression hole inside that tree is typechecked and lowered exactly as if it appeared in ordinary Incan expression position -- a hole referencing an undeclared name, or one whose type does not fit its surrounding use, is a real type error, not something a downstream desugarer discovers later.</p>
+<div class="language-text highlight"><pre><span></span><code>&lt;h1&gt;{title}&lt;/h1&gt;
+  submode: Markup
+  nodes: [Element { name: &quot;h1&quot;, children: [Hole(title: str)] }]
+</code></pre></div>
+<p>The DSL-owned structural content itself (tag names, selectors, declaration properties, regex patterns, type shapes) carries no ordinary Incan type or runtime meaning on its own -- RFC 081 assigns that to the owning DSL's desugarer or lowering hook, which is a separate step from the mechanism this section describes. A fragment with no lowering hook registered still parses, typechecks, and reaches Body IR successfully; only Rust code generation refuses, with a message naming exactly what is missing, never a silent guess.</p>
+<h3 id="formatter-and-layout-sensitivity">Formatter and layout sensitivity<a class="headerlink" href="#formatter-and-layout-sensitivity" title="Permanent link">&para;</a></h3>
+<p>If your fragment's layout should never be reformatted, mark it explicitly:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="n">EmbeddedFragmentDescriptor</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="s">&quot;html.fragment&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">EmbeddedFragmentSubmode</span><span class="p">::</span><span class="n">Markup</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;markup_nodes&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">.</span><span class="n">in_declaration_body</span><span class="p">(</span><span class="s">&quot;html&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">.</span><span class="n">layout_sensitive</span><span class="p">()</span>
+</code></pre></div>
+<p>The formatter has exactly two states for an embedded fragment: format it structurally from the typed artifact, or preserve its original source layout verbatim. <code>layout_sensitive()</code> requests the second -- this is a stable, load-bearing signal for that future formatter work, but the formatter itself does not consume it yet. Today the formatter always writes an embedded fragment's verbatim source text regardless of this flag; <code>layout_sensitive()</code> has no observable effect until the structural-formatting path lands.</p>
+<h2 id="7-add-an-optional-desugarer">7. Add an optional desugarer<a class="headerlink" href="#7-add-an-optional-desugarer" title="Permanent link">&para;</a></h2>
 <p>Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same <code>library_vocab()</code> bundle.</p>
 <div class="language-rust highlight"><span class="filename">routekit/vocab_companion/src/desugar.rs</span><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span><span class="n">DesugarError</span><span class="p">,</span><span class="w"> </span><span class="n">DesugarOutput</span><span class="p">,</span><span class="w"> </span><span class="n">IncanExpr</span><span class="p">,</span><span class="w"> </span><span class="n">IncanStatement</span><span class="p">,</span><span class="w"> </span><span class="n">VocabDesugarer</span><span class="p">,</span><span class="w"> </span><span class="n">VocabSyntaxNode</span><span class="p">};</span>
 
@@ -9861,7 +10050,7 @@ orders |&gt; paid_orders
 <li>the canonical <code>__incan_*</code> runtime cell globals</li>
 </ul>
 <p>Malformed artifact paths, invalid checksums, or missing ABI exports fail the producer build early instead of surfacing later in consumer projects.</p>
-<h2 id="7-build-the-library-artifact">7. Build the library artifact<a class="headerlink" href="#7-build-the-library-artifact" title="Permanent link">&para;</a></h2>
+<h2 id="8-build-the-library-artifact">8. Build the library artifact<a class="headerlink" href="#8-build-the-library-artifact" title="Permanent link">&para;</a></h2>
 <p>Run library mode from the Incan project root:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--lib
 </code></pre></div>
@@ -9873,7 +10062,7 @@ orders |&gt; paid_orders
 <li>packages the derived metadata and any registered desugarer into <code>target/lib/&lt;library&gt;.incnlib</code></li>
 </ol>
 <p>Any serialized JSON sidecars or extraction glue are tooling details rather than part of the standard authoring workflow.</p>
-<h2 id="8-consume-the-dsl-from-another-project">8. Consume the DSL from another project<a class="headerlink" href="#8-consume-the-dsl-from-another-project" title="Permanent link">&para;</a></h2>
+<h2 id="9-consume-the-dsl-from-another-project">9. Consume the DSL from another project<a class="headerlink" href="#9-consume-the-dsl-from-another-project" title="Permanent link">&para;</a></h2>
 <p>The consumer depends on the built library artifact:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
 <span class="n">routekit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../routekit/target/lib&quot;</span><span class="w"> </span><span class="p">}</span>
@@ -9892,6 +10081,9 @@ orders |&gt; paid_orders
 <li>If local desugarer packaging fails with a missing target error, install the required Rust target (<code>rustup target add wasm32-wasip1</code>) and rerun <code>incan build --lib</code>.</li>
 <li>If desugared code needs Rust crates or stdlib features, declare them in <code>LibraryManifest</code> so consumer builds get the same requirements.</li>
 <li>Block or clause-oriented DSL registrations need a desugarer when they cannot continue through the compiler as ordinary Incan syntax on their own.</li>
+<li>An <code>EmbeddedFragmentDescriptor</code> claims one fixed submode kind from the RFC 081 catalog; it cannot author its own grammar, and unrecognized syntax inside a claimed position is always a parse error, never a fallback to a broader guess.</li>
+<li>Do not describe an embedded-fragment submode as compatible with a specific external language (CSS, HTML, and so on) in your own library's documentation. The mechanism only claims the constructs each submode's table explicitly enumerates.</li>
+<li>A fragment with no registered lowering hook still parses, typechecks, and reaches Body IR; only Rust code generation refuses, naming exactly what is missing.</li>
 </ul>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
@@ -9899,6 +10091,9 @@ orders |&gt; paid_orders
 <li><a href="../../../tooling/reference/project_configuration/">Project configuration reference</a></li>
 <li><a href="../../../tooling/reference/cli_reference/">CLI reference</a></li>
 <li><a href="../../../RFCs/closed/implemented/027_incan_vocab_crate/">RFC 027: <code>incan_vocab</code></a></li>
+<li><a href="../../../RFCs/closed/implemented/040_scoped_dsl_surface_forms/">RFC 040: Scoped DSL surface forms</a></li>
+<li><a href="../../../RFCs/closed/implemented/045_scoped_dsl_symbol_surfaces/">RFC 045: Scoped DSL symbol surfaces</a></li>
+<li><a href="../../../RFCs/081_language_shaped_dsl_embeddings/">RFC 081: Language-shaped DSL embeddings</a></li>
 </ul>
 
 

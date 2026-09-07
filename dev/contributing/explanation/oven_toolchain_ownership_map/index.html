@@ -9706,13 +9706,13 @@
 <tr>
 <td><code>incan build</code> / <code>incan run</code> / <code>incan inspect rust</code></td>
 <td><code>src/cli/commands/build.rs</code></td>
-<td>The <em>command surface</em> is exactly the "project-scale convenience" RFC 118 requires to delegate shallowly to Oven — but ~90% of its 17,328 lines <em>is</em> Oven's plan-selection/build-unit/artifact/receipt logic itself, not a thin delegation call. This is a real misplacement, not an ownership-classification ambiguity: the logic belongs in Oven's operational core/API, and the CLI file should shrink to a thin caller.</td>
+<td>The <em>command surface</em> is exactly the "project-scale convenience" RFC 118 requires to delegate shallowly to Oven — but ~90% of its 17,328 lines <em>is</em> Oven's plan-selection/build-unit/artifact/receipt logic itself, not a thin delegation call. This is a real misplacement, not an ownership-classification ambiguity: the logic belongs in Oven's operational core/API, and the CLI file should shrink to a thin caller. <strong>Decided</strong> in <a href="https://github.com/encero-systems/incan/issues/1094">#1094</a>: the logic moves into <code>src/oven/plan.rs</code>, alongside the low-level plan/receipt types it already composes.</td>
 <td>4,599 / 82 (26.5% of the file is tests — a real safety net exists for whatever refactor eventually splits this file)</td>
 </tr>
 <tr>
 <td>Test harness build/execution</td>
 <td><code>src/cli/test_runner/execution.rs</code></td>
-<td>Same shim-vs-core blur as <code>build.rs</code> — it does call into Oven's plan/store, but also independently constructs build-unit inputs rather than making one clean delegation call.</td>
+<td>Same shim-vs-core blur as <code>build.rs</code> — it does call into Oven's plan/store, but also independently constructs build-unit inputs rather than making one clean delegation call. <strong>Decided</strong> alongside <code>build.rs</code> in <a href="https://github.com/encero-systems/incan/issues/1094">#1094</a>; tracked for implementation by #1095.</td>
 <td>513 / 23</td>
 </tr>
 <tr>

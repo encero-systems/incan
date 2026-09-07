@@ -9599,6 +9599,117 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-compiler-owned-declarations-and-decision-facts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Compiler-owned declarations and decision facts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-project-policy-and-execution-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Project policy and execution boundaries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-receipts-and-report-consumers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Receipts and report consumers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-remaining-language-and-tooling-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Remaining language and tooling integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Progress Checklist
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compiler-semantic-facts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compiler semantic facts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-and-package-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime and package integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#receipts-inspection-and-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receipts, inspection, and documentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9631,7 +9742,7 @@
 
 <h1 id="rfc-104-ambient-runtime-capabilities-and-receipts">RFC 104: Ambient Runtime Capabilities and Receipts<a class="headerlink" href="#rfc-104-ambient-runtime-capabilities-and-receipts" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
+<li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-05-24</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -9722,10 +9833,10 @@
     <span class="n">response</span> <span class="o">=</span> <span class="nb">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">code</span>
 </code></pre></div>
-<p>A default run behaves like a normal program while the runtime records local authority facts:</p>
+<p>A default run behaves like a normal program while the runtime records local authority facts, keeping ordinary development unblocked:</p>
 <div class="language-text highlight"><pre><span></span><code>incan run status.incn
 </code></pre></div>
-<p><code>--report json</code> materializes those facts as a machine-readable report:</p>
+<p><code>--report json</code> materializes those observed facts as a machine-readable report:</p>
 <div class="language-text highlight"><pre><span></span><code>incan run status.incn --report json
 </code></pre></div>
 <p>The report can show the authority-bearing operations that happened:</p>
@@ -9813,8 +9924,8 @@ Granted capabilities:
 <h3 id="runtime-modes">Runtime modes<a class="headerlink" href="#runtime-modes" title="Permanent link">&para;</a></h3>
 <p>The runtime should support at least these conceptual modes:</p>
 <ul>
-<li><code>permissive</code>: operations run normally with receipt and report emission disabled.</li>
-<li><code>observe</code>: operations run normally and receipts are emitted.</li>
+<li><code>permissive</code>: operations run normally with receipt and report emission disabled; this is an escape hatch rather than the default.</li>
+<li><code>observe</code>: operations run normally and receipts are emitted; this is the default for ordinary development.</li>
 <li><code>governed</code>: operations require granted capabilities and receipts are emitted.</li>
 </ul>
 <p><code>observe</code> and <code>governed</code> are collectively the reporting modes: both retain a receipt for every attempted operation, including denials. <code>permissive</code> is not a reporting mode and remains receipt-free.</p>
@@ -9822,7 +9933,7 @@ Granted capabilities:
 <div class="language-text highlight"><pre><span></span><code>incan run app.incn --report json
 incan run app.incn --allow host.env.read,host.http.request --report json
 </code></pre></div>
-<p><code>incan run</code> defaults to <code>observe</code>: ordinary local development stays uninterrupted while authority facts are recorded, and <code>--report</code> makes those facts available to a machine-readable consumer. <code>incan test</code> defaults to <code>governed</code> with nothing pre-granted, so a test that unexpectedly reaches the real filesystem or network fails with a capability diagnostic instead of silently succeeding -- the same test-isolation property most test frameworks already enforce by convention, made structural here instead. A typed action runs under whatever mode and grants its invoking context provides (a CI job's explicit <code>--allow</code>, a host's policy-selected grant set); this RFC does not define a third default distinct from <code>incan run</code> and <code>incan test</code>, since actions are never invoked in a vacuum.</p>
+<p><code>incan run</code> defaults to <code>observe</code>: ordinary local development stays uninterrupted while authority facts are recorded without unexpectedly denying an undeclared access, and <code>--report</code> makes those facts available to a machine-readable consumer. <code>permissive</code> is an explicit escape hatch for runs that must disable observation. <code>incan test</code> defaults to <code>governed</code> with nothing pre-granted, so a test that unexpectedly reaches the real filesystem or network fails with a capability diagnostic instead of silently succeeding -- the same test-isolation property most test frameworks already enforce by convention, made structural here instead. A typed action runs under whatever mode and grants its invoking context provides (a CI job's explicit <code>--allow</code>, a host's policy-selected grant set); this RFC does not define a third default distinct from <code>incan run</code> and <code>incan test</code>, since actions are never invoked in a vacuum.</p>
 <h3 id="capability-declarations">Capability declarations<a class="headerlink" href="#capability-declarations" title="Permanent link">&para;</a></h3>
 <p>Capability declarations live in source, as a first-class <code>capability</code> declaration form -- not in package manifest metadata, generated descriptors, or capability packs. This is required, not a style preference: deriving a capability's fully-qualified identity from its declaration location (see "Capability identities") only works if the declaration site is something the compiler resolves, the same way it resolves a function or type declaration.</p>
 <p>A capability declaration must include:</p>
@@ -10016,11 +10127,52 @@ incan run app.incn --allow host.env.read,host.http.request --report json
 <li><strong>LSP / Docs tooling</strong>: editors and docs can surface capability declarations, required grants, denial diagnostics, and report artifacts.</li>
 <li><strong>Policy / CI / Agents</strong>: policy and automation can consume capability declarations, action dry-runs, receipt schemas, and actual receipts to decide whether runs, actions, generated artifacts, or proposed changes are acceptable.</li>
 </ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-compiler-owned-declarations-and-decision-facts">Phase 1: Compiler-owned declarations and decision facts<a class="headerlink" href="#phase-1-compiler-owned-declarations-and-decision-facts" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Resolve capability declarations and provider-operation requirements as canonical semantic identities.</li>
+<li>Preserve capability, operation, source span, execution mode, effective grant or denial, ceiling, and denial reason in one generic authority decision.</li>
+<li>Apply authority only when an admitted authority-bearing operation is invoked, never when its module is imported.</li>
+</ul>
+<h3 id="phase-2-project-policy-and-execution-boundaries">Phase 2: Project policy and execution boundaries<a class="headerlink" href="#phase-2-project-policy-and-execution-boundaries" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Let a Loaf project declare target selection, execution policy, and environment grants without allowing source to grant host authority to itself.</li>
+<li>Have Oven enforce the selected project policy and link each execution to the stable authority decision.</li>
+</ul>
+<h3 id="phase-3-receipts-and-report-consumers">Phase 3: Receipts and report consumers<a class="headerlink" href="#phase-3-receipts-and-report-consumers" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extend the #1028 operation-receipt, redaction, replay, and report work across stdlib and package boundaries.</li>
+<li>Keep receipts linked to authority decisions rather than duplicating authority or policy semantics.</li>
+</ul>
+<h3 id="phase-4-remaining-language-and-tooling-integration">Phase 4: Remaining language and tooling integration<a class="headerlink" href="#phase-4-remaining-language-and-tooling-integration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add typed-action declaration alignment, standard-library host capability families, diagnostics, semantic inspection, and user-facing documentation.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="compiler-semantic-facts">Compiler semantic facts<a class="headerlink" href="#compiler-semantic-facts" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Parse and resolve source capability declarations as checked canonical identities.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Publish provider-operation capability requirements and lower an admitted call to a canonical provider-operation plan.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Establish a generic authority-decision fact and a first invocation-time provider consumer without provider-local allow/deny fields.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Connect the project-owned Loaf policy, target selection, and environment grants to the authority decision source.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Have Oven enforce selected project policy and record the stable decision link for all later execution consumers.</li>
+</ul>
+<h3 id="runtime-and-package-integration">Runtime and package integration<a class="headerlink" href="#runtime-and-package-integration" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Implement broad standard-library host capability publishers and constraint matchers.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Integrate package declarations and typed-action capability alignment.</li>
+</ul>
+<h3 id="receipts-inspection-and-documentation">Receipts, inspection, and documentation<a class="headerlink" href="#receipts-inspection-and-documentation" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Complete #1028 durable receipt production, redaction, replay, and report surfaces.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Expose static declarations and runtime facts through semantic inspection.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Document the user-facing policy, report, and diagnostic surfaces.</li>
+</ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Capability identities are checked symbols, not strings:</strong> a capability's fully-qualified identity is derived from where it is declared (package or toolchain identity plus module path), never typed by the author. Two packages cannot collide on a capability name because the namespace segment comes from an identity a registry already enforces as unique. A capability reference at a use site resolves like an import; a misspelled or nonexistent reference is a compile error, not a runtime surprise.</li>
 <li><strong>Capability declarations live in source</strong>, as a first-class <code>capability</code> declaration form, because deriving identity from declaration location requires the declaration to be real, compiler-resolved syntax rather than manifest or metadata.</li>
-<li><strong>Default run modes:</strong> <code>incan run</code> defaults to <code>observe</code>, recording authority facts without governed denials; <code>incan test</code> defaults to <code>governed</code> with nothing pre-granted, enforcing the same test-isolation property most test frameworks already assume by convention. Typed actions run under whatever mode and grants their invoking context provides; there is no third default.</li>
+<li><strong>Default run modes:</strong> <code>incan run</code> defaults to <code>observe</code>, recording authority facts without governed denials; <code>permissive</code> is an explicit escape hatch that disables observation, while <code>incan test</code> defaults to <code>governed</code> with nothing pre-granted, enforcing the same test-isolation property most test frameworks already assume by convention. Typed actions run under whatever mode and grants their invoking context provides; there is no third default.</li>
 <li><strong>Minimum stable host capability set is exactly the nine already proposed</strong> in Reference-level explanation (<code>host.env.read</code>, <code>host.fs.read</code>, <code>host.fs.write</code>, <code>host.process.spawn</code>, <code>host.http.request</code>, <code>host.clock.read</code>, <code>host.random</code>, <code>host.model.invoke</code>, <code>host.tool.invoke</code>), fixed and not package-extensible.</li>
 <li><strong>Scoped grants:</strong> a capability declares its own typed <code>scope</code> schema (host capabilities via <code>std.runtime</code>'s own declarations, package capabilities via their own). Scope values bind at grant time, never in a static declaration such as <code>@action(caps=[...])</code>, and are checked against the real operation's attributes at the moment it happens, independent of the declaring code.</li>
 <li><strong>No implicit host-capability grants:</strong> a package capability's <code>requires</code> list documents which host capabilities its implementation needs, for tooling and policy to inspect, but granting the package capability never automatically grants what it requires. Those must always be listed and granted separately.</li>

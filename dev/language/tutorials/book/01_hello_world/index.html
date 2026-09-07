@@ -9346,10 +9346,10 @@
 </code></pre></div>
 <div class="admonition tip">
 <p class="admonition-title">Coming from Python?</p>
-<p>In Python you usually write <code>print("...")</code>. In Incan you have both:</p>
+<p>In Python you usually write <code>print("...")</code>. In Incan both spellings select the same line-oriented builtin:</p>
 <ul>
-<li><code>println("...")</code>: prints with a newline (used in most examples)</li>
-<li><code>print("...")</code>: prints without a newline</li>
+<li><code>println("...")</code>: canonical spelling used in most examples</li>
+<li><code>print("...")</code>: immutable alias with identical behavior</li>
 </ul>
 </div>
 <p>Tip: Incan uses indentation for blocks. The canonical style is <strong>4 spaces</strong> per indent level; see the <a href="../../../reference/code_style/">Incan Code Style Guide</a> and run <code>incan fmt</code> to normalize source.</p>
@@ -9380,15 +9380,14 @@ incan<span class="w"> </span><span class="nb">test</span>
 <ol>
 <li>Change the message you print.</li>
 <li>Print two lines (two calls to <code>println</code>).</li>
-<li>Use <code>print("...")</code> once to see the “no newline” behavior.</li>
+<li>Replace one call with <code>print("...")</code> and verify that it still prints one complete line.</li>
 </ol>
 </section>
 <section class="inc-learning-panel inc-learning-panel--solution" data-label="Solution">
 <p>One possible solution:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;, Incan!&quot;</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Second line&quot;</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Incan!&quot;</span><span class="p">)</span>
 </code></pre></div>
 </section>
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-incus-category="success" data-label="Complete">

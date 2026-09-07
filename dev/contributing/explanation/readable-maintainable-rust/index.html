@@ -10035,7 +10035,7 @@
 <p><strong>Tooling baked in</strong></p>
 </li>
 <li><code>rustfmt</code> and <code>clippy</code> are non-negotiable in CI; tune lints to project needs.</li>
-<li>Dependency hygiene: <code>cargo-audit</code>, <code>cargo-deny</code>, <code>cargo-udeps</code>; pin MSRV.</li>
+<li>Dependency hygiene: <code>cargo-audit</code>, <code>cargo-deny</code>, <code>cargo-udeps</code>; pin the supported Rust release.</li>
 <li>
 <p>Tests include unit, integration, <strong>doctests</strong>, property-based (<code>proptest</code>) for parsers.</p>
 </li>
@@ -10062,7 +10062,7 @@
 <li>✅ <strong>Ownership</strong>: Minimal clones; predictable lifetimes; borrowing favored.</li>
 <li>✅ <strong>Tests</strong>: Unit + integration + doctests exist; critical logic property-tested.</li>
 <li>✅ <strong>Docs</strong>: <code>rustdoc</code> examples compile; <code>README</code> shows usage; <code>SAFETY:</code> annotations present where needed.</li>
-<li>✅ <strong>CI</strong>: Audit, deny, udeps, MSRV checks run; semantic versioning for releases.</li>
+<li>✅ <strong>CI</strong>: Audit, deny, and udeps checks run on the pinned Rust release; semantic versioning for releases.</li>
 <li>✅ <strong>Async/concurrency</strong>: Structured, cancellable; no hidden global mutable state.</li>
 </ul>
 <hr />
@@ -10154,7 +10154,7 @@
 <h3 id="cargotoml"><code>Cargo.toml</code><a class="headerlink" href="#cargotoml" title="Permanent link">&para;</a></h3>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[package]</span>
 <span class="n">edition</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;2024&quot;</span>
-<span class="n">rust-version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.85&quot;</span><span class="w"> </span><span class="c1"># MSRV pinned (keep in sync with CI)</span>
+<span class="n">rust-version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.98&quot;</span><span class="w"> </span><span class="c1"># Keep the workspace declaration aligned with pinned Rust 1.98.0 CI.</span>
 
 <span class="k">[dependencies]</span>
 <span class="n">thiserror</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span>
@@ -10170,7 +10170,7 @@ cargo<span class="w"> </span>audit
 cargo<span class="w"> </span>deny<span class="w"> </span>check
 cargo<span class="w"> </span>+nightly<span class="w"> </span>udeps<span class="w"> </span>--all-targets
 </code></pre></div>
-<p>Note: MSRV is enforced via CI running build/test with a pinned toolchain.</p>
+<p>Note: Incan supports Rust 1.98.0 for compiler builds. CI pins that exact release; Cargo's <code>rust-version</code> field records the matching <code>1.98</code> language/toolchain floor because Cargo models a minimum rather than an exact-only version.</p>
 <hr />
 <h2 id="common-pitfalls-anti-patterns">Common Pitfalls &amp; Anti-Patterns<a class="headerlink" href="#common-pitfalls-anti-patterns" title="Permanent link">&para;</a></h2>
 <h3 id="quick-reference">Quick-reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h3>

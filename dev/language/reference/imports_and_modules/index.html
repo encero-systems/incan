@@ -10079,7 +10079,7 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">utils</span><span class="p">::</span><span class="n">format_currency</span> <span class="k">as</span> <span class="n">fmt</span>
 </code></pre></div>
 <h3 id="imported-names-and-core-builtin-functions">Imported names and core builtin functions<a class="headerlink" href="#imported-names-and-core-builtin-functions" title="Permanent link">&para;</a></h3>
-<p>An explicit import creates a normal binding in the importing module. If it has the same spelling as an ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision.</p>
+<p>An explicit import creates a normal binding in the importing module. If it has the same spelling as an ordinary ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision. The output spellings <code>print</code> and <code>println</code> are immutable language functions rather than fallback bindings, so a declaration or import cannot replace either one.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># aggregates.incn</span>
 <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">sum</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
   <span class="k">return</span> <span class="n">value</span> <span class="o">+</span> <span class="mi">1</span>
@@ -10092,7 +10092,12 @@
   <span class="n">builtin_total</span> <span class="o">=</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>  <span class="c1"># calls the core builtin: 3</span>
   <span class="k">return</span> <span class="n">local_total</span> <span class="o">+</span> <span class="n">builtin_total</span>
 </code></pre></div>
-<p><code>std.builtins.&lt;name&gt;</code> is the explicit escape hatch when an unqualified builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.</p>
+<p><code>std.builtins.&lt;name&gt;</code> is the explicit escape hatch when an ordinary unqualified builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.</p>
+<p>Imports share the ordinary lexical namespace with declarations. A second declaration or import cannot silently replace an existing same-scope binding with the same local spelling. Repeating an import of the same proven declaration is a duplicate binding; importing different declarations under the same local spelling is ambiguous. Use an explicit alias when both imported targets are intentional:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">codecs.prelude</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">codecs_prelude</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">compression.prelude</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">compression_prelude</span>
+</code></pre></div>
+<p>The first valid registration remains the active lookup binding while the compiler reports the later collision, so invalid source cannot change the meaning of subsequent references.</p>
 <h2 id="published-library-namespaces">Published library namespaces<a class="headerlink" href="#published-library-namespaces" title="Permanent link">&para;</a></h2>
 <p><code>incan build --lib</code> preserves the checked module hierarchy below a library's configured source root (normally <code>src/</code>). A source directory becomes a public package namespace automatically; there is no <code>pub module</code> declaration.</p>
 <p>Given this producer layout:</p>
@@ -10298,8 +10303,8 @@
 <p>The generated language reference shows the canonical name and aliases in one place: <a href="../language/">Language reference (generated)</a>.</p>
 <h3 id="built-in-functions-always-available">Built-in functions (always available)<a class="headerlink" href="#built-in-functions-always-available" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Output</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>      <span class="c1"># Print with newline</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>        <span class="c1"># Print without newline</span>
+<span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>      <span class="c1"># Print one line</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>        <span class="c1"># Alias for the same line-oriented output function</span>
 
 <span class="c1"># Collections</span>
 <span class="nb">len</span><span class="p">(</span><span class="n">collection</span><span class="p">)</span>     <span class="c1"># Get length</span>
@@ -10321,11 +10326,13 @@
 <span class="nb">set</span><span class="p">()</span>               <span class="c1"># Empty Set</span>
 <span class="nb">set</span><span class="p">(</span><span class="n">iterable</span><span class="p">)</span>       <span class="c1"># Convert to Set</span>
 </code></pre></div>
-<p>Every core builtin function is also reachable through <code>std.builtins.&lt;name&gt;</code>. This is an explicit escape path for code that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:</p>
+<p>Every core builtin function is also reachable through <code>std.builtins.&lt;name&gt;</code>. For ordinary fallback builtins, this is an explicit escape path for code that needs the core function when an inner scope or an imported DSL gives the unqualified name a different meaning:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">total</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
   <span class="k">return</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">(</span><span class="nb">values</span><span class="p">)</span>
 </code></pre></div>
+<p>Source declarations, imports, local bindings, value parameters, and generic type parameters cannot use the immutable <code>print</code> or <code>println</code> spellings. Fields and methods may still use those names because member selection cannot replace a bare builtin function.</p>
 <p><code>std.builtins</code> is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as <code>int</code>, <code>List[T]</code>, and <code>Result[T, E]</code> remain root prelude types.</p>
+<p><code>print</code> and <code>println</code> are the exception to shadowing: both spellings select the same immutable output builtin and cannot be declared or imported as another binding.</p>
 <h2 id="special-import-import-this">Special import: <code>import this</code><a class="headerlink" href="#special-import-import-this" title="Permanent link">&para;</a></h2>
 <p><code>import this</code> is always available and prints the Incan “Zen” design principles when imported:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>

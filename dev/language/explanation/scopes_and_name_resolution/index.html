@@ -9567,7 +9567,7 @@
 <p class="admonition-title">Coming from Rust?</p>
 <p>The spirit is similar (lexical scopes, <code>mut</code> for reassignment), but the surface syntax differs:</p>
 <ul>
-<li>Incan’s <code>let x = ...</code> is the explicit way to introduce a <strong>new binding</strong> in the current scope (often used for shadowing).</li>
+<li>Incan’s <code>let x = ...</code> and <code>mut x = ...</code> are the explicit ways to introduce a <strong>new binding</strong> in the current scope. <code>let</code> creates an immutable binding; <code>mut</code> creates a mutable one. Either form can intentionally shadow an outer binding.</li>
 <li>Plain <code>x = ...</code> is context-sensitive: it either <strong>reassigns</strong> an existing <code>mut</code> binding, or introduces a new immutable binding if <code>x</code> doesn’t exist yet.</li>
 </ul>
 </div>
@@ -9609,7 +9609,7 @@
 </code></pre></div>
 <p>For the exact alias syntax, supported target kinds, public export rules, and diagnostics, see <a href="../../reference/symbol_aliases/">Symbol aliases</a>.</p>
 <h3 id="core-builtin-function-names">Core builtin function names<a class="headerlink" href="#core-builtin-function-names" title="Permanent link">&para;</a></h3>
-<p>Core builtin functions such as <code>len</code>, <code>sum</code>, and <code>zip</code> are ambient fallback bindings. A real lexical binding at module scope takes precedence over that fallback, whether it comes from a direct declaration or an explicit import. This is ordinary name resolution, not an error or a special builtin rule.</p>
+<p>Core builtin functions such as <code>len</code>, <code>sum</code>, and <code>zip</code> are ambient fallback bindings. A real lexical binding at module scope takes precedence over that fallback, whether it comes from a direct declaration or an explicit import. This is ordinary name resolution, not an error or a special builtin rule. The output functions are deliberately different: <code>print</code> and its <code>println</code> alias are immutable language bindings and cannot be redefined or replaced by an import.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">len</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">value</span> <span class="o">+</span> <span class="mi">1</span>
 
@@ -9618,7 +9618,7 @@
     <span class="n">builtin_result</span> <span class="o">=</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">len</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span> <span class="c1"># calls the core builtin: 2</span>
     <span class="k">return</span> <span class="n">local_result</span> <span class="o">+</span> <span class="n">builtin_result</span>
 </code></pre></div>
-<p>Use <code>std.builtins.&lt;name&gt;</code> when a module has intentionally reused a builtin-function spelling but a particular call needs the core builtin. The qualified form always selects the core builtin; it is not affected by the local binding.</p>
+<p>Use <code>std.builtins.&lt;name&gt;</code> when a module has intentionally reused an ordinary builtin-function spelling but a particular call needs the core builtin. The qualified form always selects the core builtin; it is not affected by the local binding.</p>
 <h3 id="function-method-scope">Function / method scope<a class="headerlink" href="#function-method-scope" title="Permanent link">&para;</a></h3>
 <p>Each <code>def ...:</code> body is a <strong>function scope</strong>.</p>
 <p>Methods also have a function-like scope and define receiver names for the method body:</p>
@@ -9679,7 +9679,7 @@
 <ul>
 <li>A binding is <strong>immutable by default</strong>.</li>
 <li>You can only reassign a binding if it was declared <code>mut</code>.</li>
-<li>Shadowing an outer name is done with <code>let</code> (a new binding in the inner scope).</li>
+<li>Shadowing an outer name is done with <code>let</code> for a new immutable binding or <code>mut</code> for a new mutable binding in the inner scope.</li>
 </ul>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">reassigns_outer</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
@@ -9699,11 +9699,11 @@
 
     <span class="k">return</span> <span class="n">x</span>  <span class="c1"># still 1</span>
 </code></pre></div>
-<p>Notes on <code>let</code>:</p>
+<p>Notes on explicit bindings:</p>
 <ul>
-<li><code>let x = ...</code> is the explicit form for “<strong>introduce a new binding</strong> in the current scope”.</li>
-<li>It’s <strong>optional</strong> when introducing a name for the first time (plain <code>x = ...</code> will do that if <code>x</code> doesn’t exist yet), but <code>let</code> is how you make <strong>shadowing</strong> unambiguous and readable in nested scopes.</li>
-<li><code>mut x = ...</code> introduces a <strong>new mutable</strong> binding. Reassigning later uses plain <code>x = ...</code> (and requires that <code>x</code> was introduced with <code>mut</code>).</li>
+<li><code>let x = ...</code> explicitly introduces a new immutable binding in the current scope; <code>mut x = ...</code> explicitly introduces a new mutable binding.</li>
+<li>An explicit form is optional when introducing a name for the first time (plain <code>x = ...</code> will do that if <code>x</code> does not exist yet), but <code>let</code> or <code>mut</code> is how you make shadowing unambiguous and readable in nested scopes.</li>
+<li>Reassigning later uses plain <code>x = ...</code> and requires that the active binding was introduced with <code>mut</code>.</li>
 </ul>
 <p>You get an error if you write this:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">errors_without_mut</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Unit</span><span class="p">:</span>
@@ -9730,7 +9730,7 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">add1</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span>
 </code></pre></div>
 <p>Closures introduce their own function scope (parameters are local to the closure body). Names from outer scopes can be <strong>read</strong> by normal lexical lookup.</p>
-<p>Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be <code>mut</code>). Shadow with <code>let</code> if you want a closure-local name.</p>
+<p>Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be <code>mut</code>). Use <code>let</code> for a new immutable closure-local binding or <code>mut</code> for a new mutable one.</p>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">closure_capture</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">mut</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">1</span>
@@ -9747,7 +9747,7 @@
 <p><strong>“Why did <code>x = ...</code> inside an <code>if</code> error?”</strong></p>
 <ul>
 <li>If <code>x</code> already exists, plain <code>x = ...</code> is treated as a reassignment, so <code>x</code> must be <code>mut</code>.</li>
-<li>If you intended a new block-local <code>x</code>, use <code>let x = ...</code> in the block.</li>
+<li>If you intended a new block-local <code>x</code>, use <code>let x = ...</code> for an immutable binding or <code>mut x = ...</code> for a mutable one.</li>
 </ul>
 </li>
 <li>

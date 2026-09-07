@@ -9636,8 +9636,8 @@
 </tr>
 <tr>
 <td>Binary floats</td>
-<td><code>f32</code>, <code>f64</code></td>
-<td>IEEE binary floating-point types in generated Rust.</td>
+<td><code>float</code>, <code>f32</code>, <code>f64</code></td>
+<td><code>float</code> is the broad IEEE type; exact-width <code>f32</code> and <code>f64</code> are finite-only.</td>
 </tr>
 <tr>
 <td>Decimal values</td>
@@ -9717,14 +9717,19 @@
 <td>Platform-sized unsigned integer</td>
 </tr>
 <tr>
+<td><code>float</code></td>
+<td><code>f64</code></td>
+<td>Broad 64-bit IEEE binary float, including NaN and infinity</td>
+</tr>
+<tr>
 <td><code>f32</code></td>
 <td><code>f32</code></td>
-<td>32-bit IEEE binary float</td>
+<td>Finite 32-bit IEEE binary value</td>
 </tr>
 <tr>
 <td><code>f64</code></td>
 <td><code>f64</code></td>
-<td>64-bit IEEE binary float</td>
+<td>Finite 64-bit IEEE binary value</td>
 </tr>
 <tr>
 <td><code>decimal[p, s]</code></td>
@@ -9734,7 +9739,9 @@
 </tbody>
 </table>
 <h2 id="aliases">Aliases<a class="headerlink" href="#aliases" title="Permanent link">&para;</a></h2>
-<p>Aliases resolve to canonical types. They do not introduce distinct nominal types.</p>
+<p>Aliases resolve to canonical types. They do not introduce distinct nominal types. The broad <code>float</code> type and the
+exact-width <code>f64</code> type share a Rust carrier but have different value contracts, so <code>float</code> is not an alias for
+<code>f64</code>.</p>
 <table>
 <thead>
 <tr>
@@ -9785,7 +9792,7 @@
 </tr>
 <tr>
 <td><code>float</code></td>
-<td><code>f64</code></td>
+<td>Broad binary float with an <code>f64</code> Rust carrier</td>
 </tr>
 <tr>
 <td><code>double</code></td>
@@ -10065,23 +10072,23 @@
 <tbody>
 <tr>
 <td><code>+</code>, <code>-</code>, <code>*</code></td>
-<td>Integer-family operands produce <code>int</code>; if either operand is <code>float</code>, the result is <code>float</code>.</td>
+<td>Matching exact floats retain their width; other floating combinations produce <code>float</code>; integer-family operands produce <code>int</code>.</td>
 </tr>
 <tr>
 <td><code>/</code></td>
-<td>Always <code>float</code>.</td>
+<td>Matching exact floats retain their width; all other combinations produce <code>float</code>.</td>
 </tr>
 <tr>
 <td><code>//</code></td>
-<td><code>int</code> when both operands are integer-family values; otherwise <code>float</code>.</td>
+<td>Matching exact floats retain their width; integer-family operands produce <code>int</code>; otherwise <code>float</code>.</td>
 </tr>
 <tr>
 <td><code>%</code></td>
-<td><code>int</code> when both operands are integer-family values; otherwise <code>float</code>.</td>
+<td>Matching exact floats retain their width; integer-family operands produce <code>int</code>; otherwise <code>float</code>.</td>
 </tr>
 <tr>
 <td><code>**</code></td>
-<td><code>int</code> only for <code>int ** &lt;non-negative int literal&gt;</code>; otherwise <code>float</code>.</td>
+<td>Matching exact floats retain their width; <code>int ** &lt;non-negative int literal&gt;</code> produces <code>int</code>; otherwise <code>float</code>.</td>
 </tr>
 <tr>
 <td><code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code></td>
@@ -10090,7 +10097,8 @@
 </tbody>
 </table>
 <h3 id="division">Division<a class="headerlink" href="#division" title="Permanent link">&para;</a></h3>
-<p><code>/</code> is true division and always returns <code>float</code>.</p>
+<p><code>/</code> is true division. Matching <code>f32</code> operands produce <code>f32</code>, and matching exact <code>f64</code> operands produce exact <code>f64</code>.
+All other operand combinations produce <code>float</code>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="mi">1</span> <span class="o">/</span> <span class="mi">2</span>
 <span class="mi">4</span> <span class="o">/</span> <span class="mi">2</span>
 <span class="mf">7.0</span> <span class="o">/</span> <span class="mi">2</span>
@@ -10142,9 +10150,19 @@ x = x &lt;op&gt; y
 <div class="language-incan highlight"><pre><span></span><code><span class="n">n</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="mi">10</span>
 <span class="n">maybe_next</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">i8</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">try_resize</span><span class="p">()</span>
 </code></pre></div>
+<p>Matching exact-width floating operands retain their width for <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>//</code>, <code>%</code>, and <code>**</code>. Every exact
+result is checked for finiteness when it is produced. Mixed <code>f32</code>/<code>f64</code>, <code>f32</code>/<code>float</code>, and <code>f32</code>/integer arithmetic
+widens the concrete <code>f32</code> operand and produces ordinary <code>float</code>.</p>
 <h2 id="nan-and-infinity">NaN and infinity<a class="headerlink" href="#nan-and-infinity" title="Permanent link">&para;</a></h2>
-<p><code>float</code>, <code>f32</code>, and <code>f64</code> are IEEE binary floating-point values in generated Rust. NaN and infinity can appear through Rust interop or APIs that produce IEEE special values.</p>
-<p>Incan's checked numeric division helpers currently panic on division by zero instead of producing NaN or infinity.</p>
+<p>Ordinary <code>float</code> follows IEEE behavior and can contain NaN or infinity. Exact-width <code>f32</code> and <code>f64</code> use Rust's
+binary floating-point carriers but accept only finite values.</p>
+<p>The compiler rejects non-finite exact literals. Generated code applies the same canonical <code>ValueError</code> check when a
+direct exact scalar enters through a public function or Rust interop, when an exact scalar is extracted from a field or
+collection index, when an exact call or arithmetic operation produces a result, and before an exact value is compared,
+formatted, or printed. Crossing from ordinary <code>float</code> into an exact carrier performs the same check; ordinary <code>float</code>
+itself remains unchanged. Public and Rust-facing aggregates are not recursively scanned at ingress; each exact scalar
+is checked when Incan extracts or observes it.</p>
+<p>Division by zero remains a <code>ZeroDivisionError</code> instead of producing NaN or infinity.</p>
 <h2 id="current-limitations">Current limitations<a class="headerlink" href="#current-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Decimal arithmetic is not defined yet.</li>
