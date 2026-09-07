@@ -1033,13 +1033,6 @@ fn split_yield_fixture_declarations(
         if !has_fixture_decorator(&func.decorators, &aliases, semantics) {
             continue;
         }
-        // A batch can carry the same fixture declaration more than once -- one copy per test source that pulled the
-        // module in. `teardowns` is keyed by fixture name and so collapses those, but the generated declarations were
-        // appended unconditionally, emitting one teardown function per copy. They share a name, a module and a span,
-        // so they project to one identity and generated Rust defined it twice.
-        if teardowns.contains_key(&func.name) {
-            continue;
-        }
         let Some((yield_index, yielded)) = func.body.iter().enumerate().find_map(|(index, stmt)| {
             if let Statement::Expr(expr) = &stmt.node
                 && let Expr::Yield(value) = &expr.node
@@ -1058,6 +1051,18 @@ fn split_yield_fixture_declarations(
                 func.name
             ));
         };
+        // A batch can carry the same fixture declaration more than once -- one copy per test source that pulled the
+        // module in. Those copies are identical down to their spans, so splitting each one appends a teardown that
+        // projects to the same identity as the last, and generated Rust defined it twice. `teardowns` is keyed by
+        // fixture name, so it already collapses them; append at most one declaration to match.
+        if teardowns.contains_key(&func.name) {
+            continue;
+        }
+        // The teardown is a second declaration split out of one source function, so it cannot share the fixture's
+        // declaration span: a canonical identity is namespace + declaration + kind + scope + span, and two
+        // declarations carrying the same span project to the same name however they are called. The `yield` that
+        // splits the body is the honest span for the half that follows it.
+        let yield_span = func.body[yield_index].span;
         let teardown_name = yield_fixture_teardown_name(&func.name);
         let mut setup_body = func.body[..yield_index].to_vec();
         let teardown_body = if yield_index + 1 < func.body.len() {
@@ -1144,7 +1149,7 @@ fn split_yield_fixture_declarations(
                 value_ty: original_return_type,
             },
         );
-        additional.push(Spanned::new(Declaration::Function(teardown_func), decl.span));
+        additional.push(Spanned::new(Declaration::Function(teardown_func), yield_span));
     }
 
     ast.declarations.extend(additional);
