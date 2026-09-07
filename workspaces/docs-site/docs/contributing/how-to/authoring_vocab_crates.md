@@ -232,7 +232,7 @@ pub fn library_vocab() -> VocabRegistration {
 }
 ```
 
-The descriptor `key` must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as `pairwise_chain()`. RFC 040 supports selected descriptor-gated non-core glyphs such as `|>`, `%>%`, `:=`, and `===`; broader language-shaped token forms remain RFC 081 work.
+The descriptor `key` must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as `pairwise_chain()`. RFC 040 supports selected descriptor-gated non-core glyphs such as `|>`, `%>%`, `:=`, and `===`. Language-shaped lexical submodes -- markup, style, raw text, regex/template literals, and type-position syntax -- are RFC 081 work, covered next.
 
 ## 5. Add scoped symbols
 
@@ -323,7 +323,86 @@ Then the desugarer can emit `IncanExpr::Helper("filter".to_string())`, and the c
 - each `exported_name` must point at a real public export from the library artifact
 - empty keys or export names are rejected before the `.incnlib` artifact is written
 
-## 6. Add an optional desugarer
+## 6. Add descriptor-gated embedded fragments (RFC 081)
+
+Scoped surfaces (section 4) reinterpret ordinary Incan tokens; embedded fragments are for content that looks like an entirely different language -- markup, style rules, regex/template literals, and type-shaped syntax that has no faithful spelling as ordinary Incan operators and identifiers. RFC 081 defines a **fixed, compiler-owned catalog** of six lexical submodes. A descriptor selects which submode kind it claims for which position; it never authors its own grammar, and the compiler never claims compatibility with any real external language. Unrecognized syntax inside a claimed position is always a parse error, never a silent reinterpretation.
+
+Start with the consumer syntax you want to enable:
+
+```incan
+from pub::webkit import webkit_name
+
+def render_card(title: str) -> None:
+    html:
+        <section class="card">
+            <h1>{title}</h1>
+        </section>
+```
+
+`html:` introduces the owning DSL block; everything inside it is the `Markup` submode's grammar, not ordinary Incan syntax reinterpreted after the fact. `{title}` is an expression hole: it re-enters ordinary Incan parsing and typechecks `title` as the real parameter it is.
+
+### The submode catalog
+
+Each submode accepts exactly the constructs listed here -- nothing more. This is the entire accepted surface; do not describe any of these as "CSS-compatible," "HTML-compatible," or similar in your own library's documentation, since the mechanism makes no such guarantee.
+
+| Submode                     | Accepts                                                                                                                 | Does not accept                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `Markup`                    | Open/close and self-closing tags, attributes (`name`, `name="literal"`, `name={expr}`), text runs, `&name;` entity references, `<!-- ... -->` comments, `{expr}` holes | Namespaces, doctype/processing instructions, unquoted attribute values |
+| `Style`                     | Comma-separated selector lists (captured as flat token runs, not parsed further), a `{ property: value; ... }` declaration block, `--custom-property` declarations, `/* ... */` comments | Nested rules, at-rules (`@media`, ...), selector combinator structure  |
+| `RawText`                   | Verbatim text runs interleaved with `{expr}` holes, and nothing else                                                    | Any structural parsing beyond hole recognition                       |
+| `RegexTemplate`             | Exactly one of: a bare `/pattern/flags` regex literal, or a `` `...${expr}...` `` template string with holes           | Mixing both forms in one fragment; regex flags beyond ASCII letters  |
+| `SelectorDeclarationValue`  | Exactly one value token: dimension (`16px`), color (`#1166ff`), `var(--name)` reference, identifier, string, number, or `{expr}` hole | Multiple values, arithmetic between values                           |
+| `TypePosition`              | `name`, `a.b.Name` qualified names, `Name<Arg, ...>` generics, `T?` nullable, `T[]` array, `A \| B` union                | Bounds, variance, wildcards, function types                          |
+
+Register the submode with `EmbeddedFragmentDescriptor`:
+
+```rust
+use incan_vocab::{
+    DeclarationSurface, DslSurface, EmbeddedFragmentDescriptor, EmbeddedFragmentSubmode, LibraryManifest,
+    VocabRegistration,
+};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new()
+        .with_surface(
+            DslSurface::on_import("webkit")
+                .with_declaration(DeclarationSurface::named("html").with_statement_body())
+                .with_embedded_fragment(
+                    EmbeddedFragmentDescriptor::new("html.fragment", EmbeddedFragmentSubmode::Markup, "markup_nodes")
+                        .in_declaration_body("html"),
+                ),
+        )
+        .with_library_manifest(LibraryManifest::default())
+}
+```
+
+`EmbeddedFragmentDescriptor::new(key, submode, artifact_key)` takes the same stable `key` convention as scoped surfaces, the fixed `EmbeddedFragmentSubmode` variant it claims, and an `artifact_key` naming the typed-artifact contribution your desugarer or lowering hook should expect. Eligibility (`in_declaration_body`, `in_clause_body`, `in_call_argument`) reuses the same `ScopedSurfaceEligibility` builder methods scoped surfaces use, but only `in_declaration_body` is currently wired into embedded-fragment parsing -- registering `in_clause_body`/`in_call_argument` on an embedded-fragment descriptor compiles but never activates today. If two same-depth descriptors claim the same submode for the same position, the compiler rejects the combination as ambiguous rather than guessing which one wins.
+
+### What the compiler hands back
+
+Accepted fragments are never rediscovered by matching raw source text later. The parser produces a typed `EmbeddedFragmentExpr` artifact: the claimed submode, a structural node tree in source order, and the fragment's verbatim source text (for tooling that needs the untouched original). Every expression hole inside that tree is typechecked and lowered exactly as if it appeared in ordinary Incan expression position -- a hole referencing an undeclared name, or one whose type does not fit its surrounding use, is a real type error, not something a downstream desugarer discovers later.
+
+```text
+<h1>{title}</h1>
+  submode: Markup
+  nodes: [Element { name: "h1", children: [Hole(title: str)] }]
+```
+
+The DSL-owned structural content itself (tag names, selectors, declaration properties, regex patterns, type shapes) carries no ordinary Incan type or runtime meaning on its own -- RFC 081 assigns that to the owning DSL's desugarer or lowering hook, which is a separate step from the mechanism this section describes. A fragment with no lowering hook registered still parses, typechecks, and reaches Body IR successfully; only Rust code generation refuses, with a message naming exactly what is missing, never a silent guess.
+
+### Formatter and layout sensitivity
+
+If your fragment's layout should never be reformatted, mark it explicitly:
+
+```rust
+EmbeddedFragmentDescriptor::new("html.fragment", EmbeddedFragmentSubmode::Markup, "markup_nodes")
+    .in_declaration_body("html")
+    .layout_sensitive()
+```
+
+The formatter has exactly two states for an embedded fragment: format it structurally from the typed artifact, or preserve its original source layout verbatim. `layout_sensitive()` requests the second -- this is a stable, load-bearing signal for that future formatter work, but the formatter itself does not consume it yet. Today the formatter always writes an embedded fragment's verbatim source text regardless of this flag; `layout_sensitive()` has no observable effect until the structural-formatting path lands.
+
+## 7. Add an optional desugarer
 
 Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same `library_vocab()` bundle.
 
@@ -376,7 +455,7 @@ This emits the `desugar_block` entrypoint and required `__incan_*` memory global
 
 Malformed artifact paths, invalid checksums, or missing ABI exports fail the producer build early instead of surfacing later in consumer projects.
 
-## 7. Build the library artifact
+## 8. Build the library artifact
 
 Run library mode from the Incan project root:
 
@@ -393,7 +472,7 @@ This requires `src/lib.incn`. During the build, Incan:
 
 Any serialized JSON sidecars or extraction glue are tooling details rather than part of the standard authoring workflow.
 
-## 8. Consume the DSL from another project
+## 9. Consume the DSL from another project
 
 The consumer depends on the built library artifact:
 
@@ -419,6 +498,9 @@ from pub::routekit import routekit_name
 - If local desugarer packaging fails with a missing target error, install the required Rust target (`rustup target add wasm32-wasip1`) and rerun `incan build --lib`.
 - If desugared code needs Rust crates or stdlib features, declare them in `LibraryManifest` so consumer builds get the same requirements.
 - Block or clause-oriented DSL registrations need a desugarer when they cannot continue through the compiler as ordinary Incan syntax on their own.
+- An `EmbeddedFragmentDescriptor` claims one fixed submode kind from the RFC 081 catalog; it cannot author its own grammar, and unrecognized syntax inside a claimed position is always a parse error, never a fallback to a broader guess.
+- Do not describe an embedded-fragment submode as compatible with a specific external language (CSS, HTML, and so on) in your own library's documentation. The mechanism only claims the constructs each submode's table explicitly enumerates.
+- A fragment with no registered lowering hook still parses, typechecks, and reaches Body IR; only Rust code generation refuses, naming exactly what is missing.
 
 ## See also
 
@@ -426,3 +508,6 @@ from pub::routekit import routekit_name
 - [Project configuration reference](../../tooling/reference/project_configuration.md)
 - [CLI reference](../../tooling/reference/cli_reference.md)
 - [RFC 027: `incan_vocab`](../../RFCs/closed/implemented/027_incan_vocab_crate.md)
+- [RFC 040: Scoped DSL surface forms](../../RFCs/closed/implemented/040_scoped_dsl_surface_forms.md)
+- [RFC 045: Scoped DSL symbol surfaces](../../RFCs/closed/implemented/045_scoped_dsl_symbol_surfaces.md)
+- [RFC 081: Language-shaped DSL embeddings](../../RFCs/081_language_shaped_dsl_embeddings.md)

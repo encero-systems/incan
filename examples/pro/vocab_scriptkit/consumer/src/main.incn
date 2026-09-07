@@ -1,0 +1,23 @@
+from pub::scriptkit import scriptkit_name
+
+def greeting(name: str) -> None:
+    """Demonstrate the `RegexTemplate` submode's template-string form, with one expression hole."""
+    pattern:
+        `hello ${name}!`
+
+def slug_pattern() -> None:
+    """Demonstrate the `RegexTemplate` submode's bare regex-literal form: pattern plus flags."""
+    pattern:
+        /^[a-z0-9-]+$/i
+
+def response_shape() -> None:
+    """Demonstrate the `TypePosition` submode: a qualified name, a generic argument, nullable, and a union."""
+    shape:
+        scriptkit.Response<str>? | scriptkit.Error
+
+def main() -> None:
+    let name = scriptkit_name()
+    print(name)
+    greeting(name)
+    slug_pattern()
+    response_shape()

@@ -1,6 +1,6 @@
 //! The compiler-to-runtime seam for RFC 104 authority decisions.
 //!
-//! [`crate::facts`] defines what an authority decision *is*. This module defines how a consumer *obtains* one, and it
+//! The `facts` module defines what an authority decision *is*. This module defines how a consumer *obtains* one, and it
 //! exists so that no consumer has to define grant semantics of its own. A provider-operation plan, a runtime
 //! entrypoint, and a test harness all ask the same question through [`AuthorityDecisionSource`] and all receive the
 //! same [`AuthorityDecision`].
@@ -46,10 +46,15 @@ impl AuthorityRequest {
     }
 
     /// Build the grant context a decision about this request carries.
-    fn grant_context(&self, ceiling_applied: bool) -> AuthorityGrantContext {
+    fn grant_context(
+        &self,
+        effective_grants: Vec<CanonicalSymbolId>,
+        ceiling: Option<Vec<CanonicalSymbolId>>,
+    ) -> AuthorityGrantContext {
         AuthorityGrantContext {
             requested_scope: self.requested_scope.clone(),
-            ceiling_applied,
+            effective_grants,
+            ceiling,
         }
     }
 }
@@ -73,13 +78,18 @@ pub trait AuthorityDecisionSource {
 #[derive(Debug, Clone)]
 pub struct StaticAuthority {
     mode: AuthorityMode,
-    granted: BTreeSet<String>,
-    ceiling: Option<BTreeSet<String>>,
+    granted: BTreeSet<CanonicalSymbolId>,
+    ceiling: Option<BTreeSet<CanonicalSymbolId>>,
 }
 
 impl StaticAuthority {
-    /// Build an authority source for `mode` granting exactly `granted`, with no host ceiling.
-    pub fn new(mode: AuthorityMode, granted: impl IntoIterator<Item = String>) -> Self {
+    /// Build an authority source for `mode` granting exactly these canonical capability identities, with no host
+    /// ceiling.
+    ///
+    /// A grant is the compiler-resolved capability identity, never its rendered diagnostic spelling. That keeps a
+    /// request for one package or module capability from acquiring authority through another capability that happens
+    /// to render to the same text.
+    pub fn new(mode: AuthorityMode, granted: impl IntoIterator<Item = CanonicalSymbolId>) -> Self {
         Self {
             mode,
             granted: granted.into_iter().collect(),
@@ -92,13 +102,13 @@ impl StaticAuthority {
     /// RFC 104 makes the ceiling a grant source distinct from the invocation's own request, combined by
     /// **intersection and never union**: an invocation can only ever receive less than its ceiling allows, however
     /// much it asks for. A grant outside the ceiling is therefore denied even though it was requested.
-    pub fn with_ceiling(mut self, ceiling: impl IntoIterator<Item = String>) -> Self {
+    pub fn with_ceiling(mut self, ceiling: impl IntoIterator<Item = CanonicalSymbolId>) -> Self {
         self.ceiling = Some(ceiling.into_iter().collect());
         self
     }
 
-    /// The effective grant set: the request bounded by the ceiling, when one is supplied.
-    pub fn effective_grants(&self) -> BTreeSet<String> {
+    /// The effective project grant set bounded by the host ceiling, when one is supplied.
+    pub fn effective_grants(&self) -> BTreeSet<CanonicalSymbolId> {
         match &self.ceiling {
             Some(ceiling) => self.granted.intersection(ceiling).cloned().collect(),
             None => self.granted.clone(),
@@ -106,10 +116,24 @@ impl StaticAuthority {
     }
 }
 
+impl Default for StaticAuthority {
+    /// Build the default observe-mode authority source with no explicit grants or ceiling.
+    fn default() -> Self {
+        Self::new(AuthorityMode::default(), Vec::new())
+    }
+}
+
 impl AuthorityDecisionSource for StaticAuthority {
     fn decide(&self, request: &AuthorityRequest) -> AuthorityDecision {
-        let ceiling_applied = self.ceiling.is_some();
-        let grant = request.grant_context(ceiling_applied);
+        let effective_grants = self.effective_grants();
+        let grant = request.grant_context(
+            effective_grants
+                .iter()
+                .filter(|grant| *grant == &request.capability)
+                .cloned()
+                .collect(),
+            self.ceiling.as_ref().map(|values| values.iter().cloned().collect()),
+        );
         let provenance = request.provenance();
 
         // Permissive and observe runs never deny; the difference between them is whether receipts are emitted, which
@@ -118,17 +142,16 @@ impl AuthorityDecisionSource for StaticAuthority {
             return AuthorityDecision::allowed(request.capability.clone(), self.mode, grant, provenance);
         }
 
-        let requested = &request.suggested_grant;
         let outside_ceiling = self
             .ceiling
             .as_ref()
-            .is_some_and(|ceiling| !ceiling.contains(requested));
+            .is_some_and(|ceiling| !ceiling.contains(&request.capability));
 
         // Report the ceiling first: an invocation that asked for authority its host never permitted is a different
         // failure from one that simply never asked, and only the former tells the caller their request was capped.
         let reason = if outside_ceiling {
             Some(AuthorityDenialReason::OutsideCeiling)
-        } else if !self.granted.contains(requested) {
+        } else if !self.granted.contains(&request.capability) {
             Some(AuthorityDenialReason::NotGranted)
         } else {
             None
@@ -178,6 +201,19 @@ mod tests {
         assert_eq!(decision.mode, AuthorityMode::Permissive);
     }
 
+    /// Ordinary development observes authority use unless an invoking project selects another mode.
+    #[test]
+    fn the_default_authority_source_observes_an_ungranted_capability() {
+        let authority = StaticAuthority::default();
+
+        let decision = authority.decide(&request());
+
+        assert!(decision.is_allowed());
+        assert_eq!(decision.mode, AuthorityMode::Observe);
+        assert!(decision.grant.effective_grants.is_empty());
+        assert_eq!(decision.grant.ceiling, None);
+    }
+
     /// A governed run denies what was never granted, and says so in a way a consumer can branch on.
     #[test]
     fn a_governed_run_denies_a_capability_that_was_never_granted() {
@@ -193,9 +229,10 @@ mod tests {
     /// A governed run allows what was granted, and preserves the requested scope on the decision.
     #[test]
     fn a_governed_run_allows_a_granted_capability_and_keeps_its_scope() {
-        let authority = StaticAuthority::new(AuthorityMode::Governed, ["host.http.request".to_string()]);
+        let request = request();
+        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]);
 
-        let decision = authority.decide(&request());
+        let decision = authority.decide(&request);
 
         assert!(decision.is_allowed());
         assert_eq!(
@@ -207,17 +244,24 @@ mod tests {
     /// A ceiling bounds the grant by intersection: requesting more than the ceiling allows yields less, never more.
     #[test]
     fn a_ceiling_denies_a_grant_the_invocation_requested_but_the_host_did_not_permit() {
-        let authority = StaticAuthority::new(AuthorityMode::Governed, ["host.http.request".to_string()])
-            .with_ceiling(["host.fs.read".to_string()]);
+        let request = request();
+        let ceiling = CanonicalSymbolId::module_declaration(
+            vec!["host".to_string(), "fs".to_string()],
+            "read",
+            SemanticSourceTargetKind::Capability,
+            crate::HirSourceSpan::new(30, 40),
+        );
+        let authority =
+            StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]).with_ceiling([ceiling.clone()]);
 
-        let decision = authority.decide(&request());
+        let decision = authority.decide(&request);
 
         assert!(
             !decision.is_allowed(),
             "an invocation cannot widen its own authority past its ceiling",
         );
         assert_eq!(decision.denial_reason(), Some(AuthorityDenialReason::OutsideCeiling));
-        assert!(decision.grant.ceiling_applied);
+        assert_eq!(decision.grant.ceiling, Some(vec![ceiling]));
         assert!(
             authority.effective_grants().is_empty(),
             "the effective grant is the intersection of ceiling and request, not their union",
@@ -227,28 +271,73 @@ mod tests {
     /// A grant present in both the request and the ceiling survives the intersection.
     #[test]
     fn a_ceiling_keeps_a_grant_that_both_sides_permit() {
-        let authority = StaticAuthority::new(
-            AuthorityMode::Governed,
-            ["host.http.request".to_string(), "host.fs.read".to_string()],
-        )
-        .with_ceiling(["host.http.request".to_string()]);
+        let request = request();
+        let other_capability = CanonicalSymbolId::module_declaration(
+            vec!["host".to_string(), "fs".to_string()],
+            "read",
+            SemanticSourceTargetKind::Capability,
+            crate::HirSourceSpan::new(30, 40),
+        );
+        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone(), other_capability])
+            .with_ceiling([request.capability.clone()]);
 
-        let decision = authority.decide(&request());
+        let decision = authority.decide(&request);
 
         assert!(decision.is_allowed());
         assert_eq!(
             authority.effective_grants(),
-            ["host.http.request".to_string()].into_iter().collect(),
+            [request.capability.clone()].into_iter().collect(),
             "only the capability both sides permit survives",
         );
+    }
+
+    /// A durable decision retains the actual grant intersection and the ceiling that bounded it.
+    #[test]
+    fn a_ceiling_decision_carries_the_effective_grant_and_applicable_constraint() {
+        let request = request();
+        let other_capability = CanonicalSymbolId::module_declaration(
+            vec!["host".to_string(), "fs".to_string()],
+            "read",
+            SemanticSourceTargetKind::Capability,
+            crate::HirSourceSpan::new(30, 40),
+        );
+        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone(), other_capability])
+            .with_ceiling([request.capability.clone()]);
+
+        let decision = authority.decide(&request);
+
+        assert!(decision.is_allowed());
+        assert_eq!(decision.grant.effective_grants, vec![request.capability.clone()]);
+        assert_eq!(decision.grant.ceiling, Some(vec![request.capability]));
+    }
+
+    /// A diagnostic suggestion is never an authority key: only the request capability identity can be granted.
+    #[test]
+    fn a_governed_run_rejects_a_capability_that_only_borrows_an_allowed_diagnostic_spelling() {
+        let mut mismatched = request();
+        let granted = mismatched.capability.clone();
+        mismatched.capability = CanonicalSymbolId::module_declaration(
+            vec!["host".to_string(), "fs".to_string()],
+            "read",
+            SemanticSourceTargetKind::Capability,
+            crate::HirSourceSpan::new(30, 40),
+        );
+        let authority = StaticAuthority::new(AuthorityMode::Governed, [granted]);
+
+        let decision = authority.decide(&mismatched);
+
+        assert!(!decision.is_allowed());
+        assert_eq!(decision.denial_reason(), Some(AuthorityDenialReason::NotGranted));
+        assert_eq!(decision.provenance.suggested_grant, "host.http.request");
     }
 
     /// The seam must be usable through a trait object so a host, a local run, and a test double are interchangeable.
     #[test]
     fn the_seam_is_object_safe() {
-        let authority = StaticAuthority::new(AuthorityMode::Governed, ["host.http.request".to_string()]);
+        let request = request();
+        let authority = StaticAuthority::new(AuthorityMode::Governed, [request.capability.clone()]);
         let source: &dyn AuthorityDecisionSource = &authority;
 
-        assert!(source.decide(&request()).is_allowed());
+        assert!(source.decide(&request).is_allowed());
     }
 }

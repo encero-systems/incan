@@ -53,7 +53,7 @@ pub(crate) fn stmt_list_binding_use_scan(stmts: &[IrStmt], binding_name: &str) -
 /// Check whether an expression references one local binding.
 pub(crate) fn expr_uses_binding_name(expr: &IrExpr, binding_name: &str) -> bool {
     match &expr.kind {
-        IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+        IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name, .. } | IrExprKind::StaticBinding { name, .. } => {
             name == binding_name
         }
         IrExprKind::BinOp { left, right, .. } => {
@@ -208,6 +208,9 @@ pub(crate) fn expr_uses_binding_name(expr: &IrExpr, binding_name: &str) -> bool 
         }),
         IrExprKind::RegisterCallableName { callable, .. } => expr_uses_binding_name(callable, binding_name),
         IrExprKind::CacheGenericDecoratedFunction { value, .. } => expr_uses_binding_name(value, binding_name),
+        IrExprKind::EmbeddedFragment { holes, .. } => {
+            holes.iter().any(|hole| expr_uses_binding_name(hole, binding_name))
+        }
         IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -329,7 +332,7 @@ fn stmt_binding_use_scan(stmt: &IrStmt, binding_name: &str) -> BindingUseScan {
 fn assign_target_uses_binding_name(assign_target: &AssignTarget, binding_name: &str) -> bool {
     match assign_target {
         AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => name == binding_name,
-        AssignTarget::Static(_) => false,
+        AssignTarget::Static { .. } => false,
         AssignTarget::Field { object, .. } => expr_uses_binding_name(object, binding_name),
         AssignTarget::Index { object, index } => {
             expr_uses_binding_name(object, binding_name) || expr_uses_binding_name(index, binding_name)

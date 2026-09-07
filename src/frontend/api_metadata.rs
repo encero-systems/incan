@@ -23,14 +23,20 @@ use crate::frontend::library_exports::{
     CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
 };
 use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::symbols::{
+    ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo,
+};
 use crate::frontend::typechecker::{ConstValue, TypeChecker};
 use crate::library_manifest::{
-    ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport, EnumVariantExport,
-    FieldExport, FieldRequirementExport, FunctionExport, MethodExport, ModelExport, NewtypeConstraintExport,
-    NewtypeExport, ParamExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport,
-    PresetModelFieldExport, PresetValueExport, PropertyExport, ReceiverExport, TraitExport, TypeAliasExport,
-    TypeBoundExport, TypeParamExport, TypeRef, param_default_from_checked, params_from_checked, type_ref_from_resolved,
+    CanonicalIdentityExport, ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport,
+    EnumVariantExport, FieldExport, FieldRequirementExport, FunctionExport, ImplementationAssociatedTypeExport,
+    ImplementationTraitBoundExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, MethodExport,
+    ModelExport, NewtypeConstraintExport, NewtypeExport, ParamExport, PartialExport, PartialPresetExport,
+    PartialTargetKindExport, PresetDictEntryExport, PresetModelFieldExport, PresetValueExport, PropertyExport,
+    ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
+    param_default_from_checked, params_from_checked, type_ref_from_resolved,
 };
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
 
@@ -192,6 +198,9 @@ pub struct ApiClass {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiProperty {
     pub name: String,
+    /// Canonical member declaration identity, absent only for legacy or non-package metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
     pub return_type: TypeRef,
 }
 
@@ -233,6 +242,9 @@ pub struct ApiEnum {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiEnumVariant {
     pub name: String,
+    /// Canonical variant declaration identity, absent only for legacy or non-package metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
     pub fields: Vec<TypeRef>,
     pub value: Option<EnumValueExport>,
 }
@@ -325,6 +337,9 @@ pub struct ApiPartial {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiMethod {
     pub name: String,
+    /// Canonical member declaration identity, distinct for same-name overloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
     /// Canonical method targeted by this same-type alias, when this entry projects an alias rather than a body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias_of: Option<String>,
@@ -414,6 +429,7 @@ pub(crate) fn partial_export_from_api(partial: &ApiPartial) -> PartialExport {
 pub(crate) fn method_export_from_api(method: &ApiMethod) -> MethodExport {
     MethodExport {
         name: method.name.clone(),
+        canonical: method.canonical.clone(),
         alias_of: method.alias_of.clone(),
         type_params: method.type_params.clone(),
         receiver: method.receiver.clone(),
@@ -428,6 +444,7 @@ pub(crate) fn method_export_from_api(method: &ApiMethod) -> MethodExport {
 fn property_export_from_api(property: &ApiProperty) -> PropertyExport {
     PropertyExport {
         name: property.name.clone(),
+        canonical: property.canonical.clone(),
         return_type: property.return_type.clone(),
     }
 }
@@ -494,6 +511,7 @@ pub(crate) fn enum_export_from_api(enum_decl: &ApiEnum) -> EnumExport {
             .iter()
             .map(|variant| EnumVariantExport {
                 name: variant.name.clone(),
+                canonical: variant.canonical.clone(),
                 fields: variant.fields.clone(),
                 value: variant.value.clone(),
             })
@@ -819,6 +837,7 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                 ApiDeclaration::Alias(alias) => aliases.push(ApiAliasProjectionRequest {
                     path: declaration_path(&module.module_path, &alias.name),
                     target_path: normalized_api_target_path(&alias.target_path),
+                    module_path: module.module_path.clone(),
                     name: alias.name.clone(),
                     anchor: alias.anchor.clone(),
                 }),
@@ -834,8 +853,24 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
             if projections.contains_key(&alias.path) {
                 continue;
             }
-            if let Some(target) = projections.get(&alias.target_path) {
-                projections.insert(alias.path.clone(), projected_function_for_alias(alias, target));
+            // An alias whose target lives in its own module records that target unqualified, because that is how the
+            // source writes it: `pub run = alias helper` inside `provider` records `["helper"]`. Projections are
+            // keyed by resolved declaration path, `["provider", "helper"]`, so the two never met and every
+            // same-module alias published no callable metadata at all.
+            //
+            // Resolve against the alias's own module first, then fall back to the path as written for a target that
+            // really is module-qualified. The recorded `target_path` is deliberately left alone: it is compared
+            // against the identity graph downstream, and rewriting it here would move that comparison rather than
+            // fix this one.
+            let qualified =
+                (alias.target_path.len() == 1).then(|| declaration_path(&alias.module_path, &alias.target_path[0]));
+            let resolved = qualified
+                .as_ref()
+                .and_then(|path| projections.get(path))
+                .or_else(|| projections.get(&alias.target_path));
+            if let Some(target) = resolved {
+                let projection = projected_function_for_alias(alias, target);
+                projections.insert(alias.path.clone(), projection);
                 changed = true;
             }
         }
@@ -1045,6 +1080,8 @@ pub fn api_declaration_public_name(declaration: &ApiDeclaration) -> Option<&str>
 struct ApiAliasProjectionRequest {
     path: Vec<String>,
     target_path: Vec<String>,
+    /// The module the alias is declared in, used to resolve a target written without a module qualifier.
+    module_path: Vec<String>,
     name: String,
     anchor: SourceAnchor,
 }
@@ -1326,6 +1363,7 @@ fn api_trait(
             .iter()
             .map(|(name, ty)| FieldExport {
                 name: name.clone(),
+                canonical: None,
                 ty: type_ref_from_resolved(ty),
                 surface_type_name: Some(ty.to_string()),
                 visibility: crate::library_manifest::FieldVisibilityExport::Public,
@@ -1373,6 +1411,7 @@ fn api_enum(
             .iter()
             .map(|variant| ApiEnumVariant {
                 name: variant.name.clone(),
+                canonical: canonical_identity_export(variant.canonical.as_ref()),
                 fields: variant.fields.iter().map(type_ref_from_resolved).collect(),
                 value: variant.value.as_ref().map(|value| match value {
                     crate::frontend::symbols::ValueEnumValue::Str(value) => EnumValueExport::Str(value.clone()),
@@ -1585,6 +1624,7 @@ fn methods(
         };
         out.push(ApiMethod {
             name: callable.name.clone(),
+            canonical: canonical_identity_export(checked.canonical.as_ref()),
             alias_of: checked.alias_of.clone(),
             anchor: callable.anchor.clone(),
             docstring_sections: parse_docstring(docstring.as_deref()),
@@ -1608,6 +1648,7 @@ fn methods(
             }
             out.push(ApiMethod {
                 name: checked.name.clone(),
+                canonical: canonical_identity_export(checked.canonical.as_ref()),
                 alias_of: checked.alias_of.clone(),
                 anchor: anchor(module_path, &format!("{owner}.{}", checked.name), alias.span),
                 docstring: None,
@@ -1714,6 +1755,40 @@ fn type_bound(bound: &CheckedTypeBound) -> TypeBoundExport {
         source_name: bound.source_name.clone(),
         module_path: bound.module_path.clone(),
         type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
+        implementation_type_params: bound
+            .implementation_type_params
+            .iter()
+            .map(implementation_type_param)
+            .collect(),
+    }
+}
+
+/// Convert one checked implementation parameter into API manifest metadata.
+fn implementation_type_param(type_param: &ImplementationTypeParamInfo) -> ImplementationTypeParamExport {
+    ImplementationTypeParamExport {
+        name: type_param.name.clone(),
+        bounds: type_param.bounds.iter().map(implementation_trait_bound).collect(),
+    }
+}
+
+/// Convert one checked implementation requirement into API manifest metadata.
+fn implementation_trait_bound(bound: &ImplementationTraitBoundInfo) -> ImplementationTraitBoundExport {
+    ImplementationTraitBoundExport {
+        trait_path: bound.trait_path.clone(),
+        type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
+        associated_types: bound
+            .associated_types
+            .iter()
+            .map(|(name, ty)| ImplementationAssociatedTypeExport {
+                name: name.clone(),
+                ty: type_ref_from_resolved(ty),
+            })
+            .collect(),
+        origin: match bound.origin {
+            ImplementationTraitBoundOriginInfo::Standard => ImplementationTraitBoundOriginExport::Standard,
+            ImplementationTraitBoundOriginInfo::RustCapability => ImplementationTraitBoundOriginExport::RustCapability,
+            ImplementationTraitBoundOriginInfo::SourceCallable => ImplementationTraitBoundOriginExport::SourceCallable,
+        },
     }
 }
 
@@ -1722,6 +1797,7 @@ fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport 
     let default = field.default.as_ref().and_then(param_default_from_checked);
     FieldExport {
         name: field.name.clone(),
+        canonical: canonical_identity_export(field.canonical.as_ref()),
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {
@@ -1741,9 +1817,22 @@ fn properties(properties: &[CheckedProperty]) -> Vec<ApiProperty> {
         .iter()
         .map(|property| ApiProperty {
             name: property.name.clone(),
+            canonical: canonical_identity_export(property.canonical.as_ref()),
             return_type: type_ref_from_resolved(&property.return_type),
         })
         .collect()
+}
+
+/// Convert a package-owned checked identity into its stable manifest representation.
+///
+/// API metadata is also produced for editor-only module checks that have no package owner. Those retain the legacy
+/// absence rather than inventing a package name; compiled-library producers assign package origins before collection.
+fn canonical_identity_export(identity: Option<&CanonicalSymbolId>) -> Option<CanonicalIdentityExport> {
+    let identity = identity?;
+    let SymbolOrigin::Package { library, .. } = &identity.origin else {
+        return None;
+    };
+    CanonicalIdentityExport::from_canonical(library, identity)
 }
 
 /// Return checked fields ordered to match the source declaration.
@@ -1780,7 +1869,7 @@ fn decorators_metadata(
     decorators
         .iter()
         .map(|decorator| {
-            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &checker.import_aliases);
+            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &checker.symbols);
             DecoratorMetadata {
                 path: resolved,
                 source_name: decorator.node.path.segments.join("."),
@@ -1927,7 +2016,7 @@ fn decorator_call_arg_metadata(arg: &CallArg, checker: &TypeChecker) -> Decorato
             value: decorator_expr_value(value, checker),
         },
         CallArg::Named(name, value) => DecoratorCallArgMetadata::Named {
-            name: name.clone(),
+            name: name.node.clone(),
             value: decorator_expr_value(value, checker),
         },
         CallArg::PositionalUnpack(value) => DecoratorCallArgMetadata::PositionalUnpack {
@@ -2704,6 +2793,47 @@ mod tests {
     }
 
     #[test]
+    fn checked_api_preserves_package_owned_method_identity() -> Result<(), String> {
+        let source = r#"
+pub class Buffer:
+    def getvalue(self) -> int:
+        return 1
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_package_identity(Some("incan_stdlib_system".to_string()));
+        checker.set_current_module_path(Some(vec!["io".to_string()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let metadata = collect_checked_api_metadata(&program, &checker, vec!["io".to_string()]);
+        let method = metadata
+            .declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Class(class) if class.name == "Buffer" => {
+                    class.methods.iter().find(|method| method.name == "getvalue")
+                }
+                _ => None,
+            })
+            .ok_or("missing checked Buffer.getvalue metadata")?;
+        let canonical = method.canonical.as_ref().ok_or("missing canonical method identity")?;
+
+        assert_eq!(canonical.declaration_name, "getvalue");
+        assert_eq!(canonical.kind, "method");
+        assert_eq!(
+            canonical.origin,
+            crate::library_manifest::CanonicalIdentityOriginExport::Package {
+                library: "incan_stdlib_system".to_string(),
+                module_path: vec!["io".to_string()],
+            }
+        );
+        assert_eq!(method_export_from_api(method).canonical.as_ref(), Some(canonical));
+        Ok(())
+    }
+
+    #[test]
     fn checked_api_metadata_extracts_function_decorator_and_docstring() -> Result<(), String> {
         let source = r#"
 @rust.allow("dead_code")
@@ -3135,6 +3265,7 @@ pub class Writer:
         let checked_methods = vec![
             CheckedMethod {
                 name: "write".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),
@@ -3157,6 +3288,7 @@ pub class Writer:
             },
             CheckedMethod {
                 name: "write".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),
@@ -3229,6 +3361,7 @@ pub class Parser:
         let checked_methods = vec![
             CheckedMethod {
                 name: "parse".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),
@@ -3244,6 +3377,7 @@ pub class Parser:
             },
             CheckedMethod {
                 name: "parse".to_string(),
+                canonical: None,
                 alias_of: None,
                 type_params: Vec::new(),
                 receiver: Some(crate::frontend::ast::Receiver::Immutable),
@@ -3340,7 +3474,7 @@ pub model Order with Labelled:
     Order contract.
     """
     pub id [description="Stable id"] as "orderId": int
-    pub label: str = DEFAULT_LABEL
+    pub fallback_label: str = DEFAULT_LABEL
 
     def label(self) -> str:
         """
@@ -3373,7 +3507,7 @@ pub model Order with Labelled:
         assert_eq!(model.trait_adoptions[0].name, "Labelled");
         assert_eq!(
             model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
-            vec!["id", "label"]
+            vec!["id", "fallback_label"]
         );
         assert_eq!(model.fields[0].alias.as_deref(), Some("orderId"));
         assert_eq!(model.fields[0].description.as_deref(), Some("Stable id"));

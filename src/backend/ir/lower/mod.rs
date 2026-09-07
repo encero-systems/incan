@@ -43,7 +43,8 @@ use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, Var
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
 use super::{
-    FunctionReexport, FunctionSignature, IrCheckedCFunction, IrCheckedCResource, IrCheckedCType, IrProgram, Mutability,
+    FunctionReexport, FunctionRegistry, FunctionSignature, IrCheckedCFunction, IrCheckedCResource, IrCheckedCType,
+    IrProgram, Mutability,
 };
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
@@ -60,6 +61,7 @@ use incan_core::lang::trait_capabilities;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics::NumericTypeId;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 // Re-export error types
 pub use errors::{LoweringError, LoweringErrors};
@@ -143,6 +145,11 @@ pub struct AstLowering {
     /// permits them to access adopter fields. This stack keeps every annotation and typechecker-owned expression fact
     /// specialized to the concrete `with Trait[...]` arguments during that expansion.
     pub(super) active_trait_type_substitutions: Vec<HashMap<String, IrType>>,
+    /// Callable and owner type parameters active while lowering a body.
+    ///
+    /// The typechecker intentionally represents scoped parameters as either `TypeVar` or `Named` depending on the
+    /// semantic path that produced a fact. This stack lets resolved-type lowering preserve both forms as IR generics.
+    pub(super) active_callable_type_params: Vec<HashSet<String>>,
     /// Concrete nominal types that explicitly adopt the stdlib Iterator protocol.
     pub(super) iterator_adopter_names: HashSet<String>,
     /// Optional typechecker output used to drive lowering (avoid heuristics).
@@ -213,16 +220,209 @@ pub struct AstLowering {
     pub(super) rusttype_interop_edges: HashMap<String, Vec<ast::InteropEdgeDecl>>,
     /// Method rebinding aliases keyed by type alias/newtype name (`alias -> target_method`).
     pub(super) type_method_rebindings: HashMap<String, HashMap<String, String>>,
+    /// Canonical method identities already materialized by an inherent impl in this lowering pass.
+    ///
+    /// Trait ABI slots are lowered separately. Keeping the exact identities here prevents that later pass from
+    /// emitting a second recoverable wrapper for a declaration whose inherent projection already exists.
+    pub(super) emitted_inherent_method_identities: HashSet<CanonicalSymbolId>,
+    /// Exact source-member identities paired with the nominal owner that receives their emitted projection.
+    pub(super) emitted_member_projections: Vec<(String, String, CanonicalSymbolId)>,
+    /// Compiler-generated forwarding methods created for source method-partial bindings.
+    ///
+    /// A method partial is a binding to an existing declaration, not a second declaration. Recording these exact
+    /// synthetic wrappers lets method lowering classify them as compiler helpers without treating a missing member
+    /// identity on any source-written method as permission to emit a raw name.
+    pub(super) generated_method_partial_wrappers: HashSet<(String, usize, usize, String)>,
+    /// Source-local generated method-partial wrappers, indexed without their original owner for inherited methods.
+    pub(super) local_generated_method_partial_wrappers: HashSet<(usize, usize, String)>,
     /// Best-effort source module name for compiler-provided call-site metadata.
     pub(super) current_source_module_name: Option<String>,
+    /// Traits each locally declared nominal type adopts, by type name.
+    ///
+    /// A recoverable projection is a wrapper emitted beside a declaration. A local type gets one for a method it
+    /// writes and for a trait it adopts -- and for nothing else. A trait method the type never adopted has no slot
+    /// here even though the call resolves to a real declaration, so projection needs to know which traits were
+    /// actually adopted rather than inferring it from the identity the call resolved to.
+    pub(super) adopted_traits_by_type: HashMap<String, HashSet<String>>,
+    /// Trait names this program declares.
+    ///
+    /// A value typed as a trait names no implementation, so a method call on one cannot be projected: the trait's own
+    /// declaration is an abstract slot and only adopting types emit a wrapper beside it. A supertrait makes this
+    /// visible even when the dispatched trait differs from the receiver's -- `OrderedCollection[int]` dispatching
+    /// `Collection::first` is still a trait-typed receiver.
+    pub(super) declared_trait_names: HashSet<String>,
     /// Canonical package identity supplied by the build or test orchestration layer.
     ///
     /// Explicit `RegistrySubject.package()` entries need this boundary-owned fact so their runtime value agrees with
-    /// the checked package artifact rather than preserving a source placeholder.
+    /// the checked package artifact rather than preserving a source placeholder. It is also the only fact this stage
+    /// has for "which library is this compilation producing", which method projection needs to tell a package's own
+    /// declarations from another package's -- see [`AstLowering::produced_library_identity`]. It is `None` when no
+    /// project owns the compilation, and every package identity is then genuinely foreign.
     pub(super) registry_package_identity: Option<String>,
 }
 
 impl AstLowering {
+    /// The library this compilation is producing, when a project owns it.
+    ///
+    /// A [`SymbolOrigin::Package`](incan_semantics_core::SymbolOrigin::Package) says which library *declares* a
+    /// symbol; it does not say the symbol is foreign. Comparing against this answers the second question, which is
+    /// the one an emission decision usually needs: a package's own declarations are emitted by this build, another
+    /// package's are not.
+    fn produced_library_identity(&self) -> Option<&str> {
+        self.registry_package_identity.as_deref()
+    }
+
+    /// Return the compiler-minted identity for a linker-visible source function declaration.
+    fn emitted_function_identity(&self, name: &str, span: ast::Span) -> Result<CanonicalSymbolId, LoweringError> {
+        let identity = self.type_info.as_ref().and_then(|info| {
+            let declaration_span = (span.start, span.end);
+            info.declarations
+                .function_bindings_by_span
+                .get(&declaration_span)
+                .and_then(|binding| binding.identity.as_ref())
+                .or_else(|| info.declarations.declaration_identities.get(&declaration_span))
+                .filter(|identity| {
+                    matches!(
+                        identity.kind,
+                        SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+                    ) && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                })
+                .cloned()
+        });
+        identity.ok_or_else(|| LoweringError {
+            message: format!(
+                "linker-visible Incan function `{name}` reached lowering without its compiler-owned canonical identity"
+            ),
+            span: span.into(),
+        })
+    }
+
+    /// Return the compiler-minted identity for a linker-visible source static declaration.
+    fn emitted_static_identity(&self, name: &str, span: ast::Span) -> Result<CanonicalSymbolId, LoweringError> {
+        self.type_info
+            .as_ref()
+            .and_then(|info| {
+                info.declarations
+                    .declaration_identities
+                    .get(&(span.start, span.end))
+                    .filter(|identity| {
+                        matches!(identity.kind, SemanticSourceTargetKind::Static)
+                            && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                    })
+                    .cloned()
+            })
+            .ok_or_else(|| LoweringError {
+                message: format!(
+                    "linker-visible Incan static `{name}` reached lowering without its compiler-owned canonical identity"
+                ),
+                span: span.into(),
+            })
+    }
+
+    /// Return the exact linker-visible source target retained for a module-level symbol alias.
+    fn emitted_symbol_alias_target_identity(
+        &self,
+        name: &str,
+        span: ast::Span,
+    ) -> Result<Option<CanonicalSymbolId>, LoweringError> {
+        let type_info = self.type_info.as_ref().ok_or_else(|| LoweringError {
+            message: format!("source alias `{name}` reached lowering without checked binding metadata"),
+            span: span.into(),
+        })?;
+        let binding = type_info
+            .declarations
+            .hir_bindings_by_span
+            .get(&(span.start, span.end))
+            .and_then(|bindings| bindings.iter().find(|binding| binding.local_name == name));
+        let canonical = binding.and_then(|binding| binding.canonical.as_ref());
+        if let Some(identity) = canonical {
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Function
+                    | SemanticSourceTargetKind::Partial
+                    | SemanticSourceTargetKind::Static
+            ) && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+            {
+                return Ok(Some(identity.clone()));
+            }
+            return Ok(None);
+        }
+
+        let requires_projection = type_info.declarations.function_bindings.contains_key(name)
+            || type_info.declarations.static_bindings.contains_key(name);
+        if requires_projection {
+            return Err(LoweringError {
+                message: format!(
+                    "linker-visible Incan alias `{name}` reached lowering without its target's compiler-owned canonical identity"
+                ),
+                span: span.into(),
+            });
+        }
+        Ok(None)
+    }
+
+    /// Project a resolved source-function reference without decoding or interpreting an emitted name.
+    pub(in crate::backend::ir::lower) fn emitted_function_reference_name(&self, span: ast::Span) -> Option<String> {
+        self.type_info
+            .as_ref()?
+            .resolved_identity(span)
+            .filter(|identity| {
+                matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+                ) && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+            })
+            .map(encode_incan_symbol_identity)
+    }
+
+    /// Project one exact source member-callable reference while leaving builtin, Rust, runtime, and unproven calls
+    /// untouched.
+    pub(in crate::backend::ir::lower) fn emitted_method_reference_name(
+        &self,
+        span: ast::Span,
+        resolved_method_name: &str,
+        rebase_source_stdlib: bool,
+    ) -> Option<String> {
+        self.type_info
+            .as_ref()?
+            .resolved_identity(span)
+            .filter(|identity| {
+                matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property
+                ) && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                    // Method aliases are resolved to their target spelling before this lookup, so they project the
+                    // target declaration. Method partials retain the binding spelling while carrying their target's
+                    // identity; that deliberate mismatch keeps their compiler-generated forwarding helper name.
+                    && identity.declaration_name == resolved_method_name
+            })
+            .filter(|identity| {
+                self.type_info
+                    .as_ref()
+                    .is_none_or(|info| !info.is_compiler_generated_member_identity(identity))
+            })
+            .map(|identity| Self::emitted_source_identity_name(identity, rebase_source_stdlib))
+    }
+
+    /// Project a checked source identity into the physical namespace used by generated Rust.
+    ///
+    /// Source stdlib metadata is owned by `std.*`; source-backed stdlib modules are emitted below `incan_std.*` to
+    /// keep that internal implementation distinct from the external `incan_stdlib` crate. Every lowering path that
+    /// compares or substitutes a checked stdlib identity must use the same one-way projection.
+    pub(in crate::backend::ir::lower) fn emitted_source_identity_name(
+        identity: &CanonicalSymbolId,
+        rebase_source_stdlib: bool,
+    ) -> String {
+        let mut identity = identity.clone();
+        if rebase_source_stdlib
+            && let SymbolOrigin::Module(module_path) = &mut identity.origin
+            && module_path.first().map(String::as_str) == Some(incan_core::lang::stdlib::STDLIB_ROOT)
+        {
+            module_path[0] = incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string();
+        }
+        encode_incan_symbol_identity(&identity)
+    }
+
     /// Enter one callable body with its declared return type available to statement lowering.
     pub(super) fn push_callable_return_type(&mut self, return_type: &IrType) {
         self.callable_return_types.push(return_type.clone());
@@ -258,7 +458,7 @@ impl AstLowering {
             IrType::Float => NumericTypeId::F64,
             _ => return value,
         };
-        if !crate::frontend::typechecker::numeric_type_losslessly_widens_to(*actual, expected) {
+        if !incan_core::numeric_values::numeric_type_losslessly_widens_to(*actual, expected) {
             return value;
         }
         TypedExpr::new(
@@ -435,6 +635,7 @@ impl AstLowering {
             active_trait_default_function_paths: Vec::new(),
             active_trait_default_type_paths: Vec::new(),
             active_trait_type_substitutions: Vec::new(),
+            active_callable_type_params: Vec::new(),
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             provider_plan: None,
@@ -458,7 +659,13 @@ impl AstLowering {
             rusttype_underlying: HashMap::new(),
             rusttype_interop_edges: HashMap::new(),
             type_method_rebindings: HashMap::new(),
+            emitted_inherent_method_identities: HashSet::new(),
+            emitted_member_projections: Vec::new(),
+            generated_method_partial_wrappers: HashSet::new(),
+            local_generated_method_partial_wrappers: HashSet::new(),
             current_source_module_name: None,
+            adopted_traits_by_type: HashMap::new(),
+            declared_trait_names: HashSet::new(),
             registry_package_identity: None,
         }
     }
@@ -723,6 +930,14 @@ impl AstLowering {
             .find_map(|substitutions| substitutions.get(name).cloned())
     }
 
+    /// Return whether `name` is a type parameter of the callable or nominal owner whose body is being lowered.
+    pub(super) fn is_active_callable_type_param(&self, name: &str) -> bool {
+        self.active_callable_type_params
+            .iter()
+            .rev()
+            .any(|params| params.contains(name))
+    }
+
     /// Extract generated validation constraints from a newtype underlying annotation.
     fn newtype_constraints_from_ast(ty: &ast::Type) -> Vec<NewtypePrimitiveConstraint> {
         let ast::Type::ConstrainedPrimitive(_, constraints) = ty else {
@@ -879,7 +1094,12 @@ impl AstLowering {
     fn partial_forward_args(params: &[ast::Spanned<ast::Param>], span: ast::Span) -> Vec<ast::CallArg> {
         params
             .iter()
-            .map(|param| ast::CallArg::Named(param.node.name.clone(), Self::ident_expr(param.node.name.clone(), span)))
+            .map(|param| {
+                ast::CallArg::Named(
+                    ast::Spanned::new(param.node.name.clone(), ast::Span::default()),
+                    Self::ident_expr(param.node.name.clone(), span),
+                )
+            })
             .collect()
     }
 
@@ -887,11 +1107,12 @@ impl AstLowering {
     fn function_partial_wrapper(
         partial: &ast::PartialDecl,
         target: &ast::FunctionDecl,
+        emitted_target_name: Option<String>,
         span: ast::Span,
     ) -> ast::FunctionDecl {
         let presets = Self::partial_arg_map(&partial.args);
         let params = Self::partial_projected_params(&target.params, &presets);
-        let callee = Self::ident_expr(target.name.clone(), span);
+        let callee = Self::ident_expr(emitted_target_name.unwrap_or_else(|| target.name.clone()), span);
         let call = ast::Spanned::new(
             ast::Expr::Call(Box::new(callee), Vec::new(), Self::partial_forward_args(&params, span)),
             span,
@@ -1014,6 +1235,7 @@ impl AstLowering {
         program: &ast::Program,
         partial: &ast::PartialDecl,
         span: ast::Span,
+        function_registry: Option<&FunctionRegistry>,
     ) -> Result<ast::FunctionDecl, LoweringError> {
         let Some(target_name) = partial.target.segments.last() else {
             return Err(LoweringError {
@@ -1024,7 +1246,9 @@ impl AstLowering {
         for decl in &program.declarations {
             match &decl.node {
                 ast::Declaration::Function(func) if &func.name == target_name => {
-                    return Ok(Self::function_partial_wrapper(partial, func, span));
+                    let emitted_target_name =
+                        function_registry.and_then(|registry| registry.emitted_projection(&func.name));
+                    return Ok(Self::function_partial_wrapper(partial, func, emitted_target_name, span));
                 }
                 ast::Declaration::Model(model) if &model.name == target_name => {
                     return Ok(Self::constructor_partial_wrapper(
@@ -1093,7 +1317,7 @@ impl AstLowering {
         let previous = constructor_seed
             .as_ref()
             .and_then(|(name, ty)| self.struct_names.insert(name.clone(), ty.clone()));
-        let lowered = self.lower_declaration(&ast::Declaration::Function(wrapper));
+        let lowered = self.lower_declaration(&ast::Declaration::Function(wrapper), ast::Span::default());
         if let Some((name, _)) = constructor_seed {
             match previous {
                 Some(previous) => {
@@ -1109,38 +1333,74 @@ impl AstLowering {
 
     /// Build synthetic same-type method wrappers for method partial declarations.
     fn method_partial_wrappers(
+        &mut self,
+        owner: &str,
         methods: &[ast::Spanned<ast::MethodDecl>],
         aliases: &[ast::Spanned<ast::MethodAliasDecl>],
         partials: &[ast::Spanned<ast::MethodPartialDecl>],
         span: ast::Span,
-    ) -> Vec<ast::Spanned<ast::MethodDecl>> {
-        let mut out = Vec::new();
+        project_source_targets: bool,
+    ) -> Result<Vec<ast::Spanned<ast::MethodDecl>>, LoweringError> {
+        let mut out: Vec<ast::Spanned<ast::MethodDecl>> = Vec::new();
         let aliases = Self::method_alias_rebindings(aliases);
         for partial in partials {
             let target_name = aliases
                 .get(&partial.node.target)
                 .map(String::as_str)
                 .unwrap_or(partial.node.target.as_str());
-            let Some(target) = methods
-                .iter()
-                .chain(out.iter())
-                .find(|method| method.node.name == target_name)
-            else {
-                continue;
-            };
+            let (target, generated_target) =
+                if let Some(target) = methods.iter().find(|method| method.node.name == target_name) {
+                    (target, false)
+                } else if let Some(target) = out.iter().find(|method| method.node.name == target_name) {
+                    (target, true)
+                } else {
+                    return Err(LoweringError {
+                        message: format!(
+                            "method partial `{owner}.{}` reached lowering without its checked target `{target_name}`",
+                            partial.node.name
+                        ),
+                        span: partial.span.into(),
+                    });
+                };
             let presets = Self::partial_arg_map(&partial.node.args);
             let params = Self::partial_projected_params(&target.node.params, &presets);
             let receiver = ast::Spanned::new(ast::Expr::SelfExpr, span);
+            let emitted_target_name = if generated_target || !project_source_targets {
+                // Chained partials call another compiler helper. Imported trait defaults call their Rust trait ABI
+                // slot because the dependency declaration's source identity is not owned by this lowering unit.
+                target.node.name.clone()
+            } else {
+                let identity = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| {
+                        info.declarations
+                            .member_declaration_identities
+                            .get(&(target.span.start, target.span.end))
+                    })
+                    .filter(|identity| {
+                        identity.kind == SemanticSourceTargetKind::Method
+                            && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                    })
+                    .ok_or_else(|| LoweringError {
+                        message: format!(
+                            "method partial `{owner}.{}` reached lowering without the canonical identity of target `{target_name}`",
+                            partial.node.name
+                        ),
+                        span: target.span.into(),
+                    })?;
+                encode_incan_symbol_identity(identity)
+            };
             let call = ast::Spanned::new(
                 ast::Expr::MethodCall(
                     Box::new(receiver),
-                    target.node.name.clone(),
+                    emitted_target_name,
                     Vec::new(),
                     Self::partial_forward_args(&params, span),
                 ),
                 span,
             );
-            out.push(ast::Spanned::new(
+            let wrapper = ast::Spanned::new(
                 ast::MethodDecl {
                     decorators: Vec::new(),
                     surface_modifiers: target.node.surface_modifiers.clone(),
@@ -1148,26 +1408,45 @@ impl AstLowering {
                     type_params: target.node.type_params.clone(),
                     trait_target: target.node.trait_target.clone(),
                     receiver: target.node.receiver,
+                    // This forwarding declaration is synthetic; only source-written receivers carry provenance.
+                    receiver_binding: None,
                     params,
                     return_type: target.node.return_type.clone(),
                     body: Some(vec![ast::Spanned::new(ast::Statement::Return(Some(call)), span)]),
                 },
                 partial.span,
+            );
+            self.generated_method_partial_wrappers.insert((
+                owner.to_string(),
+                wrapper.span.start,
+                wrapper.span.end,
+                wrapper.node.name.clone(),
             ));
+            if project_source_targets {
+                self.local_generated_method_partial_wrappers.insert((
+                    wrapper.span.start,
+                    wrapper.span.end,
+                    wrapper.node.name.clone(),
+                ));
+            }
+            out.push(wrapper);
         }
-        out
+        Ok(out)
     }
 
     /// Return authored methods plus synthetic method partial wrappers in declaration order.
     fn methods_with_partials(
+        &mut self,
+        owner: &str,
         methods: &[ast::Spanned<ast::MethodDecl>],
         aliases: &[ast::Spanned<ast::MethodAliasDecl>],
         partials: &[ast::Spanned<ast::MethodPartialDecl>],
         span: ast::Span,
-    ) -> Vec<ast::Spanned<ast::MethodDecl>> {
+        project_source_targets: bool,
+    ) -> Result<Vec<ast::Spanned<ast::MethodDecl>>, LoweringError> {
         let mut all = methods.to_vec();
-        all.extend(Self::method_partial_wrappers(methods, aliases, partials, span));
-        all
+        all.extend(self.method_partial_wrappers(owner, methods, aliases, partials, span, project_source_targets)?);
+        Ok(all)
     }
 
     /// Create a checked lowering context from typechecker output.
@@ -1182,7 +1461,10 @@ impl AstLowering {
 
     /// Seed trait declarations from imported source modules so RFC 024 default methods can be expanded into adopter
     /// impls.
-    pub fn seed_dependency_trait_decls(&mut self, dependency_modules: &[(&str, &ast::Program, Option<Vec<String>>)]) {
+    pub fn seed_dependency_trait_decls(
+        &mut self,
+        dependency_modules: &[(&str, &ast::Program, Option<Vec<String>>)],
+    ) -> Result<(), LoweringErrors> {
         for (module_name, module_ast, path_segments) in dependency_modules {
             let mut module_keys = vec![(*module_name).to_string()];
             if let Some(path_segments) = path_segments {
@@ -1196,14 +1478,21 @@ impl AstLowering {
                     continue;
                 };
                 let mut trait_decl = tr.clone();
-                trait_decl.methods =
-                    Self::methods_with_partials(&tr.methods, &tr.method_aliases, &tr.method_partials, decl.span);
+                trait_decl.methods = self.methods_with_partials(
+                    &tr.name,
+                    &tr.methods,
+                    &tr.method_aliases,
+                    &tr.method_partials,
+                    decl.span,
+                    false,
+                )?;
                 for module_key in &module_keys {
                     self.trait_decls
                         .insert(format!("{module_key}.{}", tr.name), trait_decl.clone());
                 }
             }
         }
+        Ok(())
     }
 
     /// Seed alias maps for types that may be referenced from other modules.
@@ -1299,12 +1588,17 @@ impl AstLowering {
         let _ = self.nominal_callable_scopes.pop();
     }
 
+    /// Define a local value and its static-binding classification in the current lowering scope.
     pub(super) fn define_local_binding(&mut self, name: String, ty: IrType, is_static_binding: bool) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.clone(), ty);
         }
-        if is_static_binding && let Some(scope) = self.static_binding_scopes.last_mut() {
-            scope.insert(name);
+        if let Some(scope) = self.static_binding_scopes.last_mut() {
+            if is_static_binding {
+                scope.insert(name);
+            } else {
+                scope.remove(&name);
+            }
         }
     }
 
@@ -1485,10 +1779,18 @@ impl AstLowering {
 
     /// Return whether `name` resolves to a source-level static binding in an active scope.
     pub(super) fn is_static_binding(&self, name: &str) -> bool {
-        self.static_binding_scopes
+        let Some(scope_index) = self
+            .scopes
             .iter()
             .rev()
-            .any(|scope| scope.contains(name))
+            .position(|scope| scope.contains_key(name))
+            .map(|reversed| self.scopes.len() - reversed - 1)
+        else {
+            return false;
+        };
+        self.static_binding_scopes
+            .get(scope_index)
+            .is_some_and(|scope| scope.contains(name))
     }
 
     pub(super) fn is_direct_static_ident(&self, expr: &ast::Spanned<ast::Expr>) -> Option<String> {
@@ -1604,11 +1906,19 @@ impl AstLowering {
     /// Collect callable re-exports from checked package metadata.
     fn collect_function_reexports(&self, program: &ast::Program) -> Vec<FunctionReexport> {
         let mut reexports = Vec::new();
+        let stdlib_import_facade = self.current_source_module_name.as_deref().is_some_and(|module| {
+            let root = module.split('.').next();
+            matches!(root, Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE))
+                && program
+                    .declarations
+                    .iter()
+                    .all(|decl| matches!(decl.node, ast::Declaration::Docstring(_) | ast::Declaration::Import(_)))
+        });
         for decl in &program.declarations {
             let ast::Declaration::Import(import) = &decl.node else {
                 continue;
             };
-            if !matches!(import.visibility, ast::Visibility::Public) {
+            if !matches!(import.visibility, ast::Visibility::Public) && !stdlib_import_facade {
                 continue;
             }
             let ast::ImportKind::From { module, items } = &import.kind else {
@@ -1644,7 +1954,17 @@ impl AstLowering {
         } else {
             module.segments.clone()
         };
-        crate::frontend::module::canonicalize_source_module_segments(&segments)
+        let mut canonical = crate::frontend::module::canonicalize_source_module_segments(&segments);
+        if canonical.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+            && self
+                .current_source_module_name
+                .as_deref()
+                .and_then(|module| module.split('.').next())
+                == Some(stdlib::INCAN_STD_NAMESPACE)
+        {
+            canonical[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+        }
+        canonical
     }
 
     /// Lower a complete AST program to IR.
@@ -1670,13 +1990,41 @@ impl AstLowering {
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn lower_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
         let mut ir_program = IrProgram::new();
+        self.emitted_member_projections.clear();
         ir_program.source_module_name = self.current_source_module_name.clone();
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
         ir_program.function_reexports = self.collect_function_reexports(program);
         self.imported_alias_targets = self.collect_imported_alias_targets(program);
-        self.seed_imported_stdlib_trait_decls(program);
+        self.seed_imported_stdlib_trait_decls(program)?;
+        self.adopted_traits_by_type = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Model(m) => Some((m.name.clone(), &m.traits)),
+                ast::Declaration::Class(c) => Some((c.name.clone(), &c.traits)),
+                _ => None,
+            })
+            .map(|(name, traits)| {
+                let adopted = traits
+                    .iter()
+                    .map(|trait_ref| {
+                        let spelled = trait_ref.node.name.as_str();
+                        spelled.rsplit('.').next().unwrap_or(spelled).to_string()
+                    })
+                    .collect::<HashSet<_>>();
+                (name, adopted)
+            })
+            .collect();
+        self.declared_trait_names = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Trait(trait_decl) => Some(trait_decl.name.clone()),
+                _ => None,
+            })
+            .collect();
         self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
             .declarations
@@ -1731,13 +2079,25 @@ impl AstLowering {
         for decl in &program.declarations {
             if let ast::Declaration::Class(ref c) = decl.node {
                 let mut class_decl = c.clone();
-                class_decl.methods =
-                    Self::methods_with_partials(&c.methods, &c.method_aliases, &c.method_partials, decl.span);
+                class_decl.methods = self.methods_with_partials(
+                    &c.name,
+                    &c.methods,
+                    &c.method_aliases,
+                    &c.method_partials,
+                    decl.span,
+                    true,
+                )?;
                 self.class_decls.insert(c.name.clone(), class_decl);
             }
             if let ast::Declaration::Trait(ref t) = decl.node {
-                let trait_methods =
-                    Self::methods_with_partials(&t.methods, &t.method_aliases, &t.method_partials, decl.span);
+                let trait_methods = self.methods_with_partials(
+                    &t.name,
+                    &t.methods,
+                    &t.method_aliases,
+                    &t.method_partials,
+                    decl.span,
+                    true,
+                )?;
                 let method_names: Vec<String> = trait_methods.iter().map(|m| m.node.name.clone()).collect();
                 self.trait_methods.insert(t.name.clone(), method_names);
                 let mut trait_decl = t.clone();
@@ -1808,10 +2168,25 @@ impl AstLowering {
                     .as_ref()
                     .and_then(|info| info.declarations.newtype_construction.get(&n.name));
                 let plan = if let Some(checked) = checked {
+                    let checked_constructor_source_name = checked.checked_constructor.clone();
+                    let checked_constructor = checked
+                        .checked_constructor_identity
+                        .as_ref()
+                        .filter(|identity| {
+                            identity.kind == incan_semantics_core::SemanticSourceTargetKind::Method
+                                && matches!(
+                                    identity.origin,
+                                    incan_semantics_core::SymbolOrigin::Module(_)
+                                        | incan_semantics_core::SymbolOrigin::Package { .. }
+                                )
+                        })
+                        .map(incan_semantics_core::encode_incan_symbol_identity)
+                        .or_else(|| checked_constructor_source_name.clone());
                     super::IrNewtypeConstructionPlan {
                         type_params: self.lower_type_params(&n.type_params),
                         underlying: self.lower_resolved_type(&checked.underlying),
-                        checked_constructor: checked.checked_constructor.clone(),
+                        checked_constructor,
+                        checked_constructor_source_name,
                         constraints: checked.constraints.clone(),
                         implicit_coercion_enabled: checked.implicit_coercion_enabled,
                         supports_string_conversion: checked.supports_string_conversion,
@@ -1827,10 +2202,12 @@ impl AstLowering {
                             | IrType::Numeric(_)
                             | IrType::Generic(_)
                     );
+                    let checked_constructor = Self::select_newtype_checked_ctor(n);
                     super::IrNewtypeConstructionPlan {
                         type_params: self.lower_type_params(&n.type_params),
                         underlying,
-                        checked_constructor: Self::select_newtype_checked_ctor(n),
+                        checked_constructor: checked_constructor.clone(),
+                        checked_constructor_source_name: checked_constructor,
                         constraints: Self::newtype_constraints_from_ast(&n.underlying.node),
                         implicit_coercion_enabled: Self::newtype_allows_implicit_coercion(&n.decorators),
                         supports_string_conversion,
@@ -1941,31 +2318,57 @@ impl AstLowering {
                         Some(original_params),
                     );
                     let return_type = self.lower_resolved_type(&callable_ret);
-                    ir_program.function_registry.register(
+                    let identity = match self.emitted_function_identity(&f.name, decl.span) {
+                        Ok(identity) => identity,
+                        Err(err) => {
+                            errors.push(err);
+                            continue;
+                        }
+                    };
+                    ir_program.function_registry.register_canonical_projection(
                         emitted_function_name.clone(),
+                        f.name.clone(),
+                        identity,
                         params.clone(),
                         return_type.clone(),
                     );
                     self.update_root_function_binding(&emitted_function_name, &params, &return_type);
 
-                    let original_name = Self::decorator_original_function_name(&f.name);
+                    let original_registry_key = Self::decorator_original_function_registry_key(&emitted_function_name);
+                    let original_name = Self::decorator_original_function_name(&emitted_function_name);
                     let original_return_type = function_binding
                         .as_ref()
                         .map(|binding| self.lower_resolved_type(&binding.return_type))
                         .unwrap_or_else(|| {
                             self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names))
                         });
-                    ir_program
-                        .function_registry
-                        .register(original_name, source_params, original_return_type);
+                    // Decorator originals are compiler-generated helpers. Only the source-facing wrapper carries the
+                    // declaration's canonical projection; assigning that identity here would emit two equal Rust
+                    // identifiers for one declaration.
+                    ir_program.function_registry.register_generated(
+                        original_registry_key,
+                        original_name,
+                        f.name.clone(),
+                        source_params,
+                        original_return_type,
+                    );
                     continue;
                 }
                 let return_type = function_binding
                     .as_ref()
                     .map(|binding| self.lower_resolved_type(&binding.return_type))
                     .unwrap_or_else(|| self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)));
-                ir_program.function_registry.register(
+                let identity = match self.emitted_function_identity(&f.name, decl.span) {
+                    Ok(identity) => identity,
+                    Err(err) => {
+                        errors.push(err);
+                        continue;
+                    }
+                };
+                ir_program.function_registry.register_canonical_projection(
                     emitted_function_name.clone(),
+                    f.name.clone(),
+                    identity,
                     source_params.clone(),
                     return_type.clone(),
                 );
@@ -1984,7 +2387,7 @@ impl AstLowering {
                     .function_registry
                     .register(alias.name.clone(), signature.params, signature.return_type);
             } else if let ast::Declaration::Partial(ref partial) = decl.node {
-                match self.partial_wrapper_function(program, partial, decl.span) {
+                match self.partial_wrapper_function(program, partial, decl.span, None) {
                     Ok(wrapper) => {
                         let type_param_names: std::collections::HashSet<&str> =
                             wrapper.type_params.iter().map(|tp| tp.name.as_str()).collect();
@@ -2020,8 +2423,17 @@ impl AstLowering {
                         };
                         let return_type =
                             self.lower_type_with_type_params(&wrapper.return_type.node, Some(&type_param_names));
-                        ir_program.function_registry.register(
+                        let identity = match self.emitted_function_identity(&partial.name, decl.span) {
+                            Ok(identity) => identity,
+                            Err(err) => {
+                                errors.push(err);
+                                continue;
+                            }
+                        };
+                        ir_program.function_registry.register_canonical_projection(
                             wrapper.name.clone(),
+                            partial.name.clone(),
+                            identity,
                             params.clone(),
                             return_type.clone(),
                         );
@@ -2038,8 +2450,14 @@ impl AstLowering {
             // Models always get impl blocks (for serde methods even if no user methods)
             match &decl.node {
                 ast::Declaration::Model(m) => {
-                    let model_methods =
-                        Self::methods_with_partials(&m.methods, &m.method_aliases, &m.method_partials, decl.span);
+                    let model_methods = self.methods_with_partials(
+                        &m.name,
+                        &m.methods,
+                        &m.method_aliases,
+                        &m.method_partials,
+                        decl.span,
+                        true,
+                    )?;
                     // Generate struct
                     match self.lower_model(m) {
                         Ok(struct_ir) => {
@@ -2208,10 +2626,16 @@ impl AstLowering {
                     }
                 }
                 ast::Declaration::Newtype(n) => {
-                    let newtype_methods =
-                        Self::methods_with_partials(&n.methods, &n.method_aliases, &n.method_partials, decl.span);
+                    let newtype_methods = self.methods_with_partials(
+                        &n.name,
+                        &n.methods,
+                        &n.method_aliases,
+                        &n.method_partials,
+                        decl.span,
+                        true,
+                    )?;
                     if n.is_rusttype {
-                        match self.lower_declaration(&ast::Declaration::Newtype(n.clone())) {
+                        match self.lower_declaration(&ast::Declaration::Newtype(n.clone()), decl.span) {
                             Ok(ir_decl) => {
                                 ir_program.declarations.push(ir_decl);
                             }
@@ -2379,6 +2803,20 @@ impl AstLowering {
                         }
                         for decl in &decls {
                             if let IrDeclKind::Function(func) = &decl.kind {
+                                // A decorator original is lowered under a registry key that is deliberately not valid
+                                // syntax, and only the registry maps it to the private helper name. The undecorated
+                                // path registers that mapping; this one did not, so a decorated overload's key reached
+                                // emission verbatim and building an identifier from it panicked the compiler.
+                                if let Some(physical_name) = Self::decorator_original_physical_name_for_key(&func.name)
+                                {
+                                    ir_program.function_registry.register_generated(
+                                        func.name.clone(),
+                                        physical_name,
+                                        f.name.clone(),
+                                        func.params.clone(),
+                                        func.return_type.clone(),
+                                    );
+                                }
                                 ir_program.function_registry.register(
                                     func.name.clone(),
                                     func.params.clone(),
@@ -2396,7 +2834,12 @@ impl AstLowering {
                     Err(e) => errors.push(e),
                 },
                 ast::Declaration::Partial(partial) => {
-                    match self.partial_wrapper_function(program, partial, decl.span) {
+                    match self.partial_wrapper_function(
+                        program,
+                        partial,
+                        decl.span,
+                        Some(&ir_program.function_registry),
+                    ) {
                         Ok(wrapper) => match self.lower_partial_wrapper_declaration(partial, wrapper) {
                             Ok(ir_decl) => {
                                 if let IrDeclKind::Function(ref func) = ir_decl.kind {
@@ -2417,7 +2860,7 @@ impl AstLowering {
                 ast::Declaration::Alias(alias) if self.alias_projects_overload_set(alias) => {}
                 _ => {
                     // Regular declaration lowering
-                    match self.lower_declaration(&decl.node) {
+                    match self.lower_declaration(&decl.node, decl.span) {
                         Ok(ir_decl) => {
                             if let IrDeclKind::Function(ref func) = ir_decl.kind
                                 && func.name == conventions::ENTRYPOINT_NAME
@@ -2479,6 +2922,7 @@ impl AstLowering {
             .type_info
             .as_ref()
             .is_some_and(|info| info.c_abi.uses_checked_c_span_buffers);
+        ir_program.member_projections = self.emitted_member_projections.clone();
 
         if errors.is_empty() {
             Ok(ir_program)
@@ -2495,13 +2939,13 @@ impl AstLowering {
             let ast::Declaration::Import(import) = &decl.node else {
                 continue;
             };
-            let IrDeclKind::Import {
+            let Ok(IrDeclKind::Import {
                 origin,
                 qualifier,
                 path,
                 items,
                 ..
-            } = self.lower_import(import)
+            }) = self.lower_import(import, decl.span)
             else {
                 continue;
             };
@@ -2558,7 +3002,9 @@ impl AstLowering {
             .to_string();
         let Some(binding) = self.decorated_function_binding_for_decl(&f.name, span) else {
             if emitted_name == f.name {
-                return Ok(vec![self.lower_declaration(&ast::Declaration::Function(f.clone()))?]);
+                return Ok(vec![
+                    self.lower_declaration(&ast::Declaration::Function(f.clone()), span)?,
+                ]);
             }
             let lowered = self.lower_function_named(f, emitted_name, self.map_callable_visibility(f.visibility))?;
             return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered))]);
@@ -2577,8 +3023,8 @@ impl AstLowering {
             _ => Vec::new(),
         };
 
-        let original_name = Self::decorator_original_function_name(&emitted_name);
-        let original = self.lower_function_named(f, original_name.clone(), super::decl::Visibility::Private)?;
+        let original_registry_key = Self::decorator_original_function_registry_key(&emitted_name);
+        let original = self.lower_function_named(f, original_registry_key.clone(), super::decl::Visibility::Private)?;
         let decorated_ty = self.function_type_from_callable_surface(
             &callable_params,
             &callable_ret,
@@ -2590,7 +3036,7 @@ impl AstLowering {
             let wrapper = self.generic_decorated_function_wrapper(
                 f,
                 &emitted_name,
-                &original_name,
+                &original_registry_key,
                 &callable_params,
                 &original_params,
                 callable_ret.as_ref(),
@@ -2605,9 +3051,18 @@ impl AstLowering {
             ]);
         }
 
-        let decorator_expr = self.decorator_application_expr(&emitted_name, &f.decorators)?;
-        let mut value = self.lower_expr_spanned(&decorator_expr)?;
-        value.ty = decorated_ty.clone();
+        let original_ty = IrType::Function {
+            params: original.params.iter().map(|param| param.ty.clone()).collect(),
+            ret: Box::new(original.return_type.clone()),
+        };
+        let original_ref = TypedExpr::new(
+            IrExprKind::FunctionItem {
+                name: original_registry_key,
+                type_args: Vec::new(),
+            },
+            original_ty,
+        );
+        let value = self.lower_decorator_application_value(&f.decorators, original_ref, decorated_ty.clone())?;
         let static_name = Self::decorator_static_binding_name(&emitted_name);
         let wrapper = self.decorated_function_wrapper(
             f,
@@ -2623,6 +3078,7 @@ impl AstLowering {
             IrDecl::new(IrDeclKind::Static {
                 visibility: super::decl::Visibility::Private,
                 name: static_name,
+                provenance: super::decl::IrStaticProvenance::CompilerGenerated,
                 ty: decorated_ty,
                 value,
             }),
@@ -2733,6 +3189,7 @@ impl AstLowering {
             let mut lowered_registry = self.lower_expr_spanned(registry)?;
             lowered_registry.kind = IrExprKind::StaticRead {
                 name: description.registry_name.clone(),
+                reference_kind: super::expr::IrStaticReferenceKind::Source,
             };
             let key = self.lower_expr_spanned(key)?;
             let descriptor = self.lower_expr_spanned(descriptor)?;
@@ -2918,6 +3375,7 @@ impl AstLowering {
             visibility: Self::map_visibility(f.visibility),
             type_params,
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })
@@ -2929,7 +3387,44 @@ impl AstLowering {
         decorator: &ast::Spanned<ast::Decorator>,
     ) -> Result<TypedExpr, LoweringError> {
         let expr = Self::decorator_callable_expr(decorator)?;
-        self.lower_expr_spanned(&expr)
+        let mut callable = self.lower_expr_spanned(&expr)?;
+
+        // A decorator factory's synthetic callee deliberately has a default span so its callable type does not
+        // collide with the factory result stored at the full decorator span. The frontend nevertheless records the
+        // exact resolved declaration identity at that full span. Carry that compiler-owned projection into the
+        // synthetic call target explicitly; looking the raw decorator spelling up here would make shadowing and
+        // overloads ambiguous.
+        if decorator.node.is_call
+            && let Some(projection) = self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.resolved_identity(decorator.span))
+                .filter(|identity| {
+                    matches!(
+                        identity.kind,
+                        SemanticSourceTargetKind::Function
+                            | SemanticSourceTargetKind::Partial
+                            | SemanticSourceTargetKind::Method
+                            | SemanticSourceTargetKind::Property
+                    ) && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+                })
+                .map(encode_incan_symbol_identity)
+        {
+            match &mut callable.kind {
+                IrExprKind::Call { func, .. } => match &mut func.kind {
+                    IrExprKind::Var { name, .. } | IrExprKind::FunctionItem { name, .. } => *name = projection,
+                    IrExprKind::AssociatedFunction { function_name, .. }
+                    | IrExprKind::MethodCall {
+                        method: function_name, ..
+                    } => *function_name = projection,
+                    _ => {}
+                },
+                IrExprKind::MethodCall { method, .. } => *method = projection,
+                _ => {}
+            }
+        }
+
+        Ok(callable)
     }
 
     /// Lower the bottom-up decorator application chain starting from an already-specialized function value.
@@ -2983,6 +3478,7 @@ impl AstLowering {
         let static_func = TypedExpr::new(
             IrExprKind::StaticRead {
                 name: static_name.to_string(),
+                reference_kind: super::expr::IrStaticReferenceKind::CompilerGenerated,
             },
             IrType::Function {
                 params: params.iter().map(|param| param.ty.clone()).collect(),
@@ -3015,6 +3511,7 @@ impl AstLowering {
             visibility: Self::map_visibility(f.visibility),
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })
@@ -3129,7 +3626,7 @@ impl AstLowering {
     /// Lowering needs the source trait body to decide which methods belong in generated `impl Trait for Type` blocks.
     /// The typechecker already validates the import; this pass follows the same stdlib namespace graph so imported
     /// traits such as `std.io.BinaryReader` lower without hardcoded method lists.
-    fn seed_imported_stdlib_trait_decls(&mut self, program: &ast::Program) {
+    fn seed_imported_stdlib_trait_decls(&mut self, program: &ast::Program) -> Result<(), LoweringError> {
         for decl in &program.declarations {
             let ast::Declaration::Import(import) = &decl.node else {
                 continue;
@@ -3147,12 +3644,14 @@ impl AstLowering {
                 };
                 let local_name = item.alias.as_ref().unwrap_or(&item.name).clone();
                 trait_decl.name = local_name.clone();
-                trait_decl.methods = Self::methods_with_partials(
+                trait_decl.methods = self.methods_with_partials(
+                    &local_name,
                     &trait_decl.methods,
                     &trait_decl.method_aliases,
                     &trait_decl.method_partials,
                     decl.span,
-                );
+                    false,
+                )?;
                 let method_names = trait_decl
                     .methods
                     .iter()
@@ -3197,6 +3696,7 @@ impl AstLowering {
                 self.trait_decls.entry(local_name).or_insert(trait_decl);
             }
         }
+        Ok(())
     }
 
     /// Return helper functions that must stay qualified when imported stdlib trait defaults are expanded elsewhere.
@@ -3408,6 +3908,59 @@ mod tests {
     }
 
     #[test]
+    fn stdlib_import_facade_reexports_use_the_emitted_namespace() {
+        let source = r#"
+"""Import-only stdlib facade."""
+from std.datetime.civil.naive import utc
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let program = must_ok(parser::parse(&tokens));
+        let mut lowering = AstLowering::new();
+        lowering.set_current_source_module_name(Some("__incan_std.datetime.civil".to_string()));
+
+        let reexports = lowering.collect_function_reexports(&program);
+
+        assert_eq!(reexports.len(), 1);
+        assert_eq!(reexports[0].name, "utc");
+        assert_eq!(
+            reexports[0].target_path,
+            ["__incan_std", "datetime", "civil", "naive", "utc"]
+        );
+    }
+
+    #[test]
+    fn synthetic_method_partial_wrapper_has_no_source_receiver_binding() -> Result<(), String> {
+        let source = r#"
+model Cell:
+  alive: bool
+  set_alive = partial set_state(state=true)
+
+  def set_state(mut self, state: bool) -> None:
+    self.alive = state
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let declaration = program.declarations.first().ok_or("model declaration missing")?;
+        let ast::Declaration::Model(model) = &declaration.node else {
+            return Err("expected model declaration".to_string());
+        };
+        let wrappers = AstLowering::new()
+            .method_partial_wrappers(
+                &model.name,
+                &model.methods,
+                &model.method_aliases,
+                &model.method_partials,
+                declaration.span,
+                false,
+            )
+            .map_err(|error| error.to_string())?;
+        let wrapper = wrappers.first().ok_or("synthetic method wrapper missing")?;
+        assert_eq!(wrapper.node.receiver, Some(ast::Receiver::Mutable));
+        assert_eq!(wrapper.node.receiver_binding, None);
+        Ok(())
+    }
+
+    #[test]
     fn class_lowering_without_type_info_fails_closed() -> Result<(), String> {
         let source = r#"
 class Account:
@@ -3427,6 +3980,154 @@ class Account:
         if error.message != expected {
             return Err(format!("expected `{expected}`, got `{}`", error.message));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn source_function_without_canonical_identity_fails_closed() -> Result<(), String> {
+        let source = "def calculate(value: int) -> int:\n  return value + 1\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let declaration = program.declarations.first().ok_or("function declaration missing")?;
+        let ast::Declaration::Function(function) = &declaration.node else {
+            return Err("expected function declaration".to_string());
+        };
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let mut type_info = checker.type_info().clone();
+        if let Some(binding) = type_info
+            .declarations
+            .function_bindings_by_span
+            .get_mut(&(declaration.span.start, declaration.span.end))
+        {
+            binding.identity = None;
+        }
+        type_info
+            .declarations
+            .declaration_identities
+            .remove(&(declaration.span.start, declaration.span.end));
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        let errors = match lowering.lower_program(&program) {
+            Ok(_) => return Err("function lowering unexpectedly guessed a raw emitted name".to_string()),
+            Err(errors) => errors,
+        };
+        let expected = format!(
+            "linker-visible Incan function `{}` reached lowering without its compiler-owned canonical identity",
+            function.name
+        );
+        assert!(errors.iter().any(|error| error.message == expected), "{errors}");
+        Ok(())
+    }
+
+    #[test]
+    fn source_static_without_canonical_identity_fails_closed() -> Result<(), String> {
+        let source = "static counter: int = 0\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let declaration = program.declarations.first().ok_or("static declaration missing")?;
+        let ast::Declaration::Static(static_decl) = &declaration.node else {
+            return Err("expected static declaration".to_string());
+        };
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let mut type_info = checker.type_info().clone();
+        type_info
+            .declarations
+            .declaration_identities
+            .remove(&(declaration.span.start, declaration.span.end));
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        let errors = match lowering.lower_program(&program) {
+            Ok(_) => return Err("static lowering unexpectedly guessed a raw emitted name".to_string()),
+            Err(errors) => errors,
+        };
+        let expected = format!(
+            "linker-visible Incan static `{}` reached lowering without its compiler-owned canonical identity",
+            static_decl.name
+        );
+        assert!(errors.iter().any(|error| error.message == expected), "{errors}");
+        Ok(())
+    }
+
+    #[test]
+    fn decorated_function_original_name_collision_uses_distinct_registry_keys() -> Result<(), String> {
+        let source = r#"
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+def __incan_original_target() -> int:
+  return 1
+
+@preserve()
+def target() -> int:
+  return 2
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        let ir = lowering
+            .lower_program(&program)
+            .map_err(|errors| format!("lowering failed: {errors}"))?;
+        let generated_key = AstLowering::decorator_original_function_registry_key("target");
+        assert_eq!(
+            ir.function_registry.generated_physical_name(&generated_key),
+            Some("__incan_original_target")
+        );
+        assert!(ir.function_registry.canonical_identity(&generated_key).is_none());
+        assert!(
+            ir.function_registry
+                .canonical_identity("__incan_original_target")
+                .is_some()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_method_without_canonical_identity_fails_closed() -> Result<(), String> {
+        let source = r#"
+model Counter:
+  value: int
+
+  def next(self) -> int:
+    return self.value + 1
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let declaration = program.declarations.first().ok_or("model declaration missing")?;
+        let ast::Declaration::Model(model) = &declaration.node else {
+            return Err("expected model declaration".to_string());
+        };
+        let method = model.methods.first().ok_or("method declaration missing")?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let mut type_info = checker.type_info().clone();
+        type_info
+            .declarations
+            .member_declaration_identities
+            .remove(&(method.span.start, method.span.end));
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        let errors = match lowering.lower_program(&program) {
+            Ok(_) => return Err("method lowering unexpectedly guessed a raw emitted name".to_string()),
+            Err(errors) => errors,
+        };
+        let expected = format!(
+            "linker-visible Incan member `{}.{}` reached lowering without its compiler-owned canonical identity",
+            model.name, method.node.name
+        );
+        assert!(errors.iter().any(|error| error.message == expected), "{errors}");
         Ok(())
     }
 

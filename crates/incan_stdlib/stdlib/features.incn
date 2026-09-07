@@ -1501,7 +1501,7 @@ static toolchain_installer_manifest: RegistryEntry[FeatureId, FeatureDescriptor]
         rfc="RFC 015",
         stability=FeatureStability.Stable,
         activation="Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned toolchain manifest.",
-        summary="The toolchain install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` from the same release archives across direct and package-manager channels. Direct and pipx installation can provision stable Rust and `wasm32-wasip1`; npm and Homebrew install prebuilt command binaries and leave Rust management to the user.",
+        summary="The toolchain install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` from the same release archives across direct and package-manager channels. Direct and pipx installation can provision pinned Rust 1.98.0 and `wasm32-wasip1`; npm and Homebrew install prebuilt command binaries and leave Rust management to the user.",
         canonical_forms=toolchain_installer_manifest_forms,
         prefer_over="Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth.",
         references=toolchain_installer_manifest_references,

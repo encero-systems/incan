@@ -348,6 +348,11 @@ pub fn invalid_float_literal(value: &str, span: Span) -> CompileError {
     CompileError::new(format!("Invalid float literal: {}", value), span)
 }
 
+/// Report a decimal source literal that cannot satisfy the lexical numeric contract.
+pub fn invalid_decimal_literal(value: &str, span: Span) -> CompileError {
+    CompileError::new(format!("Invalid decimal literal: {}", value), span)
+}
+
 pub fn invalid_integer_literal(value: &str, span: Span) -> CompileError {
     CompileError::new(format!("Invalid integer literal: {}", value), span)
 }

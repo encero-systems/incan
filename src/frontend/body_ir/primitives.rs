@@ -199,6 +199,125 @@ pub(super) fn lower_literal(lit: &ast::Literal) -> bir::Constant {
         ast::Literal::Bytes(bytes) => bir::Constant::Bytes(bytes.clone()),
     }
 }
+
+/// Lower a numeric literal with the canonical type selected by the typechecker.
+///
+/// Ordinary `int` and `float` keep their compact compatibility variants. Explicit sized numerics and decimals use
+/// [`bir::Constant::TypedNumeric`] so wide integer magnitude, float width/rounding, and decimal scale cannot be lost
+/// before a replacement backend sees them.
+pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::Constant {
+    use incan_core::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
+
+    let typed = match (lit, ty) {
+        (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind))) => {
+            match info_for(*kind).family {
+                NumericFamily::SignedInteger => i128::try_from(value.magnitude)
+                    .ok()
+                    .map(|value| bir::TypedNumericConstant::Signed { kind: *kind, value }),
+                NumericFamily::UnsignedInteger => Some(bir::TypedNumericConstant::Unsigned {
+                    kind: *kind,
+                    value: value.magnitude,
+                }),
+                NumericFamily::BinaryFloat => match kind {
+                    NumericTypeId::F32 => {
+                        let value = value.magnitude as f32;
+                        value
+                            .is_finite()
+                            .then_some(bir::TypedNumericConstant::F32 { bits: value.to_bits() })
+                    }
+                    NumericTypeId::F64 => {
+                        let value = value.magnitude as f64;
+                        value
+                            .is_finite()
+                            .then_some(bir::TypedNumericConstant::F64 { bits: value.to_bits() })
+                    }
+                    _ => None,
+                },
+                NumericFamily::Bool => None,
+            }
+        }
+        (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32))) => {
+            let normalized = value.repr.replace('_', "");
+            normalized
+                .parse::<f32>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .map(|value| bir::TypedNumericConstant::F32 { bits: value.to_bits() })
+        }
+        (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F64))) => {
+            value.value.is_finite().then_some(bir::TypedNumericConstant::F64 {
+                bits: value.value.to_bits(),
+            })
+        }
+        (ast::Literal::Decimal(value), IncanType::Decimal { precision, scale }) => {
+            decimal_constant(&value.body, *precision, *scale)
+        }
+        _ => None,
+    };
+    typed
+        .map(bir::Constant::TypedNumeric)
+        .unwrap_or_else(|| lower_literal(lit))
+}
+
+/// Normalize one typechecked decimal literal into the same coefficient/literal-scale pair as `Decimal128`.
+fn decimal_constant(body: &str, precision: u8, scale: u8) -> Option<bir::TypedNumericConstant> {
+    let parsed = incan_core::numeric_values::parse_decimal_literal_body(body)?;
+    Some(bir::TypedNumericConstant::Decimal {
+        precision,
+        scale,
+        coefficient: parsed.coefficient,
+        literal_scale: parsed.literal_scale,
+    })
+}
+
+/// Fold a checked negative exact-numeric literal into one typed constant without applying a general runtime
+/// negation rule. Ordinary float/int negation remains an operation and keeps its existing replacement boundary.
+pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType) -> Option<bir::Constant> {
+    use incan_core::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
+
+    let value = match (lit, ty) {
+        (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind)))
+            if info_for(*kind).family == NumericFamily::SignedInteger =>
+        {
+            let signed = if value.magnitude == (1_u128 << 127) {
+                i128::MIN
+            } else {
+                -i128::try_from(value.magnitude).ok()?
+            };
+            bir::TypedNumericConstant::Signed {
+                kind: *kind,
+                value: signed,
+            }
+        }
+        (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32))) => {
+            let value = -(value.magnitude as f32);
+            value
+                .is_finite()
+                .then_some(bir::TypedNumericConstant::F32 { bits: value.to_bits() })?
+        }
+        (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F64))) => {
+            let value = -(value.magnitude as f64);
+            value
+                .is_finite()
+                .then_some(bir::TypedNumericConstant::F64 { bits: value.to_bits() })?
+        }
+        (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32))) => {
+            let normalized = value.repr.replace('_', "");
+            let value = -normalized.parse::<f32>().ok()?;
+            value
+                .is_finite()
+                .then_some(bir::TypedNumericConstant::F32 { bits: value.to_bits() })?
+        }
+        (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F64))) => {
+            let value = -value.value;
+            value
+                .is_finite()
+                .then_some(bir::TypedNumericConstant::F64 { bits: value.to_bits() })?
+        }
+        _ => return None,
+    };
+    Some(bir::Constant::TypedNumeric(value))
+}
 /// Canonical base name of the checked range-value type, as the typechecker spells it (`Range[int]`).
 ///
 /// `TypeChecker::check_range_expr` (`src/frontend/typechecker/check_expr/control_flow.rs`) produces this spelling,

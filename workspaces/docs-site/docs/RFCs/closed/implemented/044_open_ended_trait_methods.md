@@ -8,7 +8,7 @@
     - RFC 026 (Superseded — archival; Rust trait contracts on wrappers: RFC 043)
     - RFC 003 (traits and derives)
 - **Issue:** https://github.com/encero-systems/incan/issues/201
-- **RFC PR:** —
+- **RFC PR:** [#531](https://github.com/encero-systems/incan/pull/531)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

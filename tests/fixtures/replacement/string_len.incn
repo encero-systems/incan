@@ -1,0 +1,17 @@
+"""Prove Unicode-scalar string length across global and method spellings."""
+
+
+def string_len() -> bool:
+    """Check empty, ASCII, precomposed, astral, and decomposed strings while emitting one comparison line."""
+    assert len("") == 0
+    assert len("abc") == 3
+    assert len("é") == 1
+    assert len("😀") == 1
+    assert len("é") == 2
+    assert "".len() == 0
+    assert "abc".len() == 3
+    assert "é".len() == 1
+    assert "😀".len() == 1
+    assert "é".len() == 2
+    println("string len")
+    return true
