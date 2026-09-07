@@ -1,6 +1,6 @@
 //! Receipt-bound Oven interop execution inputs.
 //!
-//! Portable `[oven.interop]` lock data describes what a package requires. This module records the separately
+//! Portable `[interop.c]` lock data describes what a package requires. This module records the separately
 //! selected compiler and SDK facts that authorize a native bake. It intentionally contains no ambient discovery,
 //! Cargo invocation, or direct filesystem-path hand-off.
 

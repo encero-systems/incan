@@ -1,8 +1,12 @@
-//! Oven-owned interop requirements and their portable lock projection.
+//! Authored interop requirements and their portable lock projection.
 //!
-//! An Oven interop declaration names package-owned inputs and compatibility requirements for one target. It does not
-//! claim that a compiler or SDK has already been selected, perform ambient discovery, compile a shim, or decide
-//! application semantics. Oven resolves those requirements and records its selections in a separate build receipt.
+//! An interop declaration names package-owned inputs and compatibility requirements for one target. It does not claim
+//! that a compiler or SDK has already been selected, perform ambient discovery, compile a shim, or decide application
+//! semantics. Oven resolves those requirements and records its selections in a separate build receipt.
+//!
+//! RFC 117 puts these declarations at the Loaf level under `[interop]`, with each binding kind naming itself: C
+//! declarations are `[interop.c]`. The envelope is deliberately binding-kind neutral, so a future kind adds a sibling
+//! table rather than widening this one into a catch-all native namespace.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -14,43 +18,46 @@ use sha2::{Digest, Sha256};
 
 use crate::manifest::ProjectManifest;
 
-/// Current compatibility format for the `[oven.interop]` manifest section.
-pub const OVEN_INTEROP_SCHEMA_VERSION: u32 = 1;
+/// Current compatibility format for the `[interop.c]` manifest section.
+pub const INTEROP_C_SCHEMA_VERSION: u32 = 1;
 
 /// Current compatibility format for the locked Oven interop deployment-plan projection.
 pub(crate) const OVEN_INTEROP_DEPLOYMENT_PLAN_SCHEMA_VERSION: u32 = 3;
 
-/// Oven-owned manifest settings.
+/// The `[interop]` manifest root, holding one table per declared binding kind.
+///
+/// Only C is declared today. A binding kind gets its own field rather than sharing one, because each kind's RFC owns
+/// its own source vocabulary and checking rules; merging them would make one kind's schema silently govern another.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenSection {
-    /// Target-specific checked-interop requirements.
+pub struct InteropSection {
+    /// `[interop.c]` — target-specific checked C interop requirements.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interop: Option<OvenInteropSection>,
+    pub c: Option<InteropCSection>,
 }
 
-/// Target-specific package inputs and compatibility requirements for checked interop.
+/// Target-specific package inputs and compatibility requirements for checked C interop.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropSection {
-    /// Version of the Oven interop requirement schema.
+pub struct InteropCSection {
+    /// Version of the C interop requirement schema.
     pub schema: u32,
     /// Independently declared requirements for each target triple.
     #[serde(default)]
-    pub targets: Vec<OvenInteropTarget>,
+    pub targets: Vec<InteropCTarget>,
 }
 
-impl OvenInteropSection {
+impl InteropCSection {
     /// Validate configuration that is independent from the package filesystem.
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema != OVEN_INTEROP_SCHEMA_VERSION {
+        if self.schema != INTEROP_C_SCHEMA_VERSION {
             return Err(format!(
-                "[oven.interop].schema must be {OVEN_INTEROP_SCHEMA_VERSION}, found {}",
+                "[interop.c].schema must be {INTEROP_C_SCHEMA_VERSION}, found {}",
                 self.schema
             ));
         }
         if self.targets.is_empty() {
-            return Err("[oven.interop] requires at least one [[oven.interop.targets]] entry".to_string());
+            return Err("[interop.c] requires at least one [[interop.c.targets]] entry".to_string());
         }
 
         let mut target_names = BTreeSet::new();
@@ -190,7 +197,7 @@ impl ToolchainRequirement {
 /// Package inputs and compatibility requirements declared for one target triple.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropTarget {
+pub struct InteropCTarget {
     /// Compilation and deployment target triple requested by the package.
     pub target: String,
     /// Optional compatible Clang-family capability; Oven records the selected executable separately.
@@ -276,7 +283,7 @@ pub(crate) fn ios_target_kind(target: &str) -> Option<IosTargetKind> {
 }
 
 /// Validate the target triple, platform version, and compatible SDK capability required by one mobile profile.
-fn validate_target_platform(platform: &InteropTargetPlatform, target: &OvenInteropTarget) -> Result<(), String> {
+fn validate_target_platform(platform: &InteropTargetPlatform, target: &InteropCTarget) -> Result<(), String> {
     match platform {
         InteropTargetPlatform::Android { api_level } => {
             if target.target != "aarch64-linux-android" {
@@ -899,16 +906,16 @@ fn interop_include_roots(target: &LockedInteropTarget) -> Vec<String> {
 
 /// Resolve declared Oven interop files into lockable content identities without ambient host discovery.
 pub fn locked_oven_interop_targets(manifest: &ProjectManifest) -> Result<Vec<LockedInteropTarget>, String> {
-    locked_oven_interop_targets_from_section(manifest.project_root(), manifest.oven_interop())
+    locked_interop_targets_from_section(manifest.project_root(), manifest.interop_c())
 }
 
 /// Resolve a parsed Oven interop declaration for the specified project root into portable lock entries.
 ///
 /// This accepts the already-parsed manifest section so lock generation can include interop inputs alongside the
 /// provider and SDK semantic state without rediscovering or reparsing the manifest.
-pub fn locked_oven_interop_targets_from_section(
+pub fn locked_interop_targets_from_section(
     project_root: &Path,
-    interop: Option<&OvenInteropSection>,
+    interop: Option<&InteropCSection>,
 ) -> Result<Vec<LockedInteropTarget>, String> {
     let Some(interop) = interop else {
         return Ok(Vec::new());
@@ -1208,7 +1215,7 @@ fn validate_interop_path(path: &str, label: &str) -> Result<(), String> {
 ///
 /// This stage records only already-declared package files and logical deployment facts. It does not build shims,
 /// download artifacts, or probe the host for a library.
-fn lock_interop_target(root: &Path, target: &OvenInteropTarget) -> Result<LockedInteropTarget, String> {
+fn lock_interop_target(root: &Path, target: &InteropCTarget) -> Result<LockedInteropTarget, String> {
     let mut definitions = target.definitions.clone();
     definitions.sort();
     definitions.dedup();
@@ -1346,41 +1353,41 @@ mod tests {
             "int bridge(void) { return 7; }\n",
         )?;
         fs::write(workspace.path().join("interop/lib/libfixture.a"), b"fixture archive")?;
-        let manifest_path = workspace.path().join("incan.toml");
+        let manifest_path = workspace.path().join("loaf.toml");
         let manifest = ProjectManifest::from_str(
             r#"
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-ios"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "iphoneos", version = ">=18, <19" }
 headers = ["interop/include/bridge.h"]
 definitions = ["FIXTURE=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "ios"
 deployment-target = "13.0"
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "static"
 path = "interop/lib/libfixture.a"
 origin = { source = "https://example.invalid/fixture", revision = "v1.0.0", license = "LicenseRef-Fixture" }
 dependencies = ["foundation"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "foundation"
 kind = "system"
 capability = "apple.framework.Foundation"
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["fixture"]
 name = "Fixture"
 artifacts = ["fixture"]
 
-[[oven.interop.targets.shims]]
+[[interop.c.targets.shims]]
 name = "fixture_bridge"
 language = "c"
 sources = ["interop/src/bridge.c"]
@@ -1535,7 +1542,7 @@ output = "fixture_bridge"
 
     #[test]
     fn interop_artifact_dependency_cycles_are_rejected() {
-        let target = OvenInteropTarget {
+        let target = InteropCTarget {
             target: "aarch64-linux-android".to_string(),
             toolchain: Some(ToolchainRequirement {
                 capability: "android-ndk".to_string(),
@@ -1575,8 +1582,8 @@ output = "fixture_bridge"
             bindings: Vec::new(),
             shims: Vec::new(),
         };
-        let interop = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
+        let interop = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
             targets: vec![target],
         };
         assert!(
@@ -1600,9 +1607,9 @@ output = "fixture_bridge"
 
     #[test]
     fn oven_interop_inputs_reject_ambient_paths_and_incomplete_bundles() {
-        let invalid_requirement = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let invalid_requirement = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: Some(ToolchainRequirement {
                     capability: "clang".to_string(),
@@ -1619,9 +1626,9 @@ output = "fixture_bridge"
         };
         assert!(invalid_requirement.validate().is_err());
 
-        let absolute = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let absolute = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: Some(ToolchainRequirement {
                     capability: "clang".to_string(),
@@ -1638,9 +1645,9 @@ output = "fixture_bridge"
         };
         assert!(absolute.validate().is_err());
 
-        let bundled = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let bundled = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "x86_64-apple-darwin".to_string(),
                 toolchain: None,
                 sdk: Some(ToolchainRequirement {
@@ -1667,9 +1674,9 @@ output = "fixture_bridge"
         };
         assert!(bundled.validate().is_err());
 
-        let invalid_dependency = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let invalid_dependency = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: None,
                 sdk: None,
@@ -1693,9 +1700,9 @@ output = "fixture_bridge"
         };
         assert!(invalid_dependency.validate().is_err());
 
-        let invalid_origin = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let invalid_origin = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: None,
                 sdk: None,
@@ -1727,9 +1734,9 @@ output = "fixture_bridge"
                 .is_err_and(|error| error.contains("origin source"))
         );
 
-        let unsafe_shim_output = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let unsafe_shim_output = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: None,
                 sdk: None,
@@ -1756,9 +1763,9 @@ output = "fixture_bridge"
 
     #[test]
     fn mobile_platform_profiles_require_matching_target_sdk_and_version_facts() {
-        let android = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let android = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "aarch64-linux-android".to_string(),
                 toolchain: Some(ToolchainRequirement {
                     capability: "android-ndk".to_string(),
@@ -1778,9 +1785,9 @@ output = "fixture_bridge"
         };
         assert!(android.validate().is_ok());
 
-        let apple = OvenInteropSection {
-            schema: OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![OvenInteropTarget {
+        let apple = InteropCSection {
+            schema: INTEROP_C_SCHEMA_VERSION,
+            targets: vec![InteropCTarget {
                 target: "aarch64-apple-ios".to_string(),
                 toolchain: Some(ToolchainRequirement {
                     capability: "apple-clang".to_string(),

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::lockfile::IncanLock;
+use crate::lockfile::{IncanLock, LOCK_FILENAME};
 use crate::manifest::ProjectManifest;
 use crate::oven_interop::{
     InteropDeploymentAction, InteropDeploymentPlan, InteropDeploymentPlatform, LockedInteropTarget,
@@ -50,13 +50,13 @@ pub(crate) fn locked_interop_plan_target(path: &Path, target: &str) -> CliResult
     // ---- Discover the selected package and canonical lock owner ----
     let manifest = ProjectManifest::discover(path)
         .map_err(|error| CliError::failure(error.to_string()))?
-        .ok_or_else(|| CliError::failure("Oven interop baking requires an incan.toml manifest"))?;
+        .ok_or_else(|| CliError::failure("Oven interop baking requires an loaf.toml manifest"))?;
     let context = interop_plan_lock_context(&manifest)?;
 
     // ---- Require exact Oven interop lock freshness ----
     if context.locked != context.current {
         return Err(CliError::failure(
-            "incan.lock Oven interop requirements are out of date; run `incan lock` before inspecting or baking a deployment plan",
+            "oven.lock Oven interop requirements are out of date; run `incan lock` before inspecting or baking a deployment plan",
         ));
     }
 
@@ -91,7 +91,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
     else {
         let current = locked_oven_interop_targets(manifest)
             .map_err(|error| CliError::failure(format!("invalid Oven interop requirements: {error}")))?;
-        let lock = load_interop_plan_lock(&manifest.project_root().join("incan.lock"))?;
+        let lock = load_interop_plan_lock(&manifest.project_root().join(LOCK_FILENAME))?;
         let locked = lock.semantic.oven.map(|oven| oven.interop).unwrap_or_default();
         return Ok(InteropPlanLockContext { current, locked });
     };
@@ -116,7 +116,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
         .map_err(|error| CliError::failure(format!("invalid Oven interop requirements: {error}")))?;
 
     // ---- Canonical workspace lock projection ----
-    let lock = load_interop_plan_lock(&workspace.root().join("incan.lock"))?;
+    let lock = load_interop_plan_lock(&workspace.root().join(LOCK_FILENAME))?;
     let member_root = portable_workspace_member_root(workspace.root(), member.root())?;
     let locked = lock
         .semantic
@@ -125,7 +125,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
         .find(|candidate| candidate.member_root == member_root)
         .ok_or_else(|| {
             CliError::failure(format!(
-                "incan.lock does not contain the selected workspace member `{}`; run `incan lock`",
+                "oven.lock does not contain the selected workspace member `{}`; run `incan lock`",
                 member.name()
             ))
         })?
@@ -139,7 +139,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
 fn load_interop_plan_lock(path: &Path) -> CliResult<IncanLock> {
     IncanLock::load(path).map_err(|error| {
         CliError::failure(format!(
-            "interop plan inspection requires a current incan.lock at {}: {error}",
+            "interop plan inspection requires a current oven.lock at {}: {error}",
             path.display()
         ))
     })

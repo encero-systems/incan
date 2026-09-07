@@ -272,7 +272,7 @@ impl ProjectGenerator {
     /// a caller-owned `pub::` provider whose own registry closure resolves a shared package (most dangerously an
     /// async runtime) to a different compiled artifact than the consumer's own closure. Cargo resolves the consumer
     /// and every provider as one feature-unified dependency graph, so exactly one compiled instance of each package
-    /// exists by construction. The projected `Cargo.lock` (from `incan.lock`) and the caller's Cargo policy flags
+    /// exists by construction. The projected `Cargo.lock` (from `oven.lock`) and the caller's Cargo policy flags
     /// still govern resolution; the successful binary is published to [`Self::cargo_build_binary_path`].
     pub(crate) fn cargo_build(&self, release: bool) -> io::Result<BuildResult> {
         self.materialize_cargo_lock_projection()?;

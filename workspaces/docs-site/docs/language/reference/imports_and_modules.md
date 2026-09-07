@@ -492,7 +492,7 @@ Rules:
 
 - `@ "VERSION"` uses [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html).
 - `with [...]` requires `@` (you cannot specify features without a version).
-- If the crate is configured in `incan.toml`, inline annotations are **not allowed**.
+- If the crate is configured in `loaf.toml`, inline annotations are **not allowed**.
 - When the same crate is imported in multiple files, versions must match and features are unioned.
 
 These annotations only apply to `rust::` imports. Incan module imports (`from models import User`) do not support version or feature annotations.

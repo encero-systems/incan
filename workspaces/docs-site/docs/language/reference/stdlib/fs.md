@@ -114,9 +114,9 @@ Publish an authoritative local file by creating an exclusively reserved temporar
 from std.fs import Path
 from std.tempfile import NamedTemporaryFile
 
-target = Path("incan.lock")
+target = Path("oven.lock")
 guard = target.lock_exclusive()?
-staging = NamedTemporaryFile.try_new_with(".incan.lock-", ".tmp", Some(target.parent()))?
+staging = NamedTemporaryFile.try_new_with(".oven.lock-", ".tmp", Some(target.parent()))?
 staged_path = staging.path()
 staged_path.write_bytes(rendered_lockfile)?
 staged_file = staged_path.open("rb")?

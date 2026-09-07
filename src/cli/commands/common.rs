@@ -46,10 +46,11 @@ use crate::library_manifest::{
     digest_provider_artifact,
 };
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::{DependencySource, DependencySpec};
 use crate::manifest::{
-    INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, MANIFEST_FILENAME, ProjectManifest,
+    CARGO_MANIFEST_FILENAME, DiscoveredManifest, INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV,
+    LOAF_MANIFEST_FILENAME, ManifestError, ProjectManifest, discovered_manifest_kind,
 };
+use crate::manifest::{DependencySource, DependencySpec};
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 use crate::provider::{
     BackendImplementationRequirement, FeatureSelection, PackageFeatureGraph, PackageFeaturePlan,
@@ -76,6 +77,14 @@ static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<S
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Project roots already told that their `Cargo.toml` is ignored, so one command warns once.
+///
+/// Oven prepares a project more than once per command — once per selected profile, and again for a caller-owned
+/// library graph — so emitting at the preparation boundary without this would repeat the same line several times for
+/// a single `incan build`. Keyed by project root rather than a global flag, so a workspace build still reports each
+/// member that has one.
+static IGNORED_CARGO_MANIFESTS_REPORTED: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 /// Shared immutable provider projections indexed by the canonical modules an invocation uses.
 type ProviderPlanCache = Arc<Mutex<BTreeMap<BTreeSet<Vec<String>>, Arc<ProviderPlan>>>>;
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
@@ -895,7 +904,7 @@ fn build_sdk_components_into_staging(
             .map_err(|error| CliError::failure(error.to_string()))?
             .ok_or_else(|| {
                 CliError::failure(format!(
-                    "SDK component `{}` has no incan.toml at {}",
+                    "SDK component `{}` has no loaf.toml at {}",
                     component.id,
                     component.project_root.display()
                 ))
@@ -1682,7 +1691,7 @@ pub(crate) fn discover_effective_project_manifest(start_dir: &Path) -> CliResult
 /// that root could honor a nested command override and silently bind a different project, so this boundary loads the
 /// named manifest directly while sharing the same workspace resolution as ordinary command discovery.
 pub(crate) fn effective_project_manifest_for_exact_root(project_root: &Path) -> CliResult<ProjectManifest> {
-    let manifest = ProjectManifest::load(&project_root.join(MANIFEST_FILENAME))
+    let manifest = ProjectManifest::load(&project_root.join(LOAF_MANIFEST_FILENAME))
         .map_err(|error| CliError::failure(error.to_string()))?;
     effective_project_manifest(manifest)
 }
@@ -2420,7 +2429,7 @@ pub(crate) fn parser_only_library_manifest_index(
             }
             Some(LibraryManifestIndexEntry::Failed(failure))
                 if failure.kind == LibraryManifestFailureKind::ArtifactMissing
-                    && dependency.path.join(MANIFEST_FILENAME).is_file() =>
+                    && dependency.path.join(LOAF_MANIFEST_FILENAME).is_file() =>
             {
                 entries.insert(
                     dependency_key.clone(),
@@ -2443,7 +2452,7 @@ fn parser_only_library_manifest_entry(
     dependency_root: &Path,
 ) -> CliResult<LibraryManifestIndexEntry> {
     let dependency_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
-    let manifest_path = dependency_root.join(MANIFEST_FILENAME);
+    let manifest_path = dependency_root.join(LOAF_MANIFEST_FILENAME);
     let manifest_content = fs::read_to_string(&manifest_path)
         .map_err(|error| CliError::failure(format!("failed to read {}: {error}", manifest_path.display())))?;
     let dependency_manifest = ProjectManifest::from_str(&manifest_content, &manifest_path)
@@ -2511,7 +2520,7 @@ fn prepare_library_dependency_artifacts(
             .and_then(|plan| plan.package(&dependency.path))
             .map(|package| package.features.active_features.clone())
             .unwrap_or_default();
-        let has_source_manifest = dependency.path.join(MANIFEST_FILENAME).is_file();
+        let has_source_manifest = dependency.path.join(LOAF_MANIFEST_FILENAME).is_file();
         let needs_build = match initial_index.get(dependency_key) {
             Some(LibraryManifestIndexEntry::Loaded {
                 manifest: artifact_manifest,
@@ -4501,6 +4510,42 @@ pub(crate) fn topologically_sort_modules(
     Ok(sorted)
 }
 
+/// Report an ignored `Cargo.toml` beside a Loaf manifest, at most once per project root per invocation.
+///
+/// RFC 117 rule 11: a `loaf.toml` project containing `Cargo.toml` must warn and ignore the Cargo configuration, and
+/// the diagnostic must name the ignored file and explain that Cargo compatibility is selected explicitly. Both are
+/// carried by [`ManifestError::CargoIgnored`], which renders the text; this decides only when it reaches the user.
+///
+/// It warns rather than fails, and never inspects the Cargo file: the RFC requires Oven to "continue as a Loaf
+/// project" and say what it ignored, and reading the file to describe it better would be the parsing rule 11
+/// forbids. A directory that holds no `loaf.toml` is silent here — a Cargo-only project is Cargo-compatibility
+/// mode's subject, not an ignored file.
+///
+/// Callers are the project-scale command entry points rather than one deep shared helper, because Oven's cached
+/// paths return a completed output without preparing the project at all; a warning behind preparation would appear
+/// on a cold build and vanish on a warm one, which is worse than not having it.
+pub(crate) fn warn_once_about_ignored_cargo_manifest(project_root: &Path) {
+    let DiscoveredManifest::Loaf(_) = discovered_manifest_kind(project_root) else {
+        return;
+    };
+    let cargo_manifest = project_root.join(CARGO_MANIFEST_FILENAME);
+    if !cargo_manifest.is_file() {
+        return;
+    }
+    let key = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let Ok(mut reported) = IGNORED_CARGO_MANIFESTS_REPORTED.lock() else {
+        // A poisoned registry means another thread panicked mid-report. Losing the deduplication is the right
+        // failure here: a repeated warning is noise, a dropped one hides that Cargo configuration was ignored.
+        eprintln!("warning: {}", ManifestError::CargoIgnored { path: cargo_manifest });
+        return;
+    };
+    if reported.insert(key) {
+        eprintln!("warning: {}", ManifestError::CargoIgnored { path: cargo_manifest });
+    }
+}
+
 /// Resolve the project root from a source file path.
 ///
 /// If the file is inside a `src/` directory (e.g. `src/main.incn` or `projects/foo/src/main.incn`), the project root
@@ -5191,7 +5236,7 @@ fn verify_checked_c_bindings(
 ///
 /// Checked bindings keep the authored, package-relative header spelling in their public descriptor and lock identity.
 /// The verifier alone needs a concrete file location. Restricting this translation to a header declared under
-/// `[oven.interop]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
+/// `[interop.c]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
 fn resolve_package_owned_c_binding_header(
     manifest: Option<&ProjectManifest>,
     binding: &CBindingDescriptor,
@@ -5202,7 +5247,7 @@ fn resolve_package_owned_c_binding_header(
     if Path::new(&binding.header).is_absolute() {
         return binding.clone();
     }
-    let declared = manifest.oven_interop().is_some_and(|interop| {
+    let declared = manifest.interop_c().is_some_and(|interop| {
         interop.targets.iter().any(|target| {
             target.headers.iter().any(|header| header == &binding.header)
                 || target
@@ -5335,8 +5380,8 @@ mod tests {
     #[test]
     fn package_declared_c_header_is_resolved_only_for_verification() -> Result<(), Box<dyn std::error::Error>> {
         let manifest = ProjectManifest::from_str(
-            "[project]\nname = \"c_header_fixture\"\n\n[oven.interop]\nschema = 1\n\n[[oven.interop.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/bridge.h\"]\n",
-            Path::new("/workspace/c_header_fixture/incan.toml"),
+            "[project]\nname = \"c_header_fixture\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/bridge.h\"]\n",
+            Path::new("/workspace/c_header_fixture/loaf.toml"),
         )?;
         let binding = CBindingDescriptor {
             span: Span::new(0, 0),
@@ -5466,7 +5511,7 @@ mod tests {
     #[test]
     fn explicit_sdk_selection_rejects_legacy_inventoryless_toolchains() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        let manifest_path = project.path().join("incan.toml");
+        let manifest_path = project.path().join("loaf.toml");
         fs::write(
             &manifest_path,
             "[project]\nname = \"demo\"\n\n[sdk]\nprofile = \"minimal\"\n",
@@ -5478,7 +5523,7 @@ mod tests {
 
         assert!(error.message.contains("no component inventory"));
         assert!(
-            error.message.contains("incan.toml:4:1"),
+            error.message.contains("loaf.toml:4:1"),
             "expected the explicit SDK table location, got: {}",
             error.message
         );
@@ -5489,7 +5534,7 @@ mod tests {
     #[test]
     fn sdk_selection_errors_retain_manifest_or_command_provenance() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        let manifest_path = project.path().join("incan.toml");
+        let manifest_path = project.path().join("loaf.toml");
         fs::write(
             &manifest_path,
             "[project]\nname = \"demo\"\n\n[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-web\"]\n",
@@ -5503,7 +5548,7 @@ mod tests {
 
         let rendered = format_sdk_selection_error(&component_error, &selection, Some(&manifest), None);
         assert!(
-            rendered.contains("incan.toml:6:15"),
+            rendered.contains("loaf.toml:6:15"),
             "expected exact SDK component location, got: {rendered}"
         );
 
@@ -5543,7 +5588,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let stdlib_root = temp_dir.path().join("stdlib");
         fs::create_dir_all(stdlib_root.join("nested"))?;
-        fs::write(stdlib_root.join("incan.toml"), "[project]\nname = \"stdlib\"\n")?;
+        fs::write(stdlib_root.join("loaf.toml"), "[project]\nname = \"stdlib\"\n")?;
         fs::write(
             stdlib_root.join("nested").join("module.incn"),
             "pub def value() -> int:\n  return 1\n",
@@ -5798,7 +5843,7 @@ mod tests {
         let project_root = tmp.path();
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
         )?;
 
@@ -5822,7 +5867,7 @@ mod tests {
         });
         std::fs::create_dir_all(project_root.join("deps/widgets"))?;
         std::fs::write(
-            project_root.join("deps/widgets/incan.toml"),
+            project_root.join("deps/widgets/loaf.toml"),
             "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n",
         )?;
         write_minimal_library_artifact(project_root, "widgets", "widgets_core", &manifest)?;
@@ -6034,7 +6079,7 @@ model RightValue:
     fn rust_inspect_workspace_does_not_emit_an_undeclared_derive_probe() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"derive_probe\"\nversion = \"0.1.0\"\n",
         )?;
         let requirements = ProjectRequirements {
@@ -6207,7 +6252,7 @@ model RightValue:
 [build]
 source-root = "lib"
 "#;
-        let manifest = ProjectManifest::from_str(manifest_content, &project.join("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(manifest_content, &project.join("loaf.toml"))?;
 
         let root = resolve_source_root(&project, Some(&manifest));
         assert_eq!(root, project.join("lib"));
@@ -6254,7 +6299,7 @@ model User:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -6326,7 +6371,7 @@ model User:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -6409,7 +6454,7 @@ from std.io import BytesIO
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "demo"
 version = "0.1.0"
@@ -6450,7 +6495,7 @@ def main() -> None:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "dep_order_demo"
 version = "0.1.0"
@@ -6526,7 +6571,7 @@ pub def probe() -> SubstraitPlan:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "dep_check_demo"
 version = "0.1.0"
@@ -6640,7 +6685,7 @@ pub def probe() -> SubstraitPlan:
         let pkg_dir = src_dir.join("pkg");
         std::fs::create_dir_all(&pkg_dir)?;
         std::fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"sibling_private_class\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -6702,7 +6747,7 @@ def leak() -> str:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "absolute_crate_public_types"
 version = "0.1.0"
@@ -6799,7 +6844,7 @@ import crate.module_consumer
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "cycle_dep_resolver_demo"
 version = "0.1.0"
@@ -6855,7 +6900,7 @@ pub def main() -> int:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "transitive_signature_dep_demo"
 version = "0.1.0"
@@ -6926,7 +6971,7 @@ def main() -> Result[None, str]:
         let session_root = source_root.join("session");
         std::fs::create_dir_all(&session_root)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"crate_root_facade\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(session_root.join("types.incn"), "pub class Session:\n    pub id: int\n")?;
@@ -6983,7 +7028,7 @@ def main() -> Result[None, str]:
         let types_root = source_root.join("types");
         std::fs::create_dir_all(&types_root)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"crate_root_module_import\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(types_root.join("user.incn"), "pub class User:\n    pub id: int\n")?;
@@ -7023,7 +7068,7 @@ def main() -> Result[None, str]:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "example_cycle_demo"
 version = "0.1.0"
@@ -7124,7 +7169,7 @@ def main() -> Result[None, SessionError]:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "example_directory_cycle_demo"
 version = "0.1.0"
@@ -7213,7 +7258,7 @@ def main() -> Result[None, SessionError]:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "cycle_demo"
 version = "0.1.0"
@@ -7412,7 +7457,7 @@ pub def main() -> int:
     fn rust_inspect_lock_projection_updates_only_the_local_package_version() -> Result<(), Box<dyn std::error::Error>> {
         let manifest = ProjectManifest::from_str(
             "[project]\nname = \"probe\"\nversion = \"1.2.3\"\n",
-            Path::new("probe/incan.toml"),
+            Path::new("probe/loaf.toml"),
         )?;
         let payload = r#"version = 4
 
@@ -8036,7 +8081,7 @@ def main() -> None:
         let source_root = tmp.path().join("src");
         std::fs::create_dir_all(&source_root)?;
         std::fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"feature_projection\"\n\n[project.features]\ndefault = [\"json\"]\njson = []\n",
         )?;
         let source_path = source_root.join("main.incn");
@@ -8092,7 +8137,7 @@ def main() -> None:
         std::fs::create_dir_all(entrypoint.parent().ok_or("entrypoint must have a parent")?)?;
         std::fs::create_dir_all(operations.parent().ok_or("operations must have a parent")?)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"core\"\n\n[build]\nsource-root = \"../..\"\n",
         )?;
         std::fs::write(&entrypoint, "import traits.ops\n")?;
@@ -8164,7 +8209,7 @@ def main() -> None:
         let consumer_root = tmp.path().join("consumer");
         fs::create_dir_all(&consumer_root)?;
         fs::write(
-            consumer_root.join(MANIFEST_FILENAME),
+            consumer_root.join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nfeature_library = { path = \"../feature_library\", features = [\"beta\"], default-features = false }\n",
         )?;
         let consumer = ProjectManifest::discover(&consumer_root)?.ok_or("missing consumer manifest")?;
@@ -8241,7 +8286,7 @@ def main() -> None:
         let source_root = project_root.join("src");
         std::fs::create_dir_all(&source_root)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"analysis_consumer\"\n",
         )?;
         let main_path = source_root.join("main.incn");
@@ -8298,7 +8343,7 @@ def main() -> None:
         let source_root = tmp.path().join("src");
         std::fs::create_dir_all(&source_root)?;
         std::fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"identity_consumer\"\n",
         )?;
         let shared_path = source_root.join("shared.incn");

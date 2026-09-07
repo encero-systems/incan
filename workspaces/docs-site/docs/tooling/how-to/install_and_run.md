@@ -16,7 +16,7 @@ The release manifest records the compiler archive, checksum, Rust backend policy
 
 --8<-- "_snippets/learning/first_project_loop.md"
 
-`incan new` creates `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter is deliberately small so the first run proves the complete project loop without hiding the generated files.
+`incan new` creates `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter is deliberately small so the first run proves the complete project loop without hiding the generated files.
 
 ## Build the 0.5 toolchain from source
 

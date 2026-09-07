@@ -216,17 +216,17 @@ fn select_interop_c_abi_verification_plan(
 ) -> CliResult<CAbiVerificationPlan> {
     let Some(manifest) = manifest else {
         return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` requires a project manifest with an [oven.interop] declaration"
+            "`--interop-target {requested_target}` requires a project manifest with an [interop.c] declaration"
         )));
     };
-    let Some(interop) = manifest.oven_interop() else {
+    let Some(interop) = manifest.interop_c() else {
         return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` requires an [oven.interop] declaration in incan.toml"
+            "`--interop-target {requested_target}` requires an [interop.c] declaration in loaf.toml"
         )));
     };
     let Some(interop_target) = interop.targets.iter().find(|target| target.target == requested_target) else {
         return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` is not declared by [[oven.interop.targets]] in incan.toml"
+            "`--interop-target {requested_target}` is not declared by [[interop.c.targets]] in loaf.toml"
         )));
     };
     CAbiVerificationPlan::from_interop_target(interop_target).map_err(CliError::failure)

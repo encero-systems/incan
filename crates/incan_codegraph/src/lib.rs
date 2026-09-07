@@ -52,7 +52,7 @@ pub struct CodegraphIdentitySpan {
     pub end: usize,
 }
 
-/// Package identity attached to a codegraph export when an `incan.toml` manifest is available.
+/// Package identity attached to a codegraph export when an `loaf.toml` manifest is available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegraphPackage {
     /// Project name from `[project].name`.

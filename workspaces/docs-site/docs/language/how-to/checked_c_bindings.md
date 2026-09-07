@@ -45,7 +45,7 @@ interop/
   lib/             # declared package-owned static or bundled artifacts
 ```
 
-Keep public application code out of `contract.incn` and `bridge.incn`. Put target files under `[oven.interop]`, run `incan lock`, and use the binding-use receipt when an audit needs to join checked raw use to a selected target. This layout supports intentionally low-level packages too: they may expose the contract deliberately, but should document that they do not provide a safe facade.
+Keep public application code out of `contract.incn` and `bridge.incn`. Put target files under `[interop.c]`, run `incan lock`, and use the binding-use receipt when an audit needs to join checked raw use to a selected target. This layout supports intentionally low-level packages too: they may expose the contract deliberately, but should document that they do not provide a safe facade.
 
 ## Choose exact C types
 
@@ -196,35 +196,35 @@ Clang checks each requested field offset, size, and alignment for the selected h
 
 ## Freeze Oven interop requirements for a target
 
-The binding remains the authority for the Incan-facing ABI. When a package needs physical interop inputs, declare its target-specific requirements under `[oven.interop]` in the package's `incan.toml`. The declaration names only package-owned files and compatible toolchain or SDK capabilities; it never claims that Oven has selected a local installation or asks the compiler to search the host for headers, libraries, or a C++ installation.
+The binding remains the authority for the Incan-facing ABI. When a package needs physical interop inputs, declare its target-specific requirements under `[interop.c]` in the package's `loaf.toml`. The declaration names only package-owned files and compatible toolchain or SDK capabilities; it never claims that Oven has selected a local installation or asks the compiler to search the host for headers, libraries, or a C++ installation.
 
-```toml title="incan.toml"
-[oven.interop]
+```toml title="loaf.toml"
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-ios"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "iphoneos", version = ">=18, <19" }
 headers = ["interop/include/bridge.h"]
 definitions = ["FIXTURE=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "ios"
 deployment-target = "13.0"
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "static"
 path = "interop/lib/libfixture.a"
 origin = { source = "https://example.invalid/fixture", revision = "v1.0.0", license = "MIT" }
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "foundation"
 kind = "system"
 capability = "apple.framework.Foundation"
 
-[[oven.interop.targets.shims]]
+[[interop.c.targets.shims]]
 name = "fixture_bridge"
 language = "c"
 sources = ["interop/src/bridge.c"]

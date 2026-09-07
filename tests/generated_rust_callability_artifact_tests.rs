@@ -133,8 +133,8 @@ fn write_producer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let producer = root.join("callability_lib");
     write_fixture_file(
         &producer,
-        "incan.toml",
-        include_str!("fixtures/generated_rust_callability/producer/incan.toml"),
+        "loaf.toml",
+        include_str!("fixtures/generated_rust_callability/producer/loaf.toml"),
     )?;
     write_fixture_file(
         &producer,
@@ -164,7 +164,7 @@ fn write_consumer(
     let consumer = root.join(dir_name);
     write_fixture_file(
         &consumer,
-        "incan.toml",
+        "loaf.toml",
         "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncallability = { path = \"../callability_lib\" }\n",
     )?;
     write_fixture_file(&consumer, "src/main.incn", main_source)?;

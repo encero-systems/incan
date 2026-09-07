@@ -18,7 +18,7 @@ Use the human output while diagnosing a project. Use JSON in CI or other tooling
 
 Start from `minimal` and add only the capability groups the project needs:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [project]
 name = "catalog_service"
 version = "0.1.0"
@@ -46,7 +46,7 @@ incan lock
 incan check src/main.incn
 ```
 
-Use a command-local profile override to compare another projection without editing `incan.toml`:
+Use a command-local profile override to compare another projection without editing `loaf.toml`:
 
 ```bash
 incan check src/main.incn --sdk-profile full
@@ -71,7 +71,7 @@ In JSON provider inspection, compare the component and provider `available`, `en
 
 Declare public features under `[project.features]`:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [project]
 name = "reporting"
 version = "0.1.0"
@@ -112,7 +112,7 @@ incan test --all-features
 
 An optional dependency stays outside the active graph until a feature selects `dep:<name>`. A package can activate the dependency and request one of its public features in the same declaration:
 
-```toml title="reporting/incan.toml"
+```toml title="reporting/loaf.toml"
 [project]
 name = "reporting"
 version = "0.1.0"
@@ -127,7 +127,7 @@ serializer = { path = "../serializer", optional = true, default-features = false
 
 A consumer selects the public feature on its dependency edge:
 
-```toml title="app/incan.toml"
+```toml title="app/loaf.toml"
 [project]
 name = "report_app"
 version = "0.1.0"
@@ -142,7 +142,7 @@ Feature resolution is additive. If several active parents request different feat
 
 Use the expanded feature form when different edge kinds should remain explicit:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [sdk]
 profile = "minimal"
 components = ["stdlib-web"]
@@ -155,7 +155,7 @@ Activating `server` verifies that `stdlib-web` is enabled and available; it does
 
 ## Lock and verify the intended projection
 
-Feature and component selections affect checked facts and generated output, so record the exact closure in `incan.lock`:
+Feature and component selections affect checked facts and generated output, so record the exact closure in `oven.lock`:
 
 ```bash
 incan lock --features json
