@@ -107,7 +107,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     &mut seen,
                     &mut saved_bindings,
                 );
-                Some(bir::AssertionKind::Pattern { scrutinee, pattern })
+                Some(bir::AssertionKind::Pattern {
+                    scrutinee,
+                    pattern: Box::new(pattern),
+                })
             }
             ast::AssertKind::Raises { call, error_type } => {
                 let Some(expected_error) = expected_runtime_error(&error_type.node) else {

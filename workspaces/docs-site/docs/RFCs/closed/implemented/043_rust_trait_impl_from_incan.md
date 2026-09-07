@@ -11,7 +11,7 @@
     - RFC 005 (Rust interop)
     - RFC 023 (Compilable stdlib & Rust module binding)
 - **Issue:** https://github.com/encero-systems/incan/issues/200
-- **RFC PR:** —
+- **RFC PR:** [#538](https://github.com/encero-systems/incan/pull/538)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

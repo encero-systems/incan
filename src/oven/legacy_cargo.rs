@@ -5,6 +5,12 @@
 //! publishes receipt-bound compiler-suite plans into the bounded Oven store, then removes every private Cargo target
 //! before returning. Normal Oven build, run, and test code neither calls this module nor receives a Cargo target path.
 
+mod cargo_json;
+
+// Cargo's own JSON shapes live beside this file rather than inside it. They are deserialization targets with no
+// publisher behavior, and every path stays where callers expect it through this re-export, so this is a move.
+use cargo_json::*;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -2787,138 +2793,6 @@ fn collect_materialized_directory_files(
     Ok(())
 }
 
-/// Minimal Cargo JSON message shape used to map publisher-built dependency artifacts back to unit-graph edges.
-#[derive(Clone, Deserialize)]
-struct CargoCompilerArtifact {
-    reason: String,
-    package_id: String,
-    target: CargoCompilerArtifactTarget,
-    #[serde(default)]
-    features: Vec<String>,
-    #[serde(default)]
-    filenames: Vec<PathBuf>,
-    #[serde(default)]
-    profile: CargoCompilerArtifactProfile,
-}
-
-#[derive(Clone, Default, Deserialize)]
-struct CargoCompilerArtifactProfile {
-    #[serde(default)]
-    test: bool,
-}
-
-/// Target identity emitted by Cargo's stable JSON message stream.
-#[derive(Clone, Deserialize)]
-struct CargoCompilerArtifactTarget {
-    name: String,
-    #[serde(default)]
-    src_path: PathBuf,
-}
-
-/// Cargo's unstable-but-structured unit graph, read only at the named publisher boundary.
-///
-/// The graph is not retained as an execution dependency. Oven converts its workspace test roots, resolved features,
-/// and direct dependency edges into a receipt-bound target plan before the transient Cargo target is reclaimed.
-#[derive(Deserialize)]
-struct CargoUnitGraph {
-    version: u32,
-    units: Vec<CargoUnitGraphUnit>,
-    roots: Vec<usize>,
-}
-
-#[derive(Clone, Deserialize)]
-struct CargoUnitGraphUnit {
-    pkg_id: String,
-    target: CargoUnitGraphTarget,
-    mode: String,
-    #[serde(default)]
-    platform: Option<String>,
-    #[serde(default)]
-    features: Vec<String>,
-    #[serde(default)]
-    dependencies: Vec<CargoUnitGraphDependency>,
-}
-
-#[derive(Clone, Deserialize)]
-struct CargoUnitGraphTarget {
-    kind: Vec<String>,
-    #[serde(default)]
-    crate_types: Vec<String>,
-    name: String,
-    src_path: PathBuf,
-    edition: String,
-}
-
-#[derive(Clone, Deserialize)]
-struct CargoUnitGraphDependency {
-    index: usize,
-    extern_crate_name: Option<String>,
-}
-
-/// Minimal publisher-only Cargo metadata needed to name a sealed third-party foundation manifest.
-///
-/// The unit graph is authoritative for the resolved feature set and dependency edges; Cargo metadata supplies the
-/// stable package name/version for a synthetic legacy publisher manifest. Neither record reaches an Oven consumer.
-#[derive(Clone, Deserialize)]
-struct CargoMetadata {
-    packages: Vec<CargoMetadataPackage>,
-    #[serde(default)]
-    resolve: Option<CargoMetadataResolve>,
-}
-
-/// Feature selections resolved by the explicit publisher's locked Cargo metadata call.
-#[derive(Clone, Deserialize)]
-struct CargoMetadataResolve {
-    #[serde(default)]
-    root: Option<String>,
-    #[serde(default)]
-    nodes: Vec<CargoMetadataResolveNode>,
-}
-
-/// One exact package ID and its unified features in publisher metadata.
-#[derive(Clone, Deserialize)]
-struct CargoMetadataResolveNode {
-    id: String,
-    #[serde(default)]
-    features: Vec<String>,
-    #[serde(default)]
-    dependencies: Vec<String>,
-    /// Direct dependency edges with the Cargo name used by the root package and the exact resolved package ID.
-    ///
-    /// `dependencies` is sufficient for source-closure walking, but it discards the alias-to-package relationship
-    /// needed to select a direct Rustc artifact when the lock contains multiple versions of the same crate.
-    #[serde(default)]
-    deps: Vec<CargoMetadataResolveDependency>,
-}
-
-/// One resolved Cargo dependency edge retained only while the explicit baker is publishing a Loaf.
-#[derive(Clone, Deserialize)]
-struct CargoMetadataResolveDependency {
-    name: String,
-    pkg: String,
-}
-
-/// One declared `rustc --extern` name bound to the exact Cargo package instance that owns its artifact.
-///
-/// Package names are not sufficient: a valid lock can contain two versions of one crate name. The resolved Cargo
-/// package ID is therefore consumed at the explicit baker boundary and never guessed by a normal Oven command.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ResolvedDirectDependency {
-    package: String,
-    package_id: String,
-}
-
-/// One Cargo package identity used while creating the explicit third-party foundation publisher input.
-#[derive(Clone, Deserialize)]
-struct CargoMetadataPackage {
-    id: String,
-    name: String,
-    version: String,
-    manifest_path: PathBuf,
-    #[serde(default)]
-    source: Option<String>,
-}
-
 /// Metadata search boundary used while resolving one explicit Rust-inspection surface.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InspectionPackageScope {
@@ -3032,24 +2906,6 @@ fn inspection_package_closure_ids(
         }
     }
     Ok(selected)
-}
-
-/// Exact registry checksum records decoded from the publisher's already-resolved Cargo lock.
-#[derive(Deserialize)]
-struct CargoChecksumLock {
-    #[serde(default)]
-    package: Vec<CargoChecksumLockPackage>,
-}
-
-/// One package identity whose checksum must agree with the source retained in a Loaf.
-#[derive(Deserialize)]
-struct CargoChecksumLockPackage {
-    name: String,
-    version: String,
-    #[serde(default)]
-    source: Option<String>,
-    #[serde(default)]
-    checksum: Option<String>,
 }
 
 /// Typed source handoff used only by children of the explicit `legacy_cargo` baker.

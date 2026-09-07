@@ -47,14 +47,19 @@ impl TypeChecker {
                 continue;
             };
 
-            let Some((canonical_name, field_info)) = self.resolve_field_info(fields, field_name, true, true) else {
+            let Some((canonical_name, field_info)) = self.resolve_field_info(fields, &field_name.node, true, true)
+            else {
                 bound_fields.push(None);
                 // Still typecheck the expression exactly once so nested diagnostics are preserved.
                 self.check_expr(expr);
                 self.errors
-                    .push(errors::missing_field(display_name, field_name, expr.span));
+                    .push(errors::missing_field(display_name, &field_name.node, field_name.span));
                 continue;
             };
+
+            if let Some(identity) = field_info.identity.clone() {
+                self.type_info.record_resolved_identity(field_name.span, identity);
+            }
 
             let value_ty = self.check_expr_with_expected(expr, Some(&field_info.ty));
 
@@ -73,7 +78,7 @@ impl TypeChecker {
             let is_model = matches!(self.lookup_type_info(type_name), Some(TypeInfo::Model(_)));
             if is_model && self.private_field_is_inaccessible(type_name, field_info) {
                 self.errors
-                    .push(errors::private_field(type_name, field_name, expr.span));
+                    .push(errors::private_field(type_name, &field_name.node, field_name.span));
                 continue;
             }
 
@@ -88,7 +93,7 @@ impl TypeChecker {
                 )
             {
                 self.errors.push(errors::field_type_mismatch(
-                    field_name,
+                    &field_name.node,
                     &field_info.ty.to_string(),
                     &value_ty.to_string(),
                     expr.span,
@@ -199,7 +204,7 @@ impl TypeChecker {
                         self.check_expr(e);
                     }
                 }
-                CallArg::Named(name, e) if name == "value" => {
+                CallArg::Named(name, e) if name.node == "value" => {
                     named_value_count += 1;
                     if !has_inner {
                         inner = self.check_expr(e);
@@ -398,6 +403,7 @@ impl TypeChecker {
         if let Some(type_info) = self.lookup_type_info(name).cloned()
             && let Some(ret) = self.check_type_constructor_hook_call(name, &type_info, &[], args, span)
         {
+            self.record_direct_callee_identity(name, span);
             return ret;
         }
 
@@ -427,7 +433,7 @@ impl TypeChecker {
                                     .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
                             }
                         }
-                        CallArg::Named(field, expr) if field == "message" => {
+                        CallArg::Named(field, expr) if field.node == "message" => {
                             message_count += 1;
                             let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
                             if !self.types_compatible(&actual, &ResolvedType::Str) {
@@ -435,7 +441,7 @@ impl TypeChecker {
                                     .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
                             }
                         }
-                        CallArg::Named(field, expr) if field == "code" => {
+                        CallArg::Named(field, expr) if field.node == "code" => {
                             let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
                             if !self.types_compatible(&actual, &ResolvedType::Str) {
                                 self.errors
@@ -455,18 +461,22 @@ impl TypeChecker {
                 if message_count != 1 || invalid_named {
                     self.errors.push(errors::validation_error_constructor_shape(span));
                 }
+                self.record_direct_callee_identity(name, span);
                 return ResolvedType::Named(surface_types::as_str(tid).to_string());
             }
             if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                self.record_direct_callee_identity(name, span);
                 return self.check_json_query_constructor_call(tid, args, span);
             }
             if matches!(tid, SurfaceTypeId::Html) {
+                self.record_direct_callee_identity(name, span);
                 return ResolvedType::Named(surface_types::as_str(tid).to_string());
             }
         }
 
         match self.lookup_symbol(name).map(|s| &s.kind) {
             Some(SymbolKind::Type(_)) => {
+                self.record_direct_callee_identity(name, span);
                 if let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(name).cloned() {
                     let [CallArg::Positional(value)] = args else {
                         self.errors.push(errors::newtype_constructor_shape(name, span));
@@ -494,7 +504,11 @@ impl TypeChecker {
                     self.constructor_result_type(name)
                 }
             }
-            Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
+            Some(SymbolKind::Variant(info)) => {
+                let enum_name = info.enum_name.clone();
+                self.record_direct_callee_identity(name, span);
+                ResolvedType::Named(enum_name)
+            }
             Some(_) => ResolvedType::Unknown,
             None => {
                 self.errors.push(errors::unknown_symbol(name, span));
@@ -538,7 +552,16 @@ impl TypeChecker {
         } else {
             ResolvedType::Generic(type_name.to_string(), resolved_type_args)
         };
-        Some(self.check_generic_method_call(TYPE_CONSTRUCTOR_HOOK, hook, &[], args, &[], span, &receiver_ty, None))
+        Some(self.check_resolved_generic_method_call(
+            TYPE_CONSTRUCTOR_HOOK,
+            hook,
+            &[],
+            args,
+            &[],
+            span,
+            &receiver_ty,
+            None,
+        ))
     }
 
     /// Return whether a call's named arguments exactly describe normal model/class field construction.
@@ -553,7 +576,7 @@ impl TypeChecker {
         };
         !args.is_empty()
             && args.iter().all(|arg| match arg {
-                CallArg::Named(field, _) => fields.contains_key(field),
+                CallArg::Named(field, _) => fields.contains_key(&field.node),
                 _ => false,
             })
     }

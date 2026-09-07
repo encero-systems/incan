@@ -1,10 +1,11 @@
 //! End-to-end proof for the bounded #988 Body-IR replacement executor.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use incan::backend::replacement::{ReplacementValue, execute_free_function};
+use incan::backend::replacement::{ReplacementExecutionGraph, ReplacementValue, execute_free_function};
 use incan::backend::selection::{
     BackendKind, FallbackOutcome, FallbackPolicy, ShadowComparisonState, digest_output, finalize_receipt,
     select_backend,
@@ -12,7 +13,9 @@ use incan::backend::selection::{
 use incan::frontend::body_ir::build_body_ir_module_v0;
 use incan::frontend::typechecker::TypeChecker;
 use incan::frontend::{lexer, parser};
-use incan_semantics_core::body_ir::{BodyIrModule, OwnershipFact, Rvalue, StatementKind, TryErrorRouting};
+use incan_semantics_core::body_ir::{
+    BodyIrModule, ConstructorTarget, OwnershipFact, Rvalue, StatementKind, TryErrorRouting,
+};
 use incan_semantics_core::{CompilerNodeId, IncanType};
 
 /// Lower one self-contained, typechecked source module into the Body IR the replacement backend consumes.
@@ -26,6 +29,287 @@ fn lower_typed_body_ir(source: &str) -> Result<BodyIrModule, Box<dyn std::error:
         .check_program(&program)
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+}
+
+/// Lower one named module against a shared checker so two modules can be produced for cross-module tests.
+///
+/// `lower_typed_body_ir` fixes the module path, which is right for the single-module #988 profile but cannot express
+/// a call that crosses a module edge. #1260 needs two Body-IR modules whose canonical identities were minted under
+/// their own module paths, which is what this produces.
+fn lower_named_body_ir(source: &str, module_path: &[&str]) -> Result<BodyIrModule, Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path: Vec<String> = module_path.iter().map(|part| (*part).to_string()).collect();
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+}
+
+/// Characterize the module boundary #1260 replaces: a cross-module call cannot resolve through one module.
+///
+/// `prepare_free_function_execution` and `execute_free_function` take one `&BodyIrModule`, so a body whose reachable
+/// call graph leaves that module has no way to reach its callee: an imported callable deliberately carries no
+/// same-module `direct_call_id`, and #1260 must resolve it from the compiler-owned canonical target rather than
+/// manufacture one. This pins the current boundary so the `ReplacementExecutionGraph` that replaces it has a failing
+/// test to satisfy, and so the refusal stays a refusal rather than silently executing the wrong body.
+///
+/// This passes today, so it is a characterization test rather than a failing one. Its value is the invariant it
+/// pins: a cross-module call must never resolve against the caller's own module. When #1260 makes such a call
+/// execute, this test inverts to assert the value it produces, and until then it stops a partial implementation from
+/// silently resolving the wrong body.
+#[test]
+fn a_cross_module_call_is_refused_by_the_single_module_executor() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = lower_named_body_ir("pub def provide() -> int:\n  return 7\n", &["cross_module_provider"])?;
+    let consumer = lower_named_body_ir(
+        "from cross_module_provider import provide\n\ndef main() -> int:\n  return provide()\n",
+        &["cross_module_consumer"],
+    )?;
+
+    // The provider's body exists, but it exists in the *other* module.
+    assert!(
+        provider.bodies.iter().any(|body| body.name == "provide"),
+        "the provider module must retain its own callable body"
+    );
+    assert!(
+        !consumer.bodies.iter().any(|body| body.name == "provide"),
+        "the consumer module must not contain the imported callee's body; a cross-module call has to be resolved \
+         through the module graph rather than found locally"
+    );
+
+    let executed = execute_free_function(&consumer, "main", &[]);
+    assert!(
+        executed.is_err(),
+        "executing a cross-module call against only the caller's module must refuse until #1260 supplies the \
+         execution graph, got: {executed:?}"
+    );
+    Ok(())
+}
+
+/// A canonical target owned by another module resolves through the execution graph, not through the caller.
+///
+/// This is the mechanism #1260 dispatches on. `direct_call_id` is a span identity and exists only for a declaration
+/// physically present in the calling module, which is why an imported callable has none. The canonical identity
+/// answers the different question of *which declaration was selected*, and survives the module boundary, so the
+/// graph resolves it by asking each module in turn rather than by matching a name.
+///
+/// The negative half matters as much as the positive: asking the consumer's own module for the same target must
+/// still return nothing. A resolution that succeeded locally would mean the executor could dispatch to a same-named
+/// declaration in the wrong module, which is exactly the failure the canonical identity exists to prevent.
+#[test]
+fn a_canonical_target_resolves_to_its_owning_module_through_the_graph() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = lower_named_body_ir(
+        "pub def provide() -> int:\n  return 7\n",
+        &["graph_resolution_provider"],
+    )?;
+    let consumer = lower_named_body_ir("def main() -> int:\n  return 1\n", &["graph_resolution_consumer"])?;
+
+    let provided = provider
+        .bodies
+        .iter()
+        .find(|body| body.name == "provide")
+        .ok_or("the provider module must retain its callable body")?;
+    let target = provided
+        .canonical
+        .as_ref()
+        .ok_or("the provider body must carry a canonical identity")?;
+
+    // The consumer alone cannot resolve it: the identity is owned by another module.
+    assert!(
+        consumer.body_for_canonical_target(target).is_none(),
+        "a canonical target owned by another module must not resolve against the caller's own module"
+    );
+
+    let graph = ReplacementExecutionGraph::new(&consumer, std::iter::once(&provider))?;
+    let (owner, body) = graph
+        .body_for_canonical_target(target)
+        .ok_or("the graph must resolve a canonical target owned by a reachable module")?;
+    assert_eq!(
+        owner.module_id, provider.module_id,
+        "resolution must report the module that owns the declaration"
+    );
+    assert_eq!(body.name, "provide", "resolution must return the selected declaration");
+    Ok(())
+}
+
+/// A graph refuses to be built from two modules claiming one identity.
+///
+/// Assembling a graph from disagreeing analyses is a caller fault, and accepting it would make dispatch depend on
+/// assembly order. Refusing at construction keeps that fault at the boundary that produced it rather than surfacing
+/// later as a call resolving to whichever module happened to be first.
+#[test]
+fn a_graph_refuses_duplicate_module_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let module = lower_named_body_ir("def main() -> int:\n  return 1\n", &["duplicate_identity"])?;
+    let twin = lower_named_body_ir("def main() -> int:\n  return 2\n", &["duplicate_identity"])?;
+    assert!(
+        ReplacementExecutionGraph::new(&module, std::iter::once(&twin)).is_err(),
+        "two modules claiming one identity must refuse rather than resolve by assembly order"
+    );
+    Ok(())
+}
+
+/// Two independently checked modules cannot express a resolved cross-module call.
+///
+/// This records why #1260's executable proof lives in a session-backed integration fixture rather than here. Each
+/// module below is checked by its own `TypeChecker`, so the consumer's checker never sees the provider and the call
+/// stays unresolved: `direct_call_id`, `binding`, and `canonical` are all absent. There is nothing for the execution
+/// graph to resolve, and a test that lowered two modules separately and expected a cross-module call to execute
+/// would be asserting against a call the frontend never resolved.
+///
+/// `CompilationSession::analyze_modules` is the only checker authority for a source graph, which is what makes a
+/// call across a module edge carry the canonical identity dispatch resolves on.
+#[test]
+fn independently_checked_modules_do_not_resolve_a_cross_module_call() -> Result<(), Box<dyn std::error::Error>> {
+    let consumer = lower_named_body_ir(
+        "from unseen_provider import provide\n\ndef main() -> int:\n  return provide()\n",
+        &["unresolved_consumer"],
+    )?;
+    let unresolved =
+        consumer
+            .bodies
+            .iter()
+            .flat_map(|body| body.block.stmts.iter())
+            .filter_map(|statement| match &statement.kind {
+                StatementKind::Call {
+                    callee:
+                        incan_semantics_core::body_ir::Callee::Function(
+                            incan_semantics_core::body_ir::CallableTarget::Named(target),
+                        ),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .find(|target| target.name == "provide");
+    if let Some(target) = unresolved {
+        assert!(
+            target.direct_call_id.is_none() && target.canonical.is_none(),
+            "a call the frontend never resolved must carry neither identity, got: {target:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Legal source used to isolate malformed retained constructor facts after checked lowering.
+const PAIR_CONSTRUCTION_SOURCE: &str = r#"
+model Pair:
+  left: int
+  right: int
+
+def main() -> int:
+  pair = Pair(left=40, right=2)
+  return pair.left
+"#;
+
+/// Locate the one Pair construction whose post-lowering facts each malformed-IR test changes deliberately.
+fn pair_constructor_target_mut(
+    module: &mut BodyIrModule,
+) -> Result<&mut ConstructorTarget, Box<dyn std::error::Error>> {
+    let main = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .ok_or("fixture must lower the main Body-IR body")?;
+    main.block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::Aggregate(incan_semantics_core::body_ir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target.as_mut()),
+            _ => None,
+        })
+        .ok_or("fixture must lower its model construction as a constructor aggregate".into())
+}
+
+/// Require malformed retained Pair facts to refuse before direct execution can yield a result or receipt input.
+///
+/// The public command cannot accept malformed internal Body IR, so this direct-executor seam is the honest proof:
+/// an `Err` has no `ReplacementExecution` result that a command could bind into a successful receipt.
+fn assert_malformed_pair_constructor_refusal(
+    module: &BodyIrModule,
+    expected_description: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let error = match execute_free_function(module, "main", &[]) {
+        Ok(execution) => {
+            return Err(format!(
+                "malformed retained Pair facts must refuse instead of executing, got {:?}",
+                execution.value
+            )
+            .into());
+        }
+        Err(error) => error,
+    };
+    let constructor_start = PAIR_CONSTRUCTION_SOURCE
+        .find("Pair(left=40, right=2)")
+        .ok_or("fixture must contain the model constructor")?;
+    let span = error
+        .primary_span()
+        .ok_or("malformed retained Pair facts must retain a source span")?;
+    assert_eq!(span.start, constructor_start);
+    assert_eq!(span.end, constructor_start + "Pair(left=40, right=2)".len());
+    assert!(
+        error.to_string().contains(expected_description),
+        "the refusal must name the malformed retained fact: {error}"
+    );
+    Ok(())
+}
+
+/// Find the canonical Generator.collect call in the fixture's `main` body for malformed-IR assertions.
+fn canonical_collect_target_mut(module: &mut BodyIrModule) -> Option<&mut incan_semantics_core::body_ir::MethodTarget> {
+    module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")?
+        .block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Call {
+                callee: incan_semantics_core::body_ir::Callee::Method(target),
+                ..
+            } if target
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| identity.declaration_name == "Generator.collect") =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+}
+
+/// Find one identity-selected named call in a body for malformed-IR and display-spelling assertions.
+fn canonical_named_target_mut<'module>(
+    module: &'module mut BodyIrModule,
+    body_name: &str,
+    declaration_name: &str,
+) -> Option<&'module mut incan_semantics_core::body_ir::NamedCallableTarget> {
+    module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == body_name)?
+        .block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Call {
+                callee:
+                    incan_semantics_core::body_ir::Callee::Function(
+                        incan_semantics_core::body_ir::CallableTarget::Named(target),
+                    ),
+                ..
+            } if target
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| identity.declaration_name == declaration_name) =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
 }
 
 /// Locate the compiler binary built for this integration-test invocation.
@@ -206,6 +490,60 @@ def main() -> int:
         execution.body_snapshot.contains("executed direct match arm"),
         "direct execution must retain selected pattern-arm evidence: {}",
         execution.body_snapshot
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Point:
+  x: int
+
+def main() -> int:
+  point = Point(x=42)
+  match point:
+    case Point(x=value):
+      return value
+  return 0
+"#;
+    let mut module = lower_typed_body_ir(source)?;
+    let pattern = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .and_then(|body| {
+            body.block
+                .stmts
+                .iter_mut()
+                .find_map(|statement| match &mut statement.kind {
+                    StatementKind::Assign {
+                        rvalue: Rvalue::Match { arms, .. },
+                        ..
+                    } => arms.first_mut().map(|arm| &mut arm.pattern),
+                    _ => None,
+                })
+        })
+        .ok_or("fixture must lower a nominal pattern")?;
+    let fields = match pattern {
+        incan_semantics_core::body_ir::Pattern::Nominal { fields, .. } => fields.clone(),
+        other => return Err(format!("fixture must retain the nominal identity: {other:?}").into()),
+    };
+    *pattern = incan_semantics_core::body_ir::Pattern::Struct {
+        canonical: None,
+        name: "Point".to_string(),
+        fields,
+    };
+
+    let error = match execute_free_function(&module, "main", &[]) {
+        Ok(_) => return Err("a pattern without its exact canonical target must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("match pattern without an exact direct target identity")
     );
     Ok(())
 }
@@ -705,6 +1043,151 @@ def main() -> int:
     Ok(())
 }
 
+/// Refuse a constructor when its retained declaration layout no longer matches checked constructor slots.
+///
+/// This injects malformed Body IR after lowering; valid source cannot reorder the retained declaration. The direct
+/// executor must fail at the original construction rather than return a value with fields shifted by the mutation.
+#[test]
+fn replacement_refuses_a_reordered_nominal_declaration_layout_at_the_original_constructor_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    let declaration = module
+        .nominal_declarations
+        .iter_mut()
+        .find(|declaration| declaration.name == "Pair")
+        .ok_or("fixture must retain the source-local Pair declaration")?;
+    let [left, right] = declaration.fields.as_mut_slice() else {
+        return Err("fixture must retain Pair's two canonical fields".into());
+    };
+    std::mem::swap(left, right);
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "constructor canonical target disagrees with the retained declaration identity",
+    )
+}
+
+/// Refuse a constructor missing the checked layout that pairs its numeric slots with retained field names.
+#[test]
+fn replacement_refuses_a_nominal_constructor_missing_checked_field_layout_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    pair_constructor_target_mut(&mut module)?.canonical_field_layout = None;
+
+    assert_malformed_pair_constructor_refusal(&module, "constructor `Pair` without a checked canonical field layout")
+}
+
+/// Refuse a constructor whose independently retained layout omits one checked field slot.
+#[test]
+fn replacement_refuses_a_nominal_constructor_with_a_short_checked_field_layout_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    let layout = pair_constructor_target_mut(&mut module)?
+        .canonical_field_layout
+        .as_mut()
+        .ok_or("fixture must retain Pair's checked canonical field layout")?;
+    let removed = layout
+        .pop()
+        .ok_or("fixture must retain the right field in Pair's checked layout")?;
+    assert_eq!(removed, "right");
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "canonical field layout disagrees with checked constructor facts",
+    )
+}
+
+/// Refuse a constructor whose independently retained layout changes one canonical field name.
+#[test]
+fn replacement_refuses_a_nominal_constructor_with_a_renamed_checked_field_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    let layout = pair_constructor_target_mut(&mut module)?
+        .canonical_field_layout
+        .as_mut()
+        .ok_or("fixture must retain Pair's checked canonical field layout")?;
+    let first = layout
+        .first_mut()
+        .ok_or("fixture must retain the left field in Pair's checked layout")?;
+    *first = "renamed".to_string();
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "canonical field layout disagrees with checked constructor facts",
+    )
+}
+
+/// Refuse a constructor whose retained declaration identity points outside the current Body-IR module.
+#[test]
+fn replacement_refuses_a_foreign_nominal_constructor_identity_at_the_original_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut module = lower_typed_body_ir(PAIR_CONSTRUCTION_SOURCE)?;
+    pair_constructor_target_mut(&mut module)?.direct_declaration_id =
+        Some(CompilerNodeId::declaration_span("foreign", 0, 12));
+
+    assert_malformed_pair_constructor_refusal(
+        &module,
+        "constructor canonical target disagrees with its physical Body-IR declaration",
+    )
+}
+
+#[test]
+fn replacement_refuses_enum_targets_whose_canonical_member_disagrees_with_the_physical_record()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fieldless_source =
+        "enum Signal:\n  Ready\n  Stop\n\ndef main() -> bool:\n  return Signal.Ready == Signal.Stop\n";
+    let mut fieldless = lower_typed_body_ir(fieldless_source)?;
+    let fieldless_target = fieldless
+        .bodies
+        .iter_mut()
+        .flat_map(|body| &mut body.block.stmts)
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::FieldlessEnumVariant(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("fixture must lower a fieldless-enum member")?;
+    fieldless_target.variant_canonical.declaration_name = "Stop".to_string();
+    let fieldless_error = match execute_free_function(&fieldless, "main", &[]) {
+        Ok(_) => return Err("a mismatched fieldless-enum canonical target must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        fieldless_error
+            .to_string()
+            .contains("without exact canonical source-local owner/member identities")
+    );
+
+    let value_source =
+        "enum Status(int):\n  Ok = 200\n  Missing = 404\n\ndef main() -> int:\n  return Status.Missing.value()\n";
+    let mut value = lower_typed_body_ir(value_source)?;
+    let value_target = value
+        .bodies
+        .iter_mut()
+        .flat_map(|body| &mut body.block.stmts)
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::ValueEnumVariant(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("fixture must lower a value-enum member")?;
+    value_target.enum_canonical.declaration_name = "Other".to_string();
+    let value_error = match execute_free_function(&value, "main", &[]) {
+        Ok(_) => return Err("a mismatched value-enum canonical target must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        value_error
+            .to_string()
+            .contains("without exact canonical source-local owner/member identities")
+    );
+    Ok(())
+}
+
 /// Refuse a constructor whose source-local declaration identity is absent instead of recovering it from its name.
 #[test]
 fn replacement_refuses_an_idless_nominal_constructor_at_its_original_source_span()
@@ -880,19 +1363,80 @@ def main() -> int:
     Ok(())
 }
 
-/// Refuse an unimplemented dict aggregate at its original source span.
+#[test]
+fn replacement_entrypoint_requires_one_canonical_free_function() -> Result<(), Box<dyn std::error::Error>> {
+    let mut missing_identity = lower_typed_body_ir("def main() -> int:\n  return 42\n")?;
+    missing_identity
+        .bodies
+        .first_mut()
+        .ok_or("fixture must contain main")?
+        .canonical = None;
+    let error = match execute_free_function(&missing_identity, "main", &[]) {
+        Ok(_) => return Err("an entrypoint without canonical authority must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("without an exact canonical free-function identity")
+    );
+
+    let mut mismatched_identity = lower_typed_body_ir("def main() -> int:\n  return 42\n")?;
+    mismatched_identity
+        .bodies
+        .first_mut()
+        .and_then(|body| body.canonical.as_mut())
+        .ok_or("fixture must contain main's canonical identity")?
+        .declaration_name = "not_main".to_string();
+    let error = match execute_free_function(&mismatched_identity, "main", &[]) {
+        Ok(_) => return Err("an entrypoint whose body and requested target disagree must refuse".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("without an exact canonical free-function identity")
+    );
+
+    let method_only = lower_typed_body_ir("class App:\n  def main(self) -> int:\n    return 42\n")?;
+    let error = match execute_free_function(&method_only, "main", &[]) {
+        Ok(_) => return Err("a same-named method must not become a free-function entrypoint".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("without an exact canonical free-function identity")
+    );
+
+    let overloaded = lower_typed_body_ir(
+        "def main(value: int) -> int:\n  return value\n\ndef main(value: str) -> int:\n  return 0\n",
+    )?;
+    let error = match execute_free_function(&overloaded, "main", &[ReplacementValue::Int(1)]) {
+        Ok(_) => return Err("an overloaded entrypoint must not select the first body".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("ambiguous overloaded free-function entrypoint")
+    );
+    Ok(())
+}
+
+/// Refuse a dict spread outside the membership profile at its original source span.
 #[test]
 fn replacement_refuses_unsupported_body_ir_with_the_original_source_span() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
-  values = {"first": 1}
+  values = {**{"first": 1}}
   return 0
 "#;
     let module = lower_typed_body_ir(source)?;
     let error = match execute_free_function(&module, "main", &[]) {
         Ok(execution) => {
             return Err(format!(
-                "dict aggregates must remain outside the source-local structural profile but executed as {:?}",
+                "dict spreads must remain outside the hashed membership profile but executed as {:?}",
                 execution.value
             )
             .into());
@@ -905,9 +1449,9 @@ def main() -> int:
         "unsupported execution must retain an Incan source span: {error}"
     );
     let expected_start = source
-        .find("{\"first\": 1}")
+        .find("{**{\"first\": 1}}")
         .ok_or("aggregate fixture must contain its dict assignment")?;
-    let expected_end = expected_start + "{\"first\": 1}".len();
+    let expected_end = expected_start + "{**{\"first\": 1}}".len();
     let span = error
         .primary_span()
         .ok_or("aggregate refusal must retain its original source span")?;
@@ -971,6 +1515,38 @@ def main() -> int:
     assert!(
         execution.body_snapshot.contains("yield"),
         "the Body-IR proof must retain a yield rather than materializing an eager list"
+    );
+    Ok(())
+}
+
+/// A checked method's retained canonical target, rather than its display spelling, is the replacement dispatch
+/// authority. Removing that authority must fail closed before the deferred generator can be consumed.
+#[test]
+fn replacement_dispatches_generator_methods_by_canonical_target_and_refuses_absent_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def main() -> int:
+  values = (value * 10 for value in range(1, 5) if value > 2).collect()
+  return values[0] + values[1]
+"#;
+    let mut renamed = lower_typed_body_ir(source)?;
+    canonical_collect_target_mut(&mut renamed)
+        .ok_or("fixture must retain the canonical Generator.collect target")?
+        .name = "not_collect".to_string();
+    let execution = execute_free_function(&renamed, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(70));
+
+    let mut missing = lower_typed_body_ir(source)?;
+    canonical_collect_target_mut(&mut missing)
+        .ok_or("fixture must retain the canonical Generator.collect target")?
+        .canonical = None;
+    let error = match execute_free_function(&missing, "main", &[]) {
+        Ok(_) => return Err("a source method without its canonical target must fail closed".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error.primary_span().is_some() && error.to_string().contains("method `collect`"),
+        "the missing method authority must refuse at the original call: {error}"
     );
     Ok(())
 }
@@ -1290,8 +1866,45 @@ def main() -> int:
     assert!(
         error
             .to_string()
-            .contains("body does not retain its canonical declaration identity"),
-        "the refusal must identify the malformed retained body identity: {error}"
+            .contains("canonical target disagrees with its physical Body-IR declaration"),
+        "the refusal must identify the mismatched semantic and physical declaration identities: {error}"
+    );
+    Ok(())
+}
+
+/// Named-call dispatch follows the retained declaration identity, never the source/display spelling. Removing the
+/// canonical half of that handoff must refuse even when the physical same-module id remains present.
+#[test]
+fn replacement_dispatches_named_calls_by_canonical_target_and_refuses_absent_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def helper() -> int:
+  return 42
+
+def main() -> int:
+  return helper()
+"#;
+    let mut renamed = lower_typed_body_ir(source)?;
+    canonical_named_target_mut(&mut renamed, "main", "helper")
+        .ok_or("fixture must lower the canonical helper call")?
+        .name = "not_helper".to_string();
+    assert_eq!(
+        execute_free_function(&renamed, "main", &[])?.value,
+        ReplacementValue::Int(42),
+        "the retained canonical target must select helper independently of its display spelling"
+    );
+
+    let mut missing = lower_typed_body_ir(source)?;
+    canonical_named_target_mut(&mut missing, "main", "helper")
+        .ok_or("fixture must lower the canonical helper call")?
+        .canonical = None;
+    let error = match execute_free_function(&missing, "main", &[]) {
+        Ok(_) => return Err("a physical direct-call id without its canonical target must fail closed".into()),
+        Err(error) => error,
+    };
+    assert!(
+        error.primary_span().is_some() && error.to_string().contains("without a canonical declaration target"),
+        "the missing named-call authority must refuse at the original call: {error}"
     );
     Ok(())
 }
@@ -1900,31 +2513,53 @@ def main() -> int:
     Ok(())
 }
 
-/// Refuse lexical shadowing until Body IR carries an explicit binding-equivalence fact direct frames can honor.
+/// Execute explicit `let` shadowing from the canonical locals selected by Body IR, without recovering by name.
 #[test]
-fn replacement_refuses_lexically_shadowed_bindings() -> Result<(), Box<dyn std::error::Error>> {
+fn replacement_executes_let_shadowing_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
+  mut total = 0
   x = 1
   if true:
     let x = 2
-  return x
+    total += x
+  return total + x
 "#;
     let module = lower_typed_body_ir(source)?;
-    let error = match execute_free_function(&module, "main", &[]) {
-        Ok(execution) => {
-            return Err(format!("shadowing must refuse directly, got {:?}", execution.value).into());
-        }
-        Err(error) => error,
-    };
-    let expected_start = source
-        .find("let x = 2")
-        .ok_or("shadowing fixture must contain the inner binding")?;
-    let span = error
-        .primary_span()
-        .ok_or("shadowing refusal must retain the inner binding span")?;
-    assert_eq!(span.start, expected_start);
-    assert!(error.to_string().contains("repeated user binding"));
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("shadowing fixture must lower `main`")?;
+    let x_locals = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("x"))
+        .collect::<Vec<_>>();
+    assert_eq!(x_locals.len(), 2, "the outer and inner declarations must both survive");
+    assert_ne!(x_locals[0].id, x_locals[1].id);
+    assert_ne!(x_locals[0].identity, x_locals[1].identity);
+
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(3));
+    Ok(())
+}
+
+/// `mut` is also a declaration form: its inner value must not overwrite the same-spelled outer local.
+#[test]
+fn replacement_executes_mut_shadowing_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def main() -> int:
+  mut total = 0
+  mut x = 4
+  if true:
+    mut x = 7
+    total += x
+  return total + x
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(11));
     Ok(())
 }
 
@@ -2081,6 +2716,16 @@ fn replacement_cli_executes_typed_body_ir_and_persists_a_replacement_receipt() -
             "--backend-fallback",
             "refuse",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(
         output.status.success(),
@@ -2088,15 +2733,13 @@ fn replacement_cli_executes_typed_body_ir_and_persists_a_replacement_receipt() -
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8(output.stdout)?;
     assert!(
-        stdout.contains("replacement backend executed `main`: 42"),
-        "unexpected replacement output: {stdout}"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
-    assert!(
-        !stdout.contains("Generated Rust project"),
-        "replacement path must not enter Rust generation: {stdout}"
-    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         !temporary.path().join("target/incan").exists(),
         "direct replacement execution must not create a legacy generated-project directory"
@@ -2115,6 +2758,445 @@ fn replacement_cli_executes_typed_body_ir_and_persists_a_replacement_receipt() -
         receipt["identity"]
             .as_str()
             .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    Ok(())
+}
+
+/// Execute a call that leaves the entry module through the replacement route, with a #986 receipt.
+///
+/// This is #1260's local-module positive fixture. Everything before it executed inside one module, where a callee
+/// carries a same-module `direct_call_id`. Here `main` calls a function declared in a sibling module, so the frontend
+/// resolves the callee to a canonical identity instead and the execution graph has to find the module that declares
+/// it. The result is asserted from the report rather than the receipt, because the receipt stays receipt-only.
+#[test]
+fn replacement_cli_executes_a_call_into_a_sibling_module_with_a_replacement_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    fs::write(
+        temporary.path().join("helper.incn"),
+        "pub def bump(value: int) -> int:\n  return value + 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helper import bump\n\ndef main() -> int:\n  return bump(41)\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("cross-module-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "a call into a sibling module must execute through the replacement route. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("cross-module-report.json"))?)?;
+    assert_eq!(
+        report["replacement_execution"]["result"], "42",
+        "the sibling module's declaration must produce the source-observable result"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "direct replacement execution must not create a legacy generated-project directory"
+    );
+
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["selection"]["selected_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], serde_json::json!("not_needed"));
+    Ok(())
+}
+
+/// Execute a module-qualified call, written and aliased, through the replacement route.
+///
+/// `helper.bump(41)` reaches the AST as a method call, but `helper` is a namespace, not a value. Lowering it as a
+/// receiver refused at a name that never named a place: "resolved reference `helper` has no Body IR place
+/// representation". The qualifier says where to look; the typechecker has already resolved what was found, and this
+/// executes that declaration.
+///
+/// Both spellings are pinned because they differ only in the qualifier's own binding, and an alias is the case where
+/// a name-derived target would go wrong: `provider.bump` and `helper.bump` are one declaration reached two ways.
+#[test]
+fn replacement_cli_executes_a_module_qualified_call() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        (
+            "plain",
+            "import helper\n\ndef main() -> int:\n  return helper.bump(41)\n",
+        ),
+        (
+            "aliased",
+            "import helper as provider\n\ndef main() -> int:\n  return provider.bump(41)\n",
+        ),
+    ];
+    for (name, entry_source) in cases {
+        let temporary = tempfile::tempdir()?;
+        fs::write(
+            temporary.path().join("helper.incn"),
+            "pub def bump(value: int) -> int:\n  return value + 1\n",
+        )?;
+        let entrypoint = temporary.path().join("main.incn");
+        fs::write(&entrypoint, entry_source)?;
+
+        let report_path = temporary.path().join("module-qualified-report.json");
+        let output = Command::new(incan_binary())
+            .args([
+                "build",
+                entrypoint.to_string_lossy().as_ref(),
+                "--backend",
+                "replacement",
+                "--backend-fallback",
+                "refuse",
+            ])
+            .args([
+                "--report",
+                "json",
+                "--report-output",
+                report_path.to_string_lossy().as_ref(),
+            ])
+            .output()?;
+        assert!(
+            output.status.success(),
+            "the {name} module-qualified call must execute through the replacement route. stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+        assert_eq!(
+            report["replacement_execution"]["result"], "42",
+            "the {name} module-qualified call must produce the qualified declaration's result"
+        );
+
+        let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+            temporary.path().join(".incan/backend/receipt.json"),
+        )?)?;
+        assert_eq!(receipt["executed_backend"], "replacement");
+        assert_eq!(receipt["fallback_outcome"], serde_json::json!("not_needed"));
+    }
+    Ok(())
+}
+
+/// A receiver that merely shares a module's name is still an ordinary method call.
+///
+/// The module-qualified path keys off the receiver's resolved identity rather than its spelling, so a local bound to
+/// a value keeps its own meaning even when an imported module has the same name. Getting this wrong would silently
+/// redirect a method call to a free function in another module, which is the exact failure the identity-over-spelling
+/// rule exists to prevent -- so it is pinned rather than assumed.
+#[test]
+fn a_local_sharing_a_module_name_is_not_treated_as_a_module_qualifier() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    fs::write(
+        temporary.path().join("helper.incn"),
+        "pub def bump(value: int) -> int:\n  return value + 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "import helper\n\ndef main() -> int:\n  helper = 41\n  return helper.bump()\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output.status.success(),
+        "an int has no `bump` method, so this must not execute: {combined}"
+    );
+    assert!(
+        !combined.contains("42"),
+        "the shadowing local must not be redirected to the module's declaration: {combined}"
+    );
+    Ok(())
+}
+
+/// A typed-numeric carrier crosses a module boundary, and the callee's own operations are still validated.
+///
+/// The typed-numeric walk previously followed only same-module calls, because it selected the callee by its
+/// same-module span identity. A cross-module callee was therefore refused outright. Admitting one is only sound if
+/// its operations are validated too, so both directions are pinned here: the admitted call executes, and an
+/// operation the profile does not admit is still refused when it lives in the *callee's* module rather than the
+/// entrypoint's.
+#[test]
+fn replacement_cli_follows_a_typed_numeric_call_into_the_module_that_declares_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let admitted = tempfile::tempdir()?;
+    fs::write(
+        admitted.path().join("helper.incn"),
+        "pub def widen(value: u8) -> u8:\n  return value\n",
+    )?;
+    let entrypoint = admitted.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helper import widen\n\ndef main() -> u8:\n  start: u8 = 41\n  return widen(start)\n",
+    )?;
+    let report_path = admitted.path().join("typed-numeric-report.json");
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            report_path.to_string_lossy().as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "an admitted typed-numeric call must cross the module boundary. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    assert_eq!(report["replacement_execution"]["result"], "41");
+
+    // The same shape, with an operation the carrier profile does not admit moved into the callee's module. A refusal
+    // here is the evidence that the walk actually entered `helper.incn` rather than trusting the call.
+    let refused = tempfile::tempdir()?;
+    fs::write(
+        refused.path().join("helper.incn"),
+        "pub def widen(value: u8) -> u8:\n  values: List[u8] = [value]\n  return values[0]\n",
+    )?;
+    let refused_entrypoint = refused.path().join("main.incn");
+    fs::write(
+        &refused_entrypoint,
+        "from helper import widen\n\ndef main() -> u8:\n  start: u8 = 41\n  return widen(start)\n",
+    )?;
+    let refusal = Command::new(incan_binary())
+        .args([
+            "build",
+            refused_entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !refusal.status.success(),
+        "an unadmitted typed-numeric operation in the callee's module must still be refused"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&refusal.stdout),
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+    assert!(
+        combined.contains("INCAN-R988-UNSUPPORTED") && combined.contains("aggregate construction"),
+        "the callee module's unadmitted operation must be named: {combined}"
+    );
+    assert!(
+        combined.contains("helper.incn:") && !combined.contains("main.incn:"),
+        "a refusal measured in the callee's module must report that module's source: {combined}"
+    );
+    Ok(())
+}
+
+/// A facade chain executes, and its direct, re-exported and aliased bindings name one canonical declaration.
+///
+/// This is #1261's facade fixture. `provider` declares `compute`; `facade` re-exports it and aliases it as `renamed`;
+/// the entrypoint reaches it all three ways in a single expression. The arithmetic is chosen so the total only
+/// balances when every binding actually reaches `compute` -- 2 + 11 + 29 -- rather than asserting three separate
+/// calls that could each be satisfied differently.
+///
+/// Execution alone would not show that the three bindings are the *same* declaration, so identity is asserted
+/// separately through `incan inspect codegraph`. That is a public projection: it reports declaration ids and call
+/// targets without exposing compiler-session state, Body IR, or generated Rust names, which is the boundary #1261
+/// requires its metadata evidence to respect.
+#[test]
+fn replacement_cli_executes_a_facade_chain_whose_bindings_share_one_declaration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let source_dir = temporary.path().join("src");
+    fs::create_dir_all(&source_dir)?;
+    fs::write(
+        temporary.path().join("incan.toml"),
+        "[project]\nname = \"facade_chain\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        source_dir.join("provider.incn"),
+        "pub def compute(value: int) -> int:\n  return value + 1\n",
+    )?;
+    fs::write(
+        source_dir.join("facade.incn"),
+        "pub from provider import compute\n\npub renamed = alias compute\n",
+    )?;
+    let entrypoint = source_dir.join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from provider import compute\nfrom facade import compute as reexported, renamed\n\ndef main() -> int:\n  return compute(1) + reexported(10) + renamed(28)\n",
+    )?;
+
+    let report_path = temporary.path().join("facade-report.json");
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            report_path.to_string_lossy().as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "the facade chain must execute through the replacement route. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    assert_eq!(
+        report["replacement_execution"]["result"], "42",
+        "the total only balances when the direct, re-exported and aliased bindings all reach `compute`"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], serde_json::json!("not_needed"));
+
+    // The same chain, inspected: every call must name the one declaration in `provider`.
+    let codegraph = Command::new(incan_binary())
+        .args(["inspect", "codegraph", "src", "--format", "jsonl"])
+        .current_dir(temporary.path())
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("INCAN_NO_BANNER", "1")
+        .output()?;
+    assert!(
+        codegraph.status.success(),
+        "codegraph inspection must succeed. stderr:\n{}",
+        String::from_utf8_lossy(&codegraph.stderr)
+    );
+    let mut call_targets: Vec<(String, String)> = Vec::new();
+    for line in String::from_utf8_lossy(&codegraph.stdout).lines() {
+        let record: serde_json::Value = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+        if record["record"] != serde_json::json!("call") {
+            continue;
+        }
+        let (Some(callee), Some(target)) = (record["callee"].as_str(), record["target_id"].as_str()) else {
+            continue;
+        };
+        call_targets.push((callee.to_string(), target.to_string()));
+    }
+    call_targets.sort();
+    let observed: Vec<&str> = call_targets.iter().map(|(callee, _)| callee.as_str()).collect();
+    assert_eq!(
+        observed,
+        ["compute", "reexported", "renamed"],
+        "the fixture must record one call through each binding, got {call_targets:?}"
+    );
+    let distinct: BTreeSet<&str> = call_targets.iter().map(|(_, target)| target.as_str()).collect();
+    assert_eq!(
+        distinct.len(),
+        1,
+        "a direct import, a re-export and an alias must name one declaration, got {distinct:?}"
+    );
+    let target = distinct.iter().next().ok_or("expected one resolved declaration")?;
+    assert!(
+        target.contains("provider.incn") && target.ends_with(":compute"),
+        "the shared declaration must be `compute` in the provider module, got {target}"
+    );
+    Ok(())
+}
+
+/// A sibling module is held to the same source-only profile as the entrypoint.
+///
+/// Allowing a local import means an unsupported declaration becomes reachable from a file the entrypoint never names.
+/// The refusal must still happen, so the boundary is a property of the executed graph rather than of whichever file
+/// happened to be the entrypoint.
+#[test]
+fn replacement_cli_refuses_an_unsupported_declaration_in_a_sibling_module() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    fs::write(
+        temporary.path().join("helper.incn"),
+        "pub class Holder:\n  value: int\n\npub def bump(value: int) -> int:\n  return value + 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helper import bump\n\ndef main() -> int:\n  return bump(41)\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "an unsupported declaration in a reachable module must be refused"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("INCAN-R988-UNSUPPORTED") && combined.contains("non-function top-level declaration"),
+        "missing typed refusal for the sibling module's declaration: {combined}"
+    );
+    // The span was measured in `helper.incn`, so the reported location has to be `helper.incn`. Reporting the
+    // entrypoint alongside another file's offsets points a reader at unrelated source.
+    assert!(
+        combined.contains("helper.incn:") && !combined.contains("main.incn:"),
+        "a refusal raised in a sibling module must report that module's source: {combined}"
+    );
+    assert!(
+        !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "a refused profile must not publish a replacement receipt"
     );
     Ok(())
 }
@@ -2144,6 +3226,16 @@ fn replacement_cli_executes_typed_empty_scalar_tuple_list_with_a_replacement_rec
             "--backend-fallback",
             "refuse",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(
         output.status.success(),
@@ -2151,11 +3243,13 @@ fn replacement_cli_executes_typed_empty_scalar_tuple_list_with_a_replacement_rec
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8(output.stdout)?;
     assert!(
-        stdout.contains("replacement backend executed `main`: 42"),
-        "unexpected typed empty pair-list output: {stdout}"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         !temporary.path().join("target/incan").exists(),
         "direct replacement execution must not create a legacy generated-project directory"
@@ -2188,6 +3282,12 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -2196,20 +3296,27 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(report["schema_version"], "incan.replacement_execution.v0");
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["schema_version"], "incan.replacement_execution.v1");
     assert_eq!(report["status"], "success");
     assert_eq!(report["mode"], "executable");
     assert_eq!(report["backend"]["executed_backend"], "replacement");
     assert_eq!(report["replacement_execution"]["result"], "42");
+    assert_eq!(report["replacement_execution"]["result_type"], "int");
     assert_eq!(
         report["replacement_execution"]["emitted_output"],
         serde_json::json!(["answer follows"])
     );
+    assert_eq!(output.stdout, b"answer follows\n");
+    assert_eq!(
+        report["replacement_execution"]["stdout_bytes"],
+        serde_json::json!(output.stdout)
+    );
+    assert_eq!(report["replacement_execution"]["stderr_bytes"], serde_json::json!([]));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("answer follows"),
-        "replacement CLI must relay source output when stdout is reserved for JSON: {}",
-        String::from_utf8_lossy(&output.stderr)
+        output.stderr.is_empty(),
+        "report metadata must not displace program output"
     );
     assert!(
         report["replacement_execution"]["output_identity"]
@@ -2231,6 +3338,104 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
     assert!(
         report.get("generated").is_none() && report.get("oven").is_none(),
         "direct replacement report must not invent generated-Rust or Oven evidence: {report}"
+    );
+    Ok(())
+}
+
+/// Execute only the session-projected `beta` entry and bind its semantic module to both report and receipt evidence.
+#[test]
+fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_provenance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let source_root = temporary.path().join("src");
+    fs::create_dir_all(&source_root)?;
+    let entrypoint = source_root.join("main.incn");
+    fs::write(
+        temporary.path().join("incan.toml"),
+        "[project]\nname = \"replacement_session_projection\"\n\n[project.features]\nbeta = []\n",
+    )?;
+    fs::write(
+        &entrypoint,
+        "when feature(\"beta\"):\n  def main() -> int:\n    return 42\n",
+    )?;
+
+    let inactive = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !inactive.status.success(),
+        "an inactive session projection must not execute its gated entrypoint"
+    );
+    assert!(
+        !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "a refused inactive entrypoint must not publish a replacement receipt"
+    );
+
+    let enabled = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+            "--features",
+            "beta",
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
+        .output()?;
+    assert!(
+        enabled.status.success(),
+        "the selected session feature must execute directly. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&enabled.stdout),
+        String::from_utf8_lossy(&enabled.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    let provenance = &report["semantic_module"];
+    assert_eq!(report["replacement_execution"]["result"], "42");
+    assert_eq!(provenance["module_id"], "module:main");
+    assert_eq!(provenance["module_path"], "main");
+    assert!(
+        provenance["source_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+            && provenance["semantic_snapshot_identity"]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("sha256:")),
+        "the report must name stable source and semantic-snapshot identities: {report}"
+    );
+    assert!(
+        report["replacement_execution"]["body_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| snapshot.contains("span="))
+            && report["replacement_execution"]["ownership_reads"].is_array()
+            && report["replacement_execution"]["runtime_requirements"].is_array(),
+        "the execution evidence must stay attached to the session-owned semantic module: {report}"
+    );
+
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["semantic_module"], *provenance);
+    assert_eq!(receipt["selection"]["source_identity"], provenance["source_identity"]);
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "a session-projected replacement execution must not create legacy generated output"
     );
     Ok(())
 }
@@ -2263,6 +3468,12 @@ async def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -2271,7 +3482,8 @@ async def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["backend"]["executed_backend"], "replacement");
     assert_eq!(report["backend"]["fallback_outcome"], "not_needed");
     assert_eq!(report["replacement_execution"]["result"], "7");
@@ -2462,7 +3674,7 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
     fs::write(
         &entrypoint,
         r#"def main() -> int:
-  values = {"first": 1}
+  values = {**{"first": 1}}
   return 0
 "#,
     )?;
@@ -2495,12 +3707,12 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
         "refusal must retain source authority: {combined}"
     );
     let expected_start = r#"def main() -> int:
-  values = {"first": 1}
+  values = {**{"first": 1}}
   return 0
 "#
-    .find("{\"first\": 1}")
+    .find("{**{\"first\": 1}}")
     .ok_or("aggregate fixture must contain its dict literal")?;
-    let expected_end = expected_start + "{\"first\": 1}".len();
+    let expected_end = expected_start + "{**{\"first\": 1}}".len();
     assert!(
         combined.contains(&format!(
             "primary Incan source location: {}:{expected_start}..{expected_end}",
@@ -2527,10 +3739,10 @@ fn replacement_cli_refuses_new_operator_forms_without_artifacts_or_receipts() ->
 {
     let cases = [
         (
-            "string-membership",
-            "def main() -> bool:\n  return \"a\" in \"abc\"\n",
-            "\"a\" in \"abc\"",
-            "call to runtime helper `str_contains`",
+            "string-nonmembership",
+            "def main() -> bool:\n  return \"a\" not in \"abc\"\n",
+            "\"a\" not in \"abc\"",
+            "call to runtime helper `str_not_contains`",
         ),
         (
             "power",
@@ -2975,13 +4187,25 @@ fn a_shadow_request_does_not_alter_replacement_execution() -> Result<(), Box<dyn
             "refuse",
             "--shadow",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout)?;
     assert!(
-        stdout.contains("replacement backend executed `main`: 42"),
-        "unexpected shadowed replacement output: {stdout}"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
 
     let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
         temporary.path().join(".incan/backend/receipt.json"),
@@ -3006,11 +4230,6 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
             "aliased-async-activation",
             "import std.async as async_runtime\n\ndef main() -> int:\n  return 42\n",
             "import declaration",
-        ),
-        (
-            "duplicate-async-activation",
-            "import std.async\nimport std.async\n\ndef main() -> int:\n  return 42\n",
-            "duplicate `import std.async` replacement activation",
         ),
         (
             "from-async-service",
@@ -3088,13 +4307,7 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
             combined.contains(&format!(
                 "primary Incan source location: {}:{}..",
                 entrypoint.display(),
-                if name == "duplicate-async-activation" {
-                    source
-                        .rfind("import std.async")
-                        .ok_or("duplicate activation fixture must name its second import")?
-                } else {
-                    0
-                }
+                0
             )),
             "refusal must retain its actual unsupported source span: {combined}"
         );
@@ -3104,6 +4317,198 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
             "{name} refusal must not create legacy output or a replacement receipt"
         );
     }
+    Ok(())
+}
+
+/// A Rust or Python interop boundary must refuse as a missing host, not as a construct the profile has not reached.
+///
+/// #1262 requires public diagnostics to distinguish host-capability failures from the other reasons a program is
+/// refused. Before this, `import rust::serde_json` and `import std.io` both reported "import declaration", which told
+/// a reader that the replacement route had not got round to imports yet. The truth is narrower and more useful: the
+/// route reached this import and found that executing it needs a Rust interop host it does not have.
+///
+/// The crate is named because it is the actionable identity -- it is what an eventual interop plan is selected
+/// against -- and the refusal is addressed to the file that crosses the boundary, which is not always the entry
+/// module.
+#[test]
+fn a_rust_interop_boundary_refuses_as_a_missing_host() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        (
+            "rust-crate-import",
+            "import rust::serde_json\n\ndef main() -> int:\n  return 42\n",
+            "Rust interop module import of crate `serde_json`",
+        ),
+        (
+            "rust-item-import",
+            "from rust::incan_stdlib::text import normalize\n\ndef main() -> int:\n  return 42\n",
+            "Rust interop item import of crate `incan_stdlib`",
+        ),
+        (
+            "python-import",
+            "import python \"os\"\n\ndef main() -> int:\n  return 42\n",
+            "Python interop import of `os`",
+        ),
+    ];
+    for (name, source, expected_boundary) in cases {
+        let temporary = tempfile::tempdir()?;
+        let entrypoint = temporary.path().join(format!("{name}.incn"));
+        fs::write(&entrypoint, source)?;
+        let output = Command::new(incan_binary())
+            .args([
+                "build",
+                entrypoint.to_string_lossy().as_ref(),
+                "--backend",
+                "replacement",
+                "--backend-fallback",
+                "refuse",
+            ])
+            .output()?;
+        assert!(
+            !output.status.success(),
+            "{name} must be refused by the source-only profile"
+        );
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            combined.contains("INCAN-R988-UNSUPPORTED"),
+            "{name} must be refused through the typed profile diagnostic: {combined}"
+        );
+        assert!(
+            combined.contains(expected_boundary),
+            "{name} must name the interop boundary it crosses: {combined}"
+        );
+        assert!(
+            !combined.contains("does not support import declaration"),
+            "{name} must not report an interop boundary as an unreached construct: {combined}"
+        );
+    }
+
+    // The pair that makes the distinction real: an ordinary import is still refused as a construct this profile has
+    // not reached, and never claims a missing interop host.
+    let temporary = tempfile::tempdir()?;
+    let ordinary = temporary.path().join("ordinary.incn");
+    fs::write(&ordinary, "import std.io\n\ndef main() -> int:\n  return 42\n")?;
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            ordinary.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("does not support import declaration"),
+        "a standard-library import must still refuse as an unreached construct: {combined}"
+    );
+    assert!(
+        !combined.contains("interop host"),
+        "a standard-library import must not claim a missing interop host: {combined}"
+    );
+    Ok(())
+}
+
+/// An interop refusal is addressed to the module that crosses the boundary, not to the entry module.
+///
+/// #1318 admitted local module imports into the profile, so the first Rust boundary a program reaches is now often in
+/// a module the entry file merely imported. A refusal that pointed at the entry module would send a reader to a file
+/// containing nothing to fix.
+#[test]
+fn a_rust_interop_refusal_names_the_module_that_crosses_the_boundary() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let helpers = temporary.path().join("helpers.incn");
+    fs::write(
+        &helpers,
+        "from rust::incan_stdlib::text import normalize\n\npub def helper() -> int:\n  return 1\n",
+    )?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        "from helpers import helper\n\ndef main() -> int:\n  return helper()\n",
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "a Rust interop boundary must be refused wherever it is declared"
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("Rust interop item import of crate `incan_stdlib`"),
+        "an imported module's interop boundary must be named: {combined}"
+    );
+    assert!(
+        combined.contains(&format!("primary Incan source location: {}", helpers.display()))
+            || combined.contains("helpers.incn:"),
+        "the refusal must address the module that crosses the boundary: {combined}"
+    );
+    assert!(
+        !combined.contains("main.incn:0.."),
+        "the refusal must not be addressed to the entry module: {combined}"
+    );
+    Ok(())
+}
+
+/// Duplicate standard-library activation is a canonical binding error before backend selection begins.
+#[test]
+fn duplicate_async_activation_fails_during_typechecking() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nimport std.async\n\ndef main() -> int:\n  return 42\n";
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("duplicate-async-activation.incn");
+    fs::write(&entrypoint, source)?;
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+        ])
+        .output()?;
+    assert!(!output.status.success(), "duplicate activation must not compile");
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("Duplicate definition of 'async'")
+            && combined.contains("First canonical identity:")
+            && combined.contains("Second canonical identity:"),
+        "duplicate activation must report its conflicting canonical bindings: {combined}"
+    );
+    assert!(
+        !combined.contains("INCAN-R988-UNSUPPORTED"),
+        "backend refusal must not replace the earlier type error: {combined}"
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists()
+            && !temporary.path().join(".incan/backend/receipt.json").exists(),
+        "a compile-time binding error must not create backend output or a receipt"
+    );
     Ok(())
 }
 
@@ -3135,6 +4540,16 @@ def main() -> int:
             "--backend-fallback",
             "refuse",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(
         output.status.success(),
@@ -3143,9 +4558,12 @@ def main() -> int:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("replacement backend executed `main`: 143"),
-        "the receipt-producing direct path must observe the callable result"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "143");
     let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
         temporary.path().join(".incan/backend/receipt.json"),
     )?)?;
@@ -3196,6 +4614,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3204,7 +4628,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert!(
         report["replacement_execution"]["result"] == "42",
         "the direct result must be source-observable in the replacement report: {report}"
@@ -3271,6 +4696,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3279,7 +4710,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "404");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -3346,6 +4778,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3354,7 +4792,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -3420,6 +4859,12 @@ def classify(signal: Signal) -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3428,7 +4873,8 @@ def classify(signal: Signal) -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -3497,6 +4943,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3505,7 +4957,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "2");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -3802,31 +5255,22 @@ def main() -> int:
     Ok(())
 }
 
+/// Dict membership now reaches its retained helper through an actual hashed carrier.
 #[test]
-fn replacement_cannot_reach_dict_membership_because_it_has_no_dict_value() -> Result<(), Box<dyn std::error::Error>> {
-    // The honest boundary of the folded-in runtime work. `set_contains` and `dict_contains_key` exist in
-    // `incan_stdlib`, and Body IR emits calls to them, but this executor has no set or dict value at all -- only
-    // lists. The refusal therefore lands on the *aggregate*, before membership is ever reached, which is the
-    // accurate report: the blocker is the missing value kind, not a missing helper. Whoever adds those values
-    // inherits the membership arms alongside them.
+fn replacement_executes_dict_membership_with_a_hashed_value() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> bool:
   d = {"a": 1}
   return "a" in d
 "#;
     let module = lower_typed_body_ir(source)?;
-    let Err(error) = execute_free_function(&module, "main", &[]) else {
-        return Err("dict membership must refuse until the executor has a dict value".into());
-    };
-
-    let reported = format!("{error:?}");
-    assert!(
-        reported.contains("dict aggregate"),
-        "the refusal must name the value kind it lacks: {reported}"
+    assert_eq!(
+        execute_free_function(&module, "main", &[])?.value,
+        ReplacementValue::Bool(true)
     );
     assert!(
         module.render_snapshot().contains("call helper:dict_contains_key("),
-        "Body IR must still represent the membership the executor cannot run: {}",
+        "Body IR must retain the exact membership helper that executes: {}",
         module.render_snapshot()
     );
     Ok(())
@@ -3978,11 +5422,172 @@ def main() -> str:
 }
 
 #[test]
+fn replacement_executes_json_stringify_for_the_admitted_scalar_domain() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def negative() -> str:
+  return json_stringify(-9223372036854775807)
+
+def truth() -> str:
+  return json_stringify(true)
+
+def escaped() -> str:
+  return json_stringify("line\né\t\\\"")
+
+def absent() -> str:
+  return json_stringify(None)
+"#;
+    let module = lower_typed_body_ir(source)?;
+
+    assert_eq!(
+        execute_free_function(&module, "negative", &[])?.value,
+        ReplacementValue::Str("-9223372036854775807".to_string())
+    );
+    assert_eq!(
+        execute_free_function(&module, "truth", &[])?.value,
+        ReplacementValue::Str("true".to_string())
+    );
+    assert_eq!(
+        execute_free_function(&module, "escaped", &[])?.value,
+        ReplacementValue::Str("\"line\\né\\t\\\\\\\"\"".to_string())
+    );
+    assert_eq!(
+        execute_free_function(&module, "absent", &[])?.value,
+        ReplacementValue::Str("null".to_string())
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_json_stringify_evaluates_its_operand_once() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def observed_operand() -> int:
+  println("direct JSON operand")
+  return 7
+
+def main() -> str:
+  return json_stringify(observed_operand())
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Str("7".to_string()));
+    assert_eq!(execution.emitted_output(), ["direct JSON operand"]);
+    Ok(())
+}
+
+#[test]
+fn replacement_cli_reports_scalar_json_without_legacy_artifacts() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        r#"def main() -> str:
+  maximum = json_stringify(9223372036854775807)
+  escaped = json_stringify("line\né\t\\\"")
+  absent = json_stringify(None)
+  return f"{maximum}|{escaped}|{absent}"
+"#,
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "scalar JSON must execute through the ordinary replacement CLI path. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(
+        report["replacement_execution"]["result"],
+        r#"9223372036854775807|"line\né\t\\\""|null"#
+    );
+    assert_eq!(report["replacement_execution"]["stdout_bytes"], serde_json::json!([]));
+    assert_eq!(report["replacement_execution"]["stderr_bytes"], serde_json::json!([]));
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], "not_needed");
+    assert!(
+        receipt["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "direct scalar JSON must not create a legacy generated-project directory"
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_refuses_json_stringify_outside_the_scalar_domain_at_the_call_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "def main() -> str:\n  return json_stringify([1, 2])\n";
+    let module = lower_typed_body_ir(source)?;
+    let error = execute_free_function(&module, "main", &[])
+        .err()
+        .ok_or("direct list JSON must remain outside the scalar profile")?;
+    let call = "json_stringify([1, 2])";
+    let start = source.find(call).ok_or("fixture must contain the JSON call")?;
+    let span = error
+        .primary_span()
+        .ok_or("direct JSON refusal must retain a source span")?;
+
+    assert_eq!((span.start, span.end), (start, start + call.len()));
+    assert!(
+        error.to_string().contains("`json_stringify` of list"),
+        "the refusal must name the builtin and unsupported value kind: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_dispatches_a_lexical_json_stringify_function_by_declaration_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def json_stringify(value: int) -> int:
+  return value + 1
+
+def main() -> int:
+  return json_stringify(41)
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(
+        execution.body_snapshot.contains("body json_stringify"),
+        "the direct call must execute the retained source declaration: {}",
+        execution.body_snapshot
+    );
+    Ok(())
+}
+
+#[test]
 fn replacement_refuses_f_string_interpolation_it_cannot_render_identically() -> Result<(), Box<dyn std::error::Error>> {
-    // Interpolation is deliberately narrow. A value renders only when this runtime and the Rust-emission backend
-    // provably agree on the spelling; a list does not, and neither does `float`, where this runtime keeps the source
-    // literal while the other formats an `f64` and turns `1.0` into `1`. A divergence there would be invisible in
-    // the value itself, which is exactly what the parity corpus exists to catch, so refusing is the honest answer.
+    // Interpolation is deliberately narrow: structural list Display remains outside the shared rendering profile.
+    // Ordinary float Display now uses the same normalized f64 value as native emission; Float Debug still refuses.
     let source = r#"
 def main() -> str:
   values = [1, 2]
@@ -4053,26 +5658,23 @@ fn both_backends_render_a_multi_argument_print_the_same_way() -> Result<(), Box<
     Ok(())
 }
 
+/// Protected output bindings must be rejected before a replacement Body-IR module can be constructed.
 #[test]
-fn replacement_print_respects_a_source_declaration_that_shadows_the_builtin() -> Result<(), Box<dyn std::error::Error>>
-{
-    // Resolving the builtin from a registry must not steal a name the source declared. A module defining its own
-    // `print` means that declaration, and lowering only marks the builtin when nothing in source took the spelling.
+fn replacement_rejects_a_source_declaration_that_redefines_immutable_print() -> Result<(), Box<dyn std::error::Error>> {
+    // `print` is an immutable language function. Replacement lowering only receives programs that have already
+    // passed the shared frontend contract, so redefining it must fail before Body IR can assign it another meaning.
     let source = r#"
 def print(value: int) -> int:
   return value + 1
-
-def main() -> int:
-  return print(41)
 "#;
-    let module = lower_typed_body_ir(source)?;
-    let execution = execute_free_function(&module, "main", &[])?;
-
-    assert_eq!(execution.value, ReplacementValue::Int(42));
+    let Err(error) = lower_typed_body_ir(source) else {
+        return Err("a source declaration named `print` must fail type checking".into());
+    };
     assert!(
-        execution.emitted_output().is_empty(),
-        "a shadowing declaration must not emit builtin output: {:?}",
-        execution.emitted_output()
+        error
+            .to_string()
+            .contains("Cannot redefine immutable built-in function 'print'"),
+        "the frontend must report the immutable builtin contract, got: {error}"
     );
     Ok(())
 }

@@ -221,12 +221,13 @@ impl TypeChecker {
         race: &RaceForExpr,
         span: Span,
     ) -> ResolvedType {
+        self.validate_protected_builtin_binding(&race.binding.node, race.binding.span);
         if !self.in_async_body {
             self.errors.push(errors::await_outside_async(span));
             return ResolvedType::Unknown;
         }
 
-        let mut arm_body_types = Vec::with_capacity(race.arms.len());
+        let mut arm_binding_types = Vec::with_capacity(race.arms.len());
         for arm in &race.arms {
             let awaitable_ty = self.check_expr(&arm.awaitable);
             let Some(binding_ty) = self.await_output_type(&arm.awaitable, &awaitable_ty) else {
@@ -235,14 +236,44 @@ impl TypeChecker {
                     &awaitable_ty.to_string(),
                     arm.awaitable.span,
                 ));
-                arm_body_types.push(ResolvedType::Unknown);
+                arm_binding_types.push(None);
                 continue;
             };
             // Body IR lowering consumes this instead of re-deriving the unwrap from the awaitable's own type.
             self.type_info
                 .record_race_arm_binding_type(arm.awaitable.span, binding_ty.clone());
-            arm_body_types.push(self.check_race_arm_body(&race.binding, binding_ty, &arm.body));
+            arm_binding_types.push(Some(binding_ty));
         }
+
+        // The header is the one source declaration; each arm below is a type refinement of that declaration rather
+        // than a fresh source object. Check awaitables before entering this scope so the winner binding is unavailable
+        // until an arm has actually won.
+        self.symbols.enter_scope(ScopeKind::Block);
+        let header_ty = union_ty(arm_binding_types.iter().flatten().cloned().collect());
+        self.symbols.define_with_target_kind(
+            Symbol {
+                name: race.binding.node.clone(),
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty: header_ty,
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span: race.binding.span,
+                scope: 0,
+            },
+            incan_semantics_core::SemanticSourceTargetKind::Local,
+        );
+        self.record_write_target_identity(race.binding.span, &race.binding.node);
+
+        let mut arm_body_types = Vec::with_capacity(race.arms.len());
+        for (arm, binding_ty) in race.arms.iter().zip(arm_binding_types) {
+            let Some(binding_ty) = binding_ty else {
+                arm_body_types.push(ResolvedType::Unknown);
+                continue;
+            };
+            arm_body_types.push(self.check_race_arm_body(&race.binding.node, binding_ty, race.binding.span, &arm.body));
+        }
+        self.symbols.exit_scope();
 
         let known_body_types: Vec<_> = arm_body_types
             .into_iter()
@@ -256,18 +287,25 @@ impl TypeChecker {
     }
 
     /// Type-check one race arm body with its arm-local winner binding.
-    fn check_race_arm_body(&mut self, binding: &str, binding_ty: ResolvedType, body: &RaceForBody) -> ResolvedType {
+    fn check_race_arm_body(
+        &mut self,
+        binding: &str,
+        binding_ty: ResolvedType,
+        binding_span: Span,
+        body: &RaceForBody,
+    ) -> ResolvedType {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.symbols.define(Symbol {
+        self.symbols.define_refined_binding(Symbol {
             name: binding.to_string(),
             kind: SymbolKind::Variable(VariableInfo {
                 ty: binding_ty,
                 is_mutable: false,
                 is_used: false,
             }),
-            span: Span::default(),
+            span: binding_span,
             scope: 0,
         });
+        self.record_write_target_identity(binding_span, binding);
 
         let body_ty = match body {
             RaceForBody::Expr(expr) => self.check_expr(expr),

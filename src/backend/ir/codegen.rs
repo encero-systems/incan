@@ -33,22 +33,28 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::frontend::api_metadata::ApiDeclaration;
 use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
-use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::{
+    ExportIdentityKind, ImplementationAssociatedTypeExport, ImplementationTraitBoundExport,
+    ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, TypeBoundExport, TypeRef,
+};
 use crate::oven::loaf::OVEN_LOAF_ENV;
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_core::lang::{rust_keywords, stdlib};
 
+use super::decl::{IrTraitBoundOrigin, IrTypeParam, Visibility};
 use super::emit::CallableNameResolution;
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
 };
+use super::types::IrType;
 use super::{AstLowering, EmitError, EmitService, FunctionRegistry, IrEmitter, IrProgram, LoweringErrors};
 
 mod capability_bridge;
@@ -67,6 +73,24 @@ use serde_activation::{add_serde_to_newtypes, collect_serde_derives};
 use string_try_from_bridge::{
     StringTryFromBridgeConfig, compilation_imports_std_string_try_from_contract, imports_std_string_try_from_contract,
 };
+
+/// Resolve and canonicalize the source module path used for emitted identity projection.
+fn source_module_identity_path(
+    program: &Program,
+    explicit_path: Option<Vec<String>>,
+    fallback_name: Option<&str>,
+) -> Option<Vec<String>> {
+    let path = explicit_path
+        .or_else(|| {
+            program
+                .source_path
+                .as_deref()
+                .and_then(crate::frontend::module::logical_module_name_from_source_path)
+                .map(|name| name.split('.').map(str::to_owned).collect())
+        })
+        .or_else(|| fallback_name.map(|name| vec![name.to_string()]))?;
+    Some(canonicalize_source_module_segments(&path))
+}
 
 /// Error during Rust code generation.
 ///
@@ -168,6 +192,290 @@ struct IrGenerationOptions<'a> {
 /// Lowered metadata-only modules whose generated Rust identity belongs to compiled SDK providers.
 type CompiledSdkMetadataPrograms = Vec<(Vec<String>, IrProgram)>;
 
+/// Generated root/module Rust plus the implementation metadata inferred from the same IR.
+type NestedLibraryGeneration = ((String, HashMap<Vec<String>, String>), IrGenerationMetadata);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapturedImplementationBoundRequirement {
+    module_path: Vec<String>,
+    requirement: super::trait_bound_inference::ImplementationBoundRequirement,
+    target_visibility: CapturedImplementationTargetVisibility,
+}
+
+/// Visibility of an implementation target resolved within the IR program that owns the implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapturedImplementationTargetVisibility {
+    SameProgram(Visibility),
+    Unknown,
+}
+
+/// Compiler-owned metadata discovered while lowering and inferring one generated library.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IrGenerationMetadata {
+    implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+}
+
+impl IrGenerationMetadata {
+    /// Publish exact implementation headers into the checked trait adoptions that consumers already resolve.
+    pub(crate) fn apply_to_library_manifest(&self, manifest: &mut LibraryManifest) -> Result<(), String> {
+        for captured in &self.implementation_bound_requirements {
+            let requirement = &captured.requirement;
+            let implementation_type_params = requirement
+                .type_params
+                .iter()
+                .map(implementation_type_param_export)
+                .collect::<Result<Vec<_>, _>>()?;
+            let trait_type_args = requirement
+                .trait_type_args
+                .iter()
+                .map(manifest_type_ref_from_ir)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut matched = false;
+
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                for module in &mut api.modules {
+                    if module.module_path != captured.module_path {
+                        continue;
+                    }
+                    for declaration in &mut module.declarations {
+                        let Some((name, adoptions)) = api_declaration_trait_adoptions_mut(declaration) else {
+                            continue;
+                        };
+                        if name == requirement.target_type {
+                            matched |= attach_implementation_type_params(
+                                adoptions,
+                                requirement,
+                                &trait_type_args,
+                                &implementation_type_params,
+                            )?;
+                        }
+                    }
+                }
+            }
+
+            let mut source_path = captured.module_path.clone();
+            source_path.push(requirement.target_type.clone());
+            let public_exports = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|identity| identity.source_path == source_path)
+                .map(|identity| (identity.public_name.clone(), identity.kind))
+                .collect::<Vec<_>>();
+            for (public_name, kind) in public_exports {
+                let adoptions = match kind {
+                    ExportIdentityKind::Model => manifest
+                        .exports
+                        .models
+                        .iter_mut()
+                        .find(|export| export.name == public_name)
+                        .map(|export| &mut export.trait_adoptions),
+                    ExportIdentityKind::Class => manifest
+                        .exports
+                        .classes
+                        .iter_mut()
+                        .find(|export| export.name == public_name)
+                        .map(|export| &mut export.trait_adoptions),
+                    ExportIdentityKind::Enum => manifest
+                        .exports
+                        .enums
+                        .iter_mut()
+                        .find(|export| export.name == public_name)
+                        .map(|export| &mut export.trait_adoptions),
+                    ExportIdentityKind::Newtype => manifest
+                        .exports
+                        .newtypes
+                        .iter_mut()
+                        .find(|export| export.name == public_name)
+                        .map(|export| &mut export.trait_adoptions),
+                    _ => None,
+                };
+                if let Some(adoptions) = adoptions {
+                    matched |= attach_implementation_type_params(
+                        adoptions,
+                        requirement,
+                        &trait_type_args,
+                        &implementation_type_params,
+                    )?;
+                }
+            }
+
+            // A private same-program target has no manifest surface by construction. Public aliases were tried above,
+            // so suppress only a still-unmatched target whose private visibility was retained directly from this IR.
+            if !matched
+                && matches!(
+                    captured.target_visibility,
+                    CapturedImplementationTargetVisibility::SameProgram(Visibility::Private)
+                )
+            {
+                continue;
+            }
+
+            if !matched {
+                return Err(format!(
+                    "inferred implementation requirement for `{}::{}` and trait `{}` had no checked manifest adoption",
+                    captured.module_path.join("::"),
+                    requirement.target_type,
+                    requirement.trait_source_name,
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Return the adopted-trait surface for a manifest declaration that can own implementations.
+fn api_declaration_trait_adoptions_mut(declaration: &mut ApiDeclaration) -> Option<(&str, &mut Vec<TypeBoundExport>)> {
+    match declaration {
+        ApiDeclaration::Model(model) => Some((&model.name, &mut model.trait_adoptions)),
+        ApiDeclaration::Class(class) => Some((&class.name, &mut class.trait_adoptions)),
+        ApiDeclaration::Enum(enum_decl) => Some((&enum_decl.name, &mut enum_decl.trait_adoptions)),
+        ApiDeclaration::Newtype(newtype) => Some((&newtype.name, &mut newtype.trait_adoptions)),
+        _ => None,
+    }
+}
+
+/// Attach one exact implementation header to its canonically matching checked trait adoption.
+fn attach_implementation_type_params(
+    adoptions: &mut [TypeBoundExport],
+    requirement: &super::trait_bound_inference::ImplementationBoundRequirement,
+    trait_type_args: &[TypeRef],
+    implementation_type_params: &[ImplementationTypeParamExport],
+) -> Result<bool, String> {
+    let mut matched = false;
+    for adoption in adoptions {
+        let source_name = adoption.source_name.as_deref().unwrap_or(adoption.name.as_str());
+        if source_name != requirement.trait_source_name
+            || adoption.module_path != requirement.trait_module_path
+            || adoption.type_args != trait_type_args
+        {
+            continue;
+        }
+        if !adoption.implementation_type_params.is_empty()
+            && adoption.implementation_type_params != implementation_type_params
+        {
+            return Err(format!(
+                "checked trait adoption `{}` carries conflicting implementation requirements",
+                adoption.name
+            ));
+        }
+        adoption.implementation_type_params = implementation_type_params.to_vec();
+        matched = true;
+    }
+    Ok(matched)
+}
+
+/// Convert one inferred IR implementation parameter into stable manifest metadata.
+fn implementation_type_param_export(type_param: &IrTypeParam) -> Result<ImplementationTypeParamExport, String> {
+    Ok(ImplementationTypeParamExport {
+        name: type_param.name.clone(),
+        bounds: type_param
+            .bounds
+            .iter()
+            .map(|bound| {
+                Ok(ImplementationTraitBoundExport {
+                    trait_path: bound.trait_path.clone(),
+                    type_args: bound
+                        .type_args
+                        .iter()
+                        .map(manifest_type_ref_from_ir)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    associated_types: bound
+                        .assoc_types
+                        .iter()
+                        .map(|(name, ty)| {
+                            Ok(ImplementationAssociatedTypeExport {
+                                name: name.clone(),
+                                ty: manifest_type_ref_from_ir(ty)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
+                    origin: match bound.origin {
+                        IrTraitBoundOrigin::Standard => ImplementationTraitBoundOriginExport::Standard,
+                        IrTraitBoundOrigin::RustCapability => ImplementationTraitBoundOriginExport::RustCapability,
+                        IrTraitBoundOrigin::SourceCallable => ImplementationTraitBoundOriginExport::SourceCallable,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    })
+}
+
+/// Convert an IR type used by implementation metadata into its checked manifest representation.
+fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
+    let named = |name: &str| TypeRef::Named { name: name.to_string() };
+    let applied = |name: &str, args: &[IrType]| -> Result<TypeRef, String> {
+        Ok(TypeRef::Applied {
+            name: name.to_string(),
+            args: args
+                .iter()
+                .map(manifest_type_ref_from_ir)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    };
+    match ty {
+        IrType::Unit => Ok(named(incan_core::lang::conventions::UNIT_TYPE_NAME)),
+        IrType::Bool => Ok(named("bool")),
+        IrType::Int => Ok(named("int")),
+        IrType::Float => Ok(named("float")),
+        IrType::Numeric(id) => Ok(named(incan_core::lang::types::numerics::as_str(*id))),
+        IrType::String | IrType::StaticStr | IrType::StrRef => Ok(named("str")),
+        IrType::Bytes | IrType::StaticBytes => Ok(named("bytes")),
+        IrType::FrozenStr => Ok(named("FrozenStr")),
+        IrType::FrozenBytes => Ok(named("FrozenBytes")),
+        IrType::List(inner) => applied("List", std::slice::from_ref(inner.as_ref())),
+        IrType::Dict(key, value) => applied("Dict", &[key.as_ref().clone(), value.as_ref().clone()]),
+        IrType::Set(inner) => applied("Set", std::slice::from_ref(inner.as_ref())),
+        // Source tuple annotations are checked as the canonical `Tuple[...]` generic even though lowering gives
+        // codegen the dedicated IR tuple shape. Preserve the checked manifest spelling so exact trait-adoption
+        // matching does not mistake those two internal representations for different instantiations.
+        IrType::Tuple(elements) => applied("Tuple", elements),
+        IrType::Option(inner) => applied("Option", std::slice::from_ref(inner.as_ref())),
+        IrType::Result(ok, err) => applied("Result", &[ok.as_ref().clone(), err.as_ref().clone()]),
+        IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => Ok(named(name)),
+        IrType::NamedGeneric(name, args) => applied(name, args),
+        IrType::TypeToken(inner) => Ok(TypeRef::TypeToken {
+            inner: Box::new(manifest_type_ref_from_ir(inner)?),
+        }),
+        IrType::RustDisplay(path) => Ok(TypeRef::RustPath { path: path.clone() }),
+        IrType::ExternalUnion { union, .. } => manifest_type_ref_from_ir(union),
+        IrType::ImplTrait(bound) => applied(&bound.trait_path, &bound.type_args),
+        IrType::Function { params, ret } => Ok(TypeRef::Function {
+            params: params
+                .iter()
+                .map(manifest_type_ref_from_ir)
+                .collect::<Result<Vec<_>, _>>()?,
+            return_type: Box::new(manifest_type_ref_from_ir(ret)?),
+        }),
+        IrType::Generic(name) => Ok(TypeRef::TypeParam { name: name.clone() }),
+        IrType::SelfType => Ok(TypeRef::SelfType),
+        IrType::Ref(inner) | IrType::RefMut(inner) => Ok(TypeRef::Ref {
+            inner: Box::new(manifest_type_ref_from_ir(inner)?),
+        }),
+        IrType::Decimal { precision, scale } => Ok(TypeRef::Applied {
+            name: "decimal".to_string(),
+            args: vec![
+                TypeRef::TypeParam {
+                    name: precision.to_string(),
+                },
+                TypeRef::TypeParam {
+                    name: scale.to_string(),
+                },
+            ],
+        }),
+        IrType::Unknown => Err("cannot publish unknown implementation-bound type metadata".to_string()),
+    }
+}
+
+/// Split a canonical dotted source-module name into manifest path segments.
+fn source_module_path_segments(name: &str) -> Vec<String> {
+    name.split('.')
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 impl IrGenerationOptions<'_> {
     /// Build options for an ordinary single-program generation pass.
     fn ordinary() -> Self {
@@ -236,6 +544,11 @@ pub struct IrCodegen<'a> {
     public_typecheck_module_paths: HashSet<Vec<String>>,
     /// Canonical defining package identity supplied by the command that owns the generated artifact.
     registry_package_identity: Option<String>,
+    /// Package origin used for canonical identities emitted by a compiled-library producer.
+    ///
+    /// Ordinary program builds leave this absent and retain module-owned identities. Library builds set it before
+    /// checking so producer symbols and consumer-hydrated manifest identities encode the same origin.
+    canonical_emission_package_identity: Option<String>,
     /// Canonical source-module path for the root program when its parsed AST lacks a source path.
     root_source_module_name: Option<String>,
     /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
@@ -248,6 +561,10 @@ pub struct IrCodegen<'a> {
     prechecked_main_type_info: Option<TypeCheckInfo>,
     /// Dependency facts from the same session analysis, keyed by module identity.
     prechecked_dependency_type_info: HashMap<Vec<String>, TypeCheckInfo>,
+    /// Bound-bearing implementation headers resolved from the exact IR emitted for this compilation.
+    implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+    /// Authoritative checked-API path for a library root while collecting manifest metadata.
+    metadata_root_module_path: Option<Vec<String>>,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -276,10 +593,13 @@ impl<'a> IrCodegen<'a> {
             preserve_dependency_public_items: true,
             public_typecheck_module_paths: HashSet::new(),
             registry_package_identity: None,
+            canonical_emission_package_identity: None,
             root_source_module_name: None,
             stdlib_cache: StdlibAstCache::new(),
             prechecked_main_type_info: None,
             prechecked_dependency_type_info: HashMap::new(),
+            implementation_bound_requirements: Vec::new(),
+            metadata_root_module_path: None,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
@@ -294,6 +614,61 @@ impl<'a> IrCodegen<'a> {
             .unwrap_or_else(|| name.to_string())
     }
 
+    /// Give an internal typecheck pass the canonical source paths already supplied to codegen for its dependencies.
+    ///
+    /// The dependency cache key is an emission detail and may flatten multiple source paths to the same spelling.
+    /// Rechecking without this mapping would therefore discard declaration ownership that the compilation request
+    /// already knew, leaving ordinary `module.function(...)` calls unable to carry their canonical target into IR.
+    fn register_dependency_module_paths(
+        checker: &mut crate::frontend::typechecker::TypeChecker,
+        dependencies: &[(&str, &Program, Option<Vec<String>>)],
+    ) {
+        for (name, _, path_segments) in dependencies {
+            if let Some(path_segments) = path_segments {
+                checker
+                    .register_dependency_module_path_segments(name, canonicalize_source_module_segments(path_segments));
+            }
+        }
+    }
+
+    /// Capture bound-bearing implementation headers from one inferred IR module.
+    fn capture_implementation_bound_requirements(&mut self, module_path: Vec<String>, program: &IrProgram) {
+        for requirement in super::trait_bound_inference::collect_local_implementation_bound_requirements(program) {
+            let target_visibility = program
+                .declarations
+                .iter()
+                .find_map(|declaration| match &declaration.kind {
+                    super::decl::IrDeclKind::Struct(target) if target.name == requirement.target_type => {
+                        Some(target.visibility)
+                    }
+                    super::decl::IrDeclKind::Enum(target) if target.name == requirement.target_type => {
+                        Some(target.visibility)
+                    }
+                    _ => None,
+                })
+                .map(CapturedImplementationTargetVisibility::SameProgram)
+                .unwrap_or(CapturedImplementationTargetVisibility::Unknown);
+            let captured = CapturedImplementationBoundRequirement {
+                module_path: module_path.clone(),
+                requirement,
+                target_visibility,
+            };
+            if !self.implementation_bound_requirements.contains(&captured) {
+                self.implementation_bound_requirements.push(captured);
+            }
+        }
+        self.implementation_bound_requirements.sort_by(|left, right| {
+            left.module_path
+                .cmp(&right.module_path)
+                .then(left.requirement.target_type.cmp(&right.requirement.target_type))
+                .then(
+                    left.requirement
+                        .trait_source_name
+                        .cmp(&right.requirement.trait_source_name),
+                )
+        });
+    }
+
     /// Return the transitive local source dependency subset needed to typecheck one program.
     ///
     /// Codegen typechecking must mirror the CLI checker: a module should see its declared local imports and their
@@ -301,6 +676,7 @@ impl<'a> IrCodegen<'a> {
     /// dependency universe lets same-name public helpers from unrelated modules collide before `from ... import ... as
     /// ...` collection, which changes behavior between `--check` and `--emit-rust`.
     fn imported_dependency_modules_for_program(
+        &self,
         program: &Program,
         dependencies: &[(&'a str, &'a Program, Option<Vec<String>>)],
         self_key: Option<&str>,
@@ -311,18 +687,14 @@ impl<'a> IrCodegen<'a> {
         }
 
         let mut selected = BTreeSet::new();
-        let mut pending = Self::direct_imported_dependency_indexes(program, &module_idx_by_key, self_key);
+        let mut pending = self.direct_imported_dependency_indexes(program, &module_idx_by_key, self_key);
         while let Some(idx) = pending.pop() {
             let (name, ast, path_segments) = &dependencies[idx];
             let dep_key = Self::dependency_module_key(name, path_segments);
             if self_key == Some(dep_key.as_str()) || !selected.insert(idx) {
                 continue;
             }
-            pending.extend(Self::direct_imported_dependency_indexes(
-                ast,
-                &module_idx_by_key,
-                Some(dep_key.as_str()),
-            ));
+            pending.extend(self.direct_imported_dependency_indexes(ast, &module_idx_by_key, Some(dep_key.as_str())));
         }
 
         selected
@@ -336,6 +708,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Return direct dependency-module indexes named by source imports in one program.
     fn direct_imported_dependency_indexes(
+        &self,
         program: &Program,
         module_idx_by_key: &HashMap<String, usize>,
         self_key: Option<&str>,
@@ -355,25 +728,49 @@ impl<'a> IrCodegen<'a> {
                         && let Some(dep_idx) = module_idx_by_key.get(&key).copied()
                     {
                         dep_indexes.insert(dep_idx);
+                    } else if self
+                        .provider_plan
+                        .as_deref()
+                        .is_some_and(|plan| plan.bootstrap_owns_sdk_module(&module.segments))
+                        && module.segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+                    {
+                        let physical_key = canonicalize_source_module_segments(&module.segments[1..]).join("_");
+                        if self_key != Some(physical_key.as_str())
+                            && let Some(dep_idx) = module_idx_by_key.get(&physical_key).copied()
+                        {
+                            dep_indexes.insert(dep_idx);
+                        }
                     }
                 }
                 ImportKind::Module(path) => {
                     if path.parent_levels > 0 || path.segments.is_empty() {
                         continue;
                     }
-                    let full_key = canonicalize_source_module_segments(&path.segments).join("_");
-                    if self_key != Some(full_key.as_str())
-                        && let Some(dep_idx) = module_idx_by_key.get(&full_key).copied()
-                    {
-                        dep_indexes.insert(dep_idx);
+                    let bootstrap_physical = self
+                        .provider_plan
+                        .as_deref()
+                        .is_some_and(|plan| plan.bootstrap_owns_sdk_module(&path.segments))
+                        .then(|| path.segments[1..].to_vec());
+                    let mut candidate_paths = Vec::new();
+                    if let Some(physical) = bootstrap_physical {
+                        candidate_paths.push(physical);
                     }
-                    if path.segments.len() > 1 {
-                        let parent_key =
-                            canonicalize_source_module_segments(&path.segments[..path.segments.len() - 1]).join("_");
-                        if self_key != Some(parent_key.as_str())
-                            && let Some(dep_idx) = module_idx_by_key.get(&parent_key).copied()
+                    candidate_paths.push(path.segments.clone());
+                    for candidate in candidate_paths {
+                        let full_key = canonicalize_source_module_segments(&candidate).join("_");
+                        if self_key != Some(full_key.as_str())
+                            && let Some(dep_idx) = module_idx_by_key.get(&full_key).copied()
                         {
                             dep_indexes.insert(dep_idx);
+                        }
+                        if candidate.len() > 1 {
+                            let parent_key =
+                                canonicalize_source_module_segments(&candidate[..candidate.len() - 1]).join("_");
+                            if self_key != Some(parent_key.as_str())
+                                && let Some(dep_idx) = module_idx_by_key.get(&parent_key).copied()
+                            {
+                                dep_indexes.insert(dep_idx);
+                            }
                         }
                     }
                 }
@@ -393,11 +790,21 @@ impl<'a> IrCodegen<'a> {
             for (name, signature) in program.function_registry.iter() {
                 let mut canonical_path = (*module_path).to_vec();
                 canonical_path.push(name.clone());
-                registry.register_canonical_path(
-                    &canonical_path,
-                    signature.params.clone(),
-                    signature.return_type.clone(),
-                );
+                if let Some(identity) = program.function_registry.canonical_identity(name) {
+                    registry.register_canonical_path_projection(
+                        &canonical_path,
+                        program.function_registry.source_name(name).unwrap_or(name).to_string(),
+                        identity.clone(),
+                        signature.params.clone(),
+                        signature.return_type.clone(),
+                    );
+                } else {
+                    registry.register_canonical_path(
+                        &canonical_path,
+                        signature.params.clone(),
+                        signature.return_type.clone(),
+                    );
+                }
             }
         }
 
@@ -418,11 +825,21 @@ impl<'a> IrCodegen<'a> {
                     continue;
                 }
                 if let Some(signature) = registry.get_canonical_path(&target_path).cloned() {
-                    registry.register_canonical_path(
-                        &alias_path,
-                        signature.params.clone(),
-                        signature.return_type.clone(),
-                    );
+                    if let Some(identity) = registry.canonical_identity_for_path(&target_path).cloned() {
+                        registry.register_canonical_path_projection(
+                            &alias_path,
+                            identity.declaration_name.clone(),
+                            identity,
+                            signature.params.clone(),
+                            signature.return_type.clone(),
+                        );
+                    } else {
+                        registry.register_canonical_path(
+                            &alias_path,
+                            signature.params.clone(),
+                            signature.return_type.clone(),
+                        );
+                    }
                     made_progress = true;
                 } else {
                     unresolved.push((alias_path, target_path));
@@ -558,6 +975,11 @@ impl<'a> IrCodegen<'a> {
         self.apply_string_try_from_bridge_config(emitter, string_conversion);
     }
 
+    /// Give an emitter the package context needed to render self-package canonical paths through `crate::...`.
+    fn apply_canonical_emission_context(&self, emitter: &mut IrEmitter) {
+        emitter.set_current_package_identity(self.canonical_emission_package_identity.clone());
+    }
+
     /// Set whether non-stdlib dependency modules preserve their public API surface during emission.
     ///
     /// Library builds keep this enabled so public dependency declarations remain available at the Rust crate boundary.
@@ -569,6 +991,11 @@ impl<'a> IrCodegen<'a> {
     /// Set the package identity used when materializing explicit package-level registry subjects.
     pub fn set_registry_package_identity(&mut self, identity: Option<String>) {
         self.registry_package_identity = identity;
+    }
+
+    /// Set the package origin for source declarations emitted into a compiled-library artifact.
+    pub fn set_canonical_emission_package_identity(&mut self, identity: Option<String>) {
+        self.canonical_emission_package_identity = identity;
     }
 
     /// Set the root compilation-unit identity when parsing did not retain a source path.
@@ -681,8 +1108,17 @@ impl<'a> IrCodegen<'a> {
     }
 
     /// Apply codegen's shared project context to an internal typechecker pass.
-    fn configure_typechecker(&self, tc: &mut crate::frontend::typechecker::TypeChecker) {
+    fn configure_typechecker(
+        &self,
+        tc: &mut crate::frontend::typechecker::TypeChecker,
+        module_path: Option<&[String]>,
+    ) {
         tc.stdlib_cache = self.stdlib_cache.clone();
+        let package_identity = crate::frontend::module::declaration_package_identity(
+            self.canonical_emission_package_identity.as_deref(),
+            module_path,
+        );
+        tc.set_current_package_identity(package_identity);
         if let Some(names) = self.declared_crate_names.clone() {
             tc.set_declared_crate_names(names);
         }
@@ -805,9 +1241,11 @@ impl<'a> IrCodegen<'a> {
             let module_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
-                self.configure_typechecker(&mut tc);
+                self.configure_typechecker(&mut tc, Some(path_segments.as_slice()));
+                Self::register_dependency_module_paths(&mut tc, &dependencies);
+                tc.set_current_module_path(Some(canonicalize_source_module_segments(path_segments)));
                 let typecheck_deps =
-                    Self::imported_dependency_modules_for_program(module_ast, &dependencies, Some(&module_key));
+                    self.imported_dependency_modules_for_program(module_ast, &dependencies, Some(&module_key));
                 let result = match tc.check_with_imports_allow_private(module_ast, &typecheck_deps) {
                     Ok(()) => tc.type_info().clone(),
                     Err(errs) => return Err(Self::typecheck_errors_for_module(&module_key, errs)),
@@ -819,7 +1257,7 @@ impl<'a> IrCodegen<'a> {
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
             self.configure_lowering(&mut lowering);
             lowering.set_current_source_module_name(Some(path_segments.join(".")));
-            lowering.seed_dependency_trait_decls(&dependencies);
+            lowering.seed_dependency_trait_decls(&dependencies)?;
             let ir = lowering.lower_program(module_ast)?;
             programs.push((path_segments.clone(), ir));
         }
@@ -1007,9 +1445,26 @@ impl<'a> IrCodegen<'a> {
         self.try_generate_internal(program)
     }
 
+    /// Generate one library root and return the compiler metadata inferred from the same lowered IR.
+    pub(crate) fn try_generate_with_metadata(
+        mut self,
+        program: &'a Program,
+        root_module_path: &[String],
+    ) -> Result<(String, IrGenerationMetadata), GenerationError> {
+        self.metadata_root_module_path = Some(root_module_path.to_vec());
+        let code = self.try_generate_internal(program)?;
+        Ok((
+            code,
+            IrGenerationMetadata {
+                implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+            },
+        ))
+    }
+
     /// Internal implementation of try_generate (takes &mut self)
     fn try_generate_internal(&mut self, program: &'a Program) -> Result<String, GenerationError> {
         self.current_program = Some(program);
+        self.implementation_bound_requirements.clear();
 
         // Scan for emission-relevant features
         self.update_serde_requirement(program);
@@ -1059,6 +1514,13 @@ impl<'a> IrCodegen<'a> {
             compilation_imports_std_string_try_from_contract(program, &dependency_symbol_modules),
         );
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
+        let root_module_path = source_module_identity_path(
+            program,
+            self.root_source_module_name
+                .as_deref()
+                .map(|name| name.split('.').map(str::to_owned).collect()),
+            None,
+        );
 
         // Typecheck to obtain reusable type information for lowering.
         //
@@ -1068,8 +1530,10 @@ impl<'a> IrCodegen<'a> {
         } else {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
-            self.configure_typechecker(&mut tc);
-            let typecheck_deps = Self::imported_dependency_modules_for_program(program, &dependency_modules, None);
+            self.configure_typechecker(&mut tc, root_module_path.as_deref());
+            Self::register_dependency_module_paths(&mut tc, &dependency_modules);
+            tc.set_current_module_path(root_module_path.clone());
+            let typecheck_deps = self.imported_dependency_modules_for_program(program, &dependency_modules, None);
             let result = match tc.check_with_imports(program, &typecheck_deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -1082,13 +1546,8 @@ impl<'a> IrCodegen<'a> {
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
         self.configure_lowering(&mut lowering);
-        lowering.set_current_source_module_name(self.root_source_module_name.clone().or_else(|| {
-            program
-                .source_path
-                .as_deref()
-                .and_then(crate::frontend::module::logical_module_name_from_source_path)
-        }));
-        lowering.seed_dependency_trait_decls(&dependency_modules);
+        lowering.set_current_source_module_name(root_module_path.as_ref().map(|path| path.join(".")));
+        lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
         if self.needs_serde {
@@ -1142,10 +1601,12 @@ impl<'a> IrCodegen<'a> {
             } else {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
-                self.configure_typechecker(&mut tc);
+                self.configure_typechecker(&mut tc, Some(dep_path.as_slice()));
+                Self::register_dependency_module_paths(&mut tc, &dependency_modules);
+                tc.set_current_module_path(Some(dep_path.clone()));
                 let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
                 let typecheck_deps =
-                    Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
+                    self.imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
                 let result = match tc.check_with_imports_allow_private(dep_ast, &typecheck_deps) {
                     Ok(()) => tc.type_info().clone(),
                     Err(errs) => return Err(Self::typecheck_errors_for_module(&dep_key, errs)),
@@ -1166,7 +1627,7 @@ impl<'a> IrCodegen<'a> {
                             .and_then(crate::frontend::module::logical_module_name_from_source_path)
                     }),
             );
-            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules)?;
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
@@ -1178,6 +1639,17 @@ impl<'a> IrCodegen<'a> {
             .map(|(_, dep_ir)| dep_ir)
             .collect::<Vec<_>>();
         super::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
+        let root_module_path = self.metadata_root_module_path.clone().unwrap_or_else(|| {
+            ir_program
+                .source_module_name
+                .as_deref()
+                .map(source_module_path_segments)
+                .unwrap_or_default()
+        });
+        self.capture_implementation_bound_requirements(root_module_path, &ir_program);
+        for (module_path, dependency_program) in &dependency_ir_programs {
+            self.capture_implementation_bound_requirements(module_path.clone(), dependency_program);
+        }
         let source_module_paths = dependency_ir_programs
             .iter()
             .map(|(module_path, _)| module_path.clone())
@@ -1199,6 +1671,7 @@ impl<'a> IrCodegen<'a> {
             let mut svc = EmitService::new_from_program(&ir_program);
             // Configure inner emitter
             let inner = svc.inner_mut();
+            self.apply_canonical_emission_context(inner);
             inner.set_internal_module_roots(internal_module_roots.clone());
             Self::configure_source_import_paths(inner, ir_program.source_module_name.as_deref(), &source_module_paths);
             if self.emit_zen_in_main {
@@ -1226,6 +1699,7 @@ impl<'a> IrCodegen<'a> {
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
+            self.apply_canonical_emission_context(&mut emitter);
             emitter.set_internal_module_roots(internal_module_roots.clone());
             Self::configure_source_import_paths(
                 &mut emitter,
@@ -1290,12 +1764,16 @@ impl<'a> IrCodegen<'a> {
             .map(|(name, _, path_segments)| Self::dependency_module_key(name, path_segments))
             .unwrap_or_else(|| module_name.to_string());
         let module_path_segments = module_metadata.and_then(|(_, _, path_segments)| path_segments.clone());
+        let module_identity_path =
+            source_module_identity_path(program, module_path_segments.clone(), Some(module_name));
         let module_type_info = {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
-            self.configure_typechecker(&mut tc);
+            self.configure_typechecker(&mut tc, module_identity_path.as_deref());
+            Self::register_dependency_module_paths(&mut tc, &dependency_modules);
+            tc.set_current_module_path(module_identity_path.clone());
             let typecheck_deps =
-                Self::imported_dependency_modules_for_program(program, &dependency_modules, Some(&module_key));
+                self.imported_dependency_modules_for_program(program, &dependency_modules, Some(&module_key));
             let result = match tc.check_with_imports_allow_private(program, &typecheck_deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(Self::typecheck_errors_for_module(&module_key, errs)),
@@ -1307,18 +1785,8 @@ impl<'a> IrCodegen<'a> {
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new_with_type_info(module_type_info);
         self.configure_lowering(&mut lowering);
-        lowering.set_current_source_module_name(
-            module_path_segments
-                .clone()
-                .map(|segments| segments.join("."))
-                .or_else(|| {
-                    program
-                        .source_path
-                        .as_deref()
-                        .and_then(crate::frontend::module::logical_module_name_from_source_path)
-                }),
-        );
-        lowering.seed_dependency_trait_decls(&dependency_modules);
+        lowering.set_current_source_module_name(module_identity_path.as_ref().map(|path| path.join(".")));
+        lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
 
@@ -1330,12 +1798,15 @@ impl<'a> IrCodegen<'a> {
                 continue;
             }
             let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
+            let dep_identity_path = source_module_identity_path(dep_ast, dep_path_segments.clone(), Some(dep_name));
             let dep_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
-                self.configure_typechecker(&mut tc);
+                self.configure_typechecker(&mut tc, dep_identity_path.as_deref());
+                Self::register_dependency_module_paths(&mut tc, &dependency_modules);
+                tc.set_current_module_path(dep_identity_path.clone());
                 let typecheck_deps =
-                    Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
+                    self.imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
                 let result = match tc.check_with_imports_allow_private(dep_ast, &typecheck_deps) {
                     Ok(()) => tc.type_info().clone(),
                     Err(errs) => return Err(Self::typecheck_errors_for_module(&dep_key, errs)),
@@ -1345,18 +1816,8 @@ impl<'a> IrCodegen<'a> {
             };
             let mut dep_lowering = AstLowering::new_with_type_info(dep_type_info);
             self.configure_lowering(&mut dep_lowering);
-            dep_lowering.set_current_source_module_name(
-                dep_path_segments
-                    .clone()
-                    .map(|segments| segments.join("."))
-                    .or_else(|| {
-                        dep_ast
-                            .source_path
-                            .as_deref()
-                            .and_then(crate::frontend::module::logical_module_name_from_source_path)
-                    }),
-            );
-            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
+            dep_lowering.set_current_source_module_name(dep_identity_path.as_ref().map(|path| path.join(".")));
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules)?;
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
@@ -1380,12 +1841,14 @@ impl<'a> IrCodegen<'a> {
         if use_emit_service {
             let mut svc = EmitService::new_from_program(&ir_program);
             let inner = svc.inner_mut();
+            self.apply_canonical_emission_context(inner);
             inner.set_internal_module_roots(internal_roots);
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
             self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
+            self.apply_canonical_emission_context(&mut emitter);
             emitter.set_internal_module_roots(internal_roots);
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
@@ -1468,13 +1931,16 @@ impl<'a> IrCodegen<'a> {
             if !module_names.contains(&name) {
                 continue;
             }
+            let module_identity_path = source_module_identity_path(ast, path_segments.clone(), Some(name));
             let module_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
-                self.configure_typechecker(&mut tc);
+                self.configure_typechecker(&mut tc, module_identity_path.as_deref());
+                Self::register_dependency_module_paths(&mut tc, &dependency_modules);
+                tc.set_current_module_path(module_identity_path.clone());
                 let module_key = Self::dependency_module_key(name, &path_segments);
                 let typecheck_deps =
-                    Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&module_key));
+                    self.imported_dependency_modules_for_program(ast, &dependency_modules, Some(&module_key));
                 let result = match tc.check_with_imports_allow_private(ast, &typecheck_deps) {
                     Ok(()) => tc.type_info().clone(),
                     Err(errs) => return Err(Self::typecheck_errors_for_module(&module_key, errs)),
@@ -1485,13 +1951,8 @@ impl<'a> IrCodegen<'a> {
             self.collect_provider_rust_bridge_roots(&module_type_info)?;
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
             self.configure_lowering(&mut lowering);
-            lowering.set_current_source_module_name(Some(
-                path_segments
-                    .clone()
-                    .unwrap_or_else(|| vec![name.to_string()])
-                    .join("."),
-            ));
-            lowering.seed_dependency_trait_decls(&dependency_modules);
+            lowering.set_current_source_module_name(module_identity_path.as_ref().map(|path| path.join(".")));
+            lowering.seed_dependency_trait_decls(&dependency_modules)?;
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
             // Do not auto-add serde derives to dependency modules.
@@ -1591,6 +2052,7 @@ impl<'a> IrCodegen<'a> {
             let module_code = if use_emit_service {
                 let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
+                self.apply_canonical_emission_context(inner);
                 inner.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(inner, ir.source_module_name.as_deref(), &source_module_paths);
                 inner.set_preserve_public_items(preserve_public_items);
@@ -1617,6 +2079,7 @@ impl<'a> IrCodegen<'a> {
                 svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
+                self.apply_canonical_emission_context(&mut emitter);
                 emitter.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(
                     &mut emitter,
@@ -1681,6 +2144,23 @@ impl<'a> IrCodegen<'a> {
         self.try_generate_multi_file_nested_internal(program, module_paths)
     }
 
+    /// Generate a nested library project and return metadata inferred from the same lowered IR.
+    pub(crate) fn try_generate_multi_file_nested_with_metadata(
+        mut self,
+        program: &'a Program,
+        module_paths: &[Vec<String>],
+        root_module_path: &[String],
+    ) -> Result<NestedLibraryGeneration, GenerationError> {
+        self.metadata_root_module_path = Some(root_module_path.to_vec());
+        let generated = self.try_generate_multi_file_nested_internal(program, module_paths)?;
+        Ok((
+            generated,
+            IrGenerationMetadata {
+                implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+            },
+        ))
+    }
+
     /// Generate nested dependency modules with generated-use pruning.
     ///
     /// Dependency modules keep imported/reachable declarations for binary-style emission and can preserve non-stdlib
@@ -1692,6 +2172,7 @@ impl<'a> IrCodegen<'a> {
     ) -> Result<(String, HashMap<Vec<String>, String>), GenerationError> {
         self.current_program = Some(program);
         self.source_dependency_module_paths.clear();
+        self.implementation_bound_requirements.clear();
 
         // Backfill nested module path segments for dependency modules when they were registered
         // via the legacy `add_module()` API (flat names only).
@@ -1750,10 +2231,12 @@ impl<'a> IrCodegen<'a> {
                 } else {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
-                    self.configure_typechecker(&mut tc);
+                    self.configure_typechecker(&mut tc, Some(path.as_slice()));
+                    Self::register_dependency_module_paths(&mut tc, &dependency_modules);
+                    tc.set_current_module_path(Some(canonicalize_source_module_segments(path)));
                     let self_key = canonicalize_source_module_segments(path).join("_");
                     let typecheck_deps =
-                        Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&self_key));
+                        self.imported_dependency_modules_for_program(ast, &dependency_modules, Some(&self_key));
                     let result = if self.public_typecheck_module_paths.contains(path) {
                         tc.check_with_imports(ast, &typecheck_deps)
                     } else {
@@ -1772,7 +2255,7 @@ impl<'a> IrCodegen<'a> {
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
                 self.configure_lowering(&mut lowering);
                 lowering.set_current_source_module_name(Some(path.join(".")));
-                lowering.seed_dependency_trait_decls(&dependency_modules);
+                lowering.seed_dependency_trait_decls(&dependency_modules)?;
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
                 // Do not auto-add serde derives to dependency modules.
@@ -1865,6 +2348,7 @@ impl<'a> IrCodegen<'a> {
             let module_code = if use_emit_service {
                 let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
+                self.apply_canonical_emission_context(inner);
                 inner.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(inner, ir.source_module_name.as_deref(), &source_module_paths);
                 inner.set_preserve_public_items(preserve_public_items);
@@ -1891,6 +2375,7 @@ impl<'a> IrCodegen<'a> {
                 svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
+                self.apply_canonical_emission_context(&mut emitter);
                 emitter.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(
                     &mut emitter,
@@ -1936,6 +2421,12 @@ impl Default for IrCodegen<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod canonical_projection {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/canonical_projection.rs"
+        ));
+    }
     use crate::frontend::library_manifest_index::{
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
@@ -1943,6 +2434,8 @@ mod tests {
     use crate::library_manifest::{
         ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, ParamKindExport, TypeRef,
     };
+    use canonical_projection::{projected_identities, projected_identity, projected_name};
+    use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
     use std::collections::HashMap;
     #[cfg(feature = "rust_inspect")]
     use std::fs;
@@ -1967,10 +2460,18 @@ mod tests {
         annotation: &str,
         projections: Vec<crate::frontend::typechecker::MutableRustTypeArgumentProjection>,
     ) -> Result<AstLowering, Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck errors: {errors:?}"))?;
         let start = source
             .find(annotation)
             .ok_or_else(|| format!("projection annotation `{annotation}` must occur in source"))?;
-        let mut type_info = TypeCheckInfo::default();
+        let mut type_info = checker.type_info().clone();
         type_info
             .rust
             .mutable_reference_type_argument_projections
@@ -1998,6 +2499,160 @@ mod tests {
         assert!(!code.contains("#[allow(dead_code, unused_variables)]"), "{code}");
     }
 
+    fn compact_rust(code: &str) -> String {
+        code.chars().filter(|character| !character.is_whitespace()).collect()
+    }
+
+    #[test]
+    fn overloaded_source_functions_keep_distinct_canonical_projections() {
+        let code = generate(
+            r#"
+pub def convert(value: int) -> int:
+  return value
+
+pub def convert(value: str) -> str:
+  return value
+"#,
+        );
+        let identities = projected_identities(&code, "convert", SemanticSourceTargetKind::Function);
+        assert_eq!(
+            identities.len(),
+            2,
+            "each overload needs its own source identity: {code}"
+        );
+    }
+
+    #[test]
+    fn library_generation_metadata_uses_checked_root_module_path() {
+        use crate::frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use crate::frontend::typechecker::TypeChecker;
+
+        let source = r#"
+trait Walk:
+    def copy(self) -> Self: ...
+
+pub model Stream[R] with Walk:
+    value: R
+
+    def copy(self) -> Self:
+        return self
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+        let root_module_path = vec!["main".to_string()];
+        let (_code, metadata) = must_ok(IrCodegen::new().try_generate_with_metadata(&ast, &root_module_path));
+
+        assert!(metadata.implementation_bound_requirements.iter().any(|captured| {
+            captured.module_path == root_module_path
+                && captured.requirement.target_type == "Stream"
+                && captured.target_visibility == CapturedImplementationTargetVisibility::SameProgram(Visibility::Public)
+                && captured.requirement.type_params.iter().any(|type_param| {
+                    type_param
+                        .bounds
+                        .iter()
+                        .any(|bound| bound.trait_path == incan_core::lang::trait_bounds::rust::CLONE)
+                })
+        }));
+
+        let mut checker = TypeChecker::new();
+        must_ok(checker.check_program(&ast));
+        let mut manifest = LibraryManifest::new("root_impl", "0.1.0");
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, root_module_path)],
+            public_namespaces: Vec::new(),
+        });
+        must_ok(metadata.apply_to_library_manifest(&mut manifest));
+        let implementation_type_params = manifest
+            .contract_metadata
+            .api
+            .as_ref()
+            .and_then(|api| api.modules.first())
+            .and_then(|module| {
+                module.declarations.iter().find_map(|declaration| match declaration {
+                    ApiDeclaration::Model(model) if model.name == "Stream" => model.trait_adoptions.first(),
+                    _ => None,
+                })
+            })
+            .map(|adoption| adoption.implementation_type_params.as_slice());
+        assert!(
+            implementation_type_params.is_some_and(|type_params| type_params.iter().any(|type_param| {
+                type_param.name == "R"
+                    && type_param
+                        .bounds
+                        .iter()
+                        .any(|bound| bound.trait_path == incan_core::lang::trait_bounds::rust::CLONE)
+            })),
+            "the checked root adoption must receive its inferred implementation header"
+        );
+    }
+
+    #[test]
+    fn private_implementation_metadata_is_omitted_but_unknown_visibility_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+trait Walk:
+    def copy(self) -> Self: ...
+
+model PrivateStream[R] with Walk:
+    value: R
+
+    def copy(self) -> Self:
+        return self
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["private_impl".to_string()];
+        let (_code, metadata) = IrCodegen::new().try_generate_with_metadata(&ast, &module_path)?;
+        let captured = metadata
+            .implementation_bound_requirements
+            .iter()
+            .find(|captured| captured.requirement.target_type == "PrivateStream")
+            .ok_or("private implementation should retain its inferred requirement internally")?;
+        assert_eq!(
+            captured.target_visibility,
+            CapturedImplementationTargetVisibility::SameProgram(Visibility::Private)
+        );
+
+        let mut private_manifest = LibraryManifest::new("private_impl", "0.1.0");
+        metadata.apply_to_library_manifest(&mut private_manifest)?;
+
+        let mut unknown_requirement = captured.clone();
+        unknown_requirement.target_visibility = CapturedImplementationTargetVisibility::Unknown;
+        let unknown_metadata = IrGenerationMetadata {
+            implementation_bound_requirements: vec![unknown_requirement],
+        };
+        let mut unknown_manifest = LibraryManifest::new("unknown_impl", "0.1.0");
+        let Err(error) = unknown_metadata.apply_to_library_manifest(&mut unknown_manifest) else {
+            return Err("an unknown implementation target must remain fail-closed".into());
+        };
+        assert!(
+            error.contains("had no checked manifest adoption"),
+            "unexpected unknown-target diagnostic: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn implementation_metadata_preserves_decimal_type_arguments() {
+        assert_eq!(
+            must_ok(manifest_type_ref_from_ir(&IrType::Decimal {
+                precision: 18,
+                scale: 4,
+            })),
+            TypeRef::Applied {
+                name: "decimal".to_string(),
+                args: vec![
+                    TypeRef::TypeParam { name: "18".to_string() },
+                    TypeRef::TypeParam { name: "4".to_string() },
+                ],
+            }
+        );
+    }
+
     #[test]
     fn trait_method_alias_emits_required_adopted_method_issue1055() {
         let code = generate(
@@ -2021,7 +2676,10 @@ def main() -> None:
             "expected the trait alias to emit the required method name, got:\n{code}"
         );
         assert!(
-            code.contains("pub fn filter(&self, value: i64) -> i64"),
+            code.contains(&format!(
+                "pub fn {}(\n        &self,\n        value: i64,\n    ) -> i64",
+                projected_name(&code, "filter", SemanticSourceTargetKind::Method)
+            )),
             "expected the alias target to remain available as an inherent method, got:\n{code}"
         );
     }
@@ -2039,11 +2697,15 @@ pub def use() -> str:
   return get(path="/health")
 "#,
         );
-        assert!(code.contains("pub fn get("), "{code}");
+        let get = projected_name(&code, "get", SemanticSourceTargetKind::Partial);
+        let route = projected_name(&code, "route", SemanticSourceTargetKind::Function);
+        assert!(code.contains(&format!("pub fn {get}(")), "{code}");
         assert!(code.contains("\"GET\""), "{code}");
-        assert!(code.contains("route("), "{code}");
+        assert!(code.contains(&format!("{route}(")), "{code}");
         assert!(
-            code.contains("get(\"GET\".to_string(), \"/health\".to_string())"),
+            code.contains(&format!(
+                "{get}(\n        \"GET\".to_string(),\n        \"/health\".to_string(),\n    )"
+            )),
             "{code}"
         );
     }
@@ -2099,7 +2761,8 @@ pub def use() -> Reader:
   return BronzeReader()
 "#,
         );
-        assert!(code.contains("pub fn BronzeReader("), "{code}");
+        let bronze_reader = projected_name(&code, "BronzeReader", SemanticSourceTargetKind::Partial);
+        assert!(code.contains(&format!("pub fn {bronze_reader}(")), "{code}");
         assert!(code.contains("\"bronze\""), "{code}");
         assert!(code.contains("\"delta\""), "{code}");
         assert!(code.contains("Reader {"), "{code}");
@@ -2122,7 +2785,8 @@ pub def use(user: User) -> str:
 "#,
         );
         assert!(code.contains("fn short"), "{code}");
-        assert!(code.contains("return self.label(prefix);"), "{code}");
+        let label = projected_name(&code, "label", SemanticSourceTargetKind::Method);
+        assert!(code.contains(&format!("return self\n            .{label}(")), "{code}");
         assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
     }
 
@@ -2142,7 +2806,8 @@ pub def use(user: User) -> str:
 "#,
         );
         assert!(code.contains("fn short"), "{code}");
-        assert!(code.contains("return self.label(&prefix);"), "{code}");
+        let label = projected_name(&code, "label", SemanticSourceTargetKind::Method);
+        assert!(code.contains(&format!("return self\n            .{label}(")), "{code}");
         assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
     }
 
@@ -2178,9 +2843,11 @@ def main() -> int:
   return mean(10)
 "#,
         );
-        assert!(code.contains("pub fn avg(x: i64) -> i64"), "{code}");
-        assert!(code.contains("pub use avg as average;"), "{code}");
-        assert!(code.contains("return avg(10);"), "{code}");
+        let avg = projected_name(&code, "avg", SemanticSourceTargetKind::Function);
+        let compact = compact_rust(&code);
+        assert!(compact.contains(&format!("pubfn{avg}(x:i64,)->i64")), "{code}");
+        assert!(compact.contains(&format!("pubuse{avg}asaverage;")), "{code}");
+        assert!(compact.contains(&format!("return{avg}(10,);")), "{code}");
         assert!(!code.contains("fn mean"), "{code}");
     }
 
@@ -2197,9 +2864,16 @@ def main() -> int:
   return mod(10)
 "#,
         );
-        assert!(code.contains("pub fn modulo_value(value: i64) -> i64"), "{code}");
-        assert!(code.contains("pub use modulo_value as r#mod;"), "{code}");
-        assert!(code.contains("return modulo_value(10);"), "{code}");
+        let modulo_value = projected_name(&code, "modulo_value", SemanticSourceTargetKind::Function);
+        assert!(
+            code.contains(&format!("pub fn {modulo_value}(\n    value: i64,\n) -> i64")),
+            "{code}"
+        );
+        assert!(code.contains(&format!("pub use {modulo_value} as r#mod;")), "{code}");
+        assert!(
+            code.contains(&format!("return {modulo_value}(\n        10,\n    );")),
+            "{code}"
+        );
     }
 
     #[test]
@@ -2212,8 +2886,12 @@ pub def mod(value: int) -> int:
 pub modulo = alias mod
 "#,
         );
-        assert!(code.contains("pub fn r#mod(value: i64) -> i64"), "{code}");
-        assert!(code.contains("pub use r#mod as modulo;"), "{code}");
+        let modulo = projected_name(&code, "mod", SemanticSourceTargetKind::Function);
+        assert!(
+            code.contains(&format!("pub fn {modulo}(\n    value: i64,\n) -> i64")),
+            "{code}"
+        );
+        assert!(code.contains(&format!("pub use {modulo} as modulo;")), "{code}");
     }
 
     #[test]
@@ -2227,7 +2905,8 @@ pub root = math.sqrt
             vec![vec!["math".to_string()]],
         );
         assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
-        assert!(code.contains("pub use math::sqrt as root;"), "{code}");
+        let sqrt = projected_name(&code, "sqrt", SemanticSourceTargetKind::Function);
+        assert!(code.contains(&format!("pub use math::{sqrt} as root;")), "{code}");
     }
 
     #[test]
@@ -2242,7 +2921,11 @@ def main() -> None:
 "#,
         );
 
-        assert!(code.contains("fn helper(value: i64) -> i64"), "{code}");
+        let helper = projected_name(&code, "helper", SemanticSourceTargetKind::Function);
+        assert!(
+            code.contains(&format!("fn {helper}(\n    value: i64,\n) -> i64")),
+            "{code}"
+        );
         assert_no_generated_unused_lint_allows(&code);
     }
 
@@ -2298,11 +2981,17 @@ def main() -> None:
         );
 
         assert!(
-            constants_code.contains("pub fn api_version() -> String"),
+            constants_code.contains(&format!(
+                "pub fn {}() -> String",
+                projected_name(constants_code, "api_version", SemanticSourceTargetKind::Function)
+            )),
             "{constants_code}"
         );
         assert!(
-            constants_code.contains("pub fn max_page_size() -> i64"),
+            constants_code.contains(&format!(
+                "pub fn {}() -> i64",
+                projected_name(constants_code, "max_page_size", SemanticSourceTargetKind::Function)
+            )),
             "{constants_code}"
         );
         assert!(!constants_code.contains("default_timeout"), "{constants_code}");
@@ -2340,8 +3029,12 @@ def main() -> None:
             "missing generated std.compression.gzip module",
         );
 
-        assert!(!gzip_code.contains("pub fn compress"), "{gzip_code}");
-        assert!(gzip_code.contains("pub fn decompress"), "{gzip_code}");
+        assert!(
+            projected_identities(gzip_code, "compress", SemanticSourceTargetKind::Function).is_empty(),
+            "{gzip_code}"
+        );
+        let decompress = projected_name(gzip_code, "decompress", SemanticSourceTargetKind::Function);
+        assert!(gzip_code.contains(&format!("pub fn {decompress}(")), "{gzip_code}");
         assert_no_generated_unused_lint_allows(gzip_code);
     }
 
@@ -2377,11 +3070,17 @@ def main() -> None:
         );
 
         assert!(
-            constants_code.contains("pub fn api_version() -> String"),
+            constants_code.contains(&format!(
+                "pub fn {}() -> String",
+                projected_name(constants_code, "api_version", SemanticSourceTargetKind::Function)
+            )),
             "{constants_code}"
         );
         assert!(
-            constants_code.contains("pub fn default_timeout() -> i64"),
+            constants_code.contains(&format!(
+                "pub fn {}() -> i64",
+                projected_name(constants_code, "default_timeout", SemanticSourceTargetKind::Function)
+            )),
             "{constants_code}"
         );
         assert_no_generated_unused_lint_allows(constants_code);
@@ -2420,8 +3119,32 @@ def test_generated_entrypoint() -> None:
         )]));
         let code = must_ok(codegen.try_generate(&ast));
 
-        assert!(code.contains("fn test_generated_entrypoint"), "{code}");
+        let entrypoint = projected_name(&code, "test_generated_entrypoint", SemanticSourceTargetKind::Function);
+        assert!(code.contains(&format!("fn {entrypoint}(")), "{code}");
+        assert!(
+            code.contains(&format!("use {entrypoint} as test_generated_entrypoint;")),
+            "the generated harness must retain its source-facing call path:\n{code}"
+        );
         assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn canonical_functions_keep_their_existing_rust_facing_names() {
+        let code = generate(
+            r#"
+pub def public_value() -> int:
+  return 42
+
+def test_generated_entrypoint() -> None:
+  return
+"#,
+        );
+
+        let public_projection = projected_name(&code, "public_value", SemanticSourceTargetKind::Function);
+        assert!(
+            code.contains(&format!("pub use {public_projection} as public_value;")),
+            "public Rust consumers must retain the source-facing name:\n{code}"
+        );
     }
 
     #[test]
@@ -2475,6 +3198,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2486,6 +3210,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -2561,6 +3286,7 @@ def main() -> None:
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })));
@@ -2593,6 +3319,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("AlphaRender"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2604,6 +3331,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("BetaRender"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2673,6 +3401,7 @@ def main() -> None:
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })));
@@ -2706,6 +3435,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -2713,6 +3443,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -2788,6 +3519,7 @@ def main() -> None:
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })));
@@ -2821,6 +3553,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Digest"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
@@ -2832,6 +3565,7 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Sha256"),
                     alias: None,
+                    canonical: None,
                     is_static: false,
                     force_reexport: false,
                     rust_trait_import: None,
@@ -2871,6 +3605,7 @@ def main() -> None:
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
+            rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         })));
@@ -3175,7 +3910,11 @@ def main() -> None:
 "#,
         );
 
-        assert!(code.contains("fn helper(value: i64, _: i64) -> i64"), "{code}");
+        let helper = projected_name(&code, "helper", SemanticSourceTargetKind::Function);
+        assert!(
+            code.contains(&format!("fn {helper}(\n    value: i64,\n    _: i64,\n) -> i64")),
+            "{code}"
+        );
         assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
     }
 
@@ -3561,7 +4300,11 @@ pub def add(a: int, b: int) -> int:
   return a + b
 "#,
         );
-        assert!(code.contains("fn add(a: i64, b: i64) -> i64"));
+        let add = projected_name(&code, "add", SemanticSourceTargetKind::Function);
+        assert!(
+            compact_rust(&code).contains(&format!("fn{add}(a:i64,b:i64,)->i64")),
+            "{code}"
+        );
         assert!(code.contains("a + b"));
     }
 
@@ -3719,6 +4462,406 @@ pub def touch(db: Database) -> None:
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
         assert!(!store_code.contains("use db::schema::Database;"));
+    }
+
+    #[test]
+    fn top_level_partial_keeps_one_projection_through_reexport_and_consumer_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = parse_program_result(
+            r#"
+pub model Spec:
+  pub namespace: str
+  pub policy: str
+
+pub portable = partial Spec(namespace="core")
+"#,
+        )?;
+        let facade = parse_program_result("pub from provider import portable\n")?;
+        let main = parse_program_result(
+            r#"
+from facade import portable as make_spec
+
+def main() -> None:
+  let spec = make_spec(policy="portable")
+  println(spec.namespace)
+"#,
+        )?;
+        let provider_path = vec!["provider".to_string()];
+        let facade_path = vec!["facade".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("provider", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[provider_path.clone(), facade_path.clone()])?;
+        let provider_code = modules.get(&provider_path).ok_or("missing generated provider module")?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
+        let projection = provider_code
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub fn __incan_v1_")
+                    .and_then(|tail| tail.split('(').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("provider partial did not emit an incan-v1 function projection")?;
+
+        assert!(
+            facade_code.contains(&projection),
+            "facade reexport did not bind the provider partial projection `{projection}`:\n{facade_code}"
+        );
+        assert!(
+            facade_code.contains(&format!("pub use crate::provider::{projection} as portable;")),
+            "the public facade must retain the partial's Rust-facing name:\n{facade_code}"
+        );
+        assert!(
+            main_code.contains(&projection),
+            "consumer alias did not bind or call the provider partial projection `{projection}`:\n{main_code}"
+        );
+        assert!(
+            !facade_code.contains("provider::portable") && !main_code.contains("facade::portable"),
+            "partial import/reexport fell back to a source spelling:\nfacade:\n{facade_code}\nconsumer:\n{main_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_static_declaration_reads_writes_and_init_share_one_projection() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let program = parse_program_result(
+            r#"
+pub static counter: int = 0
+
+pub def increment() -> int:
+  counter = counter + 1
+  return counter
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("source static did not emit an incan-v1 projection")?;
+
+        assert!(
+            generated.matches(&projection).count() >= 4,
+            "static declaration, module init, write, and read must share `{projection}`:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!("pub use {projection} as COUNTER;")),
+            "the public static must retain its existing Rust-facing name:\n{generated}"
+        );
+        assert!(
+            !generated.contains("static COUNTER") && !generated.contains("COUNTER.with_"),
+            "source static fell back to its raw Rust-global spelling:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_static_keeps_one_projection_through_reexport_and_consumer_alias() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = parse_program_result("pub static counter: int = 1\n")?;
+        let facade = parse_program_result("pub from provider import counter\n")?;
+        let main = parse_program_result(
+            r#"
+from facade import counter as shared
+
+def main() -> None:
+  println(shared)
+"#,
+        )?;
+        let provider_path = vec!["provider".to_string()];
+        let facade_path = vec!["facade".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("provider", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[provider_path.clone(), facade_path.clone()])?;
+        let provider_code = modules.get(&provider_path).ok_or("missing generated provider module")?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
+        let projection = provider_code
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("provider static did not emit an incan-v1 projection")?;
+
+        assert!(
+            facade_code.contains(&projection),
+            "facade reexport did not bind the provider static projection `{projection}`:\n{facade_code}"
+        );
+        assert!(
+            facade_code.contains(&format!("pub use crate::provider::{projection} as COUNTER;")),
+            "the public facade must retain the static's Rust-facing name:\n{facade_code}"
+        );
+        assert!(
+            main_code.contains(&projection),
+            "consumer alias did not bind and read the provider static projection `{projection}`:\n{main_code}"
+        );
+        assert!(
+            !facade_code.contains("provider::COUNTER") && !main_code.contains("facade::COUNTER"),
+            "static import/reexport fell back to a source spelling:\nfacade:\n{facade_code}\nconsumer:\n{main_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_decorator_static_collision_keeps_distinct_identifiers_and_reads()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+pub static __incan_decorated_target: int = 41
+
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+@preserve()
+pub def target() -> int:
+  return 1
+
+pub def source_value() -> int:
+  return __incan_decorated_target
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let source_projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("colliding source static did not emit an incan-v1 projection")?;
+
+        assert!(
+            generated.contains("static __INCAN_DECORATED_TARGET:")
+                && generated.contains("__INCAN_DECORATED_TARGET.get()"),
+            "the generated decorator cell and its wrapper read must retain the synthetic identifier:\n{generated}"
+        );
+        assert!(
+            generated.matches(&source_projection).count() >= 3,
+            "the colliding source static declaration, init, and read must share `{source_projection}`:\n{generated}"
+        );
+        assert!(
+            !source_projection.contains("__INCAN_DECORATED_TARGET"),
+            "the source and generated static spellings unexpectedly collapsed: {source_projection}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_decorator_function_collision_keeps_distinct_identifiers_and_calls()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+pub def __incan_original_target() -> int:
+  return 41
+
+@preserve()
+pub def target() -> int:
+  return 1
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let public_source_projections = generated
+            .lines()
+            .filter_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub fn __incan_v1_")
+                    .and_then(|tail| tail.split('(').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert!(
+            generated.contains("fn __incan_original_target("),
+            "the generated decorator original did not retain its private physical name:\n{generated}"
+        );
+        assert!(
+            generated.matches("__incan_original_target").count() >= 2,
+            "the decorator application did not reference the generated original by its physical name:\n{generated}"
+        );
+        assert_eq!(
+            public_source_projections.len(),
+            2,
+            "the colliding source declaration and decorated wrapper must retain two distinct public projections:\n{generated}"
+        );
+        assert!(
+            !generated.contains("@generated/decorator-original"),
+            "the collision-proof registry key leaked into generated Rust:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_module_public_function_and_static_aliases_bind_exact_projections() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let program = parse_program_result(
+            r#"
+pub def average(left: int, right: int) -> int:
+  return (left + right) // 2
+
+pub mean = alias average
+pub static total: int = 2
+pub tally = alias total
+
+pub def summarize() -> int:
+  return mean(total, tally)
+"#,
+        )?;
+        let generated = IrCodegen::new().try_generate(&program)?;
+        let function_projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub fn __incan_v1_")
+                    .and_then(|tail| tail.split('(').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("source function did not emit an incan-v1 projection")?;
+        let static_projection = generated
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("source static did not emit an incan-v1 projection")?;
+
+        assert!(
+            generated.contains(&format!("pub use {function_projection} as mean;")),
+            "the public function alias did not bind its target projection:\n{generated}"
+        );
+        assert!(
+            generated.contains(&format!("pub use {static_projection} as tally;")),
+            "the public static alias did not bind its target projection:\n{generated}"
+        );
+        assert!(
+            !generated.contains("pub use average as mean;") && !generated.contains("pub use total as tally;"),
+            "same-module aliases fell back to raw source target names:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_ordinary_binding_shadows_outer_static_binding_alias() -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+static items: list[int] = []
+
+def count_inner() -> int:
+  let live = items
+  if true:
+    let live = [1, 2]
+    return len(live)
+  return len(live)
+"#,
+        )?;
+        let mut codegen = IrCodegen::new();
+        codegen.set_externally_reachable_items(std::collections::HashSet::from(["count_inner".to_string()]));
+        let generated = codegen.try_generate(&program)?;
+
+        assert!(
+            generated.contains("let live = vec![") && generated.contains("live.len() as i64"),
+            "the inner ordinary binding did not retain local value emission:\n{generated}"
+        );
+        assert!(
+            !generated.contains("StaticBinding::from_static(&LIVE)") && !generated.contains("LIVE.get()"),
+            "the inner ordinary binding inherited an outer static-binding classification:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_eq_magic_method_keeps_abi_slot_and_recoverable_projection() -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            r#"
+model Value:
+  value: int
+
+  def __eq__(self, other: Value) -> bool:
+    return self.value == other.value
+
+def same(left: Value, right: Value) -> bool:
+  return left == right
+"#,
+        )?;
+        let mut codegen = IrCodegen::new();
+        codegen.set_externally_reachable_items(std::collections::HashSet::from(["same".to_string()]));
+        let generated = codegen.try_generate(&program)?;
+
+        assert!(
+            generated.contains("impl PartialEq for Value"),
+            "source __eq__ must retain Rust's required PartialEq ABI slot:\n{generated}"
+        );
+        assert!(
+            generated.contains("pub fn __incan_v1_")
+                && generated.contains("<Self as std::cmp::PartialEq>::eq(self, &other)"),
+            "source __eq__ must expose a recoverable wrapper that invokes the ABI slot:\n{generated}"
+        );
+        assert!(
+            !generated.contains("self.__eq__(other)"),
+            "recoverable __eq__ wrapper must not call a nonexistent inherent method:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn result_map_err_closure_keeps_concrete_member_identity() {
+        let generated = generate(
+            r#"
+pub model Failure:
+  detail: str
+
+  def message(self) -> str:
+    return self.detail
+
+pub def describe(result: Result[int, Failure]) -> Result[int, str]:
+  return result.map_err((error) => error.message())
+"#,
+        );
+        let projection = projected_name(&generated, "message", SemanticSourceTargetKind::Method);
+        let compact = compact_rust(&generated);
+
+        assert!(
+            compact.contains(&format!("error.{projection}()")),
+            "map_err must contextually type its error closure before member projection:\n{generated}"
+        );
+        assert!(
+            !compact.contains("|error|error.message()"),
+            "a contextually-known source member must not fall back to its raw spelling:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn result_map_err_string_literal_closure_owns_its_checked_return() {
+        let generated = generate(
+            r#"
+pub def normalize(result: Result[int, int]) -> Result[int, str]:
+  return result.map_err((_error) => "malformed")
+"#,
+        );
+        let compact = compact_rust(&generated);
+
+        assert!(
+            compact.contains("map_err(|_error|\"malformed\".to_string())"),
+            "a contextually typed closure must materialize its checked str return:\n{generated}"
+        );
     }
 
     #[test]
@@ -3889,8 +5032,9 @@ def main() -> None:
             .get(&testing_path)
             .ok_or_else(|| std::io::Error::other("missing generated std.testing module"))?;
 
+        let timeout = projected_name(testing_code, "timeout", SemanticSourceTargetKind::Function);
         assert!(
-            testing_code.contains("pub fn timeout(duration: String)"),
+            compact_rust(testing_code).contains(&format!("pubfn{timeout}(duration:String,)")),
             "std.testing.timeout should remain a non-generic marker wrapper; got:\n{testing_code}"
         );
         assert!(
@@ -3951,17 +5095,105 @@ def main() -> None:
     }
 
     #[test]
+    fn package_codegen_keeps_embedded_stdlib_method_identity_at_declaration_origin()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let main_module = parse_program_result(
+            r#"
+from std.io import BytesIO
+
+pub def oven_bytes() -> bytes:
+  return BytesIO(b"oven").getvalue()
+"#,
+        )?;
+        let io_module = read_stdlib_program("crates/incan_stdlib/stdlib/io.incn")?;
+        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+
+        let io_path = vec!["__incan_std".to_string(), "io".to_string()];
+        let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
+
+        let mut codegen = IrCodegen::new();
+        codegen.set_canonical_emission_package_identity(Some("oven_release_bytes_io".to_string()));
+        codegen.add_module_with_path_segments("__incan_std_io", &io_module, io_path.clone());
+        codegen.add_module_with_path_segments(
+            "__incan_std_traits_error",
+            &traits_error_module,
+            traits_error_path.clone(),
+        );
+
+        let (main_code, rust_modules) =
+            codegen.try_generate_multi_file_nested(&main_module, &[io_path.clone(), traits_error_path])?;
+        let io_code = rust_modules
+            .get(&io_path)
+            .ok_or_else(|| std::io::Error::other("missing generated std.io module"))?;
+
+        let referenced_getvalue = projected_name(&main_code, "getvalue", SemanticSourceTargetKind::Method);
+        let declared_getvalue = projected_name(io_code, "getvalue", SemanticSourceTargetKind::Method);
+        assert_eq!(
+            referenced_getvalue, declared_getvalue,
+            "a stdlib method reference must keep the identity assigned at its declaration site"
+        );
+        let getvalue_identity = projected_identity(io_code, "getvalue", SemanticSourceTargetKind::Method);
+        assert_eq!(getvalue_identity.origin, SymbolOrigin::Module(io_path.clone()));
+
+        let referenced_constructor = projected_name(&main_code, "BytesIO", SemanticSourceTargetKind::Function);
+        let declared_constructor = projected_name(io_code, "BytesIO", SemanticSourceTargetKind::Function);
+        assert_eq!(
+            referenced_constructor, declared_constructor,
+            "a stdlib constructor reference must keep the identity assigned at its declaration site"
+        );
+        let constructor_identity = projected_identity(io_code, "BytesIO", SemanticSourceTargetKind::Function);
+        assert_eq!(constructor_identity.origin, SymbolOrigin::Module(io_path));
+        Ok(())
+    }
+
+    #[test]
     fn streaming_hash_helpers_import_io_error_for_reader_chunk_failures() -> Result<(), Box<dyn std::error::Error>> {
         let streaming_module = read_stdlib_program("crates/incan_stdlib/stdlib/hash/_streaming.incn")?;
         let streaming_code = IrCodegen::new().try_generate(&streaming_module)?;
+        let compact_streaming_code = compact_rust(&streaming_code);
 
+        let reader_digest = projected_name(&streaming_code, "reader_digest", SemanticSourceTargetKind::Function);
+        let feed_digest_reader = projected_name(
+            &streaming_code,
+            "_feed_digest_reader",
+            SemanticSourceTargetKind::Function,
+        );
+        assert!(
+            compact_streaming_code.contains(&format!("pubfn{reader_digest}<R:BinaryReader,>")),
+            "the public reader API must retain its source-declared BinaryReader-only contract; got:\n{streaming_code}"
+        );
+        assert!(
+            compact_streaming_code.contains(&format!("{feed_digest_reader}<H:ByteDigestHasher,R:BinaryReader,>")),
+            "streaming over ReaderChunks<R> must preserve the source-declared BinaryReader contract without a hidden Clone requirement; got:\n{streaming_code}"
+        );
+        assert!(
+            !compact_streaming_code.contains("R:BinaryReader+Clone"),
+            "streaming hash dispatch must move mutually exclusive reader uses instead of narrowing public or private contracts with Clone; got:\n{streaming_code}"
+        );
         assert!(
             streaming_code.contains("pub use crate::__incan_std::io::IoError;"),
             "std.hash._streaming must import the IoError carried by BinaryReader chunks; got:\n{streaming_code}"
         );
         assert!(
-            streaming_code.contains("FallibleIterator::<\n                Vec<u8>,\n                IoError,"),
-            "streaming reader helpers must preserve their fallible chunk type; got:\n{streaming_code}"
+            compact_streaming_code.contains("FallibleIterator::<Vec<u8>,HashError,>")
+                && compact_streaming_code.contains("|error:IoError|"),
+            "streaming reader helpers must preserve the imported chunk error at the mapping boundary and the mapped hash error afterward; got:\n{streaming_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compression_auto_moves_non_clone_decoder_match_bindings() -> Result<(), Box<dyn std::error::Error>> {
+        let auto_module = read_stdlib_program("crates/incan_stdlib/stdlib/compression/_auto.incn")?;
+        let auto_code = IrCodegen::new().try_generate(&auto_module)?;
+
+        assert!(
+            auto_code.contains("let mut adapter = reader;"),
+            "a final assignment from a Rust decoder match binding must move without assuming Clone"
+        );
+        assert!(
+            !auto_code.contains("let mut adapter = reader.clone();"),
+            "non-Clone Rust decoder match bindings must not receive backend-inserted clones"
         );
         Ok(())
     }
@@ -4822,7 +6054,11 @@ pub def move_items(mut items: FooBar[tuple[&mut Widget, &mut Gadget]]) -> None:
 "#;
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
-        let mut lowering = AstLowering::new();
+        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| std::io::Error::other(format!("typecheck failed: {errors:?}")))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
         let ir_program = lowering
             .lower_program(&ast)
             .map_err(|error| std::io::Error::other(format!("lowering failed: {error:?}")))?;
@@ -5689,7 +6925,11 @@ pub def inspect(mut items: FooBar[tuple[Widget, Gadget]]) -> None:
 "#;
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
-        let mut lowering = AstLowering::new();
+        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| std::io::Error::other(format!("typecheck failed: {errors:?}")))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
         let ir_program = lowering
             .lower_program(&ast)
             .map_err(|error| std::io::Error::other(format!("lowering failed: {error:?}")))?;
@@ -5757,9 +6997,13 @@ pub def translate(time: f32, velocity: f32) -> f32:
             .map_err(|error| std::io::Error::other(format!("emit failed: {error:?}")))?;
 
         assert!(
-            code.contains("pub fn translate(time: f32, velocity: f32) -> f32")
-                && code.contains("accept_f32(-time + time * velocity)"),
-            "expected f32 arithmetic to cross the imported Rust f32 boundary without widening, got:\n{code}"
+            compact_rust(&code).contains(&format!(
+                "pubfn{}(time:f32,velocity:f32,)->f32",
+                projected_name(&code, "translate", SemanticSourceTargetKind::Function)
+            )) && code.contains("accept_f32(")
+                && code.matches("incan_stdlib::num::require_finite_f32").count() == 6,
+            "expected exact f32 arithmetic to retain its width and finite invariant across the imported Rust f32 \
+             boundary, got:\n{code}"
         );
         Ok(())
     }
@@ -6668,8 +7912,9 @@ pub def run() -> int:
 "#;
         let ast = parse_program(source);
         let code = must_ok(IrCodegen::new().try_generate(&ast));
+        let id = projected_name(&code, "id", SemanticSourceTargetKind::Function);
         assert!(
-            code.contains("id::<i64>(1)") || code.contains("id :: < i64 > (1)"),
+            compact_rust(&code).contains(&format!("{id}::<i64,>(1)")),
             "expected explicit function type args to emit Rust turbofish, got:\n{code}"
         );
     }
@@ -6687,8 +7932,9 @@ pub def run() -> int:
 "#;
         let ast = parse_program(source);
         let code = must_ok(IrCodegen::new().try_generate(&ast));
+        let pick = projected_name(&code, "pick", SemanticSourceTargetKind::Method);
         assert!(
-            code.contains("pick::<i64>") || code.contains("pick :: < i64 >"),
+            compact_rust(&code).contains(&format!("{pick}::<i64,>(1)")),
             "expected explicit method type args to emit Rust turbofish, got:\n{code}"
         );
     }
@@ -6704,8 +7950,9 @@ pub def run() -> int:
 "#;
         let ast = parse_program(source);
         let code = must_ok(IrCodegen::new().try_generate(&ast));
+        let pair_map = projected_name(&code, "pair_map", SemanticSourceTargetKind::Function);
         assert!(
-            code.contains("pair_map::<i64, i64>") || code.contains("pair_map :: < i64 , i64 >"),
+            compact_rust(&code).contains(&format!("{pair_map}::<i64,i64,>(1,2)")),
             "expected full turbofish for mixed explicit/`_` call-site generics, got:\n{code}"
         );
     }

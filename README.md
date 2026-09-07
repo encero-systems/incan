@@ -78,7 +78,7 @@ The current toolchain includes these public surfaces for installation, first con
 - **Starter project flow** through `incan new`, `incan run`, `incan test`, and `incan build --release`.
 - **Stable diagnostics** through `incan check --format json` and `incan explain <CODE>`.
 - **Build reports** through `incan build --report json`, including compiler version, project identity, generated paths, artifact paths, dependency summaries, Cargo policy flags, timings, and notes.
-- **Generated Rust inspection** through `incan inspect rust --format json`, which reports the current Rust-backed compiler output without treating generated Rust as a stable ABI.
+- **Generated Rust inspection** through `incan inspect rust --format json`, which reports the current Rust-backed compiler output without treating generated Rust as a stable ABI. Declarations appear in that output under reversible `incan-v1` identifiers rather than their source names.
 - **Codegraph export** through `incan inspect codegraph --format jsonl`, with compiler-backed files, modules, declarations, imports, exports, references, calls, diagnostics, spans, provenance, and degraded-state records.
 - **Boundary parity hardening** across local, imported, re-exported, package, test-batch, generated-Rust, and vocab/tooling paths.
 

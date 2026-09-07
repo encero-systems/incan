@@ -1,0 +1,6 @@
+[project]
+name = "styleforge_consumer"
+version = "0.1.0"
+
+[dependencies]
+styleforge = { path = "../producer" }

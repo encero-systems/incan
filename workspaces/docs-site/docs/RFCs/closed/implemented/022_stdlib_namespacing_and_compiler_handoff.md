@@ -10,7 +10,7 @@
     - RFC 020 (offline/locked policy)
     - RFC 051 (`JsonValue`)
 - **Issue:** [#120](https://github.com/encero-systems/incan/issues/120)
-- **RFC PR:** —
+- **RFC PR:** [#124](https://github.com/encero-systems/incan/pull/124)
 - **Written against:** v0.1
 - **Shipped in:** v0.2
 

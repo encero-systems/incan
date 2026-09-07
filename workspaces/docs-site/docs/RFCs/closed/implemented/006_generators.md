@@ -6,7 +6,7 @@
 - **Related:** RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)
 - **Issue:** https://github.com/encero-systems/incan/issues/324
 - **Follow-up:** RFC 088 (iterator adapter surface), implemented by https://github.com/encero-systems/incan/issues/127
-- **RFC PR:** —
+- **RFC PR:** [#503](https://github.com/encero-systems/incan/pull/503)
 - **Written against:** v0.1
 - **Shipped in:** v0.3
 

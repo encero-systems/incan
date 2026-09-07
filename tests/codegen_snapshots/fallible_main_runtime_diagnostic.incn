@@ -1,0 +1,10 @@
+"""Preserve entrypoint setup before executing a fallible program body."""
+
+import this
+
+
+def main() -> Result[None, str]:
+    """Keep ordinary output and runtime diagnostics when an entrypoint can also return an error."""
+    println("before failure")
+    assert false, "runtime failure"
+    return Ok(None)

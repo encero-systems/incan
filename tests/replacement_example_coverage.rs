@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use incan::backend::replacement::{ReplacementExecutionError, execute_free_function};
+use incan::backend::replacement::{ProgramIo, ReplacementExecutionError, execute_free_function_with_io};
 use incan::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
 use incan::frontend::typechecker::TypeChecker;
 use incan::frontend::{lexer, parser};
@@ -28,31 +28,42 @@ use incan::frontend::{lexer, parser};
 ///
 /// The prior 61 count treated two modules containing explicit `Unsupported` placeholders as represented. They are
 /// intentionally excluded: a placeholder is the compiler's proof that the source was *not* represented for a
-/// consumer, not a successful lowering result.
-const REPRESENTED_BASELINE: usize = 59;
+/// consumer, not a successful lowering result. RFC 120's checked-identity integration then exposed ten more examples
+/// whose resolved callable or type-member references never had a Body-IR value/place representation; the old 59
+/// baseline counted those silent omissions as represented. They remain source-representation work under #1101.
+///
+/// Moved 49 -> 52 when the corpus grew by the six sources described on [`EXAMPLE_SOURCE_BASELINE`]. Three of them
+/// lower without a Body-IR refusal; the rest still refuse, and none of the six changes what executes.
+const REPRESENTED_BASELINE: usize = 52;
 
 /// Number of committed example sources included in this fixed corpus.
 ///
 /// Keeping the denominator explicit makes additions/removals reviewed coverage events rather than silently changing
 /// the percentage while the representation and execution baselines happen to stay the same.
-const EXAMPLE_SOURCE_BASELINE: usize = 68;
+///
+/// Moved 68 -> 74 for the `vocab_markform`, `vocab_scriptkit` and `vocab_styleforge` producer/consumer pairs, added
+/// to `examples/pro/` after this denominator was last recorded. This is the reviewed coverage event the doc comment
+/// above asks for: the corpus grew, representation went up with it, and execution did not move.
+const EXAMPLE_SOURCE_BASELINE: usize = 74;
 
 /// Examples whose `main` executes today. Update this in the same change that moves it.
 ///
 /// It moved from zero to four when `print` gained a represented builtin identity and an executed implementation:
 /// 25 of the 68 examples had been stopping at their first call.
+/// Hashed set membership then admitted `examples/advanced/membership_ops.incn`, raising execution to five.
+/// Canonical string helpers then admitted `examples/simple/strings.incn`, raising execution to six.
+/// Checked scalar conversions admit `examples/advanced/type_conversions.incn`, raising execution to seven.
 ///
-/// The remaining blockers have owners, and two of them are sequenced rather than merely unstarted. #1250 owns model
-/// construction and method dispatch; #989 owns imports and multi-module execution. Reassignment belongs to #1072
-/// (plain assignment must walk enclosing scopes) followed by RFC 120's Slice 5, which replaces Body IR's flat
-/// name-to-local map with identity-keyed resolution — the map is interim by the RFC's own account, so a fix built
-/// on it inside Body IR would be resolving bindings in the one place the RFC says must not decide them.
+/// Remaining model/default profiles are tracked under #1250; #989 owns imports and multi-module execution. The
+/// selected #1256 string helpers are no longer a blocker for the committed strings example. Repeated-binding
+/// limitations remain dependent on RFC 120's Slice 5 identity-keyed resolution; the frontend's #1072 reassignment
+/// repair does not replace Body IR's interim flat name-to-local map.
 ///
 /// #1252 owns the other half of the problem, and it is the one that decides what this number is worth: the corpus
 /// covers roughly a third of the capability surface the v0.5 catalogue documents, so reaching 68 here would still
 /// leave `if let`, generators, iterator adapters, value enums and most of the standard library unexecuted. Both
 /// sit under Slice 1 (#1137), because execution evidence has to be trustworthy before anything is cut over to it.
-const EXECUTED_BASELINE: usize = 4;
+const EXECUTED_BASELINE: usize = 7;
 
 /// How far one example got through the replacement pipeline.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -115,7 +126,10 @@ fn classify(source_path: &Path) -> Result<Outcome, Box<dyn std::error::Error>> {
     if module.render_snapshot().contains("unsupported(") {
         return Ok(Outcome::NotRepresented("Body IR refusal".to_string()));
     }
-    match execute_free_function(&module, "main", &[]) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+    match execute_free_function_with_io(&module, "main", &[], &mut io) {
         Ok(_) => Ok(Outcome::Executed),
         Err(error) => Ok(Outcome::RepresentedNotExecuted(refusal_bucket(&error))),
     }
@@ -130,6 +144,7 @@ fn refusal_bucket(error: &ReplacementExecutionError) -> String {
         ReplacementExecutionError::ArgumentCount { .. } => "entrypoint argument contract",
         ReplacementExecutionError::Unsupported { .. } => "unsupported direct replacement profile",
         ReplacementExecutionError::RuntimeFailure { .. } => "direct replacement runtime failure",
+        ReplacementExecutionError::ProgramIo { .. } => "program stream failure",
         ReplacementExecutionError::ProviderAuthorityDenied { .. } => "provider authority denied",
         ReplacementExecutionError::ProviderOperationFailed { .. } => "provider operation failed",
     }
