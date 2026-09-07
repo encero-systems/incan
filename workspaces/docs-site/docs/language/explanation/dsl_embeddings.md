@@ -87,4 +87,4 @@ Diagnostics follow the same split. A construct the submode rejects is reported w
 ## See also
 
 - [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md) — the library-author side, including the full submode catalogue
-- [RFC 081](../../RFCs/081_language_shaped_dsl_embeddings.md) — the specification
+- [RFC 081](../../RFCs/closed/implemented/081_language_shaped_dsl_embeddings.md) — the specification

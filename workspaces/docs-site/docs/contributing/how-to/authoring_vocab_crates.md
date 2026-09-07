@@ -556,4 +556,4 @@ from pub::routekit import routekit_name
 - [RFC 027: `incan_vocab`](../../RFCs/closed/implemented/027_incan_vocab_crate.md)
 - [RFC 040: Scoped DSL surface forms](../../RFCs/closed/implemented/040_scoped_dsl_surface_forms.md)
 - [RFC 045: Scoped DSL symbol surfaces](../../RFCs/closed/implemented/045_scoped_dsl_symbol_surfaces.md)
-- [RFC 081: Language-shaped DSL embeddings](../../RFCs/081_language_shaped_dsl_embeddings.md)
+- [RFC 081: Language-shaped DSL embeddings](../../RFCs/closed/implemented/081_language_shaped_dsl_embeddings.md)

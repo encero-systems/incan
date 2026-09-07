@@ -8,7 +8,7 @@
     - RFC 040 (scoped DSL surface forms)
     - RFC 045 (scoped DSL symbol surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/555
-- **RFC PR:** —
+- **RFC PR:** [#1410](https://github.com/encero-systems/incan/pull/1410)
 - **Written against:** v0.3
 - **Shipped in:** v0.6
 
