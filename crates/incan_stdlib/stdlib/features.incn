@@ -1219,6 +1219,25 @@ static std_json: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_json_references,
     ),
 )
+const std_toml_forms: FrozenList[str] = ["from std.toml import parse, deserialize, serialize", "deserialize[Manifest](source)", "serialize(lock)"]
+const std_toml_references: FrozenList[CapabilityReference] = [CapabilityReference(label="std.toml", path="stdlib/toml.md")]
+static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdToml"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdToml"),
+        name="`std.toml` project documents",
+        category=FeatureCategory.Stdlib,
+        since="0.6",
+        rfc="RFC 119",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.toml`.",
+        summary="Read typed TOML values and declared models with located diagnostics, and serialize generated documents while retaining date/time kinds. Locate table values for application-owned validation diagnostics.",
+        canonical_forms=std_toml_forms,
+        prefer_over="JSON conversion that discards TOML date/time kinds or structural-error source locations.",
+        references=std_toml_references,
+    ),
+)
 const std_tempfile_forms: FrozenList[str] = ["NamedTemporaryFile.try_new()", "TemporaryDirectory.try_new()", "tmp.persist()"]
 const std_tempfile_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="std.tempfile",

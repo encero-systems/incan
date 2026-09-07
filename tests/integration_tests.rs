@@ -20412,3 +20412,62 @@ def main() -> None:
         Ok(())
     }
 }
+
+/// Keep the TOML codec journey native and cross the compiled SDK plus a user re-export boundary in one bake.
+#[test]
+fn std_toml_manifest_and_lock_roundtrip_through_compiled_sdk() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let source_dir = temporary.path().join("src");
+    fs::create_dir_all(&source_dir)?;
+    fs::write(
+        temporary.path().join("loaf.toml"),
+        "[project]\nname = \"std_toml_native_surface\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        source_dir.join("codec.incn"),
+        "pub from std.toml import TomlValue, TomlError, TomlKind, TomlErrorKind, parse, deserialize, serialize, locate\n",
+    )?;
+    let source =
+        include_str!("fixtures/valid/std_toml_surface.incn").replace("from std.toml import", "from codec import");
+    let main = source_dir.join("main.incn");
+    fs::write(&main, source)?;
+
+    let mut bake = incan_command();
+    bake.current_dir(temporary.path())
+        .args(["oven", "bake", "--project"])
+        .arg(temporary.path());
+    support::configure_explicit_oven_bake_command(&mut bake)?;
+    let baked = bake.output()?;
+    assert!(
+        baked.status.success(),
+        "TOML native bake failed:\n{}\n{}",
+        String::from_utf8_lossy(&baked.stdout),
+        String::from_utf8_lossy(&baked.stderr)
+    );
+    let output = incan_command()
+        .current_dir(temporary.path())
+        .args(["run", "--locked"])
+        .arg(main)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "TOML native assertions failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout)).trim(),
+        "TOML manifest, lock, datetime, and located errors passed"
+    );
+    let generated = temporary.path().join("target/incan/std_toml_native_surface");
+    assert!(
+        !generated.join("src/__incan_std/toml.rs").exists(),
+        "the consumer must select compiled std.toml rather than materialize its implementation"
+    );
+    let provider = compiled_sdk_provider_artifact_root(&generated, "incan_stdlib_data")?;
+    assert!(
+        provider.join("src/toml.rs").is_file(),
+        "compiled stdlib-data must own the TOML implementation"
+    );
+    Ok(())
+}

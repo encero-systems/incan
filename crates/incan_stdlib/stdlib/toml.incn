@@ -1,0 +1,303 @@
+"""
+TOML documents for project manifests and generated lock files.
+
+`parse` reads an open document as `TomlValue`; `deserialize[T]` validates a declared model directly against the original
+source so structural errors keep their source locations. `serialize` writes models and dynamic values as TOML.
+Serialization preserves values, including date/time kinds, but discards comments, key order, and authored formatting.
+"""
+
+from rust::toml import Value as RawValue, from_str, to_string, to_string_pretty
+from rust::toml::value import Datetime as RawDatetime
+from rust::toml::de import Error as DecodeError
+from rust::toml_edit import Document as SpannedDocument, TomlError as SpanParseError
+from rust::serde import Serialize as RustSerialize, Deserialize as RustDeserialize
+from rust::serde::de import DeserializeOwned
+from rust::incan_stdlib::strings import str_slice_byte_range
+
+const __derives__ = [TomlSerialize, TomlDeserialize]
+
+
+@rust.derive("serde::Serialize")
+pub trait TomlSerialize with RustSerialize:
+    """Adopt serde serialization through `@derive(toml)` or an imported `TomlSerialize` derive."""
+
+    pass
+
+
+@rust.derive("serde::Deserialize")
+pub trait TomlDeserialize with DeserializeOwned:
+    """
+    Adopt owned model deserialization through `@derive(toml)`.
+
+    The existing serde blanket trait supplies the lifetime-independent bound needed when the source document is
+    owned by the caller. The model retains its own strings and collections after decoding returns.
+    """
+
+    pass
+
+
+pub enum TomlKind(str):
+    """The seven value kinds in a TOML document; TOML has no null kind."""
+
+    String = "string"
+    Integer = "integer"
+    Float = "float"
+    Boolean = "boolean"
+    Datetime = "datetime"
+    Array = "array"
+    Table = "table"
+
+    def as_str(self) -> str:
+        """Return the stable TOML kind spelling."""
+        return self.value()
+
+
+pub enum TomlErrorKind(str):
+    """Distinguish reading/validation failures from write failures."""
+
+    Decode = "decode"
+    Encode = "serialize"
+
+    def as_str(self) -> str:
+        """Return the stable error category spelling."""
+        return self.value()
+
+
+@derive(Eq)
+pub model TomlLocation:
+    """An exact source value span with one-based Unicode coordinates and zero-based UTF-8 offsets; byte_end is exclusive."""
+
+    pub line: int
+    pub column: int
+    pub byte_start: int
+    pub byte_end: int
+
+
+pub model TomlError:
+    """
+    A TOML parse, structural, or serialization failure.
+
+    `line` and `column` are one-based Unicode character positions. `byte_start` and `byte_end` are zero-based UTF-8
+    offsets into the original input, with an exclusive end. A serializer has no input location, so its positions are
+    `None`. A deserializer may also omit a span when no source token corresponds to the error.
+    """
+
+    pub kind: TomlErrorKind
+    pub detail: str
+    pub line: Option[int]
+    pub column: Option[int]
+    pub byte_start: Option[int]
+    pub byte_end: Option[int]
+
+    def message(self) -> str:
+        """Return the underlying diagnostic detail without discarding its structured location fields."""
+        return self.detail
+
+
+@rust.derive(RustSerialize)
+@rust.derive(RustDeserialize)
+@derive(Clone)
+pub type TomlDatetime = newtype RawDatetime with TomlSerialize, TomlDeserialize:
+    """
+    A TOML offset datetime, local datetime, local date, or local time.
+
+    This retains TOML's distinct date/time value kind through serialization. `as_str` exposes its canonical spelling;
+    it does not convert local values into an instant or assume a timezone.
+    """
+
+    def as_str(self) -> str:
+        """Return the canonical TOML date/time spelling, retaining any explicit offset."""
+        return str(self.0)
+
+
+@rust.derive(RustSerialize)
+@rust.derive(RustDeserialize)
+@derive(Clone)
+pub type TomlValue = newtype RawValue with TomlSerialize, TomlDeserialize:
+    """
+    A typed TOML value with checked table and array access.
+
+    `kind` returns `string`, `integer`, `float`, `boolean`, `datetime`, `array`, or `table`. TOML has no null value:
+    `None` from an accessor means a missing key, an out-of-range index, or a different runtime kind.
+    Lookups return owned snapshots: retrieving a table or array member copies its entire selected subtree. Array
+    and table conversions likewise copy their member payloads; retain the result when traversing it repeatedly.
+    """
+
+    @staticmethod
+    def parse(source: str) -> Result[Self, TomlError]:
+        """Parse a complete TOML document, returning located syntax errors."""
+        return parse(source)
+
+    def kind(self) -> TomlKind:
+        """Return the TOML runtime kind without conflating dates with strings or integers with floats."""
+        match str(self.0.type_str()):
+            "string" => return TomlKind.String
+            "integer" => return TomlKind.Integer
+            "float" => return TomlKind.Float
+            "boolean" => return TomlKind.Boolean
+            "datetime" => return TomlKind.Datetime
+            "array" => return TomlKind.Array
+            _ => return TomlKind.Table
+
+    def to_toml(self) -> Result[str, TomlError]:
+        """Serialize this document; top-level scalar values are rejected by TOML's document grammar."""
+        return to_string(self.0).map_err((error) => _serialization_error(str(error)))
+
+    def get(self, key: str) -> Option[TomlValue]:
+        """Return a table member, or `None` when the key is absent or this value is not a table."""
+        if let Some(value) = self.0.get(key):
+            return Some(TomlValue(value.clone()))
+        return None
+
+    def get_index(self, index: int) -> Option[TomlValue]:
+        """Return an array member; negative and out-of-range indices return `None`."""
+        if index < 0:
+            return None
+        offset: Option[usize] = index.try_resize()
+        if let Some(position) = offset:
+            if let Some(value) = self.0.get(position):
+                return Some(TomlValue(value.clone()))
+        return None
+
+    def as_int(self) -> Option[int]:
+        """Return an integer payload without coercing another TOML kind."""
+        return self.0.as_integer()
+
+    def as_float(self) -> Option[float]:
+        """Return a floating-point payload, including TOML infinity and NaN."""
+        return self.0.as_float()
+
+    def as_bool(self) -> Option[bool]:
+        """Return a boolean payload without coercing another TOML kind."""
+        return self.0.as_bool()
+
+    def as_str(self) -> Option[str]:
+        """Return a string payload; dates and times keep their separate typed accessor."""
+        if let Some(value) = self.0.as_str():
+            return Some(str(value))
+        return None
+
+    def as_datetime(self) -> Option[TomlDatetime]:
+        """Return the typed date/time payload without inferring a timezone."""
+        if let Some(value) = self.0.as_datetime():
+            return Some(TomlDatetime(value.clone()))
+        return None
+
+    def as_array(self) -> Option[list[TomlValue]]:
+        """Return an owned list of typed array members, or `None` for other kinds."""
+        if let Some(values) = self.0.as_array():
+            return Some([TomlValue(value.clone()) for value in values])
+        return None
+
+    def as_table(self) -> Option[Dict[str, TomlValue]]:
+        """Return an owned dictionary of typed table members, or `None` for other kinds."""
+        if let Some(values) = self.0.as_table():
+            mut table: Dict[str, TomlValue] = {}
+            for key, value in values:
+                table[str(key)] = TomlValue(value.clone())
+            return Some(table)
+        return None
+
+
+pub def parse(source: str) -> Result[TomlValue, TomlError]:
+    """Read an entire TOML document into typed values, preserving dates and located parse failures."""
+    result: Result[RawValue, DecodeError] = from_str(source)
+    return result.map((value) => TomlValue(value)).map_err((error) => _decode_error(source, error))
+
+
+pub def locate(source: str, path: list[str]) -> Result[Option[TomlLocation], TomlError]:
+    """
+    Locate an existing table entry for a caller's own structural or policy diagnostic.
+
+    Each path element is one decoded table key, so dots inside a quoted key stay inside a single element. The
+    returned span identifies the selected value, matching declared-model field diagnostics. Missing keys and values
+    without an authored span return `None`. Array indices are not part of this table-key path API.
+
+    This reparses the original document for source spans; use it when reporting a custom validation failure, after
+    inspecting values with `parse`. It does not edit the document or preserve formatting during serialization.
+
+    Example:
+        locate(source, ["dependencies", "my_library", "unknown_option"])
+    """
+    parsed: Result[SpannedDocument[str], SpanParseError] = SpannedDocument.parse(source)
+    document = parsed.map_err((error) => _span_parse_error(source, error))?
+    mut item = document.as_item()
+    for key in path:
+        match item.get(key):
+            Some(child) =>
+                item = child
+            None => return Ok(None)
+    if let Some(span) = item.span():
+        return Ok(_span_location(source, span.start, span.end))
+    return Ok(None)
+
+
+pub def deserialize[T with TomlDeserialize](source: str) -> Result[T, TomlError]:
+    """
+    Decode the original document into a model that derives serde `Deserialize`.
+
+    Decode directly from source when diagnostics need locations: converting an already parsed value into a model
+    cannot recover its original tokens. Missing fields, invalid field types, and syntax errors all return `TomlError`.
+    """
+    result: Result[T, DecodeError] = from_str(source)
+    return result.map_err((error) => _decode_error(source, error))
+
+
+pub def serialize[T with TomlSerialize](value: T, pretty: bool = false) -> Result[str, TomlError]:
+    """
+    Encode a serde-serializable model or TOML document.
+
+    Generated lock files can use this function; authored manifest editing must use a format-preserving editor.
+    Unsupported shapes, including scalar document roots and heterogeneous values the serializer rejects, return an
+    error instead of silently switching formats.
+    """
+    if pretty:
+        return to_string_pretty(value).map_err((error) => _serialization_error(str(error)))
+    return to_string(value).map_err((error) => _serialization_error(str(error)))
+
+
+def _span_location(source: str, start: usize, end: usize) -> Option[TomlLocation]:
+    """Convert parser byte offsets into human coordinates without slicing a UTF-8 codepoint."""
+    first: Option[int] = start.try_resize()
+    last: Option[int] = end.try_resize()
+    if let Some(byte_start) = first:
+        if let Some(byte_end) = last:
+            prefix = str_slice_byte_range(source, 0, byte_start)
+            lines = prefix.split("\n")
+            return Some(
+                TomlLocation(line=len(lines), column=len(lines[-1]) + 1, byte_start=byte_start, byte_end=byte_end),
+            )
+    return None
+
+
+def _decode_error(source: str, error: DecodeError) -> TomlError:
+    """Retain the typed decoder's span, including model field validation failures."""
+    if let Some(span) = error.span():
+        return _document_error(str(error.message()), _span_location(source, span.start, span.end))
+    return _document_error(str(error.message()), None)
+
+
+def _span_parse_error(source: str, error: SpanParseError) -> TomlError:
+    """Expose malformed input from a source-location query using the same public error contract."""
+    if let Some(span) = error.span():
+        return _document_error(str(error.message()), _span_location(source, span.start, span.end))
+    return _document_error(str(error.message()), None)
+
+
+def _document_error(detail: str, location: Option[TomlLocation]) -> TomlError:
+    """Attach an optional source location to a decode or structural validation diagnostic."""
+    if let Some(position) = location:
+        return TomlError(
+            kind=TomlErrorKind.Decode,
+            detail=detail,
+            line=Some(position.line),
+            column=Some(position.column),
+            byte_start=Some(position.byte_start),
+            byte_end=Some(position.byte_end),
+        )
+    return TomlError(kind=TomlErrorKind.Decode, detail=detail, line=None, column=None, byte_start=None, byte_end=None)
+
+
+def _serialization_error(detail: str) -> TomlError:
+    """Construct an unlocated write error, since no source document exists at serialization time."""
+    return TomlError(kind=TomlErrorKind.Encode, detail=detail, line=None, column=None, byte_start=None, byte_end=None)
