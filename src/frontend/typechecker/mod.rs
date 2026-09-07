@@ -2792,10 +2792,19 @@ impl TypeChecker {
         // for a name the current module does not declare, but only one of them is a type this program actually
         // built: a user class called `Registry` resolved to `incan_stdlib_core`'s `Registry` and reported its own
         // `pub` field private, because the stub was consulted first.
+        //
+        // Requiring a single entry is what makes that safe for a bare name, where two dependencies may each export a
+        // `Registry` and choosing one silently would resolve a user's type to a stranger's declaration. A
+        // provider-qualified key cannot be ambiguous that way -- it already names one dependency and one export --
+        // so repeated entries under it are the same declaration reached again, once per hop of the facade chain that
+        // republishes it. Counting those repeats as ambiguity left a package model with no resolvable owner, so a
+        // method it gets from an adopted trait resolved through no trait at all and emitted a plain Rust method call
+        // that nothing in scope provides.
         if let Some(infos) = self.transitive_pub_types.get(name)
-            && infos.len() == 1
+            && let Some(first) = infos.first()
+            && (infos.len() == 1 || split_canonical_public_library_type_name(name).is_some())
         {
-            return Some(&infos[0]);
+            return Some(first);
         }
         self.transitive_stdlib_stub_types.get(name)
     }
