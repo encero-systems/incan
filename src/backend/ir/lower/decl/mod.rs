@@ -88,6 +88,7 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_declaration(
         &mut self,
         decl: &ast::Declaration,
+        span: ast::Span,
     ) -> Result<IrDecl, LoweringError> {
         let kind = match decl {
             ast::Declaration::Function(f) => IrDeclKind::Function(self.lower_function(f)?),
@@ -129,6 +130,9 @@ impl AstLowering {
                 IrDeclKind::Static {
                     visibility,
                     name: s.name.clone(),
+                    provenance: super::super::decl::IrStaticProvenance::Source(
+                        self.emitted_static_identity(&s.name, span)?,
+                    ),
                     ty: self.lower_type(&s.ty.node),
                     value,
                 }
@@ -168,6 +172,7 @@ impl AstLowering {
                     visibility: Self::map_visibility(a.visibility),
                     name: a.name.clone(),
                     target_path,
+                    target_canonical: self.emitted_symbol_alias_target_identity(&a.name, span)?,
                     target_origin,
                     target_qualifier,
                 }
@@ -198,7 +203,7 @@ impl AstLowering {
                     .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                 IrDeclKind::Struct(struct_ir)
             }
-            ast::Declaration::Import(i) => self.lower_import(i),
+            ast::Declaration::Import(i) => self.lower_import(i, span)?,
             ast::Declaration::Trait(t) => IrDeclKind::Trait(self.lower_trait(t)?),
             ast::Declaration::TestModule(_) => {
                 return Err(LoweringError {
@@ -251,21 +256,15 @@ impl AstLowering {
             return Ok(());
         };
 
-        let (expected_source_constructor, checked_constructor, identity) = match entry.subject_kind {
-            incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit => (
-                "current_unit",
-                "_checked_current_unit",
-                self.current_source_module_name
-                    .clone()
-                    .unwrap_or_else(|| "<unknown-compilation-unit>".to_string()),
-            ),
-            incan_semantics_core::SemanticRegistrySubjectKind::Package => (
-                "package",
-                "_checked_package",
-                self.registry_package_identity
-                    .clone()
-                    .unwrap_or_else(|| "<unpackaged>".to_string()),
-            ),
+        let identity = match entry.subject_kind {
+            incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit => self
+                .current_source_module_name
+                .clone()
+                .unwrap_or_else(|| "<unknown-compilation-unit>".to_string()),
+            incan_semantics_core::SemanticRegistrySubjectKind::Package => self
+                .registry_package_identity
+                .clone()
+                .unwrap_or_else(|| "<unpackaged>".to_string()),
             incan_semantics_core::SemanticRegistrySubjectKind::Function
             | incan_semantics_core::SemanticRegistrySubjectKind::Method => {
                 return Err(LoweringError {
@@ -275,6 +274,9 @@ impl AstLowering {
                 });
             }
         };
+        let expected_source_constructor = Self::emitted_source_identity_name(&entry.subject_constructor_identity, true);
+        let expected_entry_method = Self::emitted_source_identity_name(&entry.entry_method_identity, true);
+        let checked_constructor = Self::emitted_source_identity_name(&entry.checked_constructor_identity, true);
 
         let IrExprKind::MethodCall { method, args, .. } = &mut value.kind else {
             return Err(LoweringError {
@@ -282,9 +284,10 @@ impl AstLowering {
                 span: IrSpan::default(),
             });
         };
-        if method != "entry" {
+        if method != &expected_entry_method {
             return Err(LoweringError {
-                message: "checked registry entry lowering expected registry.entry(...)".to_string(),
+                message: "checked registry entry lowering no longer matches its frontend-approved Registry.entry"
+                    .to_string(),
                 span: IrSpan::default(),
             });
         }
@@ -305,13 +308,13 @@ impl AstLowering {
                 span: IrSpan::default(),
             });
         };
-        if subject_method != expected_source_constructor {
+        if subject_method != &expected_source_constructor {
             return Err(LoweringError {
                 message: "checked registry entry subject no longer matches its frontend-approved artifact".to_string(),
                 span: IrSpan::default(),
             });
         }
-        *subject_method = checked_constructor.to_string();
+        *subject_method = checked_constructor;
         *subject_args = vec![IrCallArg {
             name: None,
             kind: IrCallArgKind::Positional,

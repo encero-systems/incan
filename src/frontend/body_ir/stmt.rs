@@ -139,32 +139,79 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // type, with captured presets represented as named-overrideable defaults. Positional calls skip those preset
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
+        let assignment_span = ast::Span::new(span.start, span.end);
         let ty = self
-            .callable_value_ty(&assignment.value)
+            .type_info
+            .assignment_binding_type(assignment_span)
+            .map(semantic_type_from_resolved)
+            .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         let value = self.lower_expr_to_operand(&assignment.value, scope, out);
-        let local = match assignment.binding {
-            ast::BindingKind::Inferred | ast::BindingKind::Reassign => self
-                .bindings
-                .get(&assignment.name)
-                .copied()
-                .unwrap_or_else(|| self.declare_new_local(assignment.name.clone(), ty, scope, span, remaining)),
-            ast::BindingKind::Let | ast::BindingKind::Mutable => {
-                self.declare_new_local(assignment.name.clone(), ty, scope, span, remaining)
+        let binding_span = hir_span(assignment.name_span);
+        let target_identity = self
+            .type_info
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+            .cloned();
+        let place = match assignment.binding {
+            ast::BindingKind::Inferred | ast::BindingKind::Reassign => {
+                if let Some(identity) = target_identity {
+                    if let Some(&local) = self.identity_bindings.get(&identity) {
+                        bir::Place::from_local(local)
+                    } else if let Some(global) = self.global_place(identity.clone(), ty.clone()) {
+                        bir::Place::from_global(global)
+                    } else if identity.kind == SemanticSourceTargetKind::Local
+                        && identity.declaration_span == binding_span
+                    {
+                        let local = self.declare_new_local(assignment.name.clone(), ty, scope, binding_span, remaining);
+                        bir::Place::from_local(local)
+                    } else {
+                        self.push_unsupported_stmt(
+                            format!(
+                                "assignment target `{}` has no Body IR place for canonical identity `{}`",
+                                assignment.name,
+                                identity.render_compact()
+                            ),
+                            span,
+                            out,
+                        );
+                        return;
+                    }
+                } else {
+                    let local = self.bindings.get(&assignment.name).copied().unwrap_or_else(|| {
+                        self.declare_new_local(assignment.name.clone(), ty, scope, binding_span, remaining)
+                    });
+                    bir::Place::from_local(local)
+                }
             }
+            ast::BindingKind::Let | ast::BindingKind::Mutable => bir::Place::from_local(self.declare_new_local(
+                assignment.name.clone(),
+                ty,
+                scope,
+                binding_span,
+                remaining,
+            )),
         };
+        if !place.permits_write() {
+            let target = place
+                .global()
+                .map_or_else(|| assignment.name.clone(), |global| global.identity.render_compact());
+            self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
+            return;
+        }
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
-                place: bir::Place::from_local(local),
+                place: place.clone(),
                 rvalue: bir::Rvalue::Use(value),
             },
             span,
         });
-        if materializes_range {
-            self.materialized_range_locals.insert(local);
-        } else {
-            self.materialized_range_locals.remove(&local);
+        if let Some(local) = place.local_id() {
+            if materializes_range {
+                self.materialized_range_locals.insert(local);
+            } else {
+                self.materialized_range_locals.remove(&local);
+            }
         }
     }
 
@@ -181,9 +228,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let mut place = self.lower_expr_to_place(&field_assignment.object, scope, out);
-        place
-            .projection
-            .push(bir::PlaceElem::Field(field_assignment.field.clone()));
+        place.projection.push(bir::PlaceElem::field(
+            field_assignment.field.clone(),
+            self.type_info.resolved_identity(field_assignment.target_span).cloned(),
+        ));
+        if !place.permits_write() {
+            let target = place.global().map_or_else(
+                || "field assignment target".to_string(),
+                |global| global.identity.render_compact(),
+            );
+            self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
+            return;
+        }
         let value = self.lower_expr_to_operand(&field_assignment.value, scope, out);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
@@ -208,6 +264,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut place = self.lower_expr_to_place(&index_assignment.object, scope, out);
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
+        if !place.permits_write() {
+            let target = place.global().map_or_else(
+                || "index assignment target".to_string(),
+                |global| global.identity.render_compact(),
+            );
+            self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
+            return;
+        }
         let value = self.lower_expr_to_operand(&index_assignment.value, scope, out);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
@@ -246,7 +310,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let span = hir_span(source_span);
-        let Some(&local) = self.bindings.get(&compound_assignment.name) else {
+        let target_identity = self
+            .type_info
+            .resolved_write_identity(compound_assignment.name_span, &compound_assignment.name)
+            .cloned();
+        let lhs_ty = self
+            .type_info
+            .resolved_write_type(compound_assignment.name_span, &compound_assignment.name)
+            .map(semantic_type_from_resolved)
+            .unwrap_or(IncanType::Unknown);
+        let place = if let Some(identity) = target_identity {
+            self.identity_bindings
+                .get(&identity)
+                .copied()
+                .map(bir::Place::from_local)
+                .or_else(|| self.global_place(identity, lhs_ty.clone()).map(bir::Place::from_global))
+        } else {
+            self.bindings
+                .get(&compound_assignment.name)
+                .copied()
+                .map(bir::Place::from_local)
+        };
+        let Some(lhs_place) = place else {
             self.push_unsupported_stmt(
                 format!("compound assignment to unbound name `{}`", compound_assignment.name),
                 span,
@@ -254,6 +339,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             return;
         };
+        if !lhs_place.permits_write() {
+            let target = lhs_place.global().map_or_else(
+                || compound_assignment.name.clone(),
+                |global| global.identity.render_compact(),
+            );
+            self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
+            return;
+        }
 
         // A resolved operator hook makes this a method call, not a primitive combination. Checked before the
         // operand is lowered, matching the "never partially lower an operator we will refuse" rule the binary
@@ -269,7 +362,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
 
-        let lhs_ty = self.locals[local.index()].ty.clone();
+        let lhs_ty = lhs_place
+            .local_id()
+            .and_then(|local| self.locals.get(local.index()).map(|decl| decl.ty.clone()))
+            .or_else(|| lhs_place.global().map(|global| global.ty.clone()))
+            .unwrap_or(lhs_ty);
         let op = compound_assignment.op.binary_op();
         let rhs_ty = self.resolve_ty(compound_assignment.value.span);
         if !Self::binary_op_is_supported(op, &lhs_ty, &rhs_ty) {
@@ -280,9 +377,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             return;
         }
-        let lhs_place = bir::Place::from_local(local);
         let (fact, last_use) = self.ownership_fact_for_place(&lhs_place, &lhs_ty);
-        let lhs_operand = bir::Operand::place(lhs_place, fact, last_use);
+        let lhs_operand = bir::Operand::place(lhs_place.clone(), fact, last_use);
         let rhs_operand = self.lower_expr_to_operand(&compound_assignment.value, scope, out);
         let result = self.lower_binary_from_operands(
             op,
@@ -297,7 +393,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         );
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
-                place: bir::Place::from_local(local),
+                place: lhs_place,
                 rvalue: bir::Rvalue::Use(result),
             },
             span,
@@ -314,19 +410,52 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ty: IncanType,
         binding: ast::BindingKind,
         scope: bir::ScopeId,
-        span: HirSourceSpan,
+        target_span: ast::Span,
         remaining: &[ast::Spanned<ast::Statement>],
-    ) -> bir::LocalId {
-        match binding {
-            ast::BindingKind::Inferred | ast::BindingKind::Reassign => self
-                .bindings
-                .get(name)
-                .copied()
-                .unwrap_or_else(|| self.declare_new_local(name.to_string(), ty, scope, span, remaining)),
-            ast::BindingKind::Let | ast::BindingKind::Mutable => {
-                self.declare_new_local(name.to_string(), ty, scope, span, remaining)
+    ) -> Result<bir::Place, String> {
+        let declaration_span = hir_span(target_span);
+        let place = match binding {
+            ast::BindingKind::Inferred | ast::BindingKind::Reassign => {
+                let identity = self.type_info.resolved_write_identity(target_span, name).cloned();
+                if let Some(identity) = identity {
+                    if let Some(&local) = self.identity_bindings.get(&identity) {
+                        return Ok(bir::Place::from_local(local));
+                    }
+                    if let Some(global) = self.global_place(identity.clone(), ty.clone()) {
+                        let place = bir::Place::from_global(global);
+                        return place.permits_write().then_some(place).ok_or_else(|| {
+                            format!("assignment target `{}` is not writable", identity.render_compact())
+                        });
+                    }
+                    if identity.kind != SemanticSourceTargetKind::Local || identity.declaration_span != declaration_span
+                    {
+                        return Err(format!(
+                            "assignment target `{name}` has no Body IR place for canonical identity `{}`",
+                            identity.render_compact()
+                        ));
+                    }
+                    bir::Place::from_local(self.declare_new_local(
+                        name.to_string(),
+                        ty,
+                        scope,
+                        declaration_span,
+                        remaining,
+                    ))
+                } else {
+                    let local = self.bindings.get(name).copied().unwrap_or_else(|| {
+                        self.declare_new_local(name.to_string(), ty, scope, declaration_span, remaining)
+                    });
+                    bir::Place::from_local(local)
+                }
             }
-        }
+            ast::BindingKind::Let | ast::BindingKind::Mutable => {
+                bir::Place::from_local(self.declare_new_local(name.to_string(), ty, scope, declaration_span, remaining))
+            }
+        };
+        place
+            .permits_write()
+            .then_some(place)
+            .ok_or_else(|| format!("assignment target `{name}` is not writable"))
     }
 
     /// Lower `a, b = value` / `let a, b = value` into a sequence of single-target `Assign` statements: materialize
@@ -352,16 +481,45 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let value_place = self.materialize_operand_to_place(value_operand, value_ty.clone(), scope, span, out);
         let element_types = tuple_element_types(&value_ty, tuple_unpack.names.len());
 
-        for (index, (name, element_ty)) in tuple_unpack.names.iter().zip(&element_types).enumerate() {
+        if tuple_unpack.names.len() != tuple_unpack.name_spans.len() {
+            self.push_unsupported_stmt(
+                "tuple binding names and source spans are misaligned".to_string(),
+                span,
+                out,
+            );
+            return;
+        }
+
+        for (index, ((name, target_span), element_ty)) in tuple_unpack
+            .names
+            .iter()
+            .zip(&tuple_unpack.name_spans)
+            .zip(&element_types)
+            .enumerate()
+        {
             let mut element_place = value_place.clone();
-            element_place.projection.push(bir::PlaceElem::Field(index.to_string()));
+            element_place
+                .projection
+                .push(bir::PlaceElem::synthetic_field(index.to_string()));
             let (fact, last_use) = self.ownership_fact_for_place(&element_place, element_ty);
             let element_operand = bir::Operand::place(element_place, fact, last_use);
-            let local =
-                self.bind_multi_target_name(name, element_ty.clone(), tuple_unpack.binding, scope, span, remaining);
+            let place = match self.bind_multi_target_name(
+                name,
+                element_ty.clone(),
+                tuple_unpack.binding,
+                scope,
+                *target_span,
+                remaining,
+            ) {
+                Ok(place) => place,
+                Err(reason) => {
+                    self.push_unsupported_stmt(reason, span, out);
+                    return;
+                }
+            };
             out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
-                    place: bir::Place::from_local(local),
+                    place,
                     rvalue: bir::Rvalue::Use(element_operand),
                 },
                 span,
@@ -396,7 +554,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut element_operands = Vec::with_capacity(tuple_assign.targets.len());
         for (index, element_ty) in element_types.iter().enumerate() {
             let mut element_place = value_place.clone();
-            element_place.projection.push(bir::PlaceElem::Field(index.to_string()));
+            element_place
+                .projection
+                .push(bir::PlaceElem::synthetic_field(index.to_string()));
             let (fact, last_use) = self.ownership_fact_for_place(&element_place, element_ty);
             let element_operand = bir::Operand::place(element_place, fact, last_use);
             element_operands.push(self.push_assign_temp(
@@ -410,6 +570,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         for (target, value) in tuple_assign.targets.iter().zip(element_operands) {
             let place = self.lower_expr_to_place(target, scope, out);
+            if !place.permits_write() {
+                let target = place.global().map_or_else(
+                    || "tuple assignment target".to_string(),
+                    |global| global.identity.render_compact(),
+                );
+                self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
+                return;
+            }
             out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
                     place,
@@ -431,31 +599,51 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
-        let Some(last_name) = chained_assignment.targets.last() else {
+        if chained_assignment.targets.len() != chained_assignment.target_spans.len() {
+            self.push_unsupported_stmt(
+                "chained assignment targets and source spans are misaligned".to_string(),
+                span,
+                out,
+            );
+            return;
+        }
+        let Some((last_name, last_span)) = chained_assignment
+            .targets
+            .last()
+            .zip(chained_assignment.target_spans.last())
+        else {
             self.push_unsupported_stmt("empty chained assignment".to_string(), span, out);
             return;
         };
+        let last_span = *last_span;
         let value_ty = self.resolve_ty(chained_assignment.value.span);
         let value_operand = self.lower_expr_to_operand(&chained_assignment.value, scope, out);
-        let mut prev_local = self.bind_multi_target_name(
+        let mut prev_place = match self.bind_multi_target_name(
             last_name,
             value_ty.clone(),
             chained_assignment.binding,
             scope,
-            span,
+            last_span,
             remaining,
-        );
+        ) {
+            Ok(place) => place,
+            Err(reason) => {
+                self.push_unsupported_stmt(reason, span, out);
+                return;
+            }
+        };
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
-                place: bir::Place::from_local(prev_local),
+                place: prev_place.clone(),
                 rvalue: bir::Rvalue::Use(value_operand),
             },
             span,
         });
 
         // Walk the remaining targets right-to-left, each one reading the local immediately to its right.
-        for name in chained_assignment.targets[..chained_assignment.targets.len() - 1]
+        for (name, target_span) in chained_assignment.targets[..chained_assignment.targets.len() - 1]
             .iter()
+            .zip(&chained_assignment.target_spans[..chained_assignment.target_spans.len() - 1])
             .rev()
         {
             // `remaining_reads[prev_local]` was seeded only from statements *after* this whole chained-assignment
@@ -463,28 +651,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // synthetic read performed right here, within the very statement that (re)bound `prev_local`. Bump it
             // by one first so the shared `Self::ownership_fact_for_place` decrement below still lands on the
             // correct move/clone decision instead of under-counting by one.
-            if let Some(remaining_count) = self.remaining_reads.get_mut(&prev_local) {
+            if let Some(prev_local) = prev_place.local_id()
+                && let Some(remaining_count) = self.remaining_reads.get_mut(&prev_local)
+            {
                 *remaining_count += 1;
             }
-            let place = bir::Place::from_local(prev_local);
-            let (fact, last_use) = self.ownership_fact_for_place(&place, &value_ty);
-            let operand = bir::Operand::place(place, fact, last_use);
-            let local = self.bind_multi_target_name(
+            let (fact, last_use) = self.ownership_fact_for_place(&prev_place, &value_ty);
+            let operand = bir::Operand::place(prev_place, fact, last_use);
+            let place = match self.bind_multi_target_name(
                 name,
                 value_ty.clone(),
                 chained_assignment.binding,
                 scope,
-                span,
+                *target_span,
                 remaining,
-            );
+            ) {
+                Ok(place) => place,
+                Err(reason) => {
+                    self.push_unsupported_stmt(reason, span, out);
+                    return;
+                }
+            };
             out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
-                    place: bir::Place::from_local(local),
+                    place: place.clone(),
                     rvalue: bir::Rvalue::Use(operand),
                 },
                 span,
             });
-            prev_local = local;
+            prev_place = place;
         }
     }
 

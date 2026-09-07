@@ -12,7 +12,7 @@
     - RFC 041 (first-class Rust interop authoring)
     - RFC 055 (`std.fs` path-centric filesystem APIs)
 - **Issue:** https://github.com/encero-systems/incan/issues/291
-- **RFC PR:** —
+- **RFC PR:** [#511](https://github.com/encero-systems/incan/pull/511)
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.37
 

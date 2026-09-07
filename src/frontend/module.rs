@@ -60,6 +60,25 @@ pub(crate) struct ResolvedProgramSourceImport {
     pub resolution: SourceModuleImportResolution,
 }
 
+/// Select the package origin used when minting declarations for one source module.
+///
+/// A compiled library gives its own modules a package origin. Compiler-owned stdlib modules retain the module origin
+/// assigned at their declaration site even when a consumer package embeds them under the generated `__incan_std`
+/// namespace.
+pub(crate) fn declaration_package_identity(
+    package_identity: Option<&str>,
+    module_path: Option<&[String]>,
+) -> Option<String> {
+    package_identity
+        .filter(|_| {
+            !matches!(
+                module_path.and_then(|path| path.first()).map(String::as_str),
+                Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE)
+            )
+        })
+        .map(str::to_owned)
+}
+
 /// Resolve every import declaration in `program` through the canonical source-module resolver.
 ///
 /// `base_dir` is the directory of `program`'s source file. `source_root` is optional but should be supplied by CLI and
@@ -728,6 +747,23 @@ pub enum ExportedSymbol {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declaration_package_identity_excludes_source_and_generated_stdlib_modules() {
+        let package = Some("consumer");
+        assert_eq!(
+            declaration_package_identity(package, Some(&["feature".to_string()])),
+            Some("consumer".to_string())
+        );
+        assert_eq!(
+            declaration_package_identity(package, Some(&["std".to_string(), "io".to_string()])),
+            None
+        );
+        assert_eq!(
+            declaration_package_identity(package, Some(&["__incan_std".to_string(), "io".to_string()])),
+            None
+        );
+    }
     use crate::frontend::ast::{
         ClassDecl, ConstDecl, Declaration, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
         ImportPath, IntLiteral, Literal, ModelDecl, NewtypeDecl, Program, Span, Spanned, StaticDecl, TraitDecl, Type,

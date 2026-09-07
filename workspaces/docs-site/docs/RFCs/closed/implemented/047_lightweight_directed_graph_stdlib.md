@@ -9,7 +9,7 @@
     - RFC 030 (std collections)
     - RFC 033 (`ctx` — contrast only; graphs are not ambient singletons)
 - **Issue:** https://github.com/encero-systems/incan/issues/204
-- **RFC PR:** —
+- **RFC PR:** [#513](https://github.com/encero-systems/incan/pull/513)
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.37
 

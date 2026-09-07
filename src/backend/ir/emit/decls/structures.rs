@@ -6,6 +6,7 @@ use quote::{format_ident, quote};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
+use super::super::super::conversions::exact_float_value_validation;
 use super::super::super::decl::{
     IrEnum, IrEnumValue, IrEnumValueType, IrStruct, IrTypeParam, StructField, VariantFields,
 };
@@ -455,13 +456,29 @@ impl<'a> IrEmitter<'a> {
         let field_ident = format_ident!("{}", field.name);
         let none = constructors::as_str(ConstructorId::None);
         match &field.ty {
-            IrType::Option(inner) if Self::field_type_supports_scalar_value_reflection(inner) => quote! {
-                match &self.#field_ident {
-                    Some(value) => format!("{}", value),
-                    None => #none.to_string(),
+            IrType::Option(inner) if Self::field_type_supports_scalar_value_reflection(inner) => {
+                let reflected = if matches!(
+                    inner.as_ref(),
+                    IrType::Numeric(
+                        incan_core::lang::types::numerics::NumericTypeId::F32
+                            | incan_core::lang::types::numerics::NumericTypeId::F64
+                    )
+                ) {
+                    exact_float_value_validation(inner).apply(quote! { *value })
+                } else {
+                    quote! { value }
+                };
+                quote! {
+                    match &self.#field_ident {
+                        Some(value) => format!("{}", #reflected),
+                        None => #none.to_string(),
+                    }
                 }
-            },
-            _ => quote! { format!("{}", self.#field_ident) },
+            }
+            _ => {
+                let reflected = exact_float_value_validation(&field.ty).apply(quote! { self.#field_ident });
+                quote! { format!("{}", #reflected) }
+            }
         }
     }
 

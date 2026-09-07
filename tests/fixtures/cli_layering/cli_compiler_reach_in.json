@@ -1,0 +1,155 @@
+{
+  "comment": "Baseline of compiler internals the CLI layer reaches into. This list ratchets DOWN only: removing an entry is the goal, adding one fails tests/cli_layering_guardrails.rs. See issue #1297 and the sibling extraction chore #1298.",
+  "files": [
+    {
+      "path": "src/cli/commands/binding_inspect.rs",
+      "reaches": [
+        "crate::frontend::ast",
+        "crate::frontend::typechecker"
+      ]
+    },
+    {
+      "path": "src/cli/commands/build.rs",
+      "reaches": [
+        "crate::backend::project",
+        "crate::backend::replacement",
+        "crate::backend::selection",
+        "crate::backend::shadow",
+        "crate::frontend::api_metadata",
+        "crate::frontend::ast",
+        "crate::frontend::body_ir",
+        "crate::frontend::contract_metadata",
+        "crate::frontend::diagnostics",
+        "crate::frontend::lexer",
+        "crate::frontend::library_exports",
+        "crate::frontend::library_manifest_index",
+        "crate::frontend::module",
+        "crate::frontend::parser",
+        "crate::frontend::registry_metadata",
+        "crate::frontend::symbols",
+        "crate::frontend::typechecker"
+      ]
+    },
+    {
+      "path": "src/cli/commands/build_report.rs",
+      "reaches": [
+        "crate::backend::selection"
+      ]
+    },
+    {
+      "path": "src/cli/commands/codegraph.rs",
+      "reaches": [
+        "crate::frontend::ast",
+        "crate::frontend::diagnostics",
+        "crate::frontend::registry_metadata",
+        "crate::frontend::typechecker"
+      ]
+    },
+    {
+      "path": "src/cli/commands/common.rs",
+      "reaches": [
+        "crate::backend::c_abi",
+        "crate::backend::ir",
+        "crate::backend::project",
+        "crate::frontend::ast",
+        "crate::frontend::body_ir",
+        "crate::frontend::contract_metadata",
+        "crate::frontend::hir",
+        "crate::frontend::library_manifest_index",
+        "crate::frontend::module",
+        "crate::frontend::testing_markers",
+        "crate::frontend::typechecker"
+      ]
+    },
+    {
+      "path": "src/cli/commands/diagnostics.rs",
+      "reaches": [
+        "crate::backend::c_abi",
+        "crate::frontend::ast",
+        "crate::frontend::diagnostics"
+      ]
+    },
+    {
+      "path": "src/cli/commands/format.rs",
+      "reaches": [
+        "crate::frontend::diagnostics"
+      ]
+    },
+    {
+      "path": "src/cli/commands/lock.rs",
+      "reaches": [
+        "crate::backend::project",
+        "crate::frontend::ast",
+        "crate::frontend::library_manifest_index"
+      ]
+    },
+    {
+      "path": "src/cli/commands/shadow_support.rs",
+      "reaches": [
+        "crate::backend::selection",
+        "crate::backend::shadow"
+      ]
+    },
+    {
+      "path": "src/cli/commands/tools.rs",
+      "reaches": [
+        "crate::frontend::api_metadata",
+        "crate::frontend::contract_metadata",
+        "crate::frontend::diagnostics",
+        "crate::frontend::feature_metadata",
+        "crate::frontend::library_manifest_index",
+        "crate::frontend::registry_metadata",
+        "crate::frontend::typechecker"
+      ]
+    },
+    {
+      "path": "src/cli/commands/vocab_extraction.rs",
+      "reaches": [
+        "crate::backend::project"
+      ]
+    },
+    {
+      "path": "src/cli/mod.rs",
+      "reaches": [
+        "crate::backend::selection"
+      ]
+    },
+    {
+      "path": "src/cli/prelude.rs",
+      "reaches": [
+        "crate::frontend::ast"
+      ]
+    },
+    {
+      "path": "src/cli/test_runner/discovery.rs",
+      "reaches": [
+        "crate::frontend::ast",
+        "crate::frontend::ast_walk",
+        "crate::frontend::decorator_resolution",
+        "crate::frontend::testing_markers"
+      ]
+    },
+    {
+      "path": "src/cli/test_runner/execution.rs",
+      "reaches": [
+        "crate::frontend::ast",
+        "crate::frontend::decorator_resolution",
+        "crate::frontend::lexer",
+        "crate::frontend::library_manifest_index",
+        "crate::frontend::module",
+        "crate::frontend::parser",
+        "crate::frontend::testing_markers",
+        "crate::frontend::vocab_desugar_pass"
+      ]
+    },
+    {
+      "path": "src/cli/test_runner/module_graph.rs",
+      "reaches": [
+        "crate::frontend::ast",
+        "crate::frontend::library_manifest_index",
+        "crate::frontend::module",
+        "crate::frontend::vocab_desugar_pass"
+      ]
+    }
+  ]
+}
