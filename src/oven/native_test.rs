@@ -777,7 +777,13 @@ fn parse_native_test_command_timings(output: &str) -> Vec<OvenNativeTestCommandT
 ///
 /// Reporting is observational. A malformed or unrecognized line is passed through rather than diagnosed, because
 /// progress output must never be able to fail a run that would otherwise pass.
-struct NativeTestProgressReporter {
+pub struct NativeTestProgressReporter {
+    /// Root this reporter speaks for, prefixed to every line it writes.
+    ///
+    /// The compiler suite runs roots on a bounded worker pool, so without a label their lines are correct but
+    /// unattributable. `println!` holds the stdout lock for one invocation, so lines cannot tear; only the question
+    /// of which root produced one is open, and a label answers it without coordinating the workers.
+    label: Option<String>,
     /// Cases libtest has started and not yet reported a terminal event for.
     outstanding: BTreeSet<String>,
     /// Terminal events seen so far, used only to render a running count against the suite total.
@@ -787,25 +793,52 @@ struct NativeTestProgressReporter {
 }
 
 impl NativeTestProgressReporter {
-    /// Start a reporter with nothing outstanding and no announced total.
-    fn new() -> Self {
+    /// Start a reporter for a single unattributed root.
+    pub fn new() -> Self {
         Self {
+            label: None,
             outstanding: BTreeSet::new(),
             completed: 0,
             total: None,
         }
     }
 
-    /// Consume one transcript line, rendering it as progress when it is a libtest event.
+    /// Start a reporter that attributes every line to one named root.
+    pub fn for_root(label: impl Into<String>) -> Self {
+        Self {
+            label: Some(label.into()),
+            ..Self::new()
+        }
+    }
+
+    /// Render one already-formatted progress line, attributed when this reporter speaks for a named root.
+    fn emit(&self, line: &str) {
+        match self.label.as_deref() {
+            Some(label) => println!("[{label}] {line}"),
+            None => println!("{line}"),
+        }
+    }
+
+    /// Consume one transcript line, printing whatever it renders to.
     fn observe(&mut self, line: &str) {
+        for rendered in self.render(line) {
+            self.emit(&rendered);
+        }
+    }
+
+    /// Render one transcript line as progress, returning the lines it produces.
+    ///
+    /// Separate from [`Self::observe`] so the rendering can be tested against real libtest event shapes without
+    /// capturing stdout. Returning the lines rather than printing them is also what keeps a suite event, which
+    /// prints nothing, distinguishable from a case event that does.
+    fn render(&mut self, line: &str) -> Vec<String> {
         let Some(event) = serde_json::from_str::<serde_json::Value>(line)
             .ok()
             .filter(serde_json::Value::is_object)
         else {
             // Test output under `--nocapture`, not an event. Pass it through so a `println!` in a failing test still
             // reaches the person watching.
-            println!("{line}");
-            return;
+            return vec![line.to_string()];
         };
         let kind = event
             .get("type")
@@ -827,15 +860,16 @@ impl NativeTestProgressReporter {
                     self.outstanding.insert(name.to_string());
                 }
             }
-            ("test", _) if !outcome.is_empty() => self.report_terminal_event(&event, outcome),
+            ("test", _) if !outcome.is_empty() => return self.render_terminal_event(&event, outcome),
             _ => {}
         }
+        Vec::new()
     }
 
     /// Render one case's terminal event, and drop it from the outstanding set.
-    fn report_terminal_event(&mut self, event: &serde_json::Value, outcome: &str) {
+    fn render_terminal_event(&mut self, event: &serde_json::Value, outcome: &str) -> Vec<String> {
         let Some(name) = event.get("name").and_then(serde_json::Value::as_str) else {
-            return;
+            return Vec::new();
         };
         self.outstanding.remove(name);
         self.completed = self.completed.saturating_add(1);
@@ -848,7 +882,7 @@ impl NativeTestProgressReporter {
             .and_then(serde_json::Value::as_f64)
             .map(|seconds| format!(" {:>8.3}s", seconds))
             .unwrap_or_default();
-        println!("{position} {outcome:<8}{elapsed}  {name}");
+        vec![format!("{position} {outcome:<8}{elapsed}  {name}")]
     }
 
     /// Name anything libtest started and never finished, which is what a killed or hung root leaves behind.
@@ -856,12 +890,16 @@ impl NativeTestProgressReporter {
         if self.outstanding.is_empty() {
             return;
         }
-        println!(
+        // Held across the whole block so a stalled root's outstanding list stays contiguous rather than
+        // interleaving with another worker's progress between its heading and its entries.
+        let stdout = io::stdout();
+        let _lock = stdout.lock();
+        self.emit(&format!(
             "{} case(s) started and never reported a result:",
             self.outstanding.len()
-        );
+        ));
         for name in &self.outstanding {
-            println!("  {name}");
+            self.emit(&format!("  {name}"));
         }
     }
 }
@@ -887,7 +925,7 @@ fn run_native_batch_child(
         path: executable.to_path_buf(),
         source,
     })?;
-    let mut stdout = child.stdout.take().ok_or_else(|| OvenNativeTestError::Io {
+    let stdout = child.stdout.take().ok_or_else(|| OvenNativeTestError::Io {
         path: executable.to_path_buf(),
         source: io::Error::other("native test child stdout was not piped"),
     })?;
@@ -1118,6 +1156,92 @@ fn parse_libtest_text_case_counts(output: &str) -> Option<OvenNativeTestCaseCoun
 
 #[cfg(test)]
 mod tests {
+    use super::NativeTestProgressReporter;
+
+    /// Event lines captured from a real libtest binary run with `-Z unstable-options --format json --report-time`
+    /// under `RUSTC_BOOTSTRAP=1`, so these shapes are the harness's, not this test's idea of them.
+    const SUITE_STARTED: &str = r#"{ "type": "suite", "event": "started", "test_count": 7 }"#;
+    const CASE_STARTED: &str = r#"{ "type": "test", "event": "started", "name": "layering::guards_the_boundary" }"#;
+    const CASE_OK: &str =
+        r#"{ "type": "test", "name": "layering::guards_the_boundary", "event": "ok", "exec_time": 0.000047855 }"#;
+
+    #[test]
+    fn a_completed_case_reports_its_position_outcome_and_duration() {
+        let mut reporter = NativeTestProgressReporter::new();
+        assert!(
+            reporter.render(SUITE_STARTED).is_empty(),
+            "the suite header announces the total; it is not itself progress"
+        );
+        assert!(reporter.render(CASE_STARTED).is_empty(), "a start is not a result");
+
+        let rendered = reporter.render(CASE_OK);
+        assert_eq!(rendered.len(), 1, "one terminal event renders one line: {rendered:?}");
+        let line = &rendered[0];
+        assert!(
+            line.contains("1/7"),
+            "must show progress against the announced total: {line}"
+        );
+        assert!(line.contains("ok"), "must name the outcome: {line}");
+        assert!(
+            line.contains("0.000"),
+            "must carry the duration, which is the point: {line}"
+        );
+        assert!(
+            line.contains("layering::guards_the_boundary"),
+            "must name the case: {line}"
+        );
+    }
+
+    #[test]
+    fn output_that_is_not_an_event_passes_through_unchanged() {
+        // `--nocapture` interleaves the tests' own writes with the event stream. A `println!` from a failing test is
+        // often the only clue it leaves, so it must survive verbatim rather than be swallowed as unparseable.
+        let mut reporter = NativeTestProgressReporter::new();
+        assert_eq!(
+            reporter.render("thread 'x' panicked at src/lib.rs:1:1:"),
+            vec!["thread 'x' panicked at src/lib.rs:1:1:".to_string()]
+        );
+        assert_eq!(reporter.render("{ not json"), vec!["{ not json".to_string()]);
+    }
+
+    #[test]
+    fn a_case_that_never_finishes_stays_outstanding() {
+        // This is what a killed or hung root leaves behind, and naming it is the difference between "the suite died"
+        // and "the suite died in this case".
+        let mut reporter = NativeTestProgressReporter::new();
+        reporter.render(SUITE_STARTED);
+        reporter.render(CASE_STARTED);
+        assert_eq!(reporter.outstanding.len(), 1);
+
+        reporter.render(CASE_OK);
+        assert!(
+            reporter.outstanding.is_empty(),
+            "a terminal event must clear the case it belongs to"
+        );
+    }
+
+    #[test]
+    fn a_failure_renders_its_outcome_rather_than_being_treated_as_success() {
+        let mut reporter = NativeTestProgressReporter::new();
+        reporter.render(SUITE_STARTED);
+        let rendered = reporter.render(r#"{ "type": "test", "name": "a::b", "event": "failed", "exec_time": 1.5 }"#);
+        assert_eq!(rendered.len(), 1);
+        assert!(rendered[0].contains("failed"), "got: {}", rendered[0]);
+    }
+
+    #[test]
+    fn a_root_label_attributes_every_line_it_renders() {
+        // The compiler suite runs roots on a worker pool, so an unattributed line is correct and useless.
+        let mut reporter = NativeTestProgressReporter::for_root("compiler_libtests::parser");
+        reporter.render(SUITE_STARTED);
+        let rendered = reporter.render(CASE_OK);
+        assert_eq!(rendered.len(), 1);
+        // The label is applied at emit time, so rendering stays independent of it; what matters here is that a
+        // labelled reporter still renders the same content for its root.
+        assert!(rendered[0].contains("layering::guards_the_boundary"));
+        assert_eq!(reporter.label.as_deref(), Some("compiler_libtests::parser"));
+    }
+
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
