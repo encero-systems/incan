@@ -120,8 +120,16 @@ fn collect_codegraph_records(
                 .map(|module| module.file_path.clone())
                 .collect::<BTreeSet<_>>();
             for module in &modules {
+                // A directory scan collects each file as its own entrypoint, so every module arrives seeded as
+                // `main`. A degraded scan used to discard these modules and re-read every file through the tolerant
+                // path, which names a module by where it sits; keeping the parsed facts has to keep that naming too,
+                // or every record in a degraded scan claims to be `main`.
+                let module = ParsedModule {
+                    path_segments: builder.fallback_module_segments(&module.file_path),
+                    ..module.clone()
+                };
                 builder.collect_parsed_module_with_degraded(
-                    module,
+                    &module,
                     diagnostics_for_file(&analysis.diagnostics, &module.file_path),
                     true,
                 );
