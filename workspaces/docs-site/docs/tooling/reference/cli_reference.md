@@ -103,7 +103,7 @@ Options:
 - `--format text|json`: Output human diagnostics or a stable machine-readable JSON report (default: `text`).
 - `--features`, `--no-default-features`, `--all-features`: Select the root package-feature projection.
 - `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this check.
-- `--interop-target <TRIPLE>`: Verify checked C declarations against one exact target declared by `[oven.interop]`. This does not cross-compile generated Rust or package an application.
+- `--interop-target <TRIPLE>`: Verify checked C declarations against one exact target declared by `[interop.c]`. This does not cross-compile generated Rust or package an application.
 - `--workspace`: Check every selected workspace member.
 - `--member <NAME_OR_PATH>`: Check one or more selected workspace members.
 
@@ -388,7 +388,7 @@ Usage:
 incan inspect interop-plan [PATH] --target <TRIPLE> [--format text|json]
 ```
 
-Projects a standalone package or selected workspace member's exact locked Oven interop target into a deterministic, versioned deployment handoff. The command requires the selected target in `[[oven.interop.targets]]` and a current canonical `oven.lock`; workspace members use the single workspace-root lock. It refuses to emit a plan after a declared interop file or deployment fact changes.
+Projects a standalone package or selected workspace member's exact locked Oven interop target into a deterministic, versioned deployment handoff. The command requires the selected target in `[[interop.c.targets]]` and a current canonical `oven.lock`; workspace members use the single workspace-root lock. It refuses to emit a plan after a declared interop file or deployment fact changes.
 
 The JSON report contains package-relative input receipts, target/toolchain/SDK/platform requirements, include roots, definitions, dependency-ordered static, bundled, and system actions, runtime names, placements, minimum platform constraints, and governed shim inputs and logical outputs. It does not build, stage, link, sign, publish, or invoke Gradle or Xcode.
 

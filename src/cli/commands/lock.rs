@@ -2224,7 +2224,7 @@ fn collect_project_lock_context(
     let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         session_manifest.project_root(),
-        session_manifest.oven_interop(),
+        session_manifest.interop_c(),
         session.sdk_inventory.as_deref(),
         session.sdk_components.as_ref(),
         session.package_feature_plan.as_ref(),

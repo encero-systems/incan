@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::frontend::typechecker::{CBindingDescriptor, CBindingEnum, CBindingStruct, CBindingType};
-use crate::oven_interop::{InteropTargetPlatform, IosTargetKind, OvenInteropTarget, ios_target_kind};
+use crate::oven_interop::{InteropCTarget, InteropTargetPlatform, IosTargetKind, ios_target_kind};
 use incan_core::lang::c_abi::ScalarTypeId;
 
 type EnumValueProbeRequest = (String, String, String);
@@ -72,7 +72,7 @@ impl CAbiTarget {
     }
 
     /// Translate one checked Oven interop target declaration into Clang's exact ABI target spelling.
-    fn from_interop_target(interop_target: &OvenInteropTarget) -> Result<Self, String> {
+    fn from_interop_target(interop_target: &InteropCTarget) -> Result<Self, String> {
         match (&interop_target.target[..], interop_target.platform.as_ref()) {
             ("x86_64-unknown-linux-gnu", None) => Ok(Self::LinuxX86_64),
             ("aarch64-apple-darwin", None) => Ok(Self::MacosArm64),
@@ -143,7 +143,7 @@ impl CAbiVerificationPlan {
     }
 
     /// Select ABI verification from one manifest interop target whose package requirements have already been validated.
-    pub(crate) fn from_interop_target(interop_target: &OvenInteropTarget) -> Result<Self, String> {
+    pub(crate) fn from_interop_target(interop_target: &InteropCTarget) -> Result<Self, String> {
         Ok(Self {
             target: CAbiTarget::from_interop_target(interop_target)?,
             definitions: interop_target.definitions.clone(),
@@ -745,7 +745,7 @@ mod tests {
         CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingParameter, CBindingStruct, CBindingStructField,
         CBindingSymbol, CBindingType,
     };
-    use crate::oven_interop::{InteropTargetPlatform, OvenInteropTarget, ToolchainRequirement};
+    use crate::oven_interop::{InteropCTarget, InteropTargetPlatform, ToolchainRequirement};
     use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
 
     fn fixture_binding(header: String) -> CBindingDescriptor {
@@ -800,8 +800,8 @@ mod tests {
         target: &str,
         platform: InteropTargetPlatform,
         definitions: Vec<&str>,
-    ) -> OvenInteropTarget {
-        OvenInteropTarget {
+    ) -> InteropCTarget {
+        InteropCTarget {
             target: target.to_string(),
             toolchain: Some(ToolchainRequirement {
                 capability: "fixture-clang".to_string(),
