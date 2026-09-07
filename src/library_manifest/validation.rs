@@ -19,7 +19,7 @@ use super::{
     PartialExport, ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
 };
 use crate::frontend::api_metadata::{
-    ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION, validate_checked_api_public_namespaces,
+    ApiDeclaration, ApiProjectedFunction, CHECKED_API_METADATA_SCHEMA_VERSION, validate_checked_api_public_namespaces,
 };
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 use crate::frontend::registry_metadata::CHECKED_REGISTRY_METADATA_SCHEMA_VERSION;
@@ -470,11 +470,20 @@ fn validate_export_identity_binding(
                         entry.public_name
                     )));
                 };
-                // The prefixes may differ, but both sides must still name the declaration the identity names.
-                if raw_alias.target_path.last() != Some(&identity.declaration_name) {
+                // The prefixes may differ, but both sides must still name the declaration the identity names -- or,
+                // for an alias of an alias, reach it. A chain records each link on the hop it was written on, so the
+                // raw export names the intermediate alias while the identity carries the terminal declaration.
+                let reaches_identity_declaration = raw_alias.target_path.last() == Some(&identity.declaration_name)
+                    || raw.contract_metadata.api.as_ref().is_some_and(|api| {
+                        checked_api_alias_chain_reaches(api, &raw_alias.target_path, &identity.declaration_name)
+                    });
+                if !reaches_identity_declaration {
                     return Err(LibraryManifestError::Invalid(format!(
-                        "identity graph alias `{}` projection disagrees with its raw export",
-                        entry.public_name
+                        "identity graph alias `{}` projection disagrees with its raw export: the raw export targets \
+                         `{}` and the canonical identity names `{}`",
+                        entry.public_name,
+                        raw_alias.target_path.join("."),
+                        identity.declaration_name
                     )));
                 }
                 validate_alias_callable_metadata(
@@ -595,9 +604,28 @@ fn validate_nested_identity_graph_backing(
                 })
         });
     if !backed {
+        // Name what the two records disagreed on. The graph entry and the checked API each describe the same export
+        // from a different side, so a bare rejection leaves no way to tell a wrong kind from a wrong projection or a
+        // member whose source path points somewhere the API never declared.
+        let offered = namespace
+            .members
+            .iter()
+            .filter(|member| member.name == entry.public_name)
+            .map(|member| member.source_path.join("."))
+            .collect::<Vec<_>>();
         return Err(LibraryManifestError::Invalid(format!(
-            "identity graph entry `{}` is not backed by a checked API namespace declaration",
-            entry.public_name
+            "identity graph entry `{}` is not backed by a checked API namespace declaration: \
+             public path `{}` carries kind {:?} and projection {:?}, and namespace `{}` offers {}",
+            entry.public_name,
+            entry.public_path.join("."),
+            entry.kind,
+            entry.projection,
+            namespace_path.join("."),
+            if offered.is_empty() {
+                "no member of that name".to_string()
+            } else {
+                format!("`{}`", offered.join("`, `"))
+            }
         )));
     }
     Ok(())
@@ -631,22 +659,33 @@ fn api_declaration_backs_identity_entry(
             // Resolution only prepends the owning module, so the spelling must be a suffix of the resolution rather
             // than equal to it -- an unqualified `helper` resolves to `["provider", "helper"]` and still names the
             // same declaration.
+            //
+            // A chain hop breaks that suffix relation honestly: an alias of an alias carries the *terminal* function's
+            // source path, while `target_path` names the hop right next to it, so `["registry", "scale"]` never ends
+            // with `["registry", "scale_alias"]`. Accept the hop when it republishes this same projection.
             if let Some(projected) = &alias.projected_function
                 && !projected.source_path.ends_with(&alias.target_path)
+                && !alias_target_republishes_projection(api, &alias.target_path, projected)
             {
                 return false;
             }
-            validate_alias_callable_metadata(
-                &format!("checked API alias `{}`", alias.name),
-                &entry.public_name,
-                identity,
-                alias
-                    .projected_function
-                    .as_ref()
-                    .map(|projected| projected.callable.name.as_str()),
-            )
-            .is_ok()
-                && package_local_identity_target_matches(raw, api, identity)
+            // `materialize_api_alias_projections` seeds callable projections from function declarations alone, so an
+            // alias over a partial carries none here however the partial is reached. The raw export side does project
+            // partials and the package-root entry checks that, so demanding it again from the checked API rejected
+            // every facade hop over a partial rather than catching a real disagreement.
+            let projected_callable = alias
+                .projected_function
+                .as_ref()
+                .map(|projected| projected.callable.name.as_str());
+            let callable_metadata_agrees = (identity.kind == "partial" && projected_callable.is_none())
+                || validate_alias_callable_metadata(
+                    &format!("checked API alias `{}`", alias.name),
+                    &entry.public_name,
+                    identity,
+                    projected_callable,
+                )
+                .is_ok();
+            callable_metadata_agrees && package_local_identity_target_matches(raw, api, identity)
         }
         ApiDeclaration::Partial(partial) if partial.name == declaration_name => {
             entry.kind == ExportIdentityKind::Partial
@@ -683,6 +722,80 @@ fn api_declaration_backs_identity_entry(
         }
         _ => false,
     }
+}
+
+/// Return whether one checked API alias path resolves, through any number of hops, to the named declaration.
+///
+/// Each link of a re-export chain records the hop it was written on, so the first hop names an intermediate alias
+/// rather than the declaration the canonical identity carries. Follow the remaining hops instead of demanding that the
+/// first one already be terminal. A same-module hop records its target unqualified, so requalify it before the next
+/// step, and stop on a repeated path so a cyclic manifest cannot loop here.
+fn checked_api_alias_chain_reaches(
+    api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+    target_path: &[String],
+    declaration_name: &str,
+) -> bool {
+    let mut seen = HashSet::new();
+    let mut path = target_path.to_vec();
+    loop {
+        let Some((name, module_path)) = path.split_last() else {
+            return false;
+        };
+        let (name, module_path) = (name.clone(), module_path.to_vec());
+        if name == declaration_name {
+            return true;
+        }
+        if !seen.insert(path.clone()) {
+            return false;
+        }
+        let Some(module) = api.modules.iter().find(|module| module.module_path == module_path) else {
+            return false;
+        };
+        let Some(next) = module.declarations.iter().find_map(|declaration| match declaration {
+            ApiDeclaration::Alias(alias) if alias.name == name => Some(alias.target_path.clone()),
+            _ => None,
+        }) else {
+            return false;
+        };
+        path = if next.len() == 1 {
+            let mut qualified = module_path;
+            qualified.extend(next);
+            qualified
+        } else {
+            next
+        };
+    }
+}
+
+/// Return whether an alias hop's target republishes the same callable projection, as a re-export chain does.
+///
+/// Alias projections record the declaration a chain ultimately reaches, not the hop each link was written on. Comparing
+/// a link against the terminal path rejects every chain longer than one alias, so compare what the two links can
+/// honestly agree on instead: the declaration whose projection they both carry.
+fn alias_target_republishes_projection(
+    api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+    target_path: &[String],
+    projected: &ApiProjectedFunction,
+) -> bool {
+    let Some((declaration_name, module_path)) = target_path.split_last() else {
+        return false;
+    };
+    api.modules
+        .iter()
+        .find(|module| module.module_path == module_path)
+        .is_some_and(|module| {
+            module.declarations.iter().any(|declaration| {
+                matches!(
+                    declaration,
+                    ApiDeclaration::Alias(target)
+                        if target.name == *declaration_name
+                            && target
+                                .projected_function
+                                .as_ref()
+                                .is_some_and(|hop| hop.source_path == projected.source_path)
+                )
+            })
+        })
 }
 
 /// Require a package-local alias target to name the exact checked declaration and source span.
