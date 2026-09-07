@@ -12761,7 +12761,14 @@ pub def exercise_callbacks() -> None:
         assert_eq!(factory_metadata.type_params, ["T", "U"]);
         assert!(!factory_metadata.has_const_params);
         let generated_provider = std::fs::read_to_string(provider_root.join("target/lib/src/lib.rs"))?;
-        let compact_generated_provider = generated_provider.split_whitespace().collect::<String>();
+        // `prettyplease` adds a trailing comma when it breaks an argument list across lines, so the same turbofish
+        // reads as `::<f32,_,_>` or `::<f32,_,_,>`, and the same call as `f(x)` or `f(x,)`, depending only on where
+        // the line happened to break. Compare against the form that does not depend on that.
+        let compact_generated_provider = generated_provider
+            .split_whitespace()
+            .collect::<String>()
+            .replace(",>", ">")
+            .replace(",)", ")");
         assert!(
             compact_generated_provider.contains(".build_output_stream::<f32,_,_>"),
             "expected the complete method turbofish in generated provider Rust:\n{generated_provider}"
@@ -12775,7 +12782,7 @@ pub def exercise_callbacks() -> None:
             "borrowed-slice callbacks must not lower to a borrowed Vec:\n{generated_provider}"
         );
         assert!(
-            compact_generated_provider.contains("PairFactory::<i64,String,>::new"),
+            compact_generated_provider.contains("PairFactory::<i64,String>::new"),
             "expected receiver-side turbofish for both owner type parameters:\n{generated_provider}"
         );
         assert!(
@@ -12783,8 +12790,12 @@ pub def exercise_callbacks() -> None:
             "expected owner specialization on a non-Self return:\n{generated_provider}"
         );
         assert!(
-            compact_generated_provider.contains("accept_pair(PairFactory::new(7,\"marker\".into()))")
-                || compact_generated_provider.contains("accept_pair(PairFactory::new(7,\"marker\".to_string()))"),
+            // Assert the specialization, not the callee's spelling. RFC 120 projects `accept_pair`, so pinning the
+            // source name tested the projection rather than the contextual receiver specialization this case exists
+            // for. The leading paren still requires the factory call to reach the callee as the argument itself,
+            // built without a turbofish and keeping its owned `String`.
+            compact_generated_provider.contains("(PairFactory::new(7,\"marker\".into()))")
+                || compact_generated_provider.contains("(PairFactory::new(7,\"marker\".to_string()))"),
             "expected contextual receiver specialization to preserve the owned String parameter:\n{generated_provider}"
         );
 
