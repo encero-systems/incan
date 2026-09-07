@@ -101,7 +101,7 @@ Dev dependencies are only available in test contexts (files under `tests/`). Imp
 
 ### Generating the lock file
 
-Run `incan lock` to resolve all dependencies and create `incan.lock`:
+Run `incan lock` to resolve all dependencies and create `oven.lock`:
 
 ```bash
 incan lock src/main.incn
@@ -113,7 +113,7 @@ Or, if your `incan.toml` has `[project.scripts].main` set:
 incan lock
 ```
 
-`incan.lock` records normalized semantic dependency, feature, provider, and implementation-facet inputs. **Commit it
+`oven.lock` records normalized semantic dependency, feature, provider, and implementation-facet inputs. **Commit it
 to version control** so normal commands can validate that the project still matches the receipt-compatible Loaf
 selection. The lock is not permission for a normal command to resolve missing crates with Cargo.
 
@@ -125,7 +125,7 @@ The generated-Cargo cache, preheat controls, Cargo policy flags, and target-dire
 
 ### CI and offline use
 
-Normal Oven Alpha `build`, `run`, and `test` do not launch Cargo or access a registry, so Cargo's `--offline`, `--locked`, and `--frozen` policies are not normal-command controls. Commit `incan.lock`, install the required Oven-enabled toolchain before entering the restricted environment, and let receipt/lock validation fail closed if the project no longer matches the sealed Loaf. Maintainer publication can separately constrain the internal compatibility publisher with Cargo policy; that does not change the consumer contract.
+Normal Oven Alpha `build`, `run`, and `test` do not launch Cargo or access a registry, so Cargo's `--offline`, `--locked`, and `--frozen` policies are not normal-command controls. Commit `oven.lock`, install the required Oven-enabled toolchain before entering the restricted environment, and let receipt/lock validation fail closed if the project no longer matches the sealed Loaf. Maintainer publication can separately constrain the internal compatibility publisher with Cargo policy; that does not change the consumer contract.
 
 ## Resolution rules
 
@@ -190,13 +190,13 @@ error: Rust crate `criterion` is dev-only and cannot be imported from production
 error: Rust crate `fancy_logging` is optional but not enabled for this build
 ```
 
-**Fix**: Enable it through the owning manifest or Incan package feature, regenerate `incan.lock`, and use a toolchain
+**Fix**: Enable it through the owning manifest or Incan package feature, regenerate `oven.lock`, and use a toolchain
 whose Loaf authorizes the resulting closure. Otherwise remove the optional dependency.
 
 ### Stale lock file
 
 ```text
-error: incan.lock is out of date; run `incan lock`
+error: oven.lock is out of date; run `incan lock`
 ```
 
 **Fix**: Run `incan lock` to regenerate the lock file after changing dependencies.

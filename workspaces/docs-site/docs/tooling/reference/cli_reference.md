@@ -29,7 +29,7 @@ Commands:
 - `init` - Add a starter `incan.toml` and project skeleton to an existing directory
 - `version` - Update the project version in `incan.toml`
 - `env` - List, inspect, or run configured project environments
-- `lock` - Generate or update `incan.lock`
+- `lock` - Generate or update `oven.lock`
 - `tools` - Inspect local toolchain, editor integration state, and checked metadata
 
 ## Semantic inspection surfaces
@@ -388,7 +388,7 @@ Usage:
 incan inspect interop-plan [PATH] --target <TRIPLE> [--format text|json]
 ```
 
-Projects a standalone package or selected workspace member's exact locked Oven interop target into a deterministic, versioned deployment handoff. The command requires the selected target in `[[oven.interop.targets]]` and a current canonical `incan.lock`; workspace members use the single workspace-root lock. It refuses to emit a plan after a declared interop file or deployment fact changes.
+Projects a standalone package or selected workspace member's exact locked Oven interop target into a deterministic, versioned deployment handoff. The command requires the selected target in `[[oven.interop.targets]]` and a current canonical `oven.lock`; workspace members use the single workspace-root lock. It refuses to emit a plan after a declared interop file or deployment fact changes.
 
 The JSON report contains package-relative input receipts, target/toolchain/SDK/platform requirements, include roots, definitions, dependency-ordered static, bundled, and system actions, runtime names, placements, minimum platform constraints, and governed shim inputs and logical outputs. It does not build, stage, link, sign, publish, or invoke Gradle or Xcode.
 
@@ -716,11 +716,11 @@ Usage:
 incan lock [OPTIONS] [FILE]
 ```
 
-Resolves all dependencies (manifest + inline + test files) and generates or updates `incan.lock`.
+Resolves all dependencies (manifest + inline + test files) and generates or updates `oven.lock`.
 
 If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
 
-Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `incan.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable advisory lock under compiler-owned `target/incan_lock` state and replace the completed root lock atomically after synchronizing its staged contents. If a legacy project-root `.incan.lock.incan.lock` already exists, new compilers acquire it before the hidden guard so an older compiler still using that inode remains serialized. A project without the legacy sidecar uses the new protocol directly. Whenever that sidecar is absent—whether it never existed or was removed—do not run old and new compilers concurrently because an older compiler cannot discover the hidden guard.
+Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `oven.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable advisory lock under compiler-owned `target/incan_lock` state and replace the completed root lock atomically after synchronizing its staged contents. The guard identity is derived from the published lock's own filename, so an `oven.lock` project coordinates on `.oven.lock.incan.lock` — a path no compiler predating the hidden guard ever wrote. Concurrent old and new compilers are no longer a hazard for this file: a compiler from before the rename publishes `incan.lock` and never contends for `oven.lock` at all. That earlier lock is inert once a project is on `oven.lock`; nothing reads it, and you can delete it.
 
 Because the lock refresh covers every member, command-local `--features`, `--no-default-features`, `--all-features`, and `--sdk-profile` selections apply to every member projection in that refresh. A requested public feature must therefore be declared by each workspace member; use member manifests for different persistent per-member selections.
 
@@ -744,7 +744,7 @@ incan lock --sdk-profile minimal    # lock the minimal SDK profile projection
 incan lock --cargo-features metrics # select explicit backend Cargo features
 ```
 
-The generated `incan.lock` contains an embedded `Cargo.lock` payload, the expanded SDK component and provider identities, the public package-feature graph and activation reasons, private implementation-facet closure, and a fingerprint of dependency inputs. Commit it to version control for reproducible builds.
+The generated `oven.lock` contains an embedded `Cargo.lock` payload, the expanded SDK component and provider identities, the public package-feature graph and activation reasons, private implementation-facet closure, and a fingerprint of dependency inputs. Commit it to version control for reproducible builds.
 
 See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 

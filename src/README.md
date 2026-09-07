@@ -13,7 +13,7 @@ src/
 ├── main.rs                           # CLI entrypoint
 ├── lib.rs                            # Library root, re-exports
 ├── manifest.rs                       # incan.toml project manifest parsing
-├── lockfile.rs                       # incan.lock lockfile handling
+├── lockfile.rs                       # oven.lock lockfile handling
 ├── library_manifest.rs               # Library manifest (lib.incan.toml)
 ├── dependency_resolver.rs            # Dependency resolution for multi-crate builds
 ├── semantics_registry.rs             # Shared semantic definitions

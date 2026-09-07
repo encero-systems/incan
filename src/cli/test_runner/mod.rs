@@ -1814,9 +1814,9 @@ mod tests {
             &package_features,
             None,
         ) else {
-            return Err("strict test validation accepted a missing incan.lock".into());
+            return Err("strict test validation accepted a missing oven.lock".into());
         };
-        assert!(lock_error.message.contains("incan.lock is missing"));
+        assert!(lock_error.message.contains("oven.lock is missing"));
         assert_eq!(
             crate::cli::commands::lock::project_lock_collection_counts(),
             (1, 0),

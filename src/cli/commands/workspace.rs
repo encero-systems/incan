@@ -407,7 +407,7 @@ members = ["packages/member"]
             root.path().join("packages/member/incan.toml"),
             "[project]\nname = \"member\"\n",
         )?;
-        fs::write(root.path().join("packages/member/incan.lock"), "obsolete")?;
+        fs::write(root.path().join("packages/member/oven.lock"), "obsolete")?;
 
         let graph = WorkspaceGraph::load_from_root(root.path())?;
         let selection = graph.resolve_scope(WorkspaceScopeRequest::new(root.path(), false, ["member"]))?;

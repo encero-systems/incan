@@ -81,7 +81,7 @@ greeter/
 └── incan.toml             # Manifest with project metadata and [project.scripts] main set
 ```
 
-The generated `incan.toml` carries a `requires-incan` constraint for the current release line. Commit `incan.lock` once the project generates it so builds stay reproducible.
+The generated `incan.toml` carries a `requires-incan` constraint for the current release line. Commit `oven.lock` once the project generates it so builds stay reproducible.
 
 Try it immediately:
 

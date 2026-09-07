@@ -145,7 +145,7 @@ incan oven bake --project . --format json
 incan run --member pricing_app --locked
 ```
 
-The workspace bake discovers the producer and consumer, publishes the required project extensions and completed outputs, and names their exact full-standard-library base. The normal run then reuses those checked artifacts without invoking Cargo. Commit the generated root `incan.lock`; member-local lockfiles are not workspace authorities. When the producer changes its public API, bake and build it again rather than copying source files between projects.
+The workspace bake discovers the producer and consumer, publishes the required project extensions and completed outputs, and names their exact full-standard-library base. The normal run then reuses those checked artifacts without invoking Cargo. Commit the generated root `oven.lock`; member-local lockfiles are not workspace authorities. When the producer changes its public API, bake and build it again rather than copying source files between projects.
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 

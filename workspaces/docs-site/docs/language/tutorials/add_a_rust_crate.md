@@ -76,7 +76,7 @@ incan oven bake --project . --format json
 incan run --locked
 ```
 
-`incan lock` writes the reproducible dependency graph. The explicit bake may invoke the bounded compatibility publisher once and seals a project-extension Loaf over the exact full-standard-library base. `incan run --locked` then selects that immutable closure and rejects drift; it never invokes Cargo as a hidden fallback. Commit `incan.lock` so CI and collaborators resolve the same graph.
+`incan lock` writes the reproducible dependency graph. The explicit bake may invoke the bounded compatibility publisher once and seals a project-extension Loaf over the exact full-standard-library base. `incan run --locked` then selects that immutable closure and rejects drift; it never invokes Cargo as a hidden fallback. Commit `oven.lock` so CI and collaborators resolve the same graph.
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 

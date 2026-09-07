@@ -27,7 +27,7 @@ The declaration projection deliberately does not absorb facts with different lif
 | Surface | Question it answers |
 | --- | --- |
 | Binding inspection | What ABI, ownership, output, enum, and layout contract did the compiler accept from this source graph? |
-| `[oven.interop]` and `incan.lock` | What target requirements and package-owned physical inputs did the author declare and lock? |
+| `[oven.interop]` and `oven.lock` | What target requirements and package-owned physical inputs did the author declare and lock? |
 | Oven receipt and store | Which explicitly selected toolchain and SDK, verified package artifacts, and shim outputs satisfied those requirements? |
 | Codegraph and LSP projections | Which checked declarations and explicit unsafe calls occur at these source spans? |
 

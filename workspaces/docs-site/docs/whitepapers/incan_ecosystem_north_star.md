@@ -513,7 +513,7 @@ The sequencing rule is: local, receiver-owned lifecycle first; workspace, regist
 
 These are the decisions that most affect the final shape:
 
-1. Where does rich provenance live: `incan.toml`, `incan.lock`, a sidecar state file, or a future lifecycle state artifact?
+1. Where does rich provenance live: `incan.toml`, `oven.lock`, a sidecar state file, or a future lifecycle state artifact?
 2. Which command names should be stable enough to teach early: `incan capability add`, `incan action run`, `incan template update`, `incan pub search`, and `incan ai asset list` are descriptive, but may still be too wide.
 3. How much registry-backed discovery belongs in the first implementation versus built-in and local descriptors?
 4. What is the minimum policy language that can block dangerous template, capability, action, and AI mutations without creating a heavyweight governance system?

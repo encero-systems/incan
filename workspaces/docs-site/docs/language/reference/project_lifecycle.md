@@ -29,7 +29,7 @@ Project-level features such as manifest dependencies, version management, and na
 
 ## Workspaces
 
-An Incan workspace is a bounded collection of ordinary Incan projects. It coordinates which projects are members, their effective shared dependencies, and one root-owned `incan.lock`; it does not turn the repository into one package or make member versions and publication lockstep.
+An Incan workspace is a bounded collection of ordinary Incan projects. It coordinates which projects are members, their effective shared dependencies, and one root-owned `oven.lock`; it does not turn the repository into one package or make member versions and publication lockstep.
 
 A root that has both `[project]` and `[workspace]` is a **rooted workspace**: the root project is a member without listing `"."`. A root that has only `[workspace]` is **virtual** and must list at least one project member.
 
@@ -60,7 +60,7 @@ serde = { workspace = true, features = ["derive"] }
 extends = ["workspace:ci"]
 ```
 
-The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own `optional` use. Shared declarations are inactive until a member declares `{ workspace = true }`; a member-local `incan.lock` is never authoritative.
+The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own `optional` use. Shared declarations are inactive until a member declares `{ workspace = true }`; a member-local `oven.lock` is never authoritative.
 
 ### Selecting members
 
@@ -94,7 +94,7 @@ incan workspace inspect --member packages/api --format json
 
 The JSON projection includes members, selection origin, inherited dependency provenance, explicit workspace environment extensions, lock state, stale member-local locks, and currently-unused shared declarations. Workspace capability application remains member-local in this release: cross-member mutation needs a scoped plan and policy evaluation, neither of which is approximated by this foundation.
 
-Workspace lock publication uses the same crash-safe staging, synchronization, atomic replacement, and parent-directory synchronization sequence documented by `std.fs`. Publishers coordinate through a stable compiler-private guard under ignored `target/incan_lock` state rather than creating a new sidecar in the project root. If a legacy `.incan.lock.incan.lock` sidecar already exists, the compiler acquires that identity before its active guard so an older compiler using the existing inode remains serialized. Whenever the legacy sidecar is absent—whether it never existed or was removed—old and new compilers must not publish concurrently because an older compiler cannot discover the hidden guard. This preserves a prior complete root lock or a new complete root lock for cooperative readers; it is not a multi-file workspace transaction.
+Workspace lock publication uses the same crash-safe staging, synchronization, atomic replacement, and parent-directory synchronization sequence documented by `std.fs`. Publishers coordinate through a stable compiler-private guard under ignored `target/incan_lock` state rather than creating a new sidecar in the project root. The sidecar identity it checks is derived from the published lock's own filename, so an `oven.lock` project resolves it to `.oven.lock.incan.lock`, which no compiler predating that guard ever wrote. Compilers from before the rename publish `incan.lock` instead and never contend for the same target, so concurrent publication across that boundary cannot interleave on one file. This preserves a prior complete root lock or a new complete root lock for cooperative readers; it is not a multi-file workspace transaction.
 
 ## `incan.toml`
 

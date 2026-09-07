@@ -1246,7 +1246,7 @@ fn hash_directory_with_normalization(
             })?;
         // The generated provider-root Cargo.lock is a projection of the canonical Incan lock, not an independent
         // provider input. Including it here creates a two-pass identity cycle: artifact-only preparation has no
-        // Cargo.lock, while the first locked build materializes one from incan.lock and would otherwise change the
+        // Cargo.lock, while the first locked build materializes one from oven.lock and would otherwise change the
         // provider's semantic identity. Nested Cargo.lock files remain part of the artifact content projection.
         if normalization.is_some() && relative == Path::new("Cargo.lock") {
             continue;

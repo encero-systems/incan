@@ -56,7 +56,7 @@ pub(crate) fn locked_interop_plan_target(path: &Path, target: &str) -> CliResult
     // ---- Require exact Oven interop lock freshness ----
     if context.locked != context.current {
         return Err(CliError::failure(
-            "incan.lock Oven interop requirements are out of date; run `incan lock` before inspecting or baking a deployment plan",
+            "oven.lock Oven interop requirements are out of date; run `incan lock` before inspecting or baking a deployment plan",
         ));
     }
 
@@ -125,7 +125,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
         .find(|candidate| candidate.member_root == member_root)
         .ok_or_else(|| {
             CliError::failure(format!(
-                "incan.lock does not contain the selected workspace member `{}`; run `incan lock`",
+                "oven.lock does not contain the selected workspace member `{}`; run `incan lock`",
                 member.name()
             ))
         })?
@@ -139,7 +139,7 @@ fn interop_plan_lock_context(manifest: &ProjectManifest) -> CliResult<InteropPla
 fn load_interop_plan_lock(path: &Path) -> CliResult<IncanLock> {
     IncanLock::load(path).map_err(|error| {
         CliError::failure(format!(
-            "interop plan inspection requires a current incan.lock at {}: {error}",
+            "interop plan inspection requires a current oven.lock at {}: {error}",
             path.display()
         ))
     })

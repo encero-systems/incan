@@ -155,7 +155,7 @@ Activating `server` verifies that `stdlib-web` is enabled and available; it does
 
 ## Lock and verify the intended projection
 
-Feature and component selections affect checked facts and generated output, so record the exact closure in `incan.lock`:
+Feature and component selections affect checked facts and generated output, so record the exact closure in `oven.lock`:
 
 ```bash
 incan lock --features json
