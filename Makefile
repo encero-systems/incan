@@ -19,8 +19,8 @@ INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT ?= $(CURDIR)/target
 # refusal tests pass explicit tiny CLI limits rather than redefining production policy here.
 INCAN_TEST_OVEN_BAKE_FORMAT ?= text
 INCAN_TEST_OVEN_BAKE_REPORT ?=
-# Optional caller-owned location for a completed compiler-suite JSON report. The default test target removes its
-# one-use caller output after success; the case-timing target retains only this small evidence file for ranking.
+# Optional caller-owned location for the compiler-suite JSON report. The default test target removes its one-use
+# caller output; setting this retains the report, which carries every root's measured durations and case timings.
 INCAN_TEST_OVEN_COMPILER_SUITE_REPORT ?=
 # Optional caller-owned location for a successful `test-one` compiler-suite JSON report. The focused command keeps
 # its disposable output clean by default; a diagnostic caller can retain only the report for nested-command analysis.
@@ -45,9 +45,6 @@ TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 TEST_RUNTIME_ENV = $(TEST_ENV) \
 	INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
 	INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
-ifneq ($(strip $(INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS)),)
-TEST_RUNTIME_ENV += INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS="$(INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS)"
-endif
 ifneq ($(strip $(INCAN_TEST_COMMAND_TIMINGS)),)
 TEST_RUNTIME_ENV += INCAN_TEST_COMMAND_TIMINGS="$(INCAN_TEST_COMMAND_TIMINGS)"
 endif
@@ -342,11 +339,11 @@ test-oven-replay:
 		suite_succeeded=false; \
 		cleanup_suite_output() { \
 			rm -rf -- "$$suite_tmp"; \
-			if [ "$$suite_succeeded" = true ]; then \
-				if [ -n "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)" ]; then \
-					cp "$$suite_output/compiler-suite-report.json" "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)"; \
-				fi; \
-				rm -rf -- "$$suite_output"; \
+			if [ -n "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)" ] \
+				&& [ -s "$$suite_output/compiler-suite-report.json" ]; then \
+				cp "$$suite_output/compiler-suite-report.json" "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)"; \
+			fi; \
+			if [ "$$suite_succeeded" = true ]; then rm -rf -- "$$suite_output"; \
 			else echo "Oven suite failed; retaining caller output at $$suite_output" >&2; fi; \
 		}; \
 		trap cleanup_suite_output EXIT; \
@@ -371,9 +368,11 @@ test-oven-replay:
 		test ! -s "$$suite_output/cargo-guard/invocations.log"; \
 		suite_succeeded=true
 
-.PHONY: test-oven-case-timings  ## test - Run the complete Oven suite once and retain its top-25 case-timing report
+.PHONY: test-oven-case-timings  ## test - Run the complete Oven suite once and retain its measured-duration report
+# Every root now reports its case timings, so this target only chooses where to keep the report rather than turning
+# a diagnostic on. The nested-command timings it also enables remain opt-in: those come from instrumented tests.
 test-oven-case-timings:
-	@$(MAKE) --no-print-directory test-oven INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS=1 \
+	@$(MAKE) --no-print-directory test-oven INCAN_TEST_COMMAND_TIMINGS=1 \
 		INCAN_TEST_OVEN_COMPILER_SUITE_REPORT="$(CURDIR)/target/oven-compiler-suite-case-timings.json"
 
 .PHONY: test  ## test - Run all compiler tests through bounded Oven direct-Rustc execution

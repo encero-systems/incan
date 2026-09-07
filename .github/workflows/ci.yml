@@ -563,7 +563,6 @@ jobs:
           test -s target/incan_test_sdk_provider_path
       - name: Run receipt-bound Oven partition
         env:
-          INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
           INCAN_TEST_COMMAND_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
           INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: target/oven-pr-linux-partition-${{ matrix.partition }}.json
         run: >-
@@ -575,9 +574,10 @@ jobs:
           make -s test-oven-partition
           INCAN_TEST_OVEN_PARTITION_INDEX=${{ matrix.partition }}
           INCAN_TEST_OVEN_PARTITION_COUNT=4
-      # The JSON report is only written on success. A failing partition instead retains the complete libtest
-      # transcript beside its caller output, and that transcript is the only place every failing case is named:
-      # the terminal summary is deliberately bounded, so a few large panics can crowd the rest out of the log.
+      # Every partition uploads its report, green or red, because each root's measured durations are evidence either
+      # way and a red one names what failed. A failing partition additionally retains the complete libtest transcript
+      # beside its caller output, because the terminal summary is deliberately bounded and a few large panics can
+      # crowd the rest out of it.
       - name: Upload Oven partition report
         if: always()
         uses: actions/upload-artifact@v6

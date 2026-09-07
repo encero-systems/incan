@@ -68,8 +68,9 @@ pub struct OvenNativeTestCaseCounts {
 
 /// One elapsed time reported by the libtest process that Oven already executes.
 ///
-/// Case timings are diagnostic-only and are collected only when the caller opts into libtest's unstable JSON
-/// `--report-time` output. They never cause Oven to launch an additional test process.
+/// Every compiler-suite root reports these, because Oven reads those roots through libtest's structured
+/// `--report-time` stream. They are observational: they come from the test process Oven was already going to run,
+/// and never cause it to launch or repeat one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenNativeTestCaseTiming {
     /// Exact test name from the verified native-test inventory.
@@ -97,6 +98,27 @@ pub struct OvenNativeTestCommandTiming {
     pub phase_timings_ms: BTreeMap<String, u64>,
 }
 
+/// One complete native libtest root execution and the policy Oven runs it under.
+///
+/// The scheduler varies four things across roots: where the binary runs, how long it may take, how much of the host
+/// CPU budget it gets, and what to call it in progress output. Carrying them together keeps adding a fifth from
+/// growing another wrapper in the batch-runner family.
+#[derive(Debug, Clone)]
+pub struct OvenNativeTestBatchRequest<'a> {
+    /// Compiled libtest binary to inventory and execute.
+    pub executable: &'a Path,
+    /// Environment applied after Cargo state is cleared from the child.
+    pub environment: &'a BTreeMap<String, String>,
+    /// Package directory the root runs from, because fixture and snapshot tests resolve paths relative to it.
+    pub working_directory: Option<&'a Path>,
+    /// Deadline after which Oven terminates the execution group, so one root cannot hold the worker pool.
+    pub timeout: Option<Duration>,
+    /// Libtest thread budget for this root, already divided out of the host budget by the scheduler.
+    pub test_threads: Option<usize>,
+    /// Name prefixed to this root's progress lines, so concurrent roots stay attributable to their source.
+    pub root_label: Option<&'a str>,
+}
+
 /// One verified all-in-one native libtest execution used when fixture scope requires a shared process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenNativeTestBatchReport {
@@ -111,10 +133,11 @@ pub struct OvenNativeTestBatchReport {
     /// A native test executable may exit before libtest can produce a summary, so absence is represented explicitly
     /// rather than fabricating green counts from its inventory.
     pub case_counts: Option<OvenNativeTestCaseCounts>,
-    /// Per-case libtest timings when `INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS` enabled their collection.
+    /// Per-case libtest timings recovered from this root's structured event stream.
     ///
-    /// An empty vector means timing diagnostics were not requested or the libtest process did not emit a terminal
-    /// timing line for an inventory case. It does not mean that the case took zero time.
+    /// Empty on the batch that backs `incan test`, which stays on libtest's text format and so reports no per-case
+    /// times at all. On a compiler-suite root it means the libtest process emitted no terminal timing event for an
+    /// inventory case, which is what a crashed or killed root leaves behind. It never means a case took zero time.
     pub case_timings: Vec<OvenNativeTestCaseTiming>,
     /// Opt-in nested command timings emitted by existing integration-test helpers.
     pub command_timings: Vec<OvenNativeTestCommandTiming>,
@@ -135,12 +158,6 @@ pub struct OvenNativeTestBatchTiming {
     /// Time spent executing the verified native libtest process.
     pub execution_elapsed_ms: u64,
 }
-
-/// Opt into libtest's per-case elapsed-time diagnostics for one Oven invocation.
-///
-/// This is deliberately opt-in because libtest requires its unstable reporting switch. Oven retains its normal
-/// output and execution behaviour by default.
-pub const OVEN_NATIVE_TEST_CASE_TIMINGS_ENV: &str = "INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS";
 
 /// Error while obtaining native test inventory or executing an exact test.
 #[derive(Debug, thiserror::Error)]
@@ -276,14 +293,11 @@ pub fn run_native_test_batch(
     command.args(["--test-threads=1", "--nocapture"]);
     clear_inherited_cargo_environment(&mut command);
     command.envs(&request.environment);
-    let structured_events = add_case_timing_diagnostics(&mut command);
+    // Deliberately not the structured stream. This batch backs `incan test`, whose caller reads the transcript as
+    // libtest text to attribute per-test failures and prints it verbatim under `--no-capture`. Moving that surface
+    // to events is a user-facing change with its own output design; it is not this runner's to make implicitly.
     let execution_started = Instant::now();
-    let (output, timed_out) = run_native_batch_child(
-        command,
-        &executable,
-        request.timeout,
-        structured_events.then(NativeTestProgressReporter::new),
-    )?;
+    let (output, timed_out) = run_native_batch_child(command, &executable, request.timeout, None)?;
     let execution_elapsed_ms = duration_millis(execution_started.elapsed());
     let mut transcript = combined_output(&output.stdout, &output.stderr);
     if let Some(timeout) = timed_out.then_some(request.timeout).flatten() {
@@ -295,7 +309,7 @@ pub fn run_native_test_batch(
             format_timeout(timeout)
         ));
     }
-    let case_timings = parse_libtest_case_timings_if_requested(&transcript, &inventory);
+    let case_timings = parse_libtest_case_timings(&transcript, &inventory);
     let command_timings = parse_native_test_command_timings(&transcript);
     Ok(OvenNativeTestBatchReport {
         inventory,
@@ -394,13 +408,13 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
         }
         clear_inherited_cargo_environment(&mut command);
         command.envs(environment);
-        let structured_events = add_case_timing_diagnostics(&mut command);
+        add_structured_libtest_output(&mut command);
         let execution_started = Instant::now();
         let (output, timed_out) = run_native_batch_child(
             command,
             &executable,
             process_timeout,
-            structured_events.then(NativeTestProgressReporter::new),
+            Some(NativeTestProgressReporter::new(None)),
         )?;
         report.timing.execution_elapsed_ms = report
             .timing
@@ -436,7 +450,7 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
         }
         report
             .case_timings
-            .extend(parse_libtest_case_timings_if_requested(&transcript, &inventory));
+            .extend(parse_libtest_case_timings(&transcript, &inventory));
         report
             .command_timings
             .extend(parse_native_test_command_timings(&transcript));
@@ -505,57 +519,34 @@ pub fn run_native_test_batch_all_in_directory(
     environment: &BTreeMap<String, String>,
     working_directory: Option<&Path>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
-    run_native_test_batch_all_in_directory_with_timeout(executable, environment, working_directory, None)
+    run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+        executable,
+        environment,
+        working_directory,
+        timeout: None,
+        test_threads: None,
+        root_label: None,
+    })
 }
 
-/// Inventory and execute every test from one verified caller-selected package directory with an optional deadline.
+/// Inventory and execute every test in one native libtest root under the caller's chosen execution policy.
 ///
-/// The compiler-suite scheduler uses the deadline-bearing form so a platform-specific child cannot hold the whole
-/// bounded worker pool indefinitely. Ordinary callers retain the historical no-deadline wrapper above.
-pub fn run_native_test_batch_all_in_directory_with_timeout(
-    executable: &Path,
-    environment: &BTreeMap<String, String>,
-    working_directory: Option<&Path>,
-    timeout: Option<Duration>,
+/// This is the form the compiler-suite scheduler uses. It supersedes a family of wrappers that had grown one
+/// overload per added knob; a request keeps the next knob from adding another.
+pub fn run_native_test_batch_all_for_request(
+    request: &OvenNativeTestBatchRequest<'_>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
-    run_native_test_batch_all_in_directory_with_options(executable, environment, working_directory, timeout, None)
-}
-
-/// Inventory and execute every test from one verified caller-selected package directory with a fixed libtest budget.
-///
-/// The compiler-suite scheduler uses this form after splitting its host CPU budget between independent root workers.
-/// A zero budget is rejected before launching a child, so a caller cannot turn a scheduling error into libtest's
-/// less actionable command-line diagnostic.
-pub fn run_native_test_batch_all_in_directory_with_timeout_and_threads(
-    executable: &Path,
-    environment: &BTreeMap<String, String>,
-    working_directory: Option<&Path>,
-    timeout: Option<Duration>,
-    test_threads: usize,
-) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
-    if test_threads == 0 {
+    if request.test_threads == Some(0) {
         return Err(OvenNativeTestError::InvalidInput {
             field: "native test thread budget",
             message: "must be greater than zero".to_string(),
         });
     }
-    run_native_test_batch_all_in_directory_with_options(
-        executable,
-        environment,
-        working_directory,
-        timeout,
-        Some(test_threads),
-    )
-}
-
-/// Shared executor for ordinary and scheduler-budgeted complete native-test roots.
-fn run_native_test_batch_all_in_directory_with_options(
-    executable: &Path,
-    environment: &BTreeMap<String, String>,
-    working_directory: Option<&Path>,
-    timeout: Option<Duration>,
-    test_threads: Option<usize>,
-) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
+    let executable = request.executable;
+    let environment = request.environment;
+    let working_directory = request.working_directory;
+    let timeout = request.timeout;
+    let test_threads = request.test_threads;
     let inventory_started = Instant::now();
     let inventory = inventory_native_tests_with_environment(executable, environment, working_directory, true)?;
     let inventory_elapsed_ms = duration_millis(inventory_started.elapsed());
@@ -570,10 +561,8 @@ fn run_native_test_batch_all_in_directory_with_options(
     }
     clear_inherited_cargo_environment(&mut command);
     command.envs(environment);
-    let structured_events = add_case_timing_diagnostics(&mut command);
-    // Progress rendering depends on the structured event stream, so it follows the same switch. Without it libtest
-    // emits its own human transcript, which this must not duplicate or reorder.
-    let reporter = structured_events.then(NativeTestProgressReporter::new);
+    add_structured_libtest_output(&mut command);
+    let reporter = Some(NativeTestProgressReporter::new(request.root_label));
     let execution_started = Instant::now();
     let (output, timed_out) = run_native_batch_child(command, &executable, timeout, reporter)?;
     let execution_elapsed_ms = duration_millis(execution_started.elapsed());
@@ -595,7 +584,7 @@ fn run_native_test_batch_all_in_directory_with_options(
             ));
         }
     }
-    let case_timings = parse_libtest_case_timings_if_requested(&transcript, &inventory);
+    let case_timings = parse_libtest_case_timings(&transcript, &inventory);
     let command_timings = parse_native_test_command_timings(&transcript);
     Ok(OvenNativeTestBatchReport {
         inventory,
@@ -620,27 +609,32 @@ fn duration_millis(duration: Duration) -> u64 {
         .saturating_add(u64::from(duration.subsec_millis()))
 }
 
-/// Add libtest's report-time switches only for an explicit diagnostic invocation.
+/// Ask libtest for the structured event stream the compiler suite reads its roots through.
 ///
-/// `--report-time` and JSON output are still unstable in libtest. The opt-in marker itself is removed from the child
-/// environment so nested normal Incan commands cannot recursively opt into timing output. The bootstrap
-/// compatibility environment applies to the direct native test process and its ordinary process descendants only for
-/// this diagnostic run.
-fn add_case_timing_diagnostics(command: &mut Command) -> bool {
-    let requested = std::env::var_os(OVEN_NATIVE_TEST_CASE_TIMINGS_ENV).is_some();
-    command.env_remove(OVEN_NATIVE_TEST_CASE_TIMINGS_ENV);
-    if requested {
-        command.args(["-Z", "unstable-options", "--format", "json", "--report-time"]);
-        command.env("RUSTC_BOOTSTRAP", "1");
-    }
-    requested
+/// These switches are unstable, which is why they were once an opt-in diagnostic. They are unconditional on the
+/// suite's paths now because everything Oven needs from a running root is in that stream and nowhere else: which
+/// case is running, which finished, how long each took, and the exact name of each failure. The text format answers
+/// none of those until the process has already exited, and answers the last only for cases that fail by panicking —
+/// which a `Result`-returning test never does.
+///
+/// `incan test` keeps the text format: its caller parses that transcript to attribute per-test failures and shows
+/// it to the user under `--no-capture`.
+///
+/// Oven owns both ends of this. It compiles the test binary itself through direct Rustc against a pinned toolchain,
+/// so `RUSTC_BOOTSTRAP` here enables an unstable switch on a binary this same command produced, not on an arbitrary
+/// one. Pairing the switches with `--nocapture` keeps a test's own writes streaming raw between the events rather
+/// than being folded into an escaped JSON string, which is what lets the rendered transcript stay readable.
+fn add_structured_libtest_output(command: &mut Command) {
+    command.args(["-Z", "unstable-options", "--format", "json", "--report-time"]);
+    command.env("RUSTC_BOOTSTRAP", "1");
 }
 
 /// Parse JSON per-case libtest elapsed times for the inventory that Oven itself verified.
 ///
-/// The outer diagnostic runner writes JSON only because it received the explicit `--format json` argument. Nested
-/// programs retain normal text output because the opt-in marker is removed before their parent test process starts.
-/// Restricting parsed events to the outer binary's exact inventory is a second, independent safeguard.
+/// Only the process Oven launched was given `--format json`, so only its own events appear as bare event lines;
+/// anything a nested program writes arrives as ordinary interleaved output. Restricting parsed events to the outer
+/// binary's verified inventory is a second, independent safeguard against reading a nested run's line as this
+/// root's result.
 fn parse_libtest_case_timings(output: &str, inventory: &OvenNativeTestInventory) -> Vec<OvenNativeTestCaseTiming> {
     let inventory_names = inventory.names.iter().map(String::as_str).collect::<BTreeSet<_>>();
     let mut timings = BTreeMap::new();
@@ -688,18 +682,6 @@ fn parse_libtest_case_timings(output: &str, inventory: &OvenNativeTestInventory)
 fn seconds_to_rounded_millis(seconds: f64) -> Option<u64> {
     let milliseconds = seconds * 1_000.0;
     (seconds.is_finite() && seconds >= 0.0 && milliseconds <= u64::MAX as f64).then(|| milliseconds.round() as u64)
-}
-
-/// Return no timings unless the caller explicitly asked the existing libtest invocation to report them.
-fn parse_libtest_case_timings_if_requested(
-    output: &str,
-    inventory: &OvenNativeTestInventory,
-) -> Vec<OvenNativeTestCaseTiming> {
-    if std::env::var_os(OVEN_NATIVE_TEST_CASE_TIMINGS_ENV).is_some() {
-        parse_libtest_case_timings(output, inventory)
-    } else {
-        Vec::new()
-    }
 }
 
 /// Parse explicit integration-test command timing records from an already-captured libtest transcript.
@@ -793,21 +775,16 @@ pub struct NativeTestProgressReporter {
 }
 
 impl NativeTestProgressReporter {
-    /// Start a reporter for a single unattributed root.
-    pub fn new() -> Self {
+    /// Start a reporter, naming the root it speaks for when the caller runs more than one at a time.
+    ///
+    /// The label is an `Option` rather than a second constructor because attribution is the only thing that varies:
+    /// a lone root has nothing to be told apart from, and a suite root always does.
+    pub fn new(label: Option<&str>) -> Self {
         Self {
-            label: None,
+            label: label.map(str::to_string),
             outstanding: BTreeSet::new(),
             completed: 0,
             total: None,
-        }
-    }
-
-    /// Start a reporter that attributes every line to one named root.
-    pub fn for_root(label: impl Into<String>) -> Self {
-        Self {
-            label: Some(label.into()),
-            ..Self::new()
         }
     }
 
@@ -820,10 +797,21 @@ impl NativeTestProgressReporter {
     }
 
     /// Consume one transcript line, printing whatever it renders to.
+    ///
+    /// A rendered case result already carries its root in a column of its own, so only the lines this prints around
+    /// it — a test's own output and the unfinished-case list — are prefixed.
     fn observe(&mut self, line: &str) {
         for rendered in self.render(line) {
-            self.emit(&rendered);
+            match self.renders_its_own_attribution(line) {
+                true => println!("{rendered}"),
+                false => self.emit(&rendered),
+            }
         }
+    }
+
+    /// Whether a line renders into a form that already names its root.
+    fn renders_its_own_attribution(&self, line: &str) -> bool {
+        line.trim_start().starts_with('{')
     }
 
     /// Render one transcript line as progress, returning the lines it produces.
@@ -867,6 +855,10 @@ impl NativeTestProgressReporter {
     }
 
     /// Render one case's terminal event, and drop it from the outstanding set.
+    ///
+    /// The outcome and elapsed time lead in fixed-width columns so a reader can scan a long run for failures down
+    /// one edge, with the variable-width root and test name last. A case libtest reports without an `exec_time`,
+    /// which is what an ignored case looks like, renders blank there rather than claiming zero.
     fn render_terminal_event(&mut self, event: &serde_json::Value, outcome: &str) -> Vec<String> {
         let Some(name) = event.get("name").and_then(serde_json::Value::as_str) else {
             return Vec::new();
@@ -877,12 +869,16 @@ impl NativeTestProgressReporter {
             Some(total) => format!("{:>5}/{total}", self.completed),
             None => format!("{:>5}", self.completed),
         };
-        let elapsed = event
-            .get("exec_time")
-            .and_then(serde_json::Value::as_f64)
-            .map(|seconds| format!(" {:>8.3}s", seconds))
-            .unwrap_or_default();
-        vec![format!("{position} {outcome:<8}{elapsed}  {name}")]
+        let elapsed = match event.get("exec_time").and_then(serde_json::Value::as_f64) {
+            Some(seconds) => format!("[{seconds:>8.3}s]"),
+            None => " ".repeat(11),
+        };
+        let root = self.label.as_deref().unwrap_or_default();
+        let separator = if root.is_empty() { "" } else { " " };
+        vec![format!(
+            "{:>7} {elapsed} {position} {root}{separator}{name}",
+            libtest_outcome_label(outcome)
+        )]
     }
 
     /// Name anything libtest started and never finished, which is what a killed or hung root leaves behind.
@@ -901,6 +897,20 @@ impl NativeTestProgressReporter {
         for name in &self.outstanding {
             self.emit(&format!("  {name}"));
         }
+    }
+}
+
+/// Map one libtest outcome to the short label progress output uses for it.
+///
+/// libtest's own spellings differ in length and in case, which makes a column of them hard to scan. An unrecognized
+/// outcome is passed through rather than dropped: a future libtest spelling should still be visible.
+fn libtest_outcome_label(outcome: &str) -> &str {
+    match outcome {
+        "ok" => "PASS",
+        "failed" => "FAIL",
+        "ignored" => "SKIP",
+        "timeout" => "TIMEOUT",
+        other => other,
     }
 }
 
@@ -1112,7 +1122,7 @@ fn parse_libtest_case_counts(output: &str) -> Option<OvenNativeTestCaseCounts> {
     parse_libtest_json_case_counts(output).or_else(|| parse_libtest_text_case_counts(output))
 }
 
-/// Parse libtest's terminal JSON suite event emitted by the opt-in case-timing diagnostic mode.
+/// Parse libtest's terminal JSON suite event, which is how every structured root reports its final counts.
 fn parse_libtest_json_case_counts(output: &str) -> Option<OvenNativeTestCaseCounts> {
     let event = output.lines().rev().find_map(|line| {
         let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
@@ -1167,7 +1177,7 @@ mod tests {
 
     #[test]
     fn a_completed_case_reports_its_position_outcome_and_duration() {
-        let mut reporter = NativeTestProgressReporter::new();
+        let mut reporter = NativeTestProgressReporter::new(None);
         assert!(
             reporter.render(SUITE_STARTED).is_empty(),
             "the suite header announces the total; it is not itself progress"
@@ -1181,7 +1191,7 @@ mod tests {
             line.contains("1/7"),
             "must show progress against the announced total: {line}"
         );
-        assert!(line.contains("ok"), "must name the outcome: {line}");
+        assert!(line.contains("PASS"), "must name the outcome: {line}");
         assert!(
             line.contains("0.000"),
             "must carry the duration, which is the point: {line}"
@@ -1196,7 +1206,7 @@ mod tests {
     fn output_that_is_not_an_event_passes_through_unchanged() {
         // `--nocapture` interleaves the tests' own writes with the event stream. A `println!` from a failing test is
         // often the only clue it leaves, so it must survive verbatim rather than be swallowed as unparseable.
-        let mut reporter = NativeTestProgressReporter::new();
+        let mut reporter = NativeTestProgressReporter::new(None);
         assert_eq!(
             reporter.render("thread 'x' panicked at src/lib.rs:1:1:"),
             vec!["thread 'x' panicked at src/lib.rs:1:1:".to_string()]
@@ -1208,7 +1218,7 @@ mod tests {
     fn a_case_that_never_finishes_stays_outstanding() {
         // This is what a killed or hung root leaves behind, and naming it is the difference between "the suite died"
         // and "the suite died in this case".
-        let mut reporter = NativeTestProgressReporter::new();
+        let mut reporter = NativeTestProgressReporter::new(None);
         reporter.render(SUITE_STARTED);
         reporter.render(CASE_STARTED);
         assert_eq!(reporter.outstanding.len(), 1);
@@ -1222,38 +1232,60 @@ mod tests {
 
     #[test]
     fn a_failure_renders_its_outcome_rather_than_being_treated_as_success() {
-        let mut reporter = NativeTestProgressReporter::new();
+        let mut reporter = NativeTestProgressReporter::new(None);
         reporter.render(SUITE_STARTED);
         let rendered = reporter.render(r#"{ "type": "test", "name": "a::b", "event": "failed", "exec_time": 1.5 }"#);
         assert_eq!(rendered.len(), 1);
-        assert!(rendered[0].contains("failed"), "got: {}", rendered[0]);
+        assert!(rendered[0].contains("FAIL"), "got: {}", rendered[0]);
+        assert!(
+            !rendered[0].contains("PASS"),
+            "a failure must not be renderable as a pass: {}",
+            rendered[0]
+        );
+    }
+
+    #[test]
+    fn an_ignored_case_reports_no_duration_rather_than_zero() {
+        let mut reporter = NativeTestProgressReporter::new(None);
+        reporter.render(SUITE_STARTED);
+        let rendered = reporter.render(r#"{ "type": "test", "name": "a::b", "event": "ignored" }"#);
+        assert_eq!(rendered.len(), 1);
+        assert!(rendered[0].contains("SKIP"), "got: {}", rendered[0]);
+        assert!(
+            !rendered[0].contains("0.000s"),
+            "libtest reported no time for this case, so none may be shown: {}",
+            rendered[0]
+        );
     }
 
     #[test]
     fn a_root_label_attributes_every_line_it_renders() {
         // The compiler suite runs roots on a worker pool, so an unattributed line is correct and useless.
-        let mut reporter = NativeTestProgressReporter::for_root("compiler_libtests::parser");
+        let mut reporter = NativeTestProgressReporter::new(Some("compiler_libtests::parser"));
         reporter.render(SUITE_STARTED);
         let rendered = reporter.render(CASE_OK);
         assert_eq!(rendered.len(), 1);
-        // The label is applied at emit time, so rendering stays independent of it; what matters here is that a
-        // labelled reporter still renders the same content for its root.
-        assert!(rendered[0].contains("layering::guards_the_boundary"));
-        assert_eq!(reporter.label.as_deref(), Some("compiler_libtests::parser"));
+        assert!(
+            rendered[0].contains("compiler_libtests::parser") && rendered[0].contains("layering::guards_the_boundary"),
+            "a case result must name both its root and itself: {}",
+            rendered[0]
+        );
+        assert!(
+            NativeTestProgressReporter::new(None).render(CASE_OK)[0].contains("layering::guards_the_boundary"),
+            "an unlabelled root still renders its cases"
+        );
     }
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
 
     use super::{
-        OvenNativeTestCaseCounts, OvenNativeTestCommandTiming, OvenNativeTestError, OvenNativeTestInventory,
-        OvenNativeTestRequest, parse_libtest_case_counts, parse_libtest_case_timings,
+        OvenNativeTestBatchRequest, OvenNativeTestCaseCounts, OvenNativeTestCommandTiming, OvenNativeTestError,
+        OvenNativeTestInventory, OvenNativeTestRequest, parse_libtest_case_counts, parse_libtest_case_timings,
         parse_native_test_command_timings, run_native_test_batch, run_native_test_batch_all,
-        run_native_test_batch_all_in_directory_with_timeout,
-        run_native_test_batch_all_in_directory_with_timeout_and_threads,
-        run_native_test_exact_in_directory_with_timeout, run_native_tests,
+        run_native_test_batch_all_for_request, run_native_test_exact_in_directory_with_timeout, run_native_tests,
         run_native_tests_exact_in_directory_with_timeout,
     };
 
@@ -1459,7 +1491,7 @@ mod tests {
                printf '%s\\n' 'generated::case: test'\n\
                exit 0\n\
              fi\n\
-             if [ \"$1\" = \"--test-threads=1\" ] && [ \"$2\" = \"--nocapture\" ] && [ \"$#\" -eq 2 ]; then\n\
+             if [ \"$*\" = \"--test-threads=1 --nocapture\" ]; then\n\
                exit 0\n\
              fi\n\
              printf 'unexpected native test arguments: %s\\n' \"$*\" >&2\n\
@@ -1498,7 +1530,7 @@ mod tests {
                printf '%s\\n' 'exact::selected: test' 'exact::other: test'\n\
                exit 0\n\
              fi\n\
-             if [ \"$1\" = \"--exact\" ] && [ \"$2\" = \"exact::selected\" ] && [ \"$3\" = \"--nocapture\" ] && [ \"$#\" -eq 3 ]; then\n\
+             if [ \"$*\" = \"--exact exact::selected --nocapture -Z unstable-options --format json --report-time\" ]; then\n\
                pwd > \"$INCAN_TEST_EXACT_WORKING_DIRECTORY_MARKER\"\n\
                printf '%s\\n' 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s'\n\
                exit 0\n\
@@ -1564,7 +1596,7 @@ mod tests {
                printf cargo > \"$INCAN_TEST_CARGO_MARKER\"\n\
                exit 97\n\
              fi\n\
-             if [ \"$1\" != \"--exact\" ] || [ \"$3\" != \"--nocapture\" ] || [ \"$#\" -ne 3 ]; then\n\
+             if [ \"$1\" != \"--exact\" ] || [ \"$3\" != \"--nocapture\" ] || [ \"$#\" -ne 8 ]; then\n\
                printf 'unexpected native test arguments: %s\\n' \"$*\" >&2\n\
                exit 62\n\
              fi\n\
@@ -1769,7 +1801,7 @@ mod tests {
                printf '%s\\n' 'scheduled::case: test'\n\
                exit 0\n\
              fi\n\
-             if [ \"$1\" = \"--test-threads=1\" ] && [ \"$2\" = \"--nocapture\" ] && [ \"$#\" -eq 2 ]; then\n\
+             if [ \"$*\" = \"--test-threads=1 --nocapture -Z unstable-options --format json --report-time\" ]; then\n\
                exit 0\n\
              fi\n\
              printf 'unexpected native test arguments: %s\\n' \"$*\" >&2\n\
@@ -1779,13 +1811,14 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions)?;
 
-        let report = run_native_test_batch_all_in_directory_with_timeout_and_threads(
-            &executable,
-            &BTreeMap::new(),
-            Some(output.path()),
-            Some(Duration::from_secs(5)),
-            1,
-        )?;
+        let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+            executable: &executable,
+            environment: &BTreeMap::new(),
+            working_directory: Some(output.path()),
+            timeout: Some(Duration::from_secs(5)),
+            test_threads: Some(1),
+            root_label: None,
+        })?;
         assert!(report.success, "{report:#?}");
         assert_eq!(report.inventory.names, ["scheduled::case"]);
         Ok(())
@@ -1845,12 +1878,14 @@ mod tests {
         fs::set_permissions(&executable, permissions)?;
 
         let started = Instant::now();
-        let report = run_native_test_batch_all_in_directory_with_timeout(
-            &executable,
-            &BTreeMap::new(),
-            Some(output.path()),
-            Some(Duration::from_millis(10)),
-        )?;
+        let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+            executable: &executable,
+            environment: &BTreeMap::new(),
+            working_directory: Some(output.path()),
+            timeout: Some(Duration::from_millis(10)),
+            test_threads: None,
+            root_label: None,
+        })?;
         let executable_display = executable.display().to_string();
         assert!(!report.success, "{report:#?}");
         assert!(report.timed_out, "{report:#?}");
@@ -1889,12 +1924,14 @@ mod tests {
             .status()?;
         assert!(status.success());
 
-        let report = run_native_test_batch_all_in_directory_with_timeout(
-            &executable,
-            &BTreeMap::new(),
-            Some(output.path()),
-            Some(Duration::from_secs(5)),
-        )?;
+        let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+            executable: &executable,
+            environment: &BTreeMap::new(),
+            working_directory: Some(output.path()),
+            timeout: Some(Duration::from_secs(5)),
+            test_threads: None,
+            root_label: None,
+        })?;
         assert!(report.success, "{report:#?}");
         assert!(!report.timed_out, "{report:#?}");
         assert_eq!(
@@ -1906,6 +1943,120 @@ mod tests {
             })
         );
         assert!(report.output.len() >= 2 * 1024 * 1024, "{}", report.output.len());
+        Ok(())
+    }
+
+    #[test]
+    fn every_root_reports_case_timings_without_being_asked() -> Result<(), Box<dyn std::error::Error>> {
+        use std::time::Duration;
+
+        let output = tempfile::tempdir()?;
+        let source = output.path().join("timed-native-test.rs");
+        let executable = output.path().join("timed-native-test");
+        fs::write(
+            &source,
+            "#[test]\n\
+             fn quick() {}\n\
+             #[test]\n\
+             fn slower() {\n\
+                 std::thread::sleep(std::time::Duration::from_millis(30));\n\
+             }\n",
+        )?;
+        let status = Command::new(rustc_path()?)
+            .arg("--test")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()?;
+        assert!(status.success());
+
+        let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+            executable: &executable,
+            environment: &BTreeMap::new(),
+            working_directory: Some(output.path()),
+            timeout: Some(Duration::from_secs(30)),
+            test_threads: Some(1),
+            root_label: None,
+        })?;
+
+        assert!(report.success, "{report:#?}");
+        let timed = report
+            .case_timings
+            .iter()
+            .map(|timing| timing.name.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            timed,
+            BTreeSet::from(["quick", "slower"]),
+            "no marker was set, so every case must still report a duration: {report:#?}"
+        );
+        let slower = report
+            .case_timings
+            .iter()
+            .find(|timing| timing.name == "slower")
+            .ok_or("the sleeping case reported no timing")?;
+        assert!(
+            slower.elapsed_ms >= 25,
+            "a case that slept 30ms reported {}ms: {report:#?}",
+            slower.elapsed_ms
+        );
+        assert_eq!(
+            report.case_counts,
+            Some(OvenNativeTestCaseCounts {
+                passed: 2,
+                failed: 0,
+                ignored: 0
+            }),
+            "counts come from the structured suite event: {report:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_case_that_fails_without_panicking_is_still_named() -> Result<(), Box<dyn std::error::Error>> {
+        use std::time::Duration;
+
+        let output = tempfile::tempdir()?;
+        let source = output.path().join("erroring-native-test.rs");
+        let executable = output.path().join("erroring-native-test");
+        // This repository's own convention: a fallible test returns `Result` rather than unwrapping. Such a failure
+        // never panics, so it has no `thread '<name>' panicked` line and no captured-output header to be read from.
+        fs::write(
+            &source,
+            "#[test]\n\
+             fn returns_err() -> Result<(), String> {\n\
+                 Err(\"the reason\".to_string())\n\
+             }\n",
+        )?;
+        let status = Command::new(rustc_path()?)
+            .arg("--test")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()?;
+        assert!(status.success());
+
+        let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+            executable: &executable,
+            environment: &BTreeMap::new(),
+            working_directory: Some(output.path()),
+            timeout: Some(Duration::from_secs(30)),
+            test_threads: Some(1),
+            root_label: None,
+        })?;
+
+        assert!(!report.success, "{report:#?}");
+        assert!(
+            !report.output.contains("panicked"),
+            "this case fails by returning Err, so nothing may have panicked: {report:#?}"
+        );
+        assert!(
+            report
+                .output
+                .lines()
+                .any(|line| line.contains("\"event\": \"failed\"") && line.contains("returns_err")),
+            "the structured stream is the only place this failure is named: {report:#?}"
+        );
         Ok(())
     }
 

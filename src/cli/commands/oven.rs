@@ -62,9 +62,8 @@ use crate::oven::loaf::{
     retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
 };
 use crate::oven::native_test::{
-    OvenNativeTestCaseCounts, OvenNativeTestCaseTiming, OvenNativeTestCommandTiming, OvenNativeTestRequest,
-    run_native_test_batch_all_in_directory_with_timeout,
-    run_native_test_batch_all_in_directory_with_timeout_and_threads, run_native_tests,
+    OvenNativeTestBatchReport, OvenNativeTestBatchRequest, OvenNativeTestCaseCounts, OvenNativeTestCaseTiming,
+    OvenNativeTestCommandTiming, OvenNativeTestRequest, run_native_test_batch_all_for_request, run_native_tests,
     run_native_tests_exact_in_directory_with_timeout,
 };
 use crate::oven::rustc::{
@@ -3108,6 +3107,33 @@ fn run_prepared_compiler_suite_children(
     Ok(report)
 }
 
+/// Report one root's progress through the suite on a single line.
+///
+/// The suite runs its roots on a bounded worker pool, and until each one's cases start streaming there was nothing
+/// on the console to say which of forty-odd roots was compiling or how far the run had got. One line per state
+/// change is enough to answer that, and it stays legible interleaved because every line names its root.
+fn announce_compiler_suite_root(state: &str, source_relative_path: &str, detail: Option<&str>) {
+    match detail {
+        Some(detail) => println!("{state:<10} {source_relative_path} ({detail})"),
+        None => println!("{state:<10} {source_relative_path}"),
+    }
+}
+
+/// Summarize one native root's terminal result for its announcement line.
+///
+/// A root that produced no libtest summary is reported as such rather than as zero cases: the two are different
+/// facts, and only the first means the process died before it could account for its work.
+fn compiler_suite_root_outcome_detail(report: &OvenNativeTestBatchReport) -> String {
+    let elapsed = format!("{:.1}s", report.timing.execution_elapsed_ms as f64 / 1_000.0);
+    match &report.case_counts {
+        Some(counts) => format!(
+            "{} passed, {} failed, {} ignored in {elapsed}",
+            counts.passed, counts.failed, counts.ignored
+        ),
+        None => format!("no libtest summary in {elapsed}"),
+    }
+}
+
 /// Execute one prepared direct-Rustc compiler-suite child with no Cargo process or store mutation.
 fn run_prepared_compiler_suite_child(
     child: PreparedCompilerSuiteChild<'_>,
@@ -3136,6 +3162,7 @@ fn run_prepared_compiler_suite_child(
     )?;
     match child.target.runner.as_str() {
         "rustc-test" => {
+            announce_compiler_suite_root("COMPILE", &child.target.source_relative_path, None);
             let bake_started = Instant::now();
             let bake = bake_trusted_direct_rustc_test(&OvenTrustedDirectRustcTargetRequest {
                 receipt,
@@ -3163,15 +3190,21 @@ fn run_prepared_compiler_suite_child(
                     Some(&working_directory),
                     Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
                 ),
-                None => run_native_test_batch_all_in_directory_with_timeout_and_threads(
-                    &bake.output,
-                    &child.environment,
-                    Some(&working_directory),
-                    Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
-                    libtest_threads,
-                ),
+                None => run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+                    executable: &bake.output,
+                    environment: &child.environment,
+                    working_directory: Some(&working_directory),
+                    timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                    test_threads: Some(libtest_threads),
+                    root_label: Some(&child.target.source_relative_path),
+                }),
             }
             .map_err(oven_error)?;
+            announce_compiler_suite_root(
+                if report.success { "ROOT OK" } else { "ROOT FAIL" },
+                &child.target.source_relative_path,
+                Some(&compiler_suite_root_outcome_detail(&report)),
+            );
             let failures = if report.success {
                 Vec::new()
             } else {
@@ -3214,6 +3247,7 @@ fn run_prepared_compiler_suite_child(
             })
         }
         "rustdoc-test" => {
+            announce_compiler_suite_root("DOCTEST", &child.target.source_relative_path, None);
             let temporary_directory = child.output.with_extension("rustdoc-tmp");
             let rustdoc_started = Instant::now();
             run_trusted_rustdoc_test(&OvenTrustedRustdocTestRequest {
@@ -3233,6 +3267,11 @@ fn run_prepared_compiler_suite_child(
                 timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
             })
             .map_err(oven_error)?;
+            announce_compiler_suite_root(
+                "DOCTEST OK",
+                &child.target.source_relative_path,
+                Some(&format!("{:.1}s", rustdoc_started.elapsed().as_secs_f64())),
+            );
             Ok(CompilerSuiteChildrenReport {
                 native_test_count: 0,
                 doctest_targets: 1,
@@ -3378,12 +3417,14 @@ fn run_planned_compiler_suite_children(
                 .map_err(oven_error)?;
                 let direct_rustc_bake_elapsed_ms = bake_started.elapsed().as_millis();
                 let working_directory = compiler_suite_target_working_directory(compiler_root, &source, target)?;
-                let report = run_native_test_batch_all_in_directory_with_timeout(
-                    &bake.output,
-                    &target_environment,
-                    Some(&working_directory),
-                    Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
-                )
+                let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+                    executable: &bake.output,
+                    environment: &target_environment,
+                    working_directory: Some(&working_directory),
+                    timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                    test_threads: None,
+                    root_label: Some(&target.source_relative_path),
+                })
                 .map_err(oven_error)?;
                 suite_report.native_test_count += report.inventory.names.len();
                 suite_report.native_test_roots.push(CompilerSuiteNativeTestRootReport {
@@ -5018,26 +5059,34 @@ fn write_native_test_failure_transcript(output: &Path, transcript: &str) -> CliR
 
 /// Collect every test libtest reported as failing, in the order it first named them.
 ///
-/// Two spellings have to be read because the suite runs libtest in both modes. With output captured, each failure
-/// body is introduced by `---- <name> stdout ----`. With output passed through, no such header is printed and the
-/// only place the test is named is the panic line, where libtest has set the thread name to the test name. Reading
-/// both keeps the roster complete in either mode, and de-duplicating keeps one entry per test when both appear.
-fn failing_test_names(output: &str) -> Vec<&str> {
-    let mut names = Vec::new();
+/// Three spellings have to be read. Oven's own roots stream structured events, where a `failed` event names the test
+/// exactly and covers every way a case can fail. The two text spellings remain for transcripts that did not come
+/// from that stream — a retained transcript from an older run, or one a nested program produced: with output
+/// captured each failure body is introduced by `---- <name> stdout ----`, and with output passed through the only
+/// place the test is named is the panic line, where libtest set the thread name to the test name.
+///
+/// The text spellings alone are not sufficient for this repository. A test that fails by returning `Err` never
+/// panics, so it has no thread-name line, which is why the structured event is read first and why it is the one
+/// spelling that cannot miss a failure.
+fn failing_test_names(output: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
+        let reported = failing_test_name_from_event(trimmed).map(str::to_string);
         let captured = trimmed
             .strip_prefix("---- ")
-            .and_then(|rest| rest.strip_suffix(" stdout ----"));
+            .and_then(|rest| rest.strip_suffix(" stdout ----"))
+            .map(str::to_string);
         let passed_through = trimmed
             .contains("panicked at")
             .then(|| trimmed.split_once("thread '"))
             .flatten()
             .and_then(|(_, rest)| rest.split_once('\''))
-            .map(|(name, _)| name);
-        let Some(name) = captured.or(passed_through).map(str::trim) else {
+            .map(|(name, _)| name.to_string());
+        let Some(name) = reported.or(captured).or(passed_through) else {
             continue;
         };
+        let name = name.trim().to_string();
         // A panic on the harness thread names the runner, not a test; it would add noise to every roster.
         if name.is_empty() || name == "main" || names.contains(&name) {
             continue;
@@ -5045,6 +5094,46 @@ fn failing_test_names(output: &str) -> Vec<&str> {
         names.push(name);
     }
     names
+}
+
+/// Recognize the structured event lines that belong in a bounded failure detail.
+///
+/// Without this the detail selector matches nothing in a structured transcript and falls back to printing all of it,
+/// which is the opposite of bounded. A failing case's event and the suite's terminal event are what carry the
+/// result; every passing case's event is noise here.
+fn is_structured_failure_line(line: &str) -> bool {
+    if failing_test_name_from_event(line).is_some() {
+        return true;
+    }
+    if !line.starts_with('{') {
+        return false;
+    }
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    event.get("type").and_then(serde_json::Value::as_str) == Some("suite")
+        && event.get("event").and_then(serde_json::Value::as_str) != Some("started")
+}
+
+/// Read one libtest structured event, returning the test name only when the event reports a failure.
+///
+/// A line that is not an event, or an event that reports any other outcome, yields nothing: the roster must name
+/// what failed and only what failed.
+fn failing_test_name_from_event(line: &str) -> Option<&str> {
+    if !line.starts_with('{') {
+        return None;
+    }
+    let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    if event.get("type").and_then(serde_json::Value::as_str) != Some("test")
+        || event.get("event").and_then(serde_json::Value::as_str) != Some("failed")
+    {
+        return None;
+    }
+    // Borrowed from the caller's line rather than the parsed value, which does not outlive this function.
+    let name = event.get("name").and_then(serde_json::Value::as_str)?;
+    line.match_indices(name)
+        .next()
+        .map(|(start, _)| &line[start..start + name.len()])
 }
 
 /// Keep terminal failure reporting actionable without dumping an unbounded libtest transcript into the CLI error path.
@@ -5077,7 +5166,8 @@ fn native_test_failure_summary(output: &str) -> String {
             || line.contains("panicked")
             || line.contains("Error:")
             || line.starts_with("error:")
-            || line.contains("test result:");
+            || line.contains("test result:")
+            || is_structured_failure_line(line);
         if is_relevant || panic_context_remaining > 0 {
             relevant.push(line);
         }
@@ -6153,6 +6243,28 @@ mod tests {
         assert_eq!(transcript, output.with_extension("libtest-output.txt"));
         assert_eq!(fs::read_to_string(transcript)?, "one failing libtest\n");
         Ok(())
+    }
+
+    #[test]
+    fn a_structured_failure_is_named_even_though_nothing_panicked() {
+        // Shapes captured from a real libtest binary run with `-Z unstable-options --format json --report-time`
+        // under `--nocapture`, where a case that returns `Err` produces no panic line at all.
+        let summary = native_test_failure_summary(
+            "{ \"type\": \"suite\", \"event\": \"started\", \"test_count\": 2 }\n\
+             { \"type\": \"test\", \"event\": \"started\", \"name\": \"manifest::rejects_legacy\" }\n\
+             { \"type\": \"test\", \"name\": \"manifest::rejects_legacy\", \"event\": \"failed\", \"exec_time\": 0.004 }\n\
+             { \"type\": \"test\", \"name\": \"manifest::finds_loaf\", \"event\": \"ok\", \"exec_time\": 0.001 }\n\
+             { \"type\": \"suite\", \"event\": \"failed\", \"passed\": 1, \"failed\": 1, \"ignored\": 0, \"measured\": 0, \"filtered_out\": 0, \"exec_time\": 0.006 }\n",
+        );
+
+        assert!(
+            summary.contains("failing tests (1):") && summary.contains("manifest::rejects_legacy"),
+            "the roster must name a case that failed without panicking: {summary}"
+        );
+        assert!(
+            !summary.contains("manifest::finds_loaf"),
+            "only failures belong in the roster: {summary}"
+        );
     }
 
     #[test]
