@@ -10,7 +10,7 @@
 incan inspect interop-plan [PATH] --target <TRIPLE> [--format text|json]
 ```
 
-`PATH` defaults to the current directory. It must select a standalone package or one project member of an Incan workspace. The selected package must contain an `incan.toml`, an `[[interop.c.targets]]` declaration with the exact selected target, and a current canonical `oven.lock`. For a workspace member, the command reads that member's projection from the single workspace-root lock rather than accepting a member-local lock. It re-hashes every declared interop file and refuses to emit a plan when the selected projection is missing or stale.
+`PATH` defaults to the current directory. It must select a standalone package or one project member of an Incan workspace. The selected package must contain an `loaf.toml`, an `[[interop.c.targets]]` declaration with the exact selected target, and a current canonical `oven.lock`. For a workspace member, the command reads that member's projection from the single workspace-root lock rather than accepting a member-local lock. It re-hashes every declared interop file and refuses to emit a plan when the selected projection is missing or stale.
 
 Use text output to audit the selected actions:
 

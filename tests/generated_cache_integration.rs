@@ -100,7 +100,7 @@ fn write_dependency_project(root: &Path) -> Result<(), Box<dyn std::error::Error
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("tests"))?;
     fs::write(
-        root.join("incan.toml"),
+        root.join("loaf.toml"),
         "[project]\nname = \"generated_cache_fixture\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[rust-dependencies]\nserde_json = \"1\"\n",
     )?;
     fs::write(
@@ -126,7 +126,7 @@ fn write_release_json_authority_project(root: &Path) -> Result<(), Box<dyn std::
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("tests"))?;
     fs::write(
-        root.join("incan.toml"),
+        root.join("loaf.toml"),
         "[project]\nname = \"completed_output_registry_fixture\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
     )?;
     fs::write(root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
@@ -372,7 +372,7 @@ fn explicitly_baked_project_reuses_release_json_authority_without_cargo() -> Res
     );
     fs::write(&source_path, &original_source)?;
 
-    let manifest_path = project_root.join("incan.toml");
+    let manifest_path = project_root.join("loaf.toml");
     let original_manifest = fs::read_to_string(&manifest_path)?;
     let drifted_manifest = format!("{original_manifest}\n[rust-dependencies]\nsemver = \"1\"\n");
     assert_ne!(original_manifest, drifted_manifest);

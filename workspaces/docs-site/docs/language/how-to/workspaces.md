@@ -13,7 +13,7 @@ incan new --dir packages/api --yes
 incan new --dir packages/worker --yes
 ```
 
-Create `incan.toml` at `service-workspace/incan.toml`:
+Create `loaf.toml` at `service-workspace/loaf.toml`:
 
 ```toml
 [workspace]
@@ -21,7 +21,7 @@ members = ["packages/*"]
 default-members = ["api"]
 ```
 
-The root is virtual because it has `[workspace]` but no `[project]`. A virtual root must select at least one member. Every member selected by `members` must contain its own `incan.toml` with a unique project name.
+The root is virtual because it has `[workspace]` but no `[project]`. A virtual root must select at least one member. Every member selected by `members` must contain its own `loaf.toml` with a unique project name.
 
 Run the inspector before building:
 
@@ -70,7 +70,7 @@ default-members = ["api"]
 serde = { version = "1", default-features = false }
 ```
 
-Then opt a member into that declaration from `packages/api/incan.toml`:
+Then opt a member into that declaration from `packages/api/loaf.toml`:
 
 ```toml
 [project]
@@ -116,7 +116,7 @@ Run `incan workspace inspect` after changing membership. Common failures have sp
 
 | Failure                                                                       | Fix                                                                                                            |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| A literal member path has no `incan.toml`.                                    | Correct the root-relative path or initialize the member project.                                               |
+| A literal member path has no `loaf.toml`.                                    | Correct the root-relative path or initialize the member project.                                               |
 | A member, exclusion, or selector escapes the workspace root.                  | Use a non-empty root-relative path that remains beneath the canonical root.                                    |
 | Two members use the same project name.                                        | Give every member a unique `[project].name`; name-based selection must be unambiguous.                         |
 | A `default-members` entry matches no member or is ambiguous.                  | Use a unique project name or root-relative member path.                                                        |

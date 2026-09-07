@@ -393,7 +393,7 @@ mod tests {
     fn inspection_projection_reports_scope_and_stale_member_locks() -> TestResult {
         let root = tempfile::tempdir()?;
         fs::write(
-            root.path().join("incan.toml"),
+            root.path().join("loaf.toml"),
             r#"
 [project]
 name = "root"
@@ -404,7 +404,7 @@ members = ["packages/member"]
         )?;
         fs::create_dir_all(root.path().join("packages/member"))?;
         fs::write(
-            root.path().join("packages/member/incan.toml"),
+            root.path().join("packages/member/loaf.toml"),
             "[project]\nname = \"member\"\n",
         )?;
         fs::write(root.path().join("packages/member/oven.lock"), "obsolete")?;

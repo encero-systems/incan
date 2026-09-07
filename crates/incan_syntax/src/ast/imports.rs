@@ -43,14 +43,14 @@ pub enum ImportKind {
     From { module: ImportPath, items: Vec<ImportItem> },
     /// `import pub::mylib` or `import pub::mylib.widgets` - Incan library namespace import
     PubLibrary {
-        /// Library dependency key from `incan.toml [dependencies]`
+        /// Library dependency key from `loaf.toml [dependencies]`
         library: Ident,
         /// Public module namespace below the dependency root.
         path: Vec<Ident>,
     },
     /// `from pub::mylib import Widget` or `from pub::mylib.widgets import Widget`
     PubFrom {
-        /// Library dependency key from `incan.toml [dependencies]`
+        /// Library dependency key from `loaf.toml [dependencies]`
         library: Ident,
         /// Public module namespace below the dependency root.
         path: Vec<Ident>,

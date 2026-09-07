@@ -52,7 +52,7 @@ The example desugarer walks those typed artifacts and lowers the block to a visi
 Files worth reading in order:
 
 - `consumer/src/main.incn` - the user-facing DSL surface.
-- `producer/incan.toml` - points the producer library at its vocab companion crate.
+- `producer/loaf.toml` - points the producer library at its vocab companion crate.
 - `producer/vocab_companion/src/lib.rs` - registers the `query:` block and scoped surfaces.
 - `producer/vocab_companion/src/desugar.rs` - consumes typed scoped-surface artifacts and emits ordinary Incan AST.
 

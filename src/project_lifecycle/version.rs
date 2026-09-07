@@ -1,6 +1,6 @@
 //! SemVer policy for project version changes.
 //!
-//! RFC 015 defines `incan version` as a project-version operation over the `incan.toml` metadata version. This module
+//! RFC 015 defines `incan version` as a project-version operation over the `loaf.toml` metadata version. This module
 //! keeps that policy independent from CLI parsing and manifest writes: callers provide the current version and an
 //! already-decided operation, and receive the old/new versions to persist or display.
 

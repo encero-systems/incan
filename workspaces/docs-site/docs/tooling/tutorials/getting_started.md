@@ -43,7 +43,7 @@ hello/
 │   └── test_main.incn     # Starter test for the greeting function
 ├── README.md
 ├── .gitignore
-└── incan.toml             # Project manifest with a main script and requires-incan constraint
+└── loaf.toml             # Project manifest with a main script and requires-incan constraint
 ```
 
 <section class="inc-learning-panel inc-learning-panel--result" data-label="Result" markdown="1">

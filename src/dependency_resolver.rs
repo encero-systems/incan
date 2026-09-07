@@ -1,7 +1,7 @@
-//! Rust dependency resolution for `rust::` imports and `incan.toml`.
+//! Rust dependency resolution for `rust::` imports and `loaf.toml`.
 //!
 //! Implements RFC 013 resolution rules:
-//! - `incan.toml` dependencies override inline annotations
+//! - `loaf.toml` dependencies override inline annotations
 //! - inline versions/features are merged across sites
 //! - known-good defaults apply only when no explicit config exists
 //! - dev-dependencies are restricted to test contexts
@@ -280,7 +280,7 @@ fn merge_inline_imports(
                         import.span,
                     )
                     .with_hint(format!(
-                        "Move `{}` to `[rust-dependencies]` in incan.toml for `rust::` imports.",
+                        "Move `{}` to `[rust-dependencies]` in loaf.toml for `rust::` imports.",
                         import.crate_name
                     )),
                     import,
@@ -303,12 +303,12 @@ fn merge_inline_imports(
                     error: with_rust_import_context(
                         CompileError::new(
                             format!(
-                                "inline Rust dependency annotation for `{}` is not allowed because it is configured in incan.toml",
+                                "inline Rust dependency annotation for `{}` is not allowed because it is configured in loaf.toml",
                                 import.crate_name
                             ),
                             import.span,
                         )
-                        .with_hint("Remove the inline annotation or update incan.toml."),
+                        .with_hint("Remove the inline annotation or update loaf.toml."),
                         import,
                     ),
                 });
@@ -382,7 +382,7 @@ fn merge_inline_imports(
                             merged_spec.first_site.span,
                         )
                         .with_hint(format!(
-                            "Add a version annotation: `import rust::{crate_name} @ \"1.0\"` or add it to incan.toml."
+                            "Add a version annotation: `import rust::{crate_name} @ \"1.0\"` or add it to loaf.toml."
                         )),
                         &merged_spec.first_site,
                     ),
@@ -453,6 +453,12 @@ fn merge_inline_spec(existing: &mut InlineMergedSpec, next: &InlineRustImport) -
     Ok(())
 }
 
+/// Fold a crate declared in both `[rust-dependencies]` and `[rust-dev-dependencies]` into the normal table.
+///
+/// One crate resolves to one version in a build, so the two entries must agree on everything that identifies it —
+/// version, source, default features, optionality, and renamed package. Features are the exception: they are additive,
+/// so the dev entry's features join the normal one rather than conflicting with it. Disagreement on identity is
+/// reported per crate rather than on the first one found, so an author sees every incompatible pair at once.
 fn merge_overlapping_dev_dependencies(
     deps: &mut HashMap<String, DependencySpec>,
     dev_deps: &mut HashMap<String, DependencySpec>,
@@ -480,7 +486,7 @@ fn merge_overlapping_dev_dependencies(
         {
             let file_path = manifest_path
                 .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("incan.toml"));
+                .unwrap_or_else(|| PathBuf::from("loaf.toml"));
             errors.push(DependencyError {
                 file_path,
                 error: CompileError::new(
@@ -512,6 +518,11 @@ fn normalize_specs(specs: &mut HashMap<String, DependencySpec>) {
     }
 }
 
+/// Reject an inline `rust::` import of a crate that is declared optional and not enabled for this build.
+///
+/// Cargo would fail later with an unresolved-crate error that names neither the import nor the feature that would fix
+/// it. Reporting here attributes the failure to the import's own span, and to the first import of each crate rather
+/// than to every one of them, so a crate used in twenty places produces one diagnostic.
 fn validate_optional_imports(
     inline_imports: &[InlineRustImport],
     deps: &HashMap<String, DependencySpec>,
@@ -549,7 +560,7 @@ fn validate_optional_imports(
                 import.span,
             )
             .with_note(format!(
-                "The dependency `{}` is declared optional in incan.toml.",
+                "The dependency `{}` is declared optional in loaf.toml.",
                 crate_name
             ))
             .with_hint(format!(
@@ -1011,7 +1022,7 @@ test_lib = "0.5"
         Ok(())
     }
 
-    // ---- Phase 3: Resolution precedence (incan.toml > inline > known-good) ----
+    // ---- Phase 3: Resolution precedence (loaf.toml > inline > known-good) ----
 
     #[test]
     fn manifest_takes_precedence_over_known_good() -> TestResult {

@@ -1,10 +1,10 @@
-# Project configuration (`incan.toml`)
+# Project configuration (`loaf.toml`)
 
-This is the reference for the `incan.toml` project manifest format. For a practical guide to managing dependencies, see: [Managing dependencies](../how-to/dependencies.md).
+This is the reference for the `loaf.toml` project manifest format. For a practical guide to managing dependencies, see: [Managing dependencies](../how-to/dependencies.md).
 
 ## Overview
 
-`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, optional Oven interop requirements, and optional vocab companion crate settings. Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.
+`loaf.toml` is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, optional Oven interop requirements, and optional vocab companion crate settings. Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.
 
 ```text
 my_project/
@@ -12,7 +12,7 @@ my_project/
 │   └── main.incn
 ├── tests/
 │   └── test_main.incn
-├── incan.toml            # Project manifest
+├── loaf.toml            # Project manifest
 └── oven.lock            # Generated lock file (commit to VCS)
 ```
 
@@ -327,7 +327,7 @@ Incan dependency table fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `path` | string | Local library project path, relative to `incan.toml`. |
+| `path` | string | Local library project path, relative to `loaf.toml`. |
 | `optional` | bool | Keep the dependency edge inactive until a package feature selects `dep:<name>`. |
 | `default-features` | bool | Select the dependency's `default` feature; defaults to `true`. |
 | `features` | list of strings | Public Incan features requested from the dependency. |
@@ -371,7 +371,7 @@ serde = { version = "1.0", features = ["derive"], default-features = true }
 | `branch`           | string | Git branch (requires `git`)                              |
 | `tag`              | string | Git tag (requires `git`)                                 |
 | `rev`              | string | Git commit hash (requires `git`)                         |
-| `path`             | string | Local path, relative to `incan.toml` location            |
+| `path`             | string | Local path, relative to `loaf.toml` location            |
 
 ## `[rust-dev-dependencies]`
 
@@ -444,7 +444,7 @@ pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 
 ### Path
 
-Local path dependencies, relative to the `incan.toml` location:
+Local path dependencies, relative to the `loaf.toml` location:
 
 ```toml
 [rust-dependencies]

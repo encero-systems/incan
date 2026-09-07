@@ -1225,7 +1225,7 @@ mod tests {
     fn lsp_rust_inspect_workspace_includes_resolved_inline_and_stdlib_requirements()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let manifest_path = tmp.path().join("incan.toml");
+        let manifest_path = tmp.path().join("loaf.toml");
         std::fs::write(&manifest_path, "[project]\nname = \"demo\"\n")?;
         let manifest = ProjectManifest::from_str("[project]\nname = \"demo\"\n", &manifest_path)?;
 
@@ -2389,7 +2389,7 @@ mod lsp_contract_model_command_tests {
     fn write_project_bundle(root: &std::path::Path) -> std::io::Result<()> {
         std::fs::create_dir_all(root.join("contracts"))?;
         std::fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"[project]
 name = "lsp_contract_model"
 version = "0.1.0"

@@ -90,7 +90,7 @@ Libraries should acquire loggers and emit events, but should not call `basic_con
 
 ## Boundaries
 
-`std.logging` uses `std.datetime` for timestamps and ordinary `rust::std::io` imports for stdout/stderr delivery. It does not use a Rust backing logging module. Project defaults in `incan.toml`, `INCAN_LOG_*` environment overrides, `incan run --log-*` flags, exporters, and colorized terminal output are not implemented yet.
+`std.logging` uses `std.datetime` for timestamps and ordinary `rust::std::io` imports for stdout/stderr delivery. It does not use a Rust backing logging module. Project defaults in `loaf.toml`, `INCAN_LOG_*` environment overrides, `incan run --log-*` flags, exporters, and colorized terminal output are not implemented yet.
 
 ## See also
 
