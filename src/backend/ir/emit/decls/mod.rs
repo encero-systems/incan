@@ -852,7 +852,9 @@ impl<'a> IrEmitter<'a> {
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })
-        } else if path.len() == 1 && !is_incan_source_stdlib {
+        } else if path.len() == 1 {
+            // Unaliased root modules are already defined by the project. This also covers `std.prelude`, whose
+            // canonical import path is the SDK facade root; reimporting it would duplicate `__incan_std`.
             Ok(quote! {})
         } else if export_module_import {
             Ok(quote! {
