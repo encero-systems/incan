@@ -13,8 +13,8 @@ model Project:
 
 
 @derive(toml)
-model Manifest:
-    """A representative authored project document with a nested project table."""
+model SettingsDocument:
+    """An arbitrary settings document isolates typed boolean and list validation from Loaf policy."""
 
     project: Project
     features: list[str]
@@ -36,6 +36,31 @@ model Lock:
 
     version: int
     packages: list[Package]
+
+
+@derive(toml)
+model ScriptProject:
+    """Loaf project identity includes a scripts table owned by the project section."""
+
+    name: str
+    version: str
+    scripts: Dict[str, str]
+
+
+@derive(toml)
+model LocalDependency:
+    """An inline dependency entry keeps its source-relative project path."""
+
+    path: str
+
+
+@derive(toml)
+model LoafManifest:
+    """Public loaf.toml shape with project scripts, Rust dependency alias and local dependency tables."""
+
+    project: ScriptProject
+    rust_dependencies as "rust-dependencies": Dict[str, str]
+    dependencies: Dict[str, LocalDependency]
 
 
 @derive(toml)
@@ -93,11 +118,11 @@ model OvenLock:
 def run() -> Result[None, TomlError]:
     """Round-trip representative Loaf shapes and exercise source-bearing structural failures."""
     source = "features = [\"json\", \"toml\"]\nenabled = true\n[project]\nname = \"café\"\nversion = \"0.1.0\"\n"
-    manifest = deserialize[Manifest](source)?
+    manifest = deserialize[SettingsDocument](source)?
     assert manifest.project.name == "café"
     assert manifest.features == ["json", "toml"]
     assert manifest.enabled
-    restored = deserialize[Manifest](serialize(manifest)?)?
+    restored = deserialize[SettingsDocument](serialize(manifest)?)?
     assert restored.project.version == "0.1.0"
 
     lock_source = "version = 1\n[[packages]]\nname = \"app\"\nversion = \"1.0.0\"\ndependencies = [\"core\"]\n[[packages]]\nname = \"core\"\nversion = \"0.6.0\"\ndependencies = []\n"
@@ -106,6 +131,13 @@ def run() -> Result[None, TomlError]:
     assert len(restored_lock.packages) == 2
     assert restored_lock.packages[0].dependencies == ["core"]
     assert restored_lock.packages[1].name == "core"
+
+    loaf_source = "[project]\nname = \"regex_tutorial\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"main.incn\"\n[rust-dependencies]\nregex = \"1\"\n[dependencies]\nhelpers = { path = \"../helpers\" }\n"
+    loaf = deserialize[LoafManifest](loaf_source)?
+    restored_loaf = deserialize[LoafManifest](serialize(loaf)?)?
+    assert restored_loaf.project.scripts["main"] == "main.incn"
+    assert restored_loaf.rust_dependencies["regex"] == "1"
+    assert restored_loaf.dependencies["helpers"].path == "../helpers"
 
     oven_source = "[incan]\nformat = 2\nincan-version = \"0.6.0-dev.3\"\ndeps-fingerprint = \"sha256:example\"\ncargo-features = []\n[semantic.sdk]\nidentity = \"incan@0.6.0-dev.3\"\ninventory_digest = \"sha256:inventory\"\nprofile = \"default\"\n[[semantic.sdk.components]]\nid = \"stdlib-data\"\nversion = \"0.6.0-dev.3\"\nreason = \"profile:default\"\n[cargo]\nlock = \"\"\"\nversion = 4\n[[package]]\nname = \"example\"\nversion = \"1.0.0\"\n\"\"\"\n"
     oven_lock = deserialize[OvenLock](oven_source)?
@@ -201,7 +233,9 @@ def run() -> Result[None, TomlError]:
         Err(error) =>
             assert error.line == Some(1)
 
-    match deserialize[Manifest]("features = []\nenabled = \"wrong\"\n[project]\nname = \"café\"\nversion = \"0.1\"\n"):
+    match deserialize[SettingsDocument](
+        "features = []\nenabled = \"wrong\"\n[project]\nname = \"café\"\nversion = \"0.1\"\n",
+    ):
         Ok(_) =>
             assert false, "wrong boolean accepted"
         Err(error) =>
