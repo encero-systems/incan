@@ -3495,19 +3495,19 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-darwin"
 headers = ["fixture.h"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "system"
 capability = "system.fixture"
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["fixture"]
 name = "Fixture"
 artifacts = ["fixture"]
@@ -6099,21 +6099,21 @@ fn lock_records_oven_interop_requirements_and_detects_input_drift() -> Result<()
         "oven_interop_lock",
         r#"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "x86_64-unknown-linux-gnu"
 toolchain = { capability = "clang", version = ">=18, <19" }
 headers = ["interop/include/bridge.h"]
 definitions = ["FIXTURE=1"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "static"
 path = "interop/lib/libfixture.a"
 
-[[oven.interop.targets.shims]]
+[[interop.c.targets.shims]]
 name = "fixture_bridge"
 language = "c"
 sources = ["interop/src/bridge.c"]
@@ -6188,15 +6188,15 @@ fn lock_records_android_platform_requirements_without_selecting_a_local_sdk() ->
         "oven_android_platform_lock",
         r#"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-linux-android"
 toolchain = { capability = "android-ndk", version = ">=29, <30" }
 sdk = { capability = "android", version = ">=36, <37" }
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "android"
 api-level = 34
 "#,
@@ -6231,27 +6231,27 @@ fn inspect_interop_plan_is_locked_complete_and_relocatable() -> Result<(), Box<d
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-linux-android"
 toolchain = { capability = "android-ndk", version = ">=29, <30" }
 sdk = { capability = "android", version = ">=36, <37" }
 headers = ["interop/include/runtime.h"]
 definitions = ["TFLITE_STATIC_MEMORY=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "android"
 api-level = 34
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "llama"
 kind = "static"
 path = "interop/lib/libllama.a"
 dependencies = ["tflite"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "tflite"
 kind = "bundled"
 path = "interop/lib/libtensorflowlite_c.so"
@@ -6260,17 +6260,17 @@ placement = "jniLibs/arm64-v8a"
 minimum-platform = "21"
 dependencies = ["log"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "log"
 kind = "system"
 capability = "android.library.log"
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["runtime"]
 name = "Runtime"
 artifacts = ["llama", "tflite", "log"]
 
-[[oven.interop.targets.shims]]
+[[interop.c.targets.shims]]
 name = "llama_bridge"
 language = "cxx"
 sources = ["interop/src/llama_bridge.cc"]
@@ -6412,20 +6412,20 @@ fn inspect_interop_plan_uses_the_selected_workspace_member_lock_projection() -> 
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-ios"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "iphoneos", version = ">=18, <19" }
 headers = ["interop/include/accelerate_bridge.h"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "ios"
 deployment-target = "13.0"
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "accelerate"
 kind = "system"
 capability = "apple.framework.Accelerate"
@@ -6482,16 +6482,16 @@ fn check_verifies_c_bindings_against_a_declared_android_interop_target() -> Resu
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-linux-android"
 toolchain = { capability = "android-ndk", version = ">=29, <30" }
 sdk = { capability = "android", version = ">=36, <37" }
 definitions = ["INCAN_ANDROID_FIXTURE=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "android"
 api-level = 34
 "#,
@@ -6531,7 +6531,7 @@ fn check_rejects_an_undeclared_interop_target() -> Result<(), Box<dyn std::error
     )?;
     assert_failure(&output, "undeclared Oven interop target selection");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("requires an [oven.interop] declaration in incan.toml"),
+        String::from_utf8_lossy(&output.stderr).contains("requires an [interop.c] declaration in incan.toml"),
         "unexpected undeclared-target diagnostic:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -6553,19 +6553,19 @@ fn oven_interop_bake_bootstraps_direct_c_then_locked_run_uses_the_sealed_plan() 
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-darwin"
 headers = ["interop/include/fixture.h"]
 
-[[oven.interop.targets.artifacts]]
+[[interop.c.targets.artifacts]]
 name = "fixture"
 kind = "static"
 path = "interop/lib/libfixture.a"
 
-[[oven.interop.targets.bindings]]
+[[interop.c.targets.bindings]]
 module = ["fixture"]
 name = "Fixture"
 artifacts = ["fixture"]
@@ -6690,16 +6690,16 @@ fn check_verifies_c_bindings_against_a_declared_ios_interop_target() -> Result<(
 [sdk]
 profile = "minimal"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-ios"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "iphoneos", version = ">=18, <19" }
 definitions = ["INCAN_IOS_FIXTURE=1"]
 
-[oven.interop.targets.platform]
+[interop.c.targets.platform]
 kind = "ios"
 deployment-target = "13.0"
 "#,

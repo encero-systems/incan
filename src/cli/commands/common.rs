@@ -5191,7 +5191,7 @@ fn verify_checked_c_bindings(
 ///
 /// Checked bindings keep the authored, package-relative header spelling in their public descriptor and lock identity.
 /// The verifier alone needs a concrete file location. Restricting this translation to a header declared under
-/// `[oven.interop]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
+/// `[interop.c]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
 fn resolve_package_owned_c_binding_header(
     manifest: Option<&ProjectManifest>,
     binding: &CBindingDescriptor,
@@ -5202,7 +5202,7 @@ fn resolve_package_owned_c_binding_header(
     if Path::new(&binding.header).is_absolute() {
         return binding.clone();
     }
-    let declared = manifest.oven_interop().is_some_and(|interop| {
+    let declared = manifest.interop_c().is_some_and(|interop| {
         interop.targets.iter().any(|target| {
             target.headers.iter().any(|header| header == &binding.header)
                 || target
@@ -5335,7 +5335,7 @@ mod tests {
     #[test]
     fn package_declared_c_header_is_resolved_only_for_verification() -> Result<(), Box<dyn std::error::Error>> {
         let manifest = ProjectManifest::from_str(
-            "[project]\nname = \"c_header_fixture\"\n\n[oven.interop]\nschema = 1\n\n[[oven.interop.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/bridge.h\"]\n",
+            "[project]\nname = \"c_header_fixture\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/bridge.h\"]\n",
             Path::new("/workspace/c_header_fixture/incan.toml"),
         )?;
         let binding = CBindingDescriptor {

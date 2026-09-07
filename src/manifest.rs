@@ -12,7 +12,7 @@ use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 use toml_edit::{Array as EditArray, Document, DocumentMut, Item, Table, Value as EditValue};
 
-use crate::oven_interop::{OvenInteropSection, OvenSection};
+use crate::oven_interop::{InteropCSection, InteropSection};
 
 /// The canonical manifest filename that the compiler searches for.
 pub const MANIFEST_FILENAME: &str = "incan.toml";
@@ -476,7 +476,7 @@ pub struct WritableManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sdk: Option<SdkSection>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub oven: Option<OvenSection>,
+    pub interop: Option<InteropSection>,
 }
 
 impl WritableManifest {
@@ -501,8 +501,8 @@ pub struct ProjectManifest {
     pub tool: Option<ToolSection>,
     /// `[sdk]` profile and component selection (optional).
     pub sdk: Option<SdkSection>,
-    /// `[oven]` build-plan requirements interpreted by Oven.
-    pub oven: Option<OvenSection>,
+    /// `[interop]` declared foreign-binding requirements, one table per binding kind.
+    pub interop: Option<InteropSection>,
     /// `[workspace]` topology metadata when this manifest is a workspace root.
     pub workspace: Option<WorkspaceSection>,
     /// `[dependencies]` (Incan library dependencies).
@@ -590,9 +590,9 @@ impl ProjectManifest {
         self.sdk.as_ref()
     }
 
-    /// Target-specific Oven interop requirements, if the project declares them.
-    pub fn oven_interop(&self) -> Option<&OvenInteropSection> {
-        self.oven.as_ref().and_then(|oven| oven.interop.as_ref())
+    /// Target-specific checked C interop requirements, if the project declares them.
+    pub fn interop_c(&self) -> Option<&InteropCSection> {
+        self.interop.as_ref().and_then(|interop| interop.c.as_ref())
     }
 
     /// Normal Rust dependencies from the manifest.
@@ -844,7 +844,14 @@ struct RawManifest {
     #[serde(default)]
     sdk: Option<SdkSection>,
     #[serde(default)]
-    oven: Option<OvenSection>,
+    interop: Option<InteropSection>,
+    /// The retired `[oven.*]` root, accepted by the parser only so it can be rejected by name.
+    ///
+    /// `deny_unknown_fields` would otherwise answer a project that still authors `[oven.interop]` with a generic
+    /// unknown-field error listing every table this manifest accepts, which does not say where the declarations went.
+    /// Typed as a raw value rather than a schema: the point is to recognize the root, not to keep parsing it.
+    #[serde(default)]
+    oven: Option<toml::Value>,
     #[serde(default)]
     workspace: Option<WorkspaceSection>,
     #[serde(default)]
@@ -1076,10 +1083,19 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
 
     validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
     validate_requires_incan_constraints(&raw, &spans, path)?;
-    if let Some(interop) = raw.oven.as_ref().and_then(|oven| oven.interop.as_ref()) {
-        interop
+    if raw.oven.is_some() {
+        return Err(manifest_invalid(
+            path,
+            spans.table_location(&["oven"]),
+            "the `[oven.*]` table root is not read: a manifest is already Oven's authored project document, so tables \
+             name their own semantic domain instead. `[oven.interop]` in particular has moved to `[interop.c]` — \
+             rename it and `[[oven.interop.targets]]` to `[[interop.c.targets]]`; the table contents are unchanged.",
+        ));
+    }
+    if let Some(interop_c) = raw.interop.as_ref().and_then(|interop| interop.c.as_ref()) {
+        interop_c
             .validate()
-            .map_err(|message| manifest_invalid(path, spans.table_location(&["oven", "interop"]), message))?;
+            .map_err(|message| manifest_invalid(path, spans.table_location(&["interop", "c"]), message))?;
     }
     if let Some(vocab) = &raw.vocab {
         if let Some(crate_path) = &vocab.crate_path {
@@ -1106,7 +1122,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         vocab: raw.vocab,
         tool: raw.tool,
         sdk: raw.sdk,
-        oven: raw.oven,
+        interop: raw.interop,
         workspace: raw.workspace,
         library_dependencies: library_dependencies.specs,
         rust_dependencies: rust_dependencies.specs,
@@ -2065,6 +2081,47 @@ mod tests {
             rendered.contains("Cargo-compatibility mode"),
             "must explain how to select Cargo deliberately: {rendered}"
         );
+    }
+
+    #[test]
+    fn the_c_interop_table_parses_under_its_loaf_level_root() -> TestResult {
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"demo\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"include/bridge.h\"]\n",
+            Path::new("incan.toml"),
+        )?;
+        let interop_c = manifest
+            .interop_c()
+            .ok_or("manifest did not expose its [interop.c] table")?;
+        assert_eq!(interop_c.schema, crate::oven_interop::INTEROP_C_SCHEMA_VERSION);
+        assert_eq!(interop_c.targets.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_retired_interop_root_is_rejected_by_name_rather_than_ignored() -> TestResult {
+        // RFC 117 moves this table to the Loaf-level `[interop]` namespace. A project that still authors the old
+        // spelling must be told where the declarations went, not handed the generic unknown-field list that
+        // `deny_unknown_fields` would otherwise produce -- and must never be parsed as if it had declared nothing.
+        let rendered = match ProjectManifest::from_str(
+            "[project]\nname = \"demo\"\n\n[oven.interop]\nschema = 1\n\n[[oven.interop.targets]]\ntarget = \"aarch64-apple-darwin\"\n",
+            Path::new("incan.toml"),
+        ) {
+            Ok(_) => return Err("a manifest authoring the retired interop root must be rejected".into()),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            rendered.contains("[oven.interop]") && rendered.contains("[interop.c]"),
+            "must name both the retired and the current spelling: {rendered}"
+        );
+        assert!(
+            rendered.contains("[oven.*]"),
+            "must reject the whole retired root, not just the one table this project happened to author: {rendered}"
+        );
+        assert!(
+            rendered.contains("[[interop.c.targets]]"),
+            "must name the nested table too, since renaming only the root leaves the manifest invalid: {rendered}"
+        );
+        Ok(())
     }
 
     #[test]
