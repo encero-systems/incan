@@ -1,0 +1,11 @@
+"""
+`host.fs` authority for `std.runtime`.
+
+Reads and writes are separate capabilities so a grant can allow one without the other.
+"""
+
+pub capability read:
+    description = "Read from the host filesystem"
+
+pub capability write:
+    description = "Write to the host filesystem"

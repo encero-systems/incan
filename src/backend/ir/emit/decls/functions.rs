@@ -670,7 +670,7 @@ impl<'a> IrEmitter<'a> {
             })
             .collect();
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
-        let body_stmts = self.emit_stmts(&func.body)?;
+        let body_stmts = self.emit_function_body(&func.body, func.is_generator)?;
         *self.current_function_return_type.borrow_mut() = None;
 
         let async_kw = if func.is_async {
@@ -1067,7 +1067,7 @@ impl<'a> IrEmitter<'a> {
         let static_init_stmt = self.emit_module_static_init_call();
 
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
-        let body_stmts = self.emit_stmts(&func.body)?;
+        let body_stmts = self.emit_function_body(&func.body, func.is_generator)?;
         *self.current_function_return_type.borrow_mut() = None;
         let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
@@ -1364,7 +1364,7 @@ impl<'a> IrEmitter<'a> {
             })
         } else {
             *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
-            let body_stmts = self.emit_stmts(&func.body)?;
+            let body_stmts = self.emit_function_body(&func.body, func.is_generator)?;
             *self.current_function_return_type.borrow_mut() = None;
 
             let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);

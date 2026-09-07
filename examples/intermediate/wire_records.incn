@@ -1,0 +1,69 @@
+"""
+Putting a record on the wire: the names it travels under, the text its bytes travel as, and whether it arrived intact.
+
+Three separate concerns that a peer sees as one payload. Field aliases keep the wire spelling out of the field names
+the rest of the program reads. `std.encoding` turns bytes into something a URL or a log line can carry, and its
+decoders are strict, so a corrupted token fails at the boundary instead of downstream. `std.checksum` answers a
+different question again: not "who wrote this" but "did it survive the trip".
+
+Python equivalent:
+```python
+import base64, binascii, dataclasses, zlib
+
+@dataclasses.dataclass
+class User:
+    user_id: int      # travels as "id"
+    full_name: str    # travels as "name"
+    email_address: str  # travels as "email"
+
+payload = b'{"id":17,"name":"Ada Lovelace"}'
+token = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+checksum = zlib.crc32(payload)
+```
+"""
+
+from std.checksum import crc32
+from std.encoding import base64, hex
+
+
+model User:
+    """A user record whose fields travel under shorter names than the ones the program reads."""
+
+    user_id as "id": int
+    full_name as "name": str
+    email_address as "email": str
+
+
+def describe_wire_names(user: User) -> None:
+    """Print how each field is spelled in code and how it is spelled on the wire."""
+    for field in user.__fields__():
+        println(f"  {field.name} -> {field.wire_name}")
+
+
+def report_decode(label: str, token: str, original: bytes) -> None:
+    """Decode one token and say whether it survived the trip, or why it was refused."""
+    match base64.urlsafe_b64decode(token):
+        Ok(decoded) => println(f"{label}: accepted, matches the original = {decoded == original}")
+        Err(error) => println(f"{label}: rejected ({error.message()})")
+
+
+def main() -> None:
+    user = User(user_id=17, full_name="Ada Lovelace", email_address="ada@example.com")
+
+    # The alias is metadata on the model, so the mapping can be read back rather than restated in a serializer.
+    println("field names on the wire:")
+    describe_wire_names(user)
+
+    payload = b"{\"id\":17,\"name\":\"Ada Lovelace\"}"
+
+    # URL-safe base64 is a different alphabet, not a flag on the general encoder: the call site says which one.
+    token = base64.urlsafe_b64encode(payload)
+    println(f"token:    {token}")
+
+    # CRC32 is for accidental corruption, not for proving authorship. `hex.hexlify` renders its bytes for a log line.
+    println(f"crc32:    {crc32.value(payload)}")
+    println(f"crc32 hex: {hex.hexlify(crc32.digest(payload))}")
+
+    # Decoding is strict at the boundary, so a mangled token is rejected here rather than parsed as nonsense.
+    report_decode("round trip", token, payload)
+    report_decode("mangled   ", "not a token!", payload)

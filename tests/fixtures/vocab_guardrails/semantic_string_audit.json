@@ -9,8 +9,8 @@
     {
       "path": "crates/incan_core/src/interop/extension_traits.rs",
       "category": "metadata-free Rust extension-trait fallback inventory",
-      "expected_count": 10,
-      "expected_fingerprint": "0xcdd95d0c0a97022c"
+      "expected_count": 11,
+      "expected_fingerprint": "0x821039893ddb773a"
     },
     {
       "path": "crates/incan_core/src/interop/metadata.rs",

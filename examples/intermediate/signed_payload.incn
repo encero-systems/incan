@@ -1,0 +1,65 @@
+"""
+Hashing for two different jobs: identifying a value, and proving who produced it.
+
+A digest and a keyed tag look alike and are not interchangeable. This example shows both against the same payload,
+and shows the case that separates them -- an attacker who rewrites the payload can also recompute its digest, but
+cannot forge its tag without the key.
+"""
+
+from std.hash import hmac_sha256, sha256
+
+
+model Envelope:
+    """A payload plus the two pieces of metadata a receiver checks."""
+
+    payload: bytes
+    digest: bytes
+    tag: bytes
+
+
+def seal(key: bytes, payload: bytes) -> Envelope:
+    """Produce an envelope the receiver can both identify and authenticate."""
+    return Envelope(payload=payload, digest=sha256.digest(payload), tag=hmac_sha256.digest(key, payload))
+
+
+def digest_matches(envelope: Envelope) -> bool:
+    """Return whether the payload still hashes to the digest it arrived with."""
+    return sha256.digest(envelope.payload) == envelope.digest
+
+
+def is_authentic(key: bytes, envelope: Envelope) -> bool:
+    """Return whether the envelope was sealed with this key, comparing in constant time."""
+    return hmac_sha256.verify(key, envelope.payload, envelope.tag)
+
+
+def tamper(envelope: Envelope) -> Envelope:
+    """Rewrite the payload the way an attacker without the key would: new bytes, and a matching new digest."""
+    forged = b"transfer 900 to mallory"
+    return Envelope(payload=forged, digest=sha256.digest(forged), tag=envelope.tag)
+
+
+def describe(label: str, key: bytes, envelope: Envelope) -> None:
+    """Print what each check concludes about one envelope."""
+    println(f"{label}: digest_matches={digest_matches(envelope)} authentic={is_authentic(key, envelope)}")
+
+
+def main() -> None:
+    key = b"a key only the sender holds"
+    original = seal(key, b"transfer 10 to alice")
+
+    # The honest envelope passes both checks.
+    describe("original ", key, original)
+
+    # The forged one still passes the digest check: the formula is public, so anyone can recompute it for bytes
+    # they chose. Only the keyed tag catches it.
+    describe("tampered ", key, tamper(original))
+
+    # A second key is a different sender, and its tag does not verify under the first key either.
+    other = seal(b"a different sender's key", original.payload)
+    describe("other key", key, other)
+
+    # Streaming a large payload in pieces produces the same tag as sealing it in one call.
+    mut signer = hmac_sha256.new(key)
+    signer.update(b"transfer 10 ")
+    signer.update(b"to alice")
+    println(f"streamed tag matches one-shot: {signer.finalize_bytes() == original.tag}")

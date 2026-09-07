@@ -2110,74 +2110,53 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Parse one arm of a `match` expression.
+    /// Parse one arm of a `match` expression, in either spelling.
+    ///
+    /// `case Pattern:` and `Pattern =>` are two spellings of one arm grammar, not two grammars. Everything between
+    /// the pattern and the arm's terminator is common to both, so it is parsed once here. Splitting it per spelling
+    /// is what let the two surfaces drift: the `case` form accepted a guard and the arrow form rejected one with
+    /// `Expected '=>' after pattern`, for no reason the language states anywhere (#1401).
     fn match_arm(&mut self) -> Result<Spanned<MatchArm>, CompileError> {
         let start = self.current_span().start;
 
-        // Support both `case Pattern:` and `Pattern =>` syntax
-        let pattern = if self.match_token(&TokenKind::Keyword(KeywordId::Case)) {
-            let pat = self.pattern()?;
+        let is_case_form = self.match_token(&TokenKind::Keyword(KeywordId::Case));
+        let pattern = self.pattern()?;
 
-            // Check for optional guard: `case pattern if condition:`
-            let guard = if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
-                Some(self.expression()?)
-            } else {
-                None
-            };
+        // ---- Optional guard, shared by both spellings: `Pattern if condition` ----
+        let guard = if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
 
+        // ---- The arm terminator is the only thing the two spellings genuinely differ on ----
+        if is_case_form {
             self.expect(
                 &TokenKind::Punctuation(PunctuationId::Colon),
                 "Expected ':' after case pattern",
             )?;
-
-            // Check if inline or block
-            if self.match_token(&TokenKind::Newline) {
-                self.expect_suite_indent("Expected indented block")?;
-                let body = self.block()?;
-                self.expect(&TokenKind::Dedent, "Expected dedent after case body")?;
-                let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(
-                    MatchArm {
-                        pattern: pat,
-                        guard,
-                        body: MatchBody::Block(body),
-                    },
-                    Span::new(start, end),
-                ));
-            } else {
-                // Inline: could be expression or statement (like `return 0`)
-                // Try parsing as a single statement and wrap in block
-                let stmt = self.inline_statement()?;
-                let end = stmt.span.end;
-                return Ok(Spanned::new(
-                    MatchArm {
-                        pattern: pat,
-                        guard,
-                        body: MatchBody::Block(vec![stmt]),
-                    },
-                    Span::new(start, end),
-                ));
-            }
         } else {
-            self.pattern()?
-        };
+            self.expect(
+                &TokenKind::Punctuation(PunctuationId::FatArrow),
+                "Expected '=>' after pattern",
+            )?;
+        }
 
-        // Rust-style => syntax
-        self.expect(
-            &TokenKind::Punctuation(PunctuationId::FatArrow),
-            "Expected '=>' after pattern",
-        )?;
-
-        // Check for block or expression
+        // ---- Body: an indented suite when a newline follows, otherwise a single inline statement ----
         if self.match_token(&TokenKind::Newline) {
             self.expect_suite_indent("Expected indented block")?;
             let body = self.block()?;
-            self.expect(&TokenKind::Dedent, "Expected dedent after arm body")?;
+            let dedent_message = if is_case_form {
+                "Expected dedent after case body"
+            } else {
+                "Expected dedent after arm body"
+            };
+            self.expect(&TokenKind::Dedent, dedent_message)?;
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(
                 MatchArm {
                     pattern,
-                    guard: None,
+                    guard,
                     body: MatchBody::Block(body),
                 },
                 Span::new(start, end),
@@ -2185,15 +2164,16 @@ impl<'a> Parser<'a> {
         } else {
             let stmt = self.inline_statement()?;
             let end = stmt.span.end;
-            let body = if let Statement::Expr(expr) = &stmt.node {
-                MatchBody::Expr(expr.clone())
-            } else {
-                MatchBody::Block(vec![stmt])
+            // `=> expr` is an expression arm and lowering treats it as one; an inline `case` body is a suite
+            // written on one line, so it stays a block even when it holds a single expression.
+            let body = match (&stmt.node, is_case_form) {
+                (Statement::Expr(expr), false) => MatchBody::Expr(expr.clone()),
+                _ => MatchBody::Block(vec![stmt]),
             };
             Ok(Spanned::new(
                 MatchArm {
                     pattern,
-                    guard: None,
+                    guard,
                     body,
                 },
                 Span::new(start, end),

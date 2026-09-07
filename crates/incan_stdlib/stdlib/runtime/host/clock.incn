@@ -1,0 +1,6 @@
+"""
+`host.clock` authority for `std.runtime`.
+"""
+
+pub capability read:
+    description = "Read the host clock"

@@ -1,0 +1,109 @@
+"""
+Decoding exported rows against a schema the caller names at the call site.
+
+The interesting part is what pins the type. `decode_rows` mentions `T` nowhere in its arguments and nowhere in the
+shape of its result, so inference has nothing to work from; the caller says which schema to decode against, and the
+compiler holds it to that. The schema itself is read from the type rather than from an instance, so no throwaway
+value has to be built just to ask a model what its columns are called.
+
+`std.math` is here for the narrow job it is good at: deciding whether a piece of text is even shaped like a number,
+before anything tries to treat it as one.
+
+The tests live in the same file, in a `module tests:` block. They can call this file's helpers directly, and they
+are removed from `incan build` and `incan run` output.
+
+Python equivalent:
+```python
+import dataclasses, re
+
+@dataclasses.dataclass
+class Reading:
+    station: str   # exported as "station_id"
+    celsius: float # exported as "temp_c"
+
+def decode_rows(schema, lines):
+    columns = [f.metadata["wire"] for f in dataclasses.fields(schema)]
+    rows = []
+    for line in lines:
+        cells = line.split(",")
+        if len(cells) != len(columns):
+            raise ValueError(f"{schema.__name__} expects {len(columns)} columns")
+        rows.append(dict(zip(columns, cells)))
+    return rows
+```
+"""
+
+import std.math
+
+
+model Reading:
+    """
+    One station reading, as the export spells it.
+
+    Both fields are `str` because that is what a row of an export is: text that has not been parsed yet. The
+    aliases are the export's column names, which are not the names the rest of the program wants to read.
+    """
+
+    station as "station_id": str
+    celsius as "temp_c": str
+
+
+def column_names[T]() -> list[str]:
+    """Return the column names `T` declares for the wire, without constructing a `T` to ask."""
+    return [str(field.wire_name) for field in T.__fields__()]
+
+
+def decode_rows[T](lines: list[str]) -> Result[list[dict[str, str]], str]:
+    """
+    Split each exported line and label its cells with the column names `T` declares.
+
+    `T` appears in neither the arguments nor the result, so the call site is the only place that can pin it:
+    `decode_rows[Reading](lines)`. `T.__class_name__()` puts that same choice into the failure message, so a bad
+    line says which schema it was measured against instead of only how many cells it had.
+    """
+    columns = column_names[T]()
+    mut rows: list[dict[str, str]] = []
+    for line in lines:
+        cells = line.split(",")
+        if len(cells) != len(columns):
+            return Err(f"{T.__class_name__()} expects {len(columns)} columns, got {len(cells)} in '{line}'")
+        rows.append({column: cell for column, cell in zip(columns, cells)})
+    return Ok(rows)
+
+
+def readable_temperatures(rows: list[dict[str, str]]) -> list[str]:
+    """Keep the temperature cells that are actually spelled like numbers, and drop the rest."""
+    return [row["temp_c"] for row in rows if math.is_float_like(row["temp_c"])]
+
+
+def main() -> None:
+    println(f"Reading columns: {", ".join(column_names[Reading]())}")
+
+    lines = ["S1,12.5", "S2,-3.25", "S3,warm"]
+    match decode_rows[Reading](lines):
+        Ok(rows) =>
+            for row in rows:
+                println(f"  {row["station_id"]} -> {row["temp_c"]}")
+            println(f"usable temperatures: {", ".join(readable_temperatures(rows))}")
+        Err(reason) => println(f"export rejected: {reason}")
+
+    # A short line is reported against the schema it was checked with, not just as "wrong length".
+    match decode_rows[Reading](["S4"]):
+        Ok(_rows) => println("unexpectedly accepted a one-cell line")
+        Err(reason) => println(f"export rejected: {reason}")
+
+
+module tests:
+    from std.testing import assert_eq, parametrize
+
+    @parametrize("raw, expected", [("12.5", true), ("1e3", true), ("warm", false)])
+    def test_only_numeric_text_reads_as_a_temperature(raw: str, expected: bool) -> None:
+        assert_eq(math.is_float_like(raw), expected)
+
+    def test_columns_come_from_the_wire_names() -> None:
+        assert_eq(column_names[Reading](), ["station_id", "temp_c"])
+
+    def test_a_short_line_names_the_schema_it_failed() -> None:
+        match decode_rows[Reading](["S4"]):
+            Ok(_rows) => assert false, "a one-cell line is not a Reading row"
+            Err(reason) => assert "Reading" in reason

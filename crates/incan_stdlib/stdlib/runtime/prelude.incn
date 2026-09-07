@@ -1,0 +1,17 @@
+"""
+Public `std.runtime` surface.
+
+`std.runtime` is the compiler's own bundled runtime module. It owns the reserved `host.*` capability namespace: the
+authority the Incan toolchain and runtime themselves mediate, as opposed to the domain capabilities a package
+declares for itself.
+
+Example:
+
+```incan
+from std.runtime import host
+
+capability load_policy:
+    description = "Load a policy document from disk"
+    requires = [host.fs.read]
+```
+"""

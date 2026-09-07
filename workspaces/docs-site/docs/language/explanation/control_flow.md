@@ -97,6 +97,30 @@ match lookup_port(raw):
 
 Alternatives that bind names must bind the same names with the same types. `Cached(port) | Fresh(port)` is valid because both payloads have the same type; `Some(value) | None` is rejected because only one alternative binds `value`.
 
+### Guards, and the two ways to write an arm
+
+Add `if <condition>` after a pattern when the pattern alone does not decide the arm. The guard runs only if the pattern matched, and the arm is taken only if the guard is also true; when it is false, matching continues with the next arm.
+
+```incan
+match lookup_port(raw):
+    case Cached(port) if port > 1024: println(f"cached user port={port}")
+    case Cached(port): println(f"cached reserved port={port}")
+    case Fresh(port): println(f"fresh port={port}")
+    case Failed(e): println(f"error: {e}")
+```
+
+An arm can be written two ways. `case <pattern>:` introduces a body as an indented suite or on the same line, and `<pattern> => <expression>` is the shorter form for an arm whose body is a single expression:
+
+```incan
+def classify(n: int) -> str:
+    return match n:
+        x if x < 0 => "negative"
+        0 => "zero"
+        _ => "positive"
+```
+
+These are two spellings of one arm, not two kinds of arm. Anything you can write in one you can write in the other, guards included; pick whichever reads better for the arm at hand. A guard sits between the pattern and the arm's `:` or `=>` in both.
+
 ## Looping while a pattern keeps matching with `while let`
 
 Use `while let` when a loop should continue only while one pattern keeps matching.

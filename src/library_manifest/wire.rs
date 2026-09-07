@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
-    LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport, NewtypeExport, PartialExport,
-    SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact,
-    VocabExports, VocabKeywordRegistration, VocabProviderManifest, legacy_library_contract_metadata,
+    LibraryExportView, LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport,
+    NewtypeExport, PartialExport, SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport,
+    TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration, VocabProviderManifest,
+    legacy_library_contract_metadata,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,6 +53,29 @@ pub(super) struct RawLibraryExports {
     pub(super) consts: Vec<ConstExport>,
     #[serde(default)]
     pub(super) statics: Vec<StaticExport>,
+}
+
+impl RawLibraryExports {
+    /// Borrow the wire export lists as the shared public-surface view.
+    ///
+    /// Validation runs on the wire form before it is loaded, so it answers eligibility questions here rather than on
+    /// `LibraryExports`; routing through the same view keeps the provider's own build and every consumer's frontend
+    /// agreeing on what the package exports.
+    pub(super) fn view(&self) -> LibraryExportView<'_> {
+        LibraryExportView {
+            aliases: &self.aliases,
+            partials: &self.partials,
+            models: &self.models,
+            classes: &self.classes,
+            functions: &self.functions,
+            traits: &self.traits,
+            enums: &self.enums,
+            type_aliases: &self.type_aliases,
+            newtypes: &self.newtypes,
+            consts: &self.consts,
+            statics: &self.statics,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

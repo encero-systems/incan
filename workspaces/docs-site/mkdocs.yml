@@ -246,6 +246,8 @@ nav:
           - Module static storage: language/explanation/static_storage.md
           - Numeric types: language/explanation/numeric_types.md
           - Date and time model: language/explanation/datetime_model.md
+          - What hashing proves: language/explanation/hashing_guarantees.md
+          - Embedded language fragments: language/explanation/dsl_embeddings.md
           - OrdinalMap: language/explanation/ordinal_map.md
           - Graph model: language/explanation/graph_model.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
@@ -352,6 +354,7 @@ nav:
           - Template: design_records/TEMPLATE.md
           - "DD-0001: GPU capability deferral": design_records/0001_gpu_target_capability_deferred.md
           - "DD-0002: Single pinned Rust version": design_records/0002_single_pinned_rust_version.md
+          - "DD-0003: Replacement program output contract": design_records/0003_replacement_program_output_contract.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md

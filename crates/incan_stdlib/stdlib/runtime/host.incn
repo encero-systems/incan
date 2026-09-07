@@ -1,0 +1,16 @@
+"""
+Host authority for `std.runtime`.
+
+`host.*` is reserved for capabilities owned by the Incan toolchain and runtime, and only this bundled source may
+declare under it. These are ordinary `capability` declarations: they use the same mechanism a package uses, and they
+look fixed only because this source is fixed between releases.
+
+Capabilities that name a host subsystem live in that subsystem's own module, so `host.fs.read` reads as the `read`
+capability of `host.fs`. Only authority with no subsystem to name is declared here directly.
+
+Naming a capability never grants it. A `requires` entry records that an operation needs this authority so a policy
+can inspect the relationship; the runtime is what grants it.
+"""
+
+pub capability random:
+    description = "Draw values from the host's random source"

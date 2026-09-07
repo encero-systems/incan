@@ -15,9 +15,15 @@ def response_shape() -> None:
     shape:
         scriptkit.Response<str>? | scriptkit.Error
 
+def deploy_note(owner: str) -> None:
+    """Demonstrate the `RawText` submode: text kept verbatim, with one expression hole."""
+    note:
+        TODO({owner}): rotate the signing key before <<release>>
+
 def main() -> None:
     let name = scriptkit_name()
     print(name)
     greeting(name)
     slug_pattern()
     response_shape()
+    deploy_note(name)

@@ -88,6 +88,58 @@ mod embedded_fragment_tests {
         Ok(fragment)
     }
 
+    // ---- Shared hole traversal ----
+
+    #[test]
+    fn markup_fragment_holes_reach_attrs_and_nested_children() -> Result<(), Box<dyn std::error::Error>> {
+        // A fragment's expression holes are ordinary Incan, so one traversal has to reach every one of them from
+        // anywhere they can appear. The compiler already typechecks them; tooling that walks expressions reaches
+        // them through this same accessor, which is what stops a fragment from being an opaque region where hover
+        // and signature help quietly stop working (#1022).
+        let (keyword_map, surface_map) =
+            embedded_fixture_maps("html", "webkit", incan_vocab::EmbeddedFragmentSubmode::Markup);
+        let source = "import pub::webkit\n\ndef render(title: str, alt: str) -> None:\n  html:\n    <section class={title}>\n      <h1>{alt}</h1>\n      plain text\n    </section>\n";
+        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let fragment = embedded_fragment_from_program(&program)?;
+
+        let holes = fragment.holes();
+        let names: Vec<&str> = holes
+            .iter()
+            .filter_map(|hole| match &hole.node {
+                Expr::Ident(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec!["title", "alt"],
+            "an attribute hole and a nested child hole should both be reached, in source order: {holes:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn style_fragment_holes_reach_declaration_values() -> Result<(), Box<dyn std::error::Error>> {
+        // The style submode nests holes under a rule's declarations rather than under elements, so the traversal
+        // has to descend that shape too rather than only the markup one.
+        let (keyword_map, surface_map) =
+            embedded_fixture_maps("css", "styleforge", incan_vocab::EmbeddedFragmentSubmode::Style);
+        let source = "import pub::styleforge\n\ndef theme(accent: str) -> None:\n  css:\n    .card {\n      color: {accent};\n    }\n";
+        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let fragment = embedded_fragment_from_program(&program)?;
+
+        let holes = fragment.holes();
+        assert_eq!(holes.len(), 1, "the declaration value hole should be reached: {holes:?}");
+        assert!(
+            matches!(&holes[0].node, Expr::Ident(name) if name == "accent"),
+            "unexpected hole: {:?}",
+            holes[0].node
+        );
+        Ok(())
+    }
+
     // ---- Markup submode ----
 
     #[test]
@@ -815,6 +867,7 @@ mod embedded_fragment_tests {
                 keywords: vec![
                     incan_vocab::KeywordSpec::block("pattern"),
                     incan_vocab::KeywordSpec::block("shape"),
+                    incan_vocab::KeywordSpec::block("note"),
                 ],
                 valid_decorators: Vec::new(),
             }],
@@ -826,6 +879,15 @@ mod embedded_fragment_tests {
                 incan_vocab::DslSurface::on_import("scriptkit")
                     .with_declaration(incan_vocab::DeclarationSurface::named("pattern"))
                     .with_declaration(incan_vocab::DeclarationSurface::named("shape"))
+                    .with_declaration(incan_vocab::DeclarationSurface::named("note"))
+                    .with_embedded_fragment(
+                        incan_vocab::EmbeddedFragmentDescriptor::new(
+                            "note.fragment",
+                            incan_vocab::EmbeddedFragmentSubmode::RawText,
+                            "note_nodes",
+                        )
+                        .in_declaration_body("note"),
+                    )
                     .with_embedded_fragment(
                         incan_vocab::EmbeddedFragmentDescriptor::new(
                             "pattern.fragment",

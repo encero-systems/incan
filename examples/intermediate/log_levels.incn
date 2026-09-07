@@ -1,0 +1,91 @@
+"""
+Log level triage in Incan
+
+This example demonstrates:
+- Value enums that carry a string wire representation
+- Parsing an untrusted string back into an enum with `from_value`
+- `if let` for the "it parsed, use it" path without a nested match
+- Pattern alternation, so variants that share a decision share an arm
+- `loop:` as an expression that produces a value with `break`
+
+Python equivalent:
+```python
+from enum import Enum
+
+class Level(Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARN = "WARN"
+    ERROR = "ERROR"
+
+def severity(level: Level) -> int:
+    if level in (Level.DEBUG, Level.INFO):
+        return 0
+    if level is Level.WARN:
+        return 1
+    return 2
+
+def triage(raw: str) -> str:
+    try:
+        level = Level(raw)
+    except ValueError:
+        return f"{raw}: unrecognised"
+    return f"{raw}: severity {severity(level)}"
+```
+"""
+
+
+enum Level(str):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARN = "WARN"
+    ERROR = "ERROR"
+
+
+def severity(level: Level) -> int:
+    """
+    Rank a level so callers can threshold on it.
+
+    DEBUG and INFO share an arm because nothing downstream treats them differently; alternation says that once
+    instead of duplicating the body.
+    """
+    match level:
+        Level.DEBUG | Level.INFO => return 0
+        Level.WARN => return 1
+        Level.ERROR => return 2
+
+
+def triage(raw: str) -> str:
+    """
+    Turn one raw log line into a human-readable verdict.
+
+    `from_value` returns `None` for input that is not a known level, so the happy path reads as a single `if let`
+    rather than a match whose other arm exists only to handle absence.
+    """
+    if let Some(level) = Level.from_value(raw):
+        return f"{raw}: severity {severity(level)}"
+    return f"{raw}: unrecognised"
+
+
+def first_error_index(lines: list[str]) -> int:
+    """
+    Return the index of the first ERROR line, or -1 when there is none.
+
+    The scan is a `loop:` expression: both exits produce the function's answer directly, so there is no mutable
+    result variable to keep in sync with the loop body.
+    """
+    mut index = 0
+    result = loop:
+        if index >= len(lines):
+            break -1
+        if lines[index] == "ERROR":
+            break index
+        index = index + 1
+    return result
+
+
+def main() -> None:
+    lines = ["INFO", "WARN", "nonsense", "ERROR", "DEBUG"]
+    for raw in lines:
+        println(triage(raw))
+    println(f"first error at index {first_error_index(lines)}")

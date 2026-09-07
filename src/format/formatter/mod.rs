@@ -8,8 +8,12 @@
 //! - [`expressions`]: expressions, literals, operators, patterns, match arms, types
 
 mod declarations;
+mod embedded;
 mod expressions;
 mod statements;
+
+#[cfg(test)]
+mod tests;
 
 use super::config::FormatConfig;
 use super::writer::FormatWriter;

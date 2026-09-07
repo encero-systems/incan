@@ -2360,50 +2360,12 @@ impl AstLowering {
                     self.count_statement_ident_reads(&stmt.node, counts);
                 }
             }
+            // A fragment's DSL-owned structure reads no ordinary Incan bindings; only its expression holes can, and
+            // `holes` is the single authority on which those are (RFC 081, #1022). Counting through it keeps
+            // move/borrow/clone planning correct for an identifier referenced only from inside a hole.
             ast::Expr::Embedded(fragment) => {
-                for node in &fragment.nodes {
-                    self.count_embedded_node_ident_reads(&node.node, counts);
-                }
-            }
-        }
-    }
-
-    /// Count identifier reads inside the expression holes nested in one embedded-fragment node (RFC 081, `#1023`).
-    ///
-    /// Mirrors `count_expr_ident_reads`'s recursive traversal shape for `EmbeddedNode`: structural node kinds with
-    /// no possible nested hole are no-ops, `Hole` recurses into ordinary `count_expr_ident_reads`, and container
-    /// kinds (`Element`, `StyleRule`, `Declaration`) recurse into their children/attrs/selectors/declarations. This
-    /// keeps move/borrow/clone planning correct for identifiers referenced only from inside a fragment's holes.
-    fn count_embedded_node_ident_reads(&self, node: &ast::EmbeddedNode, counts: &mut HashMap<String, usize>) {
-        match node {
-            ast::EmbeddedNode::Text(_)
-            | ast::EmbeddedNode::EntityRef(_)
-            | ast::EmbeddedNode::Comment(_)
-            | ast::EmbeddedNode::Value(_)
-            | ast::EmbeddedNode::Regex { .. }
-            | ast::EmbeddedNode::TypeShape(_) => {}
-            ast::EmbeddedNode::Hole(expr) => self.count_expr_ident_reads(&expr.node, counts),
-            ast::EmbeddedNode::Element(element) => {
-                for attr in &element.attrs {
-                    if let Some(value) = &attr.value {
-                        self.count_embedded_node_ident_reads(&value.node, counts);
-                    }
-                }
-                for child in &element.children {
-                    self.count_embedded_node_ident_reads(&child.node, counts);
-                }
-            }
-            ast::EmbeddedNode::StyleRule(rule) => {
-                for selector in &rule.selectors {
-                    self.count_embedded_node_ident_reads(&selector.node, counts);
-                }
-                for declaration in &rule.declarations {
-                    self.count_embedded_node_ident_reads(&declaration.node, counts);
-                }
-            }
-            ast::EmbeddedNode::Declaration(declaration) => {
-                for value in &declaration.value {
-                    self.count_embedded_node_ident_reads(&value.node, counts);
+                for hole in fragment.holes() {
+                    self.count_expr_ident_reads(&hole.node, counts);
                 }
             }
         }

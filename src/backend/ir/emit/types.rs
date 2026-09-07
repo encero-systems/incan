@@ -570,8 +570,20 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a match arm body, including compiler-introduced bindings required by narrowed pattern lowering.
-    pub(super) fn emit_match_arm_body(&self, arm: &MatchArm) -> Result<TokenStream, EmitError> {
-        let body = self.emit_expr(&arm.body)?;
+    ///
+    /// `result_ty` is the type the whole `match` produces, when the arms are producing a value rather than running
+    /// for effect. Every arm has to hand back that one type, so the arm body is emitted through the same conversion
+    /// path a `let` of that type would use; without it a `str` arm stays a `&str` literal and the `match` cannot
+    /// satisfy a `String` binding or return type.
+    pub(super) fn emit_match_arm_body(
+        &self,
+        arm: &MatchArm,
+        result_ty: Option<&IrType>,
+    ) -> Result<TokenStream, EmitError> {
+        let body = match result_ty {
+            Some(ty) => self.emit_value_for_target(&arm.body, ty)?,
+            None => self.emit_expr(&arm.body)?,
+        };
         if arm.bindings.is_empty() {
             return Ok(body);
         }

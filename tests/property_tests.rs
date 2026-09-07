@@ -3,6 +3,8 @@
 //! These tests use proptest to verify invariants across many randomly
 //! generated inputs, catching edge cases that hand-written tests might miss.
 
+use std::collections::BTreeSet;
+
 use incan::format::format_source;
 use proptest::prelude::*;
 
@@ -95,6 +97,138 @@ def greet(name: str) -> str:
             ast1.declarations.len(),
             ast2.declarations.len(),
             "Formatting changed AST structure"
+        );
+        Ok(())
+    }
+
+    /// Examples the formatter cannot yet round trip, with the reason each one is here.
+    ///
+    /// None of these is source corruption: the two `refuses to format` entries are the formatter's comment-loss
+    /// guard doing its job, and the two `not a fixed point` entries produce output that still parses and still has
+    /// the same declarations — a comment moves between passes rather than any code changing. Three genuinely
+    /// destructive defects that this walk found were fixed rather than listed: an `enum`'s dropped `with <Trait>`
+    /// adoption, an unescaped quote in a byte literal, and a match guard written before an arrow the parser then
+    /// rejected — the last fixed in the grammar, by letting both arm spellings carry a guard, rather than by
+    /// teaching the formatter to avoid one of them.
+    ///
+    /// Comment reattachment stability is the remaining work and is tracked separately; it is a different subsystem
+    /// (`src/format/comments/`) from the declaration and literal writers fixed here.
+    const EXPECTED_ROUND_TRIP_FAILURES: &[(&str, &str)] = &[
+        (
+            "advanced/function_references/main.incn",
+            "comment reattachment is not a fixed point",
+        ),
+        (
+            "advanced/nested_project/src/main.incn",
+            "comment reattachment is not a fixed point",
+        ),
+        (
+            "advanced/using_rust_crates.incn",
+            "formatter refuses: would drop comments",
+        ),
+        ("pro/rust_interop_pro.incn", "formatter refuses: would drop comments"),
+    ];
+
+    /// Property: formatting every committed example preserves parseability and is a fixed point.
+    ///
+    /// The generated-input properties above exercise shapes the strategies know how to build. Real programs use
+    /// constructs those strategies never emit, and that is where the formatter has actually broken: an `enum`'s
+    /// `with <Trait>` adoption was dropped entirely, a byte literal's escaped quote was unescaped into source that
+    /// no longer parses, and a template string lost its delimiters. Each of those survived a green formatter suite
+    /// because no test ever round-tripped a real file (#1401).
+    ///
+    /// Files that do not parse as ordinary Incan are skipped rather than failed: descriptor-gated embedded
+    /// fragments only parse through `parse_with_source` with their owning vocab surfaces registered, which this
+    /// corpus walk deliberately does not set up.
+    #[test]
+    fn every_committed_example_round_trips() -> Result<(), String> {
+        use incan::frontend::{lexer, parser};
+        use std::path::{Path, PathBuf};
+
+        fn collect(dir: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
+            let entries = std::fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
+            for entry in entries {
+                let path = entry.map_err(|e| format!("entry in {}: {e}", dir.display()))?.path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n == "target") {
+                        continue;
+                    }
+                    collect(&path, found)?;
+                } else if path.extension().is_some_and(|e| e == "incn") {
+                    found.push(path);
+                }
+            }
+            Ok(())
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let mut files = Vec::new();
+        collect(&root, &mut files)?;
+        files.sort();
+        assert!(!files.is_empty(), "no examples found under {}", root.display());
+
+        let mut checked = 0usize;
+        let mut failures = Vec::new();
+        for file in &files {
+            let Ok(source) = std::fs::read_to_string(file) else {
+                continue;
+            };
+            // Only files that already parse as ordinary Incan are in scope; see the doc comment.
+            let Ok(tokens) = lexer::lex(&source) else {
+                continue;
+            };
+            let Ok(before) = parser::parse(&tokens) else {
+                continue;
+            };
+
+            let name = file.strip_prefix(&root).unwrap_or(file).display().to_string();
+            let once = match format_source(&source) {
+                Ok(once) => once,
+                Err(error) => {
+                    failures.push(format!("{name}: formatting failed: {error}"));
+                    continue;
+                }
+            };
+
+            match lexer::lex(&once).ok().and_then(|tokens| parser::parse(&tokens).ok()) {
+                Some(after) if after.declarations.len() == before.declarations.len() => {}
+                Some(after) => failures.push(format!(
+                    "{name}: declaration count changed {} -> {}",
+                    before.declarations.len(),
+                    after.declarations.len()
+                )),
+                None => failures.push(format!("{name}: formatted output no longer parses")),
+            }
+
+            match format_source(&once) {
+                Ok(twice) if twice == once => {}
+                Ok(_) => failures.push(format!("{name}: formatting is not a fixed point")),
+                Err(error) => failures.push(format!("{name}: second format failed: {error}")),
+            }
+            checked += 1;
+        }
+
+        assert!(
+            checked > 0,
+            "no example parsed as ordinary Incan, so nothing was round-tripped"
+        );
+
+        // Exact, not a floor, following the capability-coverage suite's reasoning: a floor lets a number sit at its
+        // starting value forever without anything saying so. Membership changing in either direction is a reviewed
+        // event — a new entry is a regression, and a departing one is a fix that should update this list.
+        let known: BTreeSet<&str> = EXPECTED_ROUND_TRIP_FAILURES.iter().map(|(file, _)| *file).collect();
+        let actual: BTreeSet<&str> = failures.iter().map(|f| f.split(':').next().unwrap_or(f)).collect();
+
+        let regressed: Vec<&&str> = actual.difference(&known).collect();
+        let fixed: Vec<&&str> = known.difference(&actual).collect();
+        assert!(
+            regressed.is_empty(),
+            "example(s) newly failed to round trip: {regressed:?}\n\nfull detail:\n{}",
+            failures.join("\n")
+        );
+        assert!(
+            fixed.is_empty(),
+            "example(s) now round trip and should be removed from EXPECTED_ROUND_TRIP_FAILURES: {fixed:?}"
         );
         Ok(())
     }

@@ -1,6 +1,12 @@
-from pub::pricing import LineItem, subtotal
+from pub::pricing import LineItem, Session, subtotal
 
 
 def main() -> None:
     item = LineItem(name="keyboard", quantity=2, unit_price=79.5)
     println(f"{item.name}: {subtotal(item)}")
+
+    # `Session` reaches the consumer through the library's root facade, not through its file layout.
+    mut basket = Session.empty()
+    basket.add(item)
+    basket.add(LineItem(name="cable", quantity=3, unit_price=4.25))
+    println(f"basket of {basket.count()}: {basket.total()}")

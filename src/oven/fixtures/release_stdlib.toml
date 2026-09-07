@@ -15,6 +15,7 @@ bzip2 = "0.6"
 crc32fast = "1"
 encoding_rs = "0.8"
 flate2 = "1"
+hmac = { version = "0.12", features = ["reset"] }
 inventory = "0.3"
 libm = "0.2"
 md5 = { package = "md-5", version = "0.10" }

@@ -1,0 +1,119 @@
+"""
+A type you wrote that behaves like a builtin collection.
+
+`len(playlist)`, `for track in playlist`, and `"Bloom" in playlist` are not special-cased for lists. They ask the
+receiver for `__len__`, `__iter__`, and `__contains__`, so a type that answers those reads at the call site exactly
+like the builtin it is standing in for.
+
+One thing is more explicit than in Python. Python hands `iter(self.tracks)` back and lets the runtime supply the
+stepping; `Iterator[T]` in Incan is a trait whose hook is `__next__`, so the playlist returns a small cursor value
+that owns the position. That is a few more lines, and it is also the whole mechanism, in view.
+
+Computed properties are the same idea one level down: `track.display_name` is derived on every read, but callers see
+an attribute rather than a method call, because that is what it is to them.
+
+Python equivalent:
+```python
+class Track:
+    def __init__(self, title, artist, seconds):
+        self.title = title
+        self.artist = artist
+        self.seconds = seconds
+
+    @property
+    def display_name(self):
+        return f"{self.artist} - {self.title}"
+
+class Playlist:
+    def __init__(self, name, tracks):
+        self.name = name
+        self.tracks = tracks
+
+    def __len__(self):
+        return len(self.tracks)
+
+    def __iter__(self):
+        return iter(self.tracks)
+
+    def __contains__(self, title):
+        return any(track.title == title for track in self.tracks)
+```
+"""
+
+from std.derives.collection import Iterator
+
+
+model Track:
+    """One track, plus the label a listener should see for it."""
+
+    title: str
+    artist: str
+    seconds: int
+
+    property display_name -> str:
+        """Build the listener-facing label from the parts actually stored, rather than storing it twice."""
+        return f"{self.artist} - {self.title}"
+
+
+model TrackCursor with Iterator[Track]:
+    """One walk over a playlist. `for` keeps asking it for the next track until it answers `None`."""
+
+    tracks: list[Track]
+    index: int
+
+    def __next__(mut self) -> Option[Track]:
+        """Yield the next track, or `None` once the playlist has been walked to the end."""
+        if self.index >= len(self.tracks):
+            return None
+        track = self.tracks[self.index]
+        self.index += 1
+        return Some(track)
+
+
+model Playlist:
+    """An ordered run of tracks that answers `len`, `for`, and `in` the way a list does."""
+
+    name: str
+    tracks: list[Track]
+
+    def __len__(self) -> int:
+        """Report the track count, so `len(playlist)` works without exposing the backing list."""
+        return len(self.tracks)
+
+    def __iter__(self) -> TrackCursor:
+        """Start a fresh walk, so `for track in playlist` reads like iterating a list and can be repeated."""
+        return TrackCursor(tracks=self.tracks, index=0)
+
+    def __contains__(self, title: str) -> bool:
+        """Match on title, so `in` asks the question a listener would ask rather than comparing whole tracks."""
+        for track in self.tracks:
+            if track.title == title:
+                return true
+        return false
+
+    property runtime_seconds -> int:
+        """Total the track lengths on each read; nothing here is stale because nothing here is stored."""
+        mut total = 0
+        for track in self.tracks:
+            total += track.seconds
+        return total
+
+
+def main() -> None:
+    playlist = Playlist(
+        name="Late shift",
+        tracks=[
+            Track(title="Bloom", artist="Halcyon", seconds=214),
+            Track(title="Undertow", artist="Kestrel", seconds=187),
+            Track(title="Nightcall", artist="Halcyon", seconds=241),
+        ],
+    )
+
+    # `len` and `for` go through the hooks, so the playlist needs no accessor for its backing list.
+    println(f"{playlist.name}: {len(playlist)} tracks, {playlist.runtime_seconds}s")
+    for track in playlist:
+        println(f"  {track.display_name}")
+
+    # `in` asks `__contains__`, which compares titles rather than whole tracks.
+    println(f"contains Bloom:   {"Bloom" in playlist}")
+    println(f"contains Skyline: {"Skyline" in playlist}")

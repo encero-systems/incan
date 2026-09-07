@@ -1141,7 +1141,7 @@ static std_encoding: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
         references=std_encoding_references,
     ),
 )
-const std_hash_forms: FrozenList[str] = ["from std.hash import Sha256Hasher, sha256, file_digest", "sink: Sha256Hasher = sha256.new()", "sha256.digest(payload)", "xxh3_64.new()"]
+const std_hash_forms: FrozenList[str] = ["from std.hash import Sha256Hasher, sha256, file_digest", "sink: Sha256Hasher = sha256.new()", "sha256.digest(payload)", "xxh3_64.new()", "from std.hash import hmac_sha256", "hmac_sha256.verify(key, payload, tag)"]
 const std_hash_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="std.hash",
     path="stdlib/hash.md",
@@ -1151,7 +1151,7 @@ const std_hash_references: FrozenList[CapabilityReference] = [CapabilityReferenc
 ), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"), CapabilityReference(
     label="Release 0.5",
     path="../../release_notes/0_5.md",
-)]
+), CapabilityReference(label="Release 0.6", path="../../release_notes/0_6.md")]
 static std_hash: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdHash"),
     subject=RegistrySubject.current_unit(),
@@ -1163,9 +1163,9 @@ static std_hash: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         rfc="RFC 065",
         stability=FeatureStability.Stable,
         activation="Import from `std.hash`.",
-        summary="`std.hash` provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. `Sha256Hasher` is a public stored-state handle for byte streams owned across model or class methods.",
+        summary="`std.hash` provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. `Sha256Hasher` is a public stored-state handle for byte streams owned across model or class methods. `hmac_sha256` adds keyed authentication with constant-time verification, for values that arrive across a boundary the caller does not trust.",
         canonical_forms=std_hash_forms,
-        prefer_over="Ad hoc hashing shims, hidden default algorithms, or `std.checksum` when the caller needs hash rather than checksum semantics.",
+        prefer_over="Ad hoc hashing shims, hidden default algorithms, `std.checksum` when the caller needs hash rather than checksum semantics, or an unkeyed digest where the caller actually needs to authenticate a value rather than detect corruption.",
         references=std_hash_references,
     ),
 )

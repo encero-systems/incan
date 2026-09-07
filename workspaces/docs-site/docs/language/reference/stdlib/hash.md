@@ -82,13 +82,32 @@ Fallible helpers return `Result[..., HashError]`.
 
 One-shot namespace helpers that are infallible raise `ValueError` for the same validation detail where applicable.
 
+## Keyed authentication
+
+`hmac_sha256` is the only keyed namespace on this page; every other namespace is unkeyed.
+
+| API | Returns | Notes |
+| --- | --- | --- |
+| `hmac_sha256.digest(key: bytes, data: bytes)` | `bytes` | 32-byte HMAC-SHA256 tag. |
+| `hmac_sha256.verify(key: bytes, data: bytes, tag: bytes)` | `bool` | Constant-time comparison; does not short-circuit on the first differing byte. |
+| `hmac_sha256.new(key: bytes)` | `HmacSha256Signer` | Incremental signer keyed with `key`. |
+
+| Hasher family | Methods |
+| --- | --- |
+| Keyed signer | `update(chunk: bytes) -> None`, `finalize_bytes() -> bytes` |
+
+`finalize_bytes` returns the tag for the bytes supplied so far and resets the signer for a subsequent stream under the same key.
+
+Keys of any length are accepted: shorter keys are zero-padded to the block size, longer keys are hashed first. Comparing tag bytes with `==` is not constant time; use `verify`.
+
 ## Boundaries
 
-`std.hash` does not provide password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Those require separate APIs because their security and compatibility contracts are different from ordinary byte hashing. Use [`std.checksum`](checksum.md) for CRC32 compatibility checksums.
+`std.hash` does not provide password hashing, signatures, authenticated encryption, CRC, or Adler checksums. Those require separate APIs because their security and compatibility contracts are different from ordinary byte hashing. Use [`std.checksum`](checksum.md) for CRC32 compatibility checksums.
 
 ## See also
 
 - [Hashing data](../../how-to/hashing_data.md)
+- [What hashing proves](../../explanation/hashing_guarantees.md)
 - [`std.checksum` reference](checksum.md)
 - [`std.encoding` reference](encoding.md)
 - [`std.io` reference](io.md)

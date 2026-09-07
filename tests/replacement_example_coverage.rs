@@ -34,7 +34,12 @@ use incan::frontend::{lexer, parser};
 ///
 /// Moved 49 -> 52 when the corpus grew by the six sources described on [`EXAMPLE_SOURCE_BASELINE`]. Three of them
 /// lower without a Body-IR refusal; the rest still refuse, and none of the six changes what executes.
-const REPRESENTED_BASELINE: usize = 52;
+///
+/// Moved 52 -> 53 when the corpus grew by the fourteen sources #1252 added. Exactly one of them lowers without a
+/// Body-IR refusal; the other thirteen still refuse, and none of the fourteen changes what executes. The ratio
+/// falling while the count rises is expected here: the new examples were written to demonstrate the documented
+/// capability surface, not to be representable in the replacement profile.
+const REPRESENTED_BASELINE: usize = 53;
 
 /// Number of committed example sources included in this fixed corpus.
 ///
@@ -44,7 +49,11 @@ const REPRESENTED_BASELINE: usize = 52;
 /// Moved 68 -> 74 for the `vocab_markform`, `vocab_scriptkit` and `vocab_styleforge` producer/consumer pairs, added
 /// to `examples/pro/` after this denominator was last recorded. This is the reviewed coverage event the doc comment
 /// above asks for: the corpus grew, representation went up with it, and execution did not move.
-const EXAMPLE_SOURCE_BASELINE: usize = 74;
+///
+/// Moved 74 -> 88 by #1252, which raised example coverage of the documented stable capability surface from 28 to 53
+/// of 56. Nine new examples plus the `library_package` session facade and its consumer are the additions; they are
+/// ordinary Incan programs rather than replacement-profile fixtures, so the denominator is where they land.
+const EXAMPLE_SOURCE_BASELINE: usize = 88;
 
 /// Examples whose `main` executes today. Update this in the same change that moves it.
 ///

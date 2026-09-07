@@ -1,0 +1,141 @@
+"""
+A delivery robot walking a route, where both closed sets it works with own their own behavior.
+
+`Direction` knows how to reverse itself, so backing out of a blocked leg is `heading.opposite()` rather than a
+lookup table maintained somewhere else. Both enums adopt the same `Labelled` trait, because a route sheet needs a
+word for a heading and a word for an outcome and does not care which is which. And `Status` says once, with an
+alternation, which of its cases mean "still working on it", instead of repeating the branch per variant.
+
+Python equivalent:
+```python
+from enum import Enum
+
+class Direction(Enum):
+    NORTH = "north"
+    SOUTH = "south"
+    EAST = "east"
+    WEST = "west"
+
+    def opposite(self):
+        return _OPPOSITES[self]
+
+    def label(self):
+        return self.value
+
+_OPPOSITES = {
+    Direction.NORTH: Direction.SOUTH,
+    Direction.SOUTH: Direction.NORTH,
+    Direction.EAST: Direction.WEST,
+    Direction.WEST: Direction.EAST,
+}
+
+class Status(Enum):
+    PENDING = "pending"
+    RETRYING = "retrying"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+
+    def label(self):
+        if self in (Status.PENDING, Status.RETRYING):
+            return "waiting"
+        return "delivered" if self is Status.DELIVERED else "given up"
+```
+"""
+
+
+trait Labelled:
+    """Anything on a route sheet that can name itself in the dispatcher's words."""
+
+    def label(self) -> str: ...
+
+
+enum Direction with Labelled:
+    """A compass heading the robot can travel along."""
+
+    North
+    South
+    East
+    West
+
+    def opposite(self) -> Direction:
+        """Return the heading that undoes this one, so a blocked leg can be reversed without a lookup table."""
+        match self:
+            Direction.North => return Direction.South
+            Direction.South => return Direction.North
+            Direction.East => return Direction.West
+            Direction.West => return Direction.East
+
+    def label(self) -> str:
+        """Name the heading the way a route sheet would, rather than as a variant name."""
+        match self:
+            Direction.North => return "north"
+            Direction.South => return "south"
+            Direction.East => return "east"
+            Direction.West => return "west"
+
+    def __str__(self) -> str:
+        """Print as that same word, so a heading needs no formatting helper at the call site."""
+        return self.label()
+
+
+enum Status with Labelled:
+    """Where one leg of the route has got to."""
+
+    Pending
+    Retrying
+    Delivered
+    Failed
+
+    def label(self) -> str:
+        """
+        Describe a leg in the terms the dispatcher cares about.
+
+        Pending and retrying legs are both simply "not finished yet"; nothing downstream distinguishes them, so
+        alternation states that once instead of duplicating the branch.
+        """
+        match self:
+            Status.Pending | Status.Retrying => return "waiting"
+            Status.Delivered => return "delivered"
+            Status.Failed => return "given up"
+
+    def is_settled(self) -> bool:
+        """Return whether this leg still needs the dispatcher's attention."""
+        match self:
+            Status.Pending | Status.Retrying => return false
+            Status.Delivered | Status.Failed => return true
+
+
+model Leg:
+    """One hop of a route: where the robot went, and how it ended."""
+
+    heading: Direction
+    status: Status
+
+
+def retreat(leg: Leg) -> Direction:
+    """Return the heading that takes the robot back off a leg it could not finish."""
+    return leg.heading.opposite()
+
+
+def describe[T with Labelled](item: T) -> str:
+    """Name anything on the route sheet, without caring whether it is a heading or an outcome."""
+    return item.label()
+
+
+def main() -> None:
+    route = [
+        Leg(heading=Direction.North, status=Status.Delivered),
+        Leg(heading=Direction.East, status=Status.Retrying),
+        Leg(heading=Direction.South, status=Status.Failed),
+        Leg(heading=Direction.West, status=Status.Pending),
+    ]
+
+    for leg in route:
+        println(f"heading {describe(leg.heading)}: {describe(leg.status)}")
+
+    outstanding = [leg for leg in route if not leg.status.is_settled()]
+    println(f"{len(outstanding)} legs still waiting")
+
+    # A failed leg is backed out along its own reverse heading. `__str__` is why the heading prints as a word here.
+    blocked = route[2]
+    println(f"backing out of the {blocked.heading} leg by going {retreat(blocked)}")

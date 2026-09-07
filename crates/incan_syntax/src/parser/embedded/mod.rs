@@ -86,6 +86,7 @@ impl<'a> Parser<'a> {
             .map(|active| active.dependency_key.clone())
             .unwrap_or_default();
         let descriptor_key = descriptor.key.clone();
+        let layout_sensitive = descriptor.format_hint.layout_sensitive;
 
         let dedent_idx = self.find_matching_dedent_index()?;
         // Use the just-consumed `Indent` token's span end, not the next token's span start: when the fragment's
@@ -132,6 +133,7 @@ impl<'a> Parser<'a> {
             submode,
             nodes,
             source_text: raw.to_string(),
+            layout_sensitive,
         };
         let embedded_expr = Spanned::new(Expr::Embedded(Box::new(fragment)), fragment_span);
         Ok(Some(vec![Spanned::new(

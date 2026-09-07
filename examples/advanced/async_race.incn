@@ -1,0 +1,50 @@
+"""
+First answer wins.
+
+A cache lookup and an origin fetch are both correct ways to get the same value, and there is no reason to wait for
+the slower one. `race` polls every arm concurrently, returns the winning arm's callback result, and drops the
+losers.
+
+Dropping is the part worth reading twice: a losing arm is cancelled at its last suspension point, so an arm must not
+carry work that something later depends on. When work has to finish whether or not it wins, spawn it before the race
+instead of racing it.
+
+Python equivalent:
+```python
+import asyncio
+
+async def main():
+    done, pending = await asyncio.wait(
+        [asyncio.create_task(from_cache()), asyncio.create_task(from_origin())],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+    print(done.pop().result())
+```
+"""
+
+from std.async.race import arm, race
+from std.async.time import sleep
+
+
+async def from_cache() -> str:
+    """Answer from the local cache, which is quick and may be stale."""
+    await sleep(0.05)
+    return "cache"
+
+
+async def from_origin() -> str:
+    """Answer from the origin, which is authoritative and slower."""
+    await sleep(0.30)
+    return "origin"
+
+
+def label(source: str) -> str:
+    """Describe which source answered first. Only the winning arm's callback runs."""
+    return f"answered by {source}"
+
+
+async def main() -> None:
+    # Source order breaks ties, but here the cache simply finishes first.
+    println(await race(arm(from_origin(), label), arm(from_cache(), label)))
