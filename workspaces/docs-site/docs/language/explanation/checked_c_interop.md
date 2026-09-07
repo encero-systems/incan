@@ -27,7 +27,7 @@ The declaration projection deliberately does not absorb facts with different lif
 | Surface | Question it answers |
 | --- | --- |
 | Binding inspection | What ABI, ownership, output, enum, and layout contract did the compiler accept from this source graph? |
-| `[oven.interop]` and `oven.lock` | What target requirements and package-owned physical inputs did the author declare and lock? |
+| `[interop.c]` and `oven.lock` | What target requirements and package-owned physical inputs did the author declare and lock? |
 | Oven receipt and store | Which explicitly selected toolchain and SDK, verified package artifacts, and shim outputs satisfied those requirements? |
 | Codegraph and LSP projections | Which checked declarations and explicit unsafe calls occur at these source spans? |
 
@@ -55,7 +55,7 @@ The language in which a library happens to be implemented is not decisive. A C++
 
 The checked boundary itself does not discover interop artifacts, provision Android or Apple targets, or hand an application assembly to Gradle or Xcode. It also does not make `c.system_library("name")` a portable library-discovery mechanism. Those jobs need target-specific artifact identity and packaging facts, which are distinct from the source ABI declaration.
 
-A package can declare target-specific, package-relative headers, static or bundled artifacts, system capabilities, C/C++ shim sources, compatible toolchain or SDK capabilities, and an Android API level or iOS deployment target under `[oven.interop]` in `incan.toml`; `incan lock` then records those normalized requirements and the content-derived identities of package-owned files. The declaration is intentionally binding-kind-neutral, so a future JNI, Python-extension, or other interop entry point can consume the same package-level evidence without replacing the language binding as ABI authority.
+A package can declare target-specific, package-relative headers, static or bundled artifacts, system capabilities, C/C++ shim sources, compatible toolchain or SDK capabilities, and an Android API level or iOS deployment target under `[interop.c]` in `incan.toml`; `incan lock` then records those normalized requirements and the content-derived identities of package-owned files. The declaration is intentionally binding-kind-neutral, so a future JNI, Python-extension, or other interop entry point can consume the same package-level evidence without replacing the language binding as ABI authority.
 
 `incan check --interop-target <triple>` checks the source-owned C ABI against one such declared target. The Android API level or iOS deployment target becomes part of Clang's exact target triple, and the target's definitions apply to every probe. This is verification only: it does not cross-compile generated Rust, link or stage artifacts, or turn a compatibility requirement into a claimed local toolchain selection.
 

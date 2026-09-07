@@ -17,7 +17,7 @@ use crate::library_manifest::{
     digest_toolchain_source_tree_with_cache,
 };
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
-use crate::oven_interop::{LockedInteropTarget, OvenInteropSection, locked_oven_interop_targets_from_section};
+use crate::oven_interop::{InteropCSection, LockedInteropTarget, locked_interop_targets_from_section};
 use crate::provider::{
     BackendImplementationRequirement, ComponentSelectionReason, PackageFeaturePlan, ProviderParticipation,
     ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
@@ -262,14 +262,14 @@ impl IncanLock {
 /// Snapshot the shared provider, SDK-component, and package-feature plans into portable canonical lock state.
 pub fn semantic_lock_state(
     project_root: &Path,
-    interop: Option<&OvenInteropSection>,
+    interop: Option<&InteropCSection>,
     sdk_inventory: Option<&SdkInventory>,
     sdk_components: Option<&ResolvedSdkComponents>,
     package_features: Option<&PackageFeaturePlan>,
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<SemanticLockState, String> {
-    let interop = locked_oven_interop_targets_from_section(project_root, interop)?;
+    let interop = locked_interop_targets_from_section(project_root, interop)?;
     let oven = (!interop.is_empty()).then_some(LockedOvenState { interop });
     let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
     let provider_semantic_identities = provider_plan
@@ -2196,9 +2196,9 @@ mod tests {
             "int bridge(void) { return 7; }\n",
         )?;
         fs::write(project.path().join("interop/lib/libfixture.a"), b"fixture archive")?;
-        let mut interop = OvenInteropSection {
-            schema: crate::oven_interop::OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![crate::oven_interop::OvenInteropTarget {
+        let mut interop = InteropCSection {
+            schema: crate::oven_interop::INTEROP_C_SCHEMA_VERSION,
+            targets: vec![crate::oven_interop::InteropCTarget {
                 target: "aarch64-apple-ios".to_string(),
                 toolchain: Some(crate::oven_interop::ToolchainRequirement {
                     capability: "apple-clang".to_string(),

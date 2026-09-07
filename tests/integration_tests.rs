@@ -17948,13 +17948,13 @@ def main() -> Result[None, SessionError]:
         std::fs::write(&header, "int fixture_abs(int value);\n")?;
         let main_path = write_project_files(
             tmp.path(),
-            "[project]\nname = \"package_relative_c_header\"\n\n[sdk]\nprofile = \"minimal\"\n\n[oven.interop]\nschema = 1\n\n[[oven.interop.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/fixture.h\"]\n",
+            "[project]\nname = \"package_relative_c_header\"\n\n[sdk]\nprofile = \"minimal\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/fixture.h\"]\n",
             "from std.interop import c\n\nbinding Fixture:\n    header = \"interop/include/fixture.h\"\n    link = c.system_library(\"c\")\n\n    symbol absolute(value: c.i32) -> c.i32:\n        native = \"fixture_abs\"\n\ndef main() -> None:\n    pass\n",
         )?;
         let output = run_check_against_checkout_sdk(&main_path, &tmp.path().join("generated-cargo-target"))?;
         assert!(
             output.status.success(),
-            "expected a package-relative checked C header to resolve through [oven.interop].\nstdout:\n{}\nstderr:\n{}",
+            "expected a package-relative checked C header to resolve through [interop.c].\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

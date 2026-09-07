@@ -3444,7 +3444,7 @@ fn prepare_project_with_options(
     let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         &project_root,
-        manifest.as_ref().and_then(ProjectManifest::oven_interop),
+        manifest.as_ref().and_then(ProjectManifest::interop_c),
         compilation_session.sdk_inventory.as_deref(),
         compilation_session.sdk_components.as_ref(),
         package_feature_plan.as_ref(),
@@ -10345,7 +10345,7 @@ fn prepare_library_project(
     let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         &project_root,
-        manifest.oven_interop(),
+        manifest.interop_c(),
         compilation_session.sdk_inventory.as_deref(),
         compilation_session.sdk_components.as_ref(),
         Some(&package_feature_plan),
@@ -15513,10 +15513,10 @@ mod tests {
             r#"[project]
 name = "consumer"
 
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-darwin"
 toolchain = { capability = "apple-clang", version = ">=17, <19" }
 headers = ["interop/include/bridge.h"]
@@ -17061,10 +17061,10 @@ headers = ["interop/include/bridge.h"]
         let header = project.path().join("interop/include/bridge.h");
         fs::write(&header, "int incan_bridge(void);\n")?;
         let manifest_source = r#"
-[oven.interop]
+[interop.c]
 schema = 1
 
-[[oven.interop.targets]]
+[[interop.c.targets]]
 target = "aarch64-apple-darwin"
 toolchain = { capability = "apple-clang", version = ">=17, <18" }
 sdk = { capability = "macosx", version = ">=18, <19" }
