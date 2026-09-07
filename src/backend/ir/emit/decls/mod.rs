@@ -688,10 +688,20 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
+                    // Two public names can share one projection: `pub scale_alias = alias scale` makes both `scale`
+                    // and `scale_alias` reach `scale`'s declaration, and an alias carries the identity of the
+                    // declaration it renames. Such an item is not a repeat -- each public name has to stay reachable
+                    // from this module -- so bind it under its own spelling rather than under the projection.
+                    let renames_shared_projection = binding == emitted_name
+                        && item
+                            .canonical
+                            .as_ref()
+                            .is_some_and(|identity| identity.declaration_name != source_binding);
                     // A projection names one declaration, so reaching it through several facades binds the same
                     // Rust identifier every time. Keep the first `use` and drop the repeats, which Rust would
                     // otherwise reject as a redefinition.
                     if binding == emitted_name
+                        && !renames_shared_projection
                         && emitted_name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
                         && !self
                             .emitted_projection_import_bindings
@@ -715,7 +725,12 @@ impl<'a> IrEmitter<'a> {
                     // provider module, can become a duplicate self-import. Non-canonical aliases retain their local
                     // Rust binding as before.
                     let effective_alias = item.alias.as_ref().filter(|_| binding != emitted_name);
-                    let item_import = if let Some(alias) = effective_alias {
+                    let item_import = if renames_shared_projection {
+                        // The declaration this alias renames already binds the projection in this module, so
+                        // importing it again would be a duplicate. Only the alias's own public name is still
+                        // missing, and the rust-facing reexport below adds exactly that.
+                        quote! {}
+                    } else if let Some(alias) = effective_alias {
                         let alias_ident = if item.canonical.is_some() {
                             Self::rust_ident(&binding)
                         } else {
