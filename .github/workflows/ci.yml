@@ -313,6 +313,14 @@ jobs:
         run: |
           CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
           CARGO_BUILD_JOBS=2 cargo build --locked -p incan_core --bin generate_lang_reference
+      # `check-docs-examples` depends on `test-prewarm-sdk`, so this job builds the SDK provider store whether or not
+      # it is asked to. Without this restore it built one cold every run and discarded it with the runner, and
+      # `linux-oven-prewarm` then built the same store again. The action restores and saves under a key content-
+      # addressed on the provider closure and rustc identity, so the store is now built once per identity rather than
+      # twice per run: a hit here skips the build, and a miss here saves the store for the prewarm to restore.
+      #
+      # It must follow the compiler build, because deriving the cache key runs `incan oven sdk-provider-store-identity`.
+      - uses: ./.github/actions/restore-sdk-provider-store
       - name: Check verified documentation examples
         run: >-
           INCAN_TEST_COMPILER_ALREADY_BUILT=1
