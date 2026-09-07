@@ -6,6 +6,7 @@ use crate::frontend::ast::*;
 use crate::frontend::symbols::{CallableParam, FieldInfo, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
 use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::derives::{self, DeriveId};
+use incan_semantics_core::SemanticSourceTargetKind;
 
 /// Build the resolved surface type for a declaration owner while that owner is still being collected.
 ///
@@ -225,6 +226,7 @@ fn method_info_from_decl(
                             })
                             .collect(),
                         module_path: checker.trait_bound_module_path(&bound.name),
+                        implementation_type_params: Vec::new(),
                     })
                     .collect(),
             )
@@ -260,8 +262,14 @@ fn method_info_from_decl(
             .map(|type_arg| resolve_declared_type(checker, type_arg, &active_type_params, owner_name, owner_self_ty))
             .collect(),
         module_path: checker.trait_bound_module_path(&target.node.name),
+        implementation_type_params: Vec::new(),
     });
     MethodInfo {
+        identity: Some(checker.symbols.member_declaration_identity(
+            &method.node.name,
+            SemanticSourceTargetKind::Method,
+            method.span,
+        )),
         type_params,
         type_param_bounds,
         type_param_bound_details,
@@ -285,6 +293,9 @@ pub(super) fn collect_method_overloads(
     let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
     let mut overloads: HashMap<String, Vec<MethodInfo>> = HashMap::new();
     for method in methods {
+        if !checker.member_binding_is_active(method.span) {
+            continue;
+        }
         overloads
             .entry(method.node.name.clone())
             .or_default()
@@ -312,13 +323,19 @@ pub(super) fn collect_methods_from_overloads(
 /// Project same-type method aliases onto the target method metadata.
 fn apply_method_aliases(
     aliases: &[Spanned<MethodAliasDecl>],
+    checker: &TypeChecker,
     methods: &mut HashMap<String, MethodInfo>,
     overloads: &mut HashMap<String, Vec<MethodInfo>>,
 ) -> HashMap<String, String> {
     let mut method_aliases = HashMap::new();
     for alias in aliases {
+        if !checker.member_binding_is_active(alias.span) {
+            continue;
+        }
         let target = alias.node.target.clone();
-        method_aliases.insert(alias.node.name.clone(), target.clone());
+        method_aliases
+            .entry(alias.node.name.clone())
+            .or_insert_with(|| target.clone());
 
         if let Some(target_overloads) = overloads.get(&target).cloned() {
             let alias_overloads: Vec<_> = target_overloads
@@ -344,10 +361,11 @@ fn apply_method_aliases(
 /// Collect same-type method alias metadata into method maps and alias maps.
 pub(super) fn collect_method_aliases(
     aliases: &[Spanned<MethodAliasDecl>],
+    checker: &TypeChecker,
     methods: &mut HashMap<String, MethodInfo>,
     overloads: &mut HashMap<String, Vec<MethodInfo>>,
 ) -> HashMap<String, String> {
-    apply_method_aliases(aliases, methods, overloads)
+    apply_method_aliases(aliases, checker, methods, overloads)
 }
 
 /// Insert a compiler-injected method into both the legacy method map and overload groups.
@@ -372,8 +390,12 @@ pub(super) fn collect_fields(
 ) -> HashMap<String, FieldInfo> {
     let owner_self_ty = owner_resolved_type(owner, owner_type_params);
     let active_type_params = type_param_name_set(owner_type_params, &[]);
-    fields
+    let active_fields = fields
         .iter()
+        .filter(|field| checker.member_binding_is_active(field.span))
+        .collect::<Vec<_>>();
+    active_fields
+        .into_iter()
         .map(|f| {
             let ty = resolve_declared_type(
                 checker,
@@ -385,6 +407,11 @@ pub(super) fn collect_fields(
             (
                 f.node.name.clone(),
                 FieldInfo {
+                    identity: Some(checker.symbols.member_declaration_identity(
+                        &f.node.name,
+                        SemanticSourceTargetKind::Field,
+                        f.span,
+                    )),
                     surface_type_name: Some(crate::frontend::symbols::field_surface_type_name(&f.node.ty.node, &ty)),
                     ty,
                     visibility: f.node.visibility,
@@ -411,12 +438,21 @@ pub(super) fn collect_properties(
 ) -> HashMap<String, PropertyInfo> {
     let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
     let active_type_params = type_param_name_set(owner_type_params, &[]);
-    properties
+    let active_properties = properties
         .iter()
+        .filter(|property| checker.member_binding_is_active(property.span))
+        .collect::<Vec<_>>();
+    active_properties
+        .into_iter()
         .map(|property| {
             (
                 property.node.name.clone(),
                 PropertyInfo {
+                    identity: Some(checker.symbols.member_declaration_identity(
+                        &property.node.name,
+                        SemanticSourceTargetKind::Property,
+                        property.span,
+                    )),
                     return_type: resolve_declared_type(
                         checker,
                         &property.node.return_type,
@@ -482,6 +518,7 @@ pub(super) fn inject_validate_methods(
         overloads,
         "new",
         MethodInfo {
+            identity: None,
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),
             type_param_bound_details: HashMap::new(),

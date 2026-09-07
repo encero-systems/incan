@@ -94,14 +94,60 @@ impl<'a> IrEmitter<'a> {
                 visibility,
                 name,
                 target_path,
+                target_canonical,
                 target_origin,
                 target_qualifier,
             } => {
                 let vis = self.emit_visibility(visibility);
                 let name_ident = Self::rust_ident(name);
-                let target =
-                    self.emit_symbol_alias_target_path(target_origin.as_ref(), target_qualifier.as_ref(), target_path);
+                let mut emitted_target_path = target_path.clone();
+                if let Some(identity) = target_canonical {
+                    if !super::super::decl::is_projected_source_symbol(identity) {
+                        return Err(EmitError::InternalInvariant(format!(
+                            "source alias `{name}` carries a non-projectable canonical target"
+                        )));
+                    }
+                    let Some(target_name) = emitted_target_path.last_mut() else {
+                        return Err(EmitError::InternalInvariant(format!(
+                            "source alias `{name}` has an empty canonical target path"
+                        )));
+                    };
+                    *target_name = incan_semantics_core::encode_incan_symbol_identity(identity);
+                }
+                let target = self.emit_symbol_alias_target_path(
+                    target_origin.as_ref(),
+                    target_qualifier.as_ref(),
+                    &emitted_target_path,
+                );
+                // A public alias of a projected declaration has to carry the projection itself, not only the alias
+                // spelling. A module re-exporting this one reaches the declaration the way every reference does --
+                // by its projection -- and an alias-only re-export left that name absent here.
+                //
+                // Only a target that lives somewhere else needs that. An alias of a declaration this module makes
+                // itself emits the projection as a bare identifier, and re-exporting a name already defined here is
+                // E0255 rather than a re-export.
+                let target_is_defined_here =
+                    emitted_target_path.len() == 1 && (target_origin.is_none() || target_qualifier.is_none());
+                let projection_reexport = (matches!(visibility, super::super::decl::Visibility::Public)
+                    && !target_is_defined_here)
+                    .then(|| {
+                        emitted_target_path
+                            .last()
+                            .filter(|name| name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX))
+                            // The module may already bind this projection: an import of the same declaration emits
+                            // exactly this `use`, and `pub run = alias helper` beside `from other import helper`
+                            // then bound it twice. One binding per module is the rule the imports already follow.
+                            .filter(|name| {
+                                self.emitted_projection_import_bindings
+                                    .borrow_mut()
+                                    .insert((*name).to_string())
+                            })
+                            .map(|_| quote! { #vis use #target; })
+                    })
+                    .flatten()
+                    .unwrap_or_default();
                 Ok(quote! {
+                    #projection_reexport
                     #vis use #target as #name_ident;
                 })
             }
@@ -114,9 +160,10 @@ impl<'a> IrEmitter<'a> {
             IrDeclKind::Static {
                 visibility,
                 name,
+                provenance,
                 ty,
                 value,
-            } => self.emit_static(visibility, name, ty, value),
+            } => self.emit_static(visibility, name, provenance, ty, value),
             IrDeclKind::Import {
                 visibility,
                 origin,
@@ -135,11 +182,20 @@ impl<'a> IrEmitter<'a> {
         &self,
         visibility: &super::super::decl::Visibility,
         name: &str,
+        provenance: &super::super::decl::IrStaticProvenance,
         ty: &IrType,
         value: &super::super::TypedExpr,
     ) -> Result<TokenStream, EmitError> {
         let vis = self.emit_visibility(visibility);
-        let name_ident = Self::rust_static_ident(name);
+        let name_ident = self.rust_static_declaration_ident(name, provenance)?;
+        let rust_facing_alias = if matches!(provenance, super::super::decl::IrStaticProvenance::Source(_))
+            && !matches!(visibility, super::super::decl::Visibility::Private)
+        {
+            let alias = Self::rust_generated_static_ident(name);
+            (alias != name_ident).then(|| quote! { #vis use #name_ident as #alias; })
+        } else {
+            None
+        };
         let ty_tokens = self.emit_type(ty);
         let previous = self.in_static_initializer.replace(true);
         let emitted_value = self.emit_expr(value);
@@ -151,6 +207,7 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! {
             #vis static #name_ident: std::sync::LazyLock<incan_stdlib::storage::StaticCell<#ty_tokens>> =
                 std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(#converted_value));
+            #rust_facing_alias
         })
     }
 
@@ -550,9 +607,9 @@ impl<'a> IrEmitter<'a> {
             // pattern matching.
             if matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import {
                 for item in items {
-                    let key = item.alias.as_ref().unwrap_or(&item.name).clone();
+                    let key = item.emitted_binding_name();
                     let mut full_path = path.to_vec();
-                    full_path.push(item.name.clone());
+                    full_path.push(item.emitted_name());
                     self.rust_import_paths.borrow_mut().insert(key, full_path);
                 }
             }
@@ -567,16 +624,20 @@ impl<'a> IrEmitter<'a> {
                 if matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import {
                     let analysis = self.generated_use_analysis.borrow();
                     items.iter().any(|item| {
-                        let binding = item.alias.as_ref().unwrap_or(&item.name);
+                        let binding = item.emitted_binding_name();
                         item.name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
-                            && analysis.used_imports.contains(binding)
+                            && analysis.used_imports.contains(&binding)
                     })
                 } else {
                     false
                 };
+            // The leading-underscore convention marks a declaration the stdlib keeps to itself, and it is a property
+            // of the *source* spelling. `emitted_binding_name()` is the RFC 120 projection for anything projected,
+            // and every projection begins with `__`, so reading privacy from it classified each projected stdlib
+            // export as private. Functions are projected and types are not, which is why a facade kept its types and
+            // silently dropped its functions.
             let should_reexport_item = |item: &super::super::decl::IrImportItem| {
-                let binding = item.alias.as_ref().unwrap_or(&item.name);
-                if is_incan_source_stdlib && binding.starts_with('_') {
+                if is_incan_source_stdlib && item.source_binding_name().starts_with('_') {
                     return false;
                 }
                 export_item_import || item.force_reexport
@@ -584,29 +645,37 @@ impl<'a> IrEmitter<'a> {
             let item_stmts: Vec<TokenStream> = items
                 .iter()
                 .filter(|item| {
-                    let binding = item.alias.as_ref().unwrap_or(&item.name);
-                    let private_type_like_binding = binding
+                    let binding = if item.is_static {
+                        item.source_binding_name().to_string()
+                    } else {
+                        item.emitted_binding_name()
+                    };
+                    let source_binding = item.source_binding_name();
+                    let private_type_like_binding = source_binding
                         .trim_start_matches('_')
                         .chars()
                         .next()
                         .is_some_and(|ch| ch.is_ascii_uppercase());
-                    if is_incan_source_stdlib && binding.starts_with('_') && !private_type_like_binding {
-                        return self.should_emit_extension_trait_import(binding);
+                    if is_incan_source_stdlib && source_binding.starts_with('_') && !private_type_like_binding {
+                        return self.should_emit_import_binding(&binding)
+                            || self.should_emit_extension_trait_import(&binding);
                     }
                     should_reexport_item(item)
-                        || self.should_emit_import_binding(binding)
-                        || self.should_emit_extension_trait_import(binding)
+                        || self.should_emit_import_binding(&binding)
+                        || self.should_emit_extension_trait_import(&binding)
                         || (preserve_metadata_missing_trait_candidate
                             && item.rust_trait_import.is_none()
                             && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {
-                    let binding = item.alias.as_ref().unwrap_or(&item.name);
-                    let name_ident = if item.is_static {
-                        Self::rust_static_ident(&item.name)
+                    let binding = item.emitted_binding_name();
+                    let source_binding = item.source_binding_name();
+                    let emitted_name = if is_incan_source_stdlib {
+                        self.stdlib_import_item_emitted_name(path, item)
                     } else {
-                        Self::rust_ident(&item.name)
+                        item.emitted_name()
                     };
+                    let name_ident = Self::rust_ident(&emitted_name);
                     let runtime_surface_reexport_path = if should_reexport_item(item) && is_incan_source_stdlib {
                         self.stdlib_runtime_surface_type_reexport_path(path, &item.name)
                     } else {
@@ -615,9 +684,10 @@ impl<'a> IrEmitter<'a> {
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     let absolute_path = matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
-                    let static_init_import = if item.is_static && self.static_needs_imported_init_import(binding) {
+                    let static_init_import = if item.is_static && self.static_needs_imported_init_import(source_binding)
+                    {
                         let init_ident = Self::rust_ident("__incan_init_module_statics");
-                        let init_alias = Self::imported_static_init_ident(binding);
+                        let init_alias = Self::imported_static_init_ident(source_binding);
                         if absolute_path {
                             quote! { use :: #path_ts_clone :: #init_ident as #init_alias; }
                         } else {
@@ -626,6 +696,42 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
+                    // Two public names can share one projection: `pub scale_alias = alias scale` makes both `scale`
+                    // and `scale_alias` reach `scale`'s declaration, and an alias carries the identity of the
+                    // declaration it renames. Such an item is not a repeat -- each public name has to stay reachable
+                    // from this module -- so bind it under its own spelling rather than under the projection.
+                    // An overload set's members are already bound under their own generated names, and the provider
+                    // exports them only that way, so they are not an alias over another declaration in this sense --
+                    // importing one by its bare projection names something no module exports.
+                    let renames_shared_projection = binding == emitted_name
+                        // A binding that already carries the name it would be renamed to is not a rename: emitting
+                        // `use path::Name as Name;` beside `use path::Name;` defines one name twice.
+                        && source_binding != emitted_name
+                        && !is_overload_emitted_name(&item.name)
+                        && item
+                            .canonical
+                            .as_ref()
+                            .is_some_and(|identity| identity.declaration_name != item.name);
+                    // A public alias in this module republishes this projection under its own `pub use`, and a
+                    // module binds one projection once. Stand aside so the binding is the public one: a private
+                    // import here would take the single slot and leave the alias unable to export it.
+                    if binding == emitted_name && self.public_alias_projection_targets.borrow().contains(&emitted_name)
+                    {
+                        return quote! {};
+                    }
+                    // A projection names one declaration, so reaching it through several facades binds the same
+                    // Rust identifier every time. Keep the first `use` and drop the repeats, which Rust would
+                    // otherwise reject as a redefinition. A repeat that also renames still owes its own name a
+                    // binding, so drop the projection half of it rather than the whole item.
+                    let repeats_projection_binding = binding == emitted_name
+                        && emitted_name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                        && !self
+                            .emitted_projection_import_bindings
+                            .borrow_mut()
+                            .insert(emitted_name.clone());
+                    if repeats_projection_binding && !renames_shared_projection {
+                        return quote! {};
+                    }
                     if item.alias.is_none()
                         && is_overload_emitted_name(&item.name)
                         && !self
@@ -636,12 +742,60 @@ impl<'a> IrEmitter<'a> {
                         return quote! {};
                     }
 
-                    let item_import = if let Some(alias) = &item.alias {
-                        let alias_ident = if item.is_static {
-                            Self::rust_static_ident(alias)
+                    // A source alias of a canonical symbol deliberately binds the provider's one projection.
+                    // Do not render `use path::projection as projection`: it is a duplicate self-alias and, in a
+                    // provider module, can become a duplicate self-import. Non-canonical aliases retain their local
+                    // Rust binding as before.
+                    // The rust-facing reexport below already binds such an alias under its own name, but only for
+                    // an item this module re-exports. A module that merely imports one still needs a binding, so
+                    // suppress the import only when that reexport will actually carry it.
+                    let reexport_carries_alias = renames_shared_projection
+                        && should_reexport_item(item)
+                        && item
+                            .canonical
+                            .as_ref()
+                            .is_some_and(super::super::decl::is_projected_source_symbol)
+                        && source_binding != emitted_name;
+                    let effective_alias_ident = item.alias.as_ref().filter(|_| binding != emitted_name).map(|alias| {
+                        if item.canonical.is_some() {
+                            Self::rust_ident(&binding)
                         } else {
                             Self::rust_ident(alias)
+                        }
+                    });
+                    // The projection is what references resolve through, and the alias's own spelling is what a
+                    // type annotation still names, so a module importing such an alias needs both bindings. Two
+                    // `use` of one path under different names is legal; binding only the alias name lost every call
+                    // through the projection, and binding only the projection lost the type.
+                    // Several facades reach one declaration, so the same rename arrives once per hop. Its name is a
+                    // Rust binding like any other and may be created only once per module.
+                    let first_rename_of_this_name = self
+                        .emitted_projection_import_bindings
+                        .borrow_mut()
+                        .insert(format!("as:{source_binding}"));
+                    let renamed_alias_binding =
+                        if renames_shared_projection && !reexport_carries_alias && first_rename_of_this_name {
+                            let alias_ident = Self::rust_ident(source_binding);
+                            if should_reexport_item(item) {
+                                if absolute_path {
+                                    quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
+                                } else {
+                                    quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                                }
+                            } else if absolute_path {
+                                quote! { use :: #path_ts_clone :: #name_ident as #alias_ident; }
+                            } else {
+                                quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                            }
+                        } else {
+                            quote! {}
                         };
+                    let item_import = if reexport_carries_alias || repeats_projection_binding {
+                        // The declaration this alias renames already binds the projection in this module, so
+                        // importing it again would be a duplicate. Only the alias's own public name is still
+                        // missing, and the rust-facing reexport below adds exactly that.
+                        quote! {}
+                    } else if let Some(alias_ident) = effective_alias_ident {
                         if let Some(runtime_path) = &runtime_surface_reexport_path {
                             quote! { pub use :: #runtime_path as #alias_ident; }
                         } else if should_reexport_item(item) {
@@ -674,7 +828,27 @@ impl<'a> IrEmitter<'a> {
                             }
                         }
                     };
-                    quote! { #static_init_import #item_import }
+                    let rust_facing_reexport = if should_reexport_item(item)
+                        && item
+                            .canonical
+                            .as_ref()
+                            .is_some_and(super::super::decl::is_projected_source_symbol)
+                        && source_binding != emitted_name
+                    {
+                        let source_ident = if item.is_static {
+                            Self::rust_generated_static_ident(source_binding)
+                        } else {
+                            Self::rust_ident(source_binding)
+                        };
+                        if absolute_path {
+                            quote! { pub use :: #path_ts_clone :: #name_ident as #source_ident; }
+                        } else {
+                            quote! { pub use #path_ts_clone :: #name_ident as #source_ident; }
+                        }
+                    } else {
+                        quote! {}
+                    };
+                    quote! { #static_init_import #item_import #renamed_alias_binding #rust_facing_reexport }
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })
@@ -762,9 +936,209 @@ fn rustdoc_safe_doc_line(line: &str, in_fenced_block: &mut bool) -> String {
     format!("{}{}", &line[..leading_len], "```ignore")
 }
 
+impl super::super::IrEmitter<'_> {
+    /// Return the emitted Rust item name for one item of an Incan-source stdlib import.
+    ///
+    /// The import path names the declaration; the bare source name does not. A consumer that materializes stdlib
+    /// source registers a module-origin declaration under the same short name as the linked provider's export, so
+    /// resolving by name first bound the re-export to an identity the provider never emitted and left `pub use`
+    /// naming an item that does not exist. The qualified path is therefore asked first — that lookup consults the
+    /// compiled-SDK manifest and fails closed when a path is ambiguous — and the name-only registry stays the
+    /// fallback it has always been.
+    pub(super) fn stdlib_import_item_emitted_name(
+        &self,
+        path: &[String],
+        item: &super::super::decl::IrImportItem,
+    ) -> String {
+        let mut canonical_path = path.to_vec();
+        canonical_path.push(item.name.clone());
+        // A consumer imports through a facade; a provider publishes the declaring module. `from std.datetime import
+        // utc` asks for `std.datetime.utc`, while the provider published `std.datetime.civil.naive.utc` -- a prelude
+        // re-export is not itself an export entry, so the facade path is absent and the lookup misses. Import
+        // resolution already proved which module declares the item, so ask the provider again by that path before
+        // falling back to an identity naming a declaration the provider never emitted.
+        let declared_path = item.canonical.as_ref().and_then(|identity| match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(declaring_module) => Some(
+                declaring_module
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(identity.declaration_name.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        });
+        self.canonical_stdlib_function_identity(&canonical_path)
+            .or_else(|| {
+                declared_path
+                    .as_deref()
+                    .and_then(|p| self.canonical_stdlib_function_identity(p))
+            })
+            .or_else(|| self.function_registry.canonical_identity_for_source_name(&item.name))
+            .map(incan_semantics_core::encode_incan_symbol_identity)
+            .unwrap_or_else(|| item.emitted_name())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use incan_semantics_core::{
+        CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+        encode_incan_symbol_identity,
+    };
+
+    use super::super::super::FunctionRegistry;
+    use super::super::super::decl::IrImportItem;
+    use super::super::super::types::IrType;
+    use super::super::IrEmitter;
     use super::{ZEN_TEXT, normalized_rustdoc_lines};
+    use crate::library_manifest::{
+        CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, LibraryManifest,
+    };
+
+    #[test]
+    fn stdlib_import_through_a_facade_finds_the_provider_by_the_declaring_module() {
+        // A provider publishes the module that declares an item, not every facade re-exporting it. `from std.datetime
+        // import utc` looks up `std.datetime.utc`, which the graph does not carry; the declaration lives at
+        // `std.datetime.civil.naive.utc`, which it does.
+        let provider_identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "incan_stdlib_data".to_string(),
+                module_path: vec!["datetime".to_string(), "civil".to_string(), "naive".to_string()],
+            },
+            declaration_name: "utc".to_string(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(10, 20),
+        };
+        let mut manifest = LibraryManifest::new("incan_stdlib_data", "0.6.0");
+        manifest.contract_metadata.identity_graph.exports.push(ExportIdentity {
+            public_name: "utc".to_string(),
+            public_path: vec![
+                "incan_stdlib_data".to_string(),
+                "datetime".to_string(),
+                "civil".to_string(),
+                "naive".to_string(),
+                "utc".to_string(),
+            ],
+            source_path: vec![
+                "datetime".to_string(),
+                "civil".to_string(),
+                "naive".to_string(),
+                "utc".to_string(),
+            ],
+            kind: ExportIdentityKind::Function,
+            projection: ExportIdentityProjection::Direct,
+            canonical: CanonicalIdentityExport::from_canonical("incan_stdlib_data", &provider_identity),
+        });
+
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+
+        // Import resolution proved the declaring module even though the facade path is not published.
+        let item = IrImportItem {
+            name: "utc".to_string(),
+            alias: None,
+            canonical: Some(CanonicalSymbolId::module_declaration(
+                vec![
+                    "std".to_string(),
+                    "datetime".to_string(),
+                    "civil".to_string(),
+                    "naive".to_string(),
+                ],
+                "utc",
+                SemanticSourceTargetKind::Function,
+                HirSourceSpan::new(30, 40),
+            )),
+            is_static: false,
+            force_reexport: false,
+            rust_trait_import: None,
+        };
+
+        let emitted = emitter.stdlib_import_item_emitted_name(&["std".to_string(), "datetime".to_string()], &item);
+
+        assert_eq!(
+            emitted,
+            encode_incan_symbol_identity(&provider_identity),
+            "a facade import must resolve to the provider's declaration, not a source-shaped stand-in"
+        );
+    }
+
+    #[test]
+    fn stdlib_import_reexports_the_providers_identity_over_a_same_named_source_declaration() {
+        let provider_identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "incan_stdlib_data".to_string(),
+                module_path: vec!["datetime".to_string(), "civil".to_string(), "naive".to_string()],
+            },
+            declaration_name: "utc".to_string(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(10, 20),
+        };
+        let mut manifest = LibraryManifest::new("incan_stdlib_data", "0.6.0");
+        manifest.contract_metadata.identity_graph.exports.push(ExportIdentity {
+            public_name: "utc".to_string(),
+            public_path: vec![
+                "incan_stdlib_data".to_string(),
+                "datetime".to_string(),
+                "utc".to_string(),
+            ],
+            source_path: vec![
+                "datetime".to_string(),
+                "civil".to_string(),
+                "naive".to_string(),
+                "utc".to_string(),
+            ],
+            kind: ExportIdentityKind::Function,
+            projection: ExportIdentityProjection::Direct,
+            canonical: CanonicalIdentityExport::from_canonical("incan_stdlib_data", &provider_identity),
+        });
+
+        // A consumer that materializes the same stdlib source registers a module-origin `utc` under the short name.
+        let source_identity = CanonicalSymbolId::module_declaration(
+            vec![
+                "std".to_string(),
+                "datetime".to_string(),
+                "civil".to_string(),
+                "naive".to_string(),
+            ],
+            "utc",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(30, 40),
+        );
+        let mut registry = FunctionRegistry::new();
+        registry.register_canonical_projection(
+            "opaque_projection".to_string(),
+            "utc".to_string(),
+            source_identity,
+            Vec::new(),
+            IrType::Unit,
+        );
+
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+
+        let item = IrImportItem {
+            name: "utc".to_string(),
+            alias: None,
+            canonical: None,
+            is_static: false,
+            force_reexport: false,
+            rust_trait_import: None,
+        };
+        let emitted = emitter.stdlib_import_item_emitted_name(&["std".to_string(), "datetime".to_string()], &item);
+
+        // RFC 120 projection is one-way inside the compiler, so assert the exact spelling emission produces
+        // rather than decoding the emitted name back into an identity.
+        assert_eq!(
+            emitted,
+            encode_incan_symbol_identity(&provider_identity),
+            "a stdlib re-export must name the linked provider's declaration, not a same-named source one"
+        );
+    }
 
     #[test]
     fn zen_text_contains_one_obvious_way_once() {

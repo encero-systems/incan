@@ -11,7 +11,7 @@
     - RFC 035 (First-class named function references)
     - RFC 038 (Variadic positional args and keyword-argument capture)
 - **Issue:** [#173](https://github.com/encero-systems/incan/issues/173)
-- **RFC PR:** —
+- **RFC PR:** [#536](https://github.com/encero-systems/incan/pull/536)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

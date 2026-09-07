@@ -1,0 +1,42 @@
+"""Exercise scalar-key membership without relying on hash-table iteration or value ordering."""
+
+
+def unit() -> None:
+    """Supply a concrete unit key rather than an unconstrained optional literal."""
+    return
+
+
+def membership() -> bool:
+    """Check all four membership helpers over each admitted key kind and typed-empty constructors."""
+    values = {1, 4, 4}
+    keyed = {"key": "value", "key": "later"}
+    flags = {true}
+    names = {"alpha"}
+    marker = unit()
+    units = {marker}
+    integer_keys = {7: "seven"}
+    boolean_keys = {true: "true"}
+    unit_keys = {marker: "unit"}
+    empty_set: Set[int] = Set()
+    empty_dict: Dict[str, int] = Dict()
+    println("hashed membership")
+    return (
+        4 in values
+        and 9 not in values
+        and "key" in keyed
+        and "value" not in keyed
+        and true in flags
+        and false not in flags
+        and "alpha" in names
+        and "beta" not in names
+        and marker in units
+        and not (marker not in units)
+        and 7 in integer_keys
+        and 8 not in integer_keys
+        and true in boolean_keys
+        and false not in boolean_keys
+        and marker in unit_keys
+        and not (marker not in unit_keys)
+        and 1 not in empty_set
+        and "key" not in empty_dict
+    )

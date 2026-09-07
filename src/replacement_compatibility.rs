@@ -1557,13 +1557,13 @@ fn validate_feature_surface_coverage(
             ));
         }
         if matches!(&comparison.evidence, ComparisonEvidence::Paired { .. })
-            && !matches!(
+            && matches!(
                 feature.evidence.direct_replacement,
-                DirectReplacementOutcome::Executable
+                DirectReplacementOutcome::ExplicitlyRefused | DirectReplacementOutcome::OutsideDirectExecution
             )
         {
             errors.push(format!(
-                "feature `{}` has paired scoped case `{}` without direct execution",
+                "feature `{}` has paired scoped case `{}` despite excluding direct execution",
                 feature.id, comparison.case_id
             ));
         }
@@ -1799,6 +1799,17 @@ fn registered_parity_corpus_case_id(case_id: &str) -> bool {
             | "replacement-body-v0-007"
             | "replacement-body-v0-018"
             | "replacement-body-v0-019"
+            | "replacement-body-v0-020"
+            | "replacement-body-v0-021"
+            | "replacement-body-v0-022"
+            | "replacement-body-v0-023"
+            | "replacement-body-v0-024"
+            | "replacement-body-v0-025"
+            | "replacement-body-v0-026"
+            | "replacement-body-v0-027"
+            | "replacement-body-v0-028"
+            | "replacement-body-v0-030"
+            | "replacement-body-v0-029"
     )
 }
 
@@ -1913,7 +1924,7 @@ pub fn render_developer_projection(
         ));
     }
     output.push_str("\n## Remaining-work issue map\n\n");
-    output.push_str("Every planned feature below has a currently open mechanism owner. #1146 is completed comparison infrastructure: it supplies reusable provenance, never ownership of missing comparison evidence. Scheduled evidence belongs to its feature/runtime owner; direct profiles without one carry explicit unscheduled evidence debt. `replacement-body-v0-001` has one paired match, while all incomplete features and uncovered cases remain non-green.\n\n");
+    output.push_str("Every planned feature below has a currently open mechanism owner. #1146 is completed comparison infrastructure: it supplies reusable provenance, never ownership of missing comparison evidence. Scheduled evidence belongs to its feature/runtime owner; direct profiles without one carry explicit unscheduled evidence debt. Stable corpus rows `replacement-body-v0-001` and `replacement-body-v0-020` through `replacement-body-v0-030` have case-scoped paired matches, while all incomplete features and uncovered cases remain non-green.\n\n");
     let features_by_owner = features_by_owner(&registry.features);
     for (owner, features) in features_by_owner {
         output.push_str(&format!(
@@ -1952,7 +1963,7 @@ pub fn render_developer_projection(
             ));
             for comparison in &feature.evidence.surfaces.scoped_comparisons {
                 output.push_str(&format!(
-                    "- Completed #1146 case `{}` ({}) comparison: {}\n",
+                    "- Case `{}` ({}) using completed comparison infrastructure #1146: {}\n",
                     comparison.case_id,
                     comparison.state.as_str(),
                     comparison_evidence_label(&comparison.evidence),
@@ -2361,8 +2372,8 @@ fn migration_bootstrap_compatibility_features() -> Vec<CompatibilityFeature> {
         planned_feature(
             "call.named-and-variadic",
             "Named calls preserve resolved targets, generic arguments, positional/named binding, and spread diagnostics.",
-            1152,
-            "Call-frame and binder execution beyond the bounded scalar profile is owned by the callable runtime slice.",
+            988,
+            "Closed #1152 delivered the callable runtime substrate; open #988 owns broadening named, variadic, and spread execution with receipt-bound evidence.",
         ),
         planned_feature(
             "decorators.dsl-surfaces",
@@ -2379,62 +2390,56 @@ fn migration_bootstrap_compatibility_features() -> Vec<CompatibilityFeature> {
         planned_feature(
             "error.result-and-try",
             "Result combinators and explicit propagation retain success, error, ordering, and diagnostic behavior.",
-            1154,
-            "Depends on #1101 for complete Body IR vocabulary; #1154 owns Result/error value routing.",
+            988,
+            "Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered Result/error value routing; open #988 owns broadening and comparing the remaining execution profile.",
         ),
         planned_feature(
             "generator.expressions",
             "Generator expressions preserve construction-versus-consumption timing and lazy collection in the admitted profile.",
-            1152,
-            "The bounded generator-expression collect path exists, but broader consumption and comparison remain non-green.",
+            988,
+            "Closed #1152 delivered the bounded generator-expression collect path; open #988 owns broader consumption and comparison, which remain non-green.",
         ),
         planned_feature(
             "generator.functions",
             "Generator functions suspend and resume without replaying prior effects or losing local state.",
-            1152,
-            "Generator-function frames and resumption remain explicit replacement refusals.",
+            988,
+            "Closed #1152 delivered the callable/lazy-generator substrate; open #988 owns the generator-function frames and resumption forms that remain explicit replacement refusals.",
         ),
-        planned_feature(
+        planned_feature_with_bounded_cases(
             "iteration.protocol-and-adapters",
             "Iterator protocols, adapters, and consumers preserve lazy dispatch, callback timing, exhaustion, and errors.",
-            1152,
-            "The callable/lazy-generator runtime slice owns the first admitted adapter profile; general protocol dispatch remains blocked.",
+            988,
+            "Closed #1152 delivered the first callable/lazy-generator adapter profile; open #988 owns broader protocol dispatch, which remains blocked.",
         ),
         planned_feature(
             "iteration.user-and-fallible",
             "User-defined and fallible iteration preserve protocol calls, terminal behavior, and error routing.",
-            1101,
-            "Body IR protocol facts need a runtime dispatch and error-routing owner before the direct profile can admit these forms.",
+            988,
+            "Closed #1101 delivered the Body IR protocol vocabulary; open #988 owns the runtime dispatch and error-routing profile required to admit these forms.",
         ),
-        planned_feature(
+        planned_feature_with_bounded_cases(
             "language.aggregates-and-projections",
             "Tuple, list, dict, set, slice, projection, mutation, equality, and ordering retain source semantics.",
-            1154,
-            "Depends on #1101 for complete aggregate/place vocabulary; #1154 owns direct value storage and mutation.",
+            988,
+            "Source-local scalar-key set/dict membership and entry count plus nonempty integer-list sorting execute directly. Standalone replacement-body-v0-020, replacement-body-v0-026 and replacement-body-v0-028 prove their exact streams and typed results across independent routes. These bounded proofs do not establish the full aggregate or ordering contract. Closed #1154 delivered the direct value-state substrate; open #988 owns broadening storage, projection, mutation, equality, and ordering execution.",
         ),
         planned_feature(
             "language.control-flow-complete",
             "Control flow beyond the bounded scalar profile preserves value-carrying branches, pattern binding, loop results, and diagnostics.",
-            1154,
-            "The current direct profile covers only the bounded scalar subset; #1154 owns the required value and pattern runtime.",
+            988,
+            "The current direct profile covers only the bounded scalar subset. Closed #1154 delivered the value and pattern runtime substrate; open #988 owns the remaining control-flow execution and comparison profile.",
         ),
         planned_feature(
             "language.match-and-patterns",
             "Match, destructuring, alternation, guards, and exhaustiveness preserve branch selection and diagnostics.",
-            1154,
-            "Depends on #1101 for complete Body IR vocabulary; #1154 owns pattern dispatch over direct values.",
+            988,
+            "Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered pattern dispatch over direct values; open #988 owns broadening and comparing the remaining match surface.",
         ),
-        planned_feature(
-            "language.numeric-complete",
-            "The full numeric contract preserves widths, literals, conversions, overflow, decimal behavior, and diagnostics beyond the scalar profile.",
-            1154,
-            "The current direct profile is intentionally scalar-bounded; #1154 owns the shared direct value model required for remaining numeric forms.",
-        ),
-        planned_feature(
+        planned_feature_with_bounded_cases(
             "language.strings-and-format",
             "String operators and formatting preserve interpolation order, conversions, and runtime failures.",
-            1101,
-            "String concatenation is boundedly executable; f-strings and general formatting remain explicit refusals.",
+            988,
+            "String concatenation, bounded scalar interpolation, selected canonical string helpers and Unicode-scalar string length execute directly. Closed #1101 delivered the Body IR vocabulary. The separate replacement-body-v0-021 and replacement-body-v0-024 corpus cases prove those bounded profiles, not this full formatting contract; open #988 owns broader execution and feature parity remains non-green.",
         ),
         planned_feature(
             "module.identity-and-aliases",
@@ -2442,11 +2447,11 @@ fn migration_bootstrap_compatibility_features() -> Vec<CompatibilityFeature> {
             1042,
             "Canonical source identity is a prerequisite for a replacement profile that crosses module boundaries.",
         ),
-        planned_feature(
+        planned_feature_with_bounded_cases(
             "nominal.models-unions-enums",
             "Models, unions, value enums, newtypes, computed properties, and static storage preserve construction and dispatch semantics.",
-            1154,
-            "Depends on #1101 for complete nominal Body IR; #1154 owns the direct nominal value representation.",
+            988,
+            "#1281 retains and executes the bounded checked int/bool/str/float `isinstance` target profile in replacement-body-v0-030. That case does not establish general runtime type values or the wider models/unions/enums/newtypes contract. Closed #1154 delivered the current direct nominal/value substrate; open #988 owns broadening the replacement execution profile.",
         ),
         planned_feature(
             "package.public-boundaries",
@@ -2457,20 +2462,20 @@ fn migration_bootstrap_compatibility_features() -> Vec<CompatibilityFeature> {
         planned_feature(
             "runtime.std-data-services",
             "Data-oriented stdlib services preserve their documented input, output, and error contracts.",
-            1156,
-            "#1156 owns checked provider-service dispatch; collection and nominal values remain a #1154 prerequisite.",
+            988,
+            "Closed #1156 delivered one checked provider-service dispatch and closed #1154 delivered its value-state prerequisite; open #988 owns broadening direct data-service execution and comparison.",
         ),
         planned_feature(
             "runtime.std-hosted-services",
             "Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjacent services retain authority and lifecycle semantics.",
-            1156,
-            "#1156 owns checked provider-service dispatch and depends on authority/receipt facts from #662.",
+            988,
+            "Closed #1156 delivered one checked provider-service dispatch. Open #988 owns broader direct execution and comparison, with authority and receipt facts still supplied by #662.",
         ),
         planned_feature(
             "runtime.std-observability",
             "Logging, telemetry, registries, and metadata services preserve structured values and provider behavior.",
-            1156,
-            "#1156 owns checked provider-service dispatch; provider authority and receipts remain explicit prerequisites.",
+            988,
+            "Closed #1156 delivered one checked provider-service dispatch; open #988 owns broader direct observability execution and comparison, while provider authority and receipts remain explicit prerequisites.",
         ),
         planned_feature(
             "testing-and-tooling",
@@ -2662,6 +2667,33 @@ fn planned_feature(
     )
 }
 
+/// Build a broad planned feature while retaining independently executable bounded corpus cases.
+///
+/// The feature-wide Body-IR, direct-execution, and comparison states remain non-green. Registered cases and their
+/// paired receipts describe only the named bounded probes, so landed evidence is not hidden behind the remaining
+/// feature work and does not promote that wider contract to preserved.
+fn planned_feature_with_bounded_cases(
+    id: &'static str,
+    contract: &'static str,
+    owner_issue: u32,
+    blocker: &'static str,
+) -> CompatibilityFeature {
+    let mut feature = planned_feature(id, contract, owner_issue, blocker);
+    let case_ids = registered_parity_case_ids(id);
+    let anchor_selector = case_ids.first().copied().unwrap_or("fn seed_corpus");
+    feature.evidence.surfaces.parity_corpus = ParityCorpusReference::Registered {
+        case_ids: case_ids.into_iter().map(str::to_string).collect(),
+        anchor: observed_anchor(
+            EvidenceSurface::ParityCorpus,
+            "tests/parity_corpus_tests.rs",
+            anchor_selector,
+            "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature.",
+        ),
+    };
+    feature.evidence.surfaces.scoped_comparisons = scoped_comparisons(id);
+    feature
+}
+
 /// Build one planned feature at the module that owns its current compiler boundary.
 ///
 /// The bootstrap map uses [`planned_feature`] only until an implementation has a coherent local registration. New
@@ -2766,6 +2798,59 @@ pub(crate) fn planned_feature_at_boundary(
     }
 }
 
+/// Build one partially materialized feature at the implementation boundary that owns its admitted subset.
+///
+/// Both compiler representation and direct execution have observed seams, but the feature-wide contract stays
+/// non-green and blocked on its named follow-up. Registered corpus comparisons prove only their bounded rows.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn partially_materialized_feature_at_boundary(
+    id: &'static str,
+    contract: &'static str,
+    owner_issue: u32,
+    blocker: &'static str,
+    typechecker_path: &'static str,
+    typechecker_selector: &'static str,
+    body_ir_path: &'static str,
+    body_ir_selector: &'static str,
+    replacement_executor_selector: &'static str,
+) -> CompatibilityFeature {
+    let mut feature = planned_feature_at_boundary(
+        id,
+        contract,
+        owner_issue,
+        blocker,
+        typechecker_path,
+        typechecker_selector,
+        body_ir_selector,
+        replacement_executor_selector,
+    );
+    let case_ids = registered_parity_case_ids(id);
+    let direct_selector = case_ids.first().copied().unwrap_or("fn seed_corpus");
+    feature.evidence.surfaces.body_ir = observed_anchor(
+        EvidenceSurface::BodyIr,
+        body_ir_path,
+        body_ir_selector,
+        "Body IR represents the admitted subset at this compiler-owned lowering seam.",
+    );
+    feature.evidence.surfaces.replacement_executor = observed_anchor(
+        EvidenceSurface::ReplacementExecutor,
+        "src/backend/replacement/mod.rs",
+        replacement_executor_selector,
+        "The replacement executor admits the bounded subset and refuses the remaining feature surface before effects.",
+    );
+    feature.evidence.surfaces.parity_corpus = ParityCorpusReference::Registered {
+        case_ids: case_ids.into_iter().map(str::to_string).collect(),
+        anchor: observed_anchor(
+            EvidenceSurface::ParityCorpus,
+            "tests/parity_corpus_tests.rs",
+            direct_selector,
+            "The stable #987 corpus registers only the bounded source-observable subset already executable here.",
+        ),
+    };
+    feature.evidence.surfaces.scoped_comparisons = scoped_comparisons(id);
+    feature
+}
+
 /// Build one bounded direct-execution feature at the direct implementation boundary that owns it.
 ///
 /// Direct execution remains separate from comparison. This factory never widens a feature to comparison-green; that
@@ -2796,7 +2881,7 @@ pub(crate) fn preserved_feature_at_boundary(
         profile.typechecker_selector,
         "The audited typechecker boundary supplies the current source admission anchor for this bounded direct profile.",
     );
-    let case_ids = preserved_parity_case_ids(id);
+    let case_ids = registered_parity_case_ids(id);
     let direct_selector = case_ids.first().copied().unwrap_or("replacement-body-v0-001");
     CompatibilityFeature {
         id: id.to_string(),
@@ -2874,39 +2959,195 @@ fn completed_comparison_infrastructure() -> CompletedComparisonInfrastructure {
     }
 }
 
-/// Return receipt-bound comparisons that prove exactly one registered corpus case without widening a feature.
+/// Return case-scoped comparisons, each proving one registered corpus case without widening the feature.
 fn scoped_comparisons(feature_id: &str) -> Vec<CorpusCaseComparisonEvidence> {
     match feature_id {
-        "language.numeric-and-scalar" => vec![CorpusCaseComparisonEvidence {
-            case_id: "replacement-body-v0-001".to_string(),
-            state: IndependentComparisonState::ComparedMatch,
-            evidence: ComparisonEvidence::Paired {
-                legacy_receipt: observed_anchor(
-                    EvidenceSurface::IndependentComparison,
-                    "tests/parity_corpus_tests.rs",
-                    "legacy_receipt_identity",
-                    "#1146 verifies the legacy Oven route's receipt identity for replacement-body-v0-001.",
-                ),
-                replacement_receipt: observed_anchor(
-                    EvidenceSurface::IndependentComparison,
-                    "tests/parity_corpus_tests.rs",
-                    "replacement_receipt_identity",
-                    "#1146 verifies the direct replacement route's receipt identity for replacement-body-v0-001.",
-                ),
-                comparison_record: observed_anchor(
-                    EvidenceSurface::IndependentComparison,
-                    "tests/parity_corpus_tests.rs",
-                    "fn the_compared_row_carries_two_route_receipts_and_its_oven_authority",
-                    "#1146 records the matched two-route source observable for replacement-body-v0-001.",
-                ),
+        "iteration.protocol-and-adapters" => vec![paired_scoped_comparison(
+            "replacement-body-v0-023",
+            "fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
+            "canonical list-based enumerate and Zip",
+        )],
+        "language.aggregates-and-projections" => vec![
+            paired_scoped_comparison(
+                "replacement-body-v0-020",
+                "fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output",
+                "scalar-key set and dict membership",
+            ),
+            paired_scoped_comparison(
+                "replacement-body-v0-026",
+                "fn the_collection_len_row_carries_two_route_receipts_and_exact_output",
+                "distinct set-entry and dict-key counts",
+            ),
+            paired_scoped_comparison(
+                "replacement-body-v0-028",
+                "fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output",
+                "nonempty integer-list sorting",
+            ),
+        ],
+        "nominal.models-unions-enums" => vec![paired_scoped_comparison(
+            "replacement-body-v0-030",
+            "fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output",
+            "checked int/bool/str/float isinstance targets over source-local union values",
+        )],
+        "language.strings-and-format" => vec![
+            paired_scoped_comparison(
+                "replacement-body-v0-021",
+                "fn the_string_helper_row_carries_two_route_receipts_and_exact_output",
+                "selected canonical string helpers",
+            ),
+            paired_scoped_comparison(
+                "replacement-body-v0-024",
+                "fn the_string_len_row_carries_two_route_receipts_and_exact_output",
+                "Unicode-scalar string length",
+            ),
+        ],
+        "language.numeric-and-scalar" => vec![
+            CorpusCaseComparisonEvidence {
+                case_id: "replacement-body-v0-001".to_string(),
+                state: IndependentComparisonState::ComparedMatch,
+                evidence: ComparisonEvidence::Paired {
+                    legacy_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "legacy_receipt_identity",
+                        "#1146 verifies the legacy Oven route's receipt identity for replacement-body-v0-001.",
+                    ),
+                    replacement_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "replacement_receipt_identity",
+                        "#1146 verifies the direct replacement route's receipt identity for replacement-body-v0-001.",
+                    ),
+                    comparison_record: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_compared_row_carries_two_route_receipts_and_its_oven_authority",
+                        "#1146 records the matched two-route source observable for replacement-body-v0-001.",
+                    ),
+                },
             },
-        }],
+            CorpusCaseComparisonEvidence {
+                case_id: "replacement-body-v0-022".to_string(),
+                state: IndependentComparisonState::ComparedMatch,
+                evidence: ComparisonEvidence::Paired {
+                    legacy_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 verifies the legacy Oven route receipt for replacement-body-v0-022.",
+                    ),
+                    replacement_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 verifies the direct replacement route receipt for replacement-body-v0-022.",
+                    ),
+                    comparison_record: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 records the matched typed result and exact streams for replacement-body-v0-022.",
+                    ),
+                },
+            },
+            CorpusCaseComparisonEvidence {
+                case_id: "replacement-body-v0-025".to_string(),
+                state: IndependentComparisonState::ComparedMatch,
+                evidence: ComparisonEvidence::Paired {
+                    legacy_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 verifies the legacy Oven route receipt for replacement-body-v0-025.",
+                    ),
+                    replacement_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 verifies the direct replacement route receipt for replacement-body-v0-025.",
+                    ),
+                    comparison_record: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 records exact scalar JSON bytes and the matched two-route source observable for replacement-body-v0-025.",
+                    ),
+                },
+            },
+            CorpusCaseComparisonEvidence {
+                case_id: "replacement-body-v0-027".to_string(),
+                state: IndependentComparisonState::ComparedMatch,
+                evidence: ComparisonEvidence::Paired {
+                    legacy_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 verifies the legacy Oven route receipt for replacement-body-v0-027.",
+                    ),
+                    replacement_receipt: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 verifies the direct replacement route receipt for replacement-body-v0-027.",
+                    ),
+                    comparison_record: observed_anchor(
+                        EvidenceSurface::IndependentComparison,
+                        "tests/parity_corpus_tests.rs",
+                        "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
+                        "#1249 records bounded canonical truthiness and exact streams for replacement-body-v0-027.",
+                    ),
+                },
+            },
+        ],
+        "language.numeric-complete" => vec![paired_scoped_comparison(
+            "replacement-body-v0-029",
+            "fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts",
+            "exact-width and decimal carrier transport",
+        )],
         _ => Vec::new(),
     }
 }
 
-/// Return the reviewed stable #987 rows that cover each bounded preserved direct profile.
-fn preserved_parity_case_ids(feature_id: &str) -> Vec<&'static str> {
+/// Build one paired comparison record whose evidence remains confined to a single stable corpus case.
+fn paired_scoped_comparison(
+    case_id: &'static str,
+    test_selector: &'static str,
+    bounded_contract: &'static str,
+) -> CorpusCaseComparisonEvidence {
+    CorpusCaseComparisonEvidence {
+        case_id: case_id.to_string(),
+        state: IndependentComparisonState::ComparedMatch,
+        evidence: ComparisonEvidence::Paired {
+            legacy_receipt: observed_anchor(
+                EvidenceSurface::IndependentComparison,
+                "tests/parity_corpus_tests.rs",
+                test_selector,
+                &format!(
+                    "The paired corpus test verifies the legacy Oven receipt for {bounded_contract} in {case_id}."
+                ),
+            ),
+            replacement_receipt: observed_anchor(
+                EvidenceSurface::IndependentComparison,
+                "tests/parity_corpus_tests.rs",
+                test_selector,
+                &format!(
+                    "The paired corpus test verifies the direct replacement receipt for {bounded_contract} in {case_id}."
+                ),
+            ),
+            comparison_record: observed_anchor(
+                EvidenceSurface::IndependentComparison,
+                "tests/parity_corpus_tests.rs",
+                test_selector,
+                &format!(
+                    "The paired corpus test records matching exact streams and the typed result for {bounded_contract} in {case_id}."
+                ),
+            ),
+        },
+    }
+}
+
+/// Return the reviewed stable #987 rows that cover each bounded direct profile.
+fn registered_parity_case_ids(feature_id: &str) -> Vec<&'static str> {
     match feature_id {
         "language.control-flow" => vec![
             "replacement-body-v0-004",
@@ -2918,7 +3159,19 @@ fn preserved_parity_case_ids(feature_id: &str) -> Vec<&'static str> {
             "replacement-body-v0-002",
             "replacement-body-v0-003",
             "replacement-body-v0-005",
+            "replacement-body-v0-022",
+            "replacement-body-v0-025",
+            "replacement-body-v0-027",
         ],
+        "language.numeric-complete" => vec!["replacement-body-v0-029"],
+        "iteration.protocol-and-adapters" => vec!["replacement-body-v0-023"],
+        "language.aggregates-and-projections" => vec![
+            "replacement-body-v0-020",
+            "replacement-body-v0-026",
+            "replacement-body-v0-028",
+        ],
+        "nominal.models-unions-enums" => vec!["replacement-body-v0-030"],
+        "language.strings-and-format" => vec!["replacement-body-v0-021", "replacement-body-v0-024"],
         "async.tasks" => vec!["replacement-body-v0-018", "replacement-body-v0-019"],
         _ => Vec::new(),
     }
@@ -3191,7 +3444,6 @@ fn migration_bootstrap_feature_requirement_links() -> Vec<FeatureRequirementLink
         req_link("language.control-flow-complete", "runtime.aggregate-store"),
         req_link("language.match-and-patterns", "patterns.dispatch"),
         req_link("language.match-and-patterns", "nominal.value-model"),
-        req_link("language.numeric-complete", "runtime.scalar-values"),
         req_link("language.numeric-complete", "runtime.aggregate-store"),
         req_link("language.strings-and-format", "runtime.scalar-values"),
         req_link("module.identity-and-aliases", "modules.canonical-identity"),

@@ -6,7 +6,6 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
-use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::errors as runtime_errors;
 use incan_core::lang::keywords;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -28,6 +27,7 @@ enum AssertIsPatternKind {
 
 struct AssertIsPattern {
     kind: AssertIsPatternKind,
+    constructor_span: Span,
     binding: Option<(String, Span)>,
 }
 
@@ -189,6 +189,7 @@ impl TypeChecker {
             Statement::Break(value) => self.check_break_stmt(value.as_ref(), stmt.span),
             Statement::Continue => self.check_continue_stmt(stmt.span),
             Statement::CompoundAssignment(compound) => {
+                self.record_write_target_identity(compound.name_span, &compound.name);
                 // Check that the variable exists and is mutable (search all scopes)
                 let var_info_opt = self
                     .symbols
@@ -387,7 +388,8 @@ impl TypeChecker {
                 // reassigns the nearest active binding, while `let`/`mut` introduce names in this scope.
                 for (i, name) in unpack.names.iter().enumerate() {
                     let ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
-                    self.check_unannotated_assignment_target(name, unpack.binding, ty, stmt.span, unpack.value.span);
+                    let target_span = unpack.name_spans.get(i).copied().unwrap_or(stmt.span);
+                    self.check_unannotated_assignment_target(name, unpack.binding, ty, target_span, unpack.value.span);
                 }
             }
             Statement::TupleAssign(assign) => {
@@ -404,6 +406,7 @@ impl TypeChecker {
                     // Check that target is a valid lvalue
                     match &target.node {
                         Expr::Ident(name) => {
+                            self.record_write_target_identity(target.span, name);
                             // Check that the variable is mutable
                             if let Some(var_info) = self.lookup_local_variable_info(name)
                                 && !var_info.is_mutable
@@ -443,12 +446,13 @@ impl TypeChecker {
                 let value_ty = self.check_expr(&ca.value);
 
                 // Chained source assignment has the same declaration/reassignment distinction as a single target.
-                for target in &ca.targets {
+                for (index, target) in ca.targets.iter().enumerate() {
+                    let target_span = ca.target_spans.get(index).copied().unwrap_or(stmt.span);
                     self.check_unannotated_assignment_target(
                         target,
                         ca.binding,
                         value_ty.clone(),
-                        stmt.span,
+                        target_span,
                         ca.value.span,
                     );
                 }
@@ -661,12 +665,16 @@ impl TypeChecker {
     /// This is the frontend boundary for rejecting unsupported local type annotations before lowering. In particular,
     /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        let target_span = assign.name_span;
         let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
         // `let` and `mut` are declaration forms: they introduce a binding that may deliberately shadow an active
         // outer one, so they never resolve against the scope chain. Only a bare `x = value` asks "does this name
         // already exist somewhere out there", and the two halves have to move together — walking outward without
         // this branch would turn every in-block `let` into a reassignment of the outer binding (#1072).
         let introduces_binding = Self::binding_introduces_name(assign.binding);
+        if !introduces_binding {
+            self.record_write_target_identity(target_span, &assign.name);
+        }
         let reassignment_ty = (!introduces_binding)
             .then(|| {
                 self.lookup_variable_info_in_scope_chain(&assign.name)
@@ -685,7 +693,7 @@ impl TypeChecker {
         // wrong way. A `let`/`mut` declaration that shadows a const is a new binding and never reaches here.
         if !introduces_binding && self.active_binding_is_const(&assign.name) {
             self.errors
-                .push(errors::const_reassignment_suggests_static(&assign.name, span));
+                .push(errors::const_reassignment_suggests_static(&assign.name, target_span));
             return;
         }
 
@@ -698,7 +706,8 @@ impl TypeChecker {
             let var_ty = var_info.ty.clone();
 
             if !is_mutable {
-                self.errors.push(errors::mutation_without_mut(&assign.name, span));
+                self.errors
+                    .push(errors::mutation_without_mut(&assign.name, target_span));
             }
             if !self.types_compatible(&value_ty, &var_ty) {
                 self.errors.push(errors::assignment_type_mismatch(
@@ -715,8 +724,10 @@ impl TypeChecker {
 
         if let Some(static_info) = self.lookup_static_info(&assign.name) {
             if static_info.is_imported {
-                self.errors
-                    .push(errors::imported_static_reassignment_not_allowed(&assign.name, span));
+                self.errors.push(errors::imported_static_reassignment_not_allowed(
+                    &assign.name,
+                    target_span,
+                ));
                 return;
             }
             let static_ty = static_info.ty.clone();
@@ -768,16 +779,25 @@ impl TypeChecker {
             value_ty
         };
 
-        self.symbols.define(Symbol {
+        self.record_assignment_binding_type(span, ty.clone());
+
+        self.validate_protected_builtin_binding(&assign.name, span);
+        let symbol = Symbol {
             name: assign.name.clone(),
             kind: SymbolKind::Variable(VariableInfo {
                 ty,
                 is_mutable,
                 is_used: false,
             }),
-            span,
+            span: target_span,
             scope: 0,
-        });
+        };
+        if introduces_binding {
+            self.symbols.define_explicit_shadow(symbol);
+        } else {
+            self.symbols.define(symbol);
+        }
+        self.record_write_target_identity(target_span, &assign.name);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_raw_result_assignment(&assign.name, assign.value.span);
@@ -814,20 +834,21 @@ impl TypeChecker {
         name: &str,
         binding: BindingKind,
         value_ty: ResolvedType,
-        statement_span: Span,
+        target_span: Span,
         value_span: Span,
     ) {
         if !Self::binding_introduces_name(binding) {
+            self.record_write_target_identity(target_span, name);
             if self.active_binding_is_const(name) {
                 self.errors
-                    .push(errors::const_reassignment_suggests_static(name, statement_span));
+                    .push(errors::const_reassignment_suggests_static(name, target_span));
                 return;
             }
             if let Some(var_info) = self.lookup_variable_info_in_scope_chain(name) {
                 let is_mutable = var_info.is_mutable;
                 let declared_ty = var_info.ty.clone();
                 if !is_mutable {
-                    self.errors.push(errors::mutation_without_mut(name, statement_span));
+                    self.errors.push(errors::mutation_without_mut(name, target_span));
                 }
                 if !self.types_compatible(&value_ty, &declared_ty) {
                     self.errors.push(errors::assignment_type_mismatch(
@@ -844,7 +865,7 @@ impl TypeChecker {
             if let Some(static_info) = self.lookup_static_info(name) {
                 if static_info.is_imported {
                     self.errors
-                        .push(errors::imported_static_reassignment_not_allowed(name, statement_span));
+                        .push(errors::imported_static_reassignment_not_allowed(name, target_span));
                     return;
                 }
                 let static_ty = static_info.ty.clone();
@@ -860,21 +881,44 @@ impl TypeChecker {
         }
 
         let is_mutable = matches!(binding, BindingKind::Mutable);
-        self.symbols.define(Symbol {
+        self.validate_protected_builtin_binding(name, target_span);
+        let symbol = Symbol {
             name: name.to_string(),
             kind: SymbolKind::Variable(VariableInfo {
                 ty: value_ty,
                 is_mutable,
                 is_used: false,
             }),
-            span: statement_span,
+            span: target_span,
             scope: 0,
-        });
+        };
+        if Self::binding_introduces_name(binding) {
+            self.symbols.define_explicit_shadow(symbol);
+        } else {
+            self.symbols.define(symbol);
+        }
+        self.record_write_target_identity(target_span, name);
         if is_mutable {
             self.mutable_bindings.insert(name.to_string());
         }
         self.consumed_iterator_bindings.remove(name);
         self.transferred_c_resource_bindings.remove(name);
+    }
+
+    /// Preserve the binding selected for a write at its exact authored target span.
+    pub(super) fn record_write_target_identity(&mut self, span: Span, name: &str) {
+        let resolved = self.symbols.lookup(name).and_then(|symbol_id| {
+            let identity = self.symbols.identity_of(symbol_id)?.clone();
+            let ty = match &self.symbols.get(symbol_id)?.kind {
+                SymbolKind::Variable(info) => info.ty.clone(),
+                SymbolKind::Static(info) => info.ty.clone(),
+                _ => return None,
+            };
+            Some((identity, ty))
+        });
+        if let Some((identity, ty)) = resolved {
+            self.type_info.record_resolved_write_identity(span, name, identity, ty);
+        }
     }
 
     /// Give a compiler-managed C output constructor the ordinary local name supplied by its enclosing assignment.
@@ -966,15 +1010,50 @@ impl TypeChecker {
         }
     }
 
+    /// Return the canonical declaration identity for a nominal type name, when resolution proved one.
+    fn canonical_isinstance_target_identity(&self, name: &str) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        let imported = self.type_info.resolved_import_identity(name).cloned();
+        let local = self.lookup_symbol(name).and_then(|symbol| {
+            let target = self.source_target_for_symbol(name, &symbol.kind)?;
+            let kind = incan_semantics_core::SemanticSourceTargetKind::from_kind_str(&target.kind);
+            Some(incan_semantics_core::CanonicalSymbolId::module_declaration(
+                target.module_path,
+                target.name,
+                kind,
+                incan_semantics_core::HirSourceSpan::new(symbol.span.start, symbol.span.end),
+            ))
+        });
+        imported.or(local)
+    }
+
     /// Resolve the type argument used by a narrowing expression.
-    fn resolve_narrowing_type_expr(&self, expr: &Spanned<Expr>) -> Option<ResolvedType> {
-        match &expr.node {
-            Expr::Ident(name) => {
-                Some(self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols)))
+    pub(in crate::frontend::typechecker) fn resolve_isinstance_target(
+        &mut self,
+        expr: &Spanned<Expr>,
+    ) -> Option<super::type_info::IsInstanceTargetInfo> {
+        let name = match &expr.node {
+            Expr::Ident(name) => name,
+            Expr::Paren(inner) => {
+                let mut target = self.resolve_isinstance_target(inner)?;
+                target.span = expr.span;
+                return Some(target);
             }
-            Expr::Paren(inner) => self.resolve_narrowing_type_expr(inner),
-            _ => None,
+            _ => return None,
+        };
+        let source_type = Spanned::new(Type::Simple(name.clone()), expr.span);
+        let ty = self.resolve_type_checked(&source_type);
+        if ty == ResolvedType::Unknown {
+            return None;
         }
+        let canonical = self.canonical_isinstance_target_identity(name).or_else(|| match &ty {
+            ResolvedType::Named(resolved_name) => self.canonical_isinstance_target_identity(resolved_name),
+            _ => None,
+        });
+        Some(super::type_info::IsInstanceTargetInfo {
+            ty,
+            canonical,
+            span: expr.span,
+        })
     }
 
     /// Return whether two union member candidates are equivalent for narrowing.
@@ -1056,15 +1135,18 @@ impl TypeChecker {
         self.none_check_branch_narrowing(expr)
     }
 
+    /// Return the value arguments of either source spelling for one checked builtin call.
+    fn checked_isinstance_condition_args(expr: &Spanned<Expr>) -> Option<&[CallArg]> {
+        match &expr.node {
+            Expr::Call(_, _, args) | Expr::MethodCall(_, _, _, args) => Some(args),
+            _ => None,
+        }
+    }
+
     /// Determine branch-local narrowing introduced by `isinstance`.
     fn isinstance_branch_narrowing(&self, expr: &Spanned<Expr>) -> Option<BranchNarrowing> {
-        let Expr::Call(callee, _, args) = &expr.node else {
-            return None;
-        };
-        let Expr::Ident(call_name) = &callee.node else {
-            return None;
-        };
-        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+        let args = Self::checked_isinstance_condition_args(expr)?;
+        if args.len() != 2 {
             return None;
         }
         let value_expr = match &args[0] {
@@ -1075,14 +1157,10 @@ impl TypeChecker {
             return None;
         };
 
-        let target_expr = match &args[1] {
-            CallArg::Positional(expr) => expr,
-            _ => return None,
-        };
-        let target_ty = self.resolve_narrowing_type_expr(target_expr)?;
+        let target_ty = &self.type_info.isinstance_target(expr.span)?.ty;
         let var_info = self.lookup_variable_info(var_name)?;
-        let true_ty = self.narrowed_type_for_isinstance(&var_info.ty, &target_ty)?;
-        let false_ty = self.else_type_for_isinstance(&var_info.ty, &target_ty);
+        let true_ty = self.narrowed_type_for_isinstance(&var_info.ty, target_ty)?;
+        let false_ty = self.else_type_for_isinstance(&var_info.ty, target_ty);
 
         Some(BranchNarrowing {
             name: var_name.clone(),
@@ -1123,7 +1201,7 @@ impl TypeChecker {
 
     /// Shadow a binding inside a branch with its narrowed type.
     fn define_narrowed_binding(&mut self, name: String, ty: ResolvedType, is_mutable: bool, span: Span) {
-        self.symbols.define(Symbol {
+        self.symbols.define_refined_binding(Symbol {
             name: name.clone(),
             kind: SymbolKind::Variable(VariableInfo {
                 ty,
@@ -1494,6 +1572,7 @@ impl TypeChecker {
     ) {
         match &pattern.node {
             Pattern::Binding(name) => {
+                self.validate_protected_builtin_binding(name, pattern.span);
                 self.symbols.define(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
@@ -1504,6 +1583,7 @@ impl TypeChecker {
                     span: pattern.span,
                     scope: 0,
                 });
+                self.record_write_target_identity(pattern.span, name);
             }
             Pattern::Wildcard => {}
             Pattern::Tuple(items) => {
@@ -1654,11 +1734,17 @@ impl TypeChecker {
             return;
         }
 
+        if compatible {
+            let constructor = match pattern.kind {
+                AssertIsPatternKind::Some => ConstructorId::Some,
+                AssertIsPatternKind::None => ConstructorId::None,
+                AssertIsPatternKind::Ok => ConstructorId::Ok,
+                AssertIsPatternKind::Err => ConstructorId::Err,
+            };
+            self.record_pattern_lexical_identity(constructors::as_str(constructor), pattern.constructor_span);
+        }
+
         if let Some((name, span)) = pattern.binding {
-            if self.symbols.lookup_local(&name).is_some() {
-                self.errors.push(errors::duplicate_definition(&name, span));
-                return;
-            }
             let ty = match pattern.kind {
                 AssertIsPatternKind::Some => scrutinee_ty
                     .option_inner_type()
@@ -1668,8 +1754,9 @@ impl TypeChecker {
                 AssertIsPatternKind::Err => scrutinee_ty.result_err_type().cloned().unwrap_or(ResolvedType::Unknown),
                 AssertIsPatternKind::None => ResolvedType::Unit,
             };
+            self.validate_protected_builtin_binding(&name, span);
             self.symbols.define(Symbol {
-                name,
+                name: name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
                     ty,
                     is_mutable: false,
@@ -1678,6 +1765,7 @@ impl TypeChecker {
                 span,
                 scope: 0,
             });
+            self.record_write_target_identity(span, &name);
         }
     }
 
@@ -1685,15 +1773,16 @@ impl TypeChecker {
     fn assert_is_pattern_from_pattern(pattern: &Spanned<Pattern>) -> Option<AssertIsPattern> {
         match &pattern.node {
             Pattern::Constructor(name, args)
-                if name == constructors::as_str(ConstructorId::None) && args.is_empty() =>
+                if name.node == constructors::as_str(ConstructorId::None) && args.is_empty() =>
             {
                 Some(AssertIsPattern {
                     kind: AssertIsPatternKind::None,
+                    constructor_span: name.span,
                     binding: None,
                 })
             }
             Pattern::Constructor(name, args) => {
-                let kind = match name.as_str() {
+                let kind = match name.node.as_str() {
                     n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
                     n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
                     n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,
@@ -1707,7 +1796,11 @@ impl TypeChecker {
                     Pattern::Binding(name) => Some((name.clone(), arg.span)),
                     _ => return None,
                 };
-                Some(AssertIsPattern { kind, binding })
+                Some(AssertIsPattern {
+                    kind,
+                    constructor_span: name.span,
+                    binding,
+                })
             }
             _ => None,
         }

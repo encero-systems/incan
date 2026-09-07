@@ -8,6 +8,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 
+#[path = "support/canonical_projection.rs"]
+mod canonical_projection;
+
+/// Read generated Rust with RFC 120 projections decoded back to the spellings the source used.
+///
+/// Every linker-visible Incan-origin declaration reaches generated Rust as an encoded projection, so an assertion
+/// written against a source spelling can only be evaluated after decoding. Decoding preserves the generated header
+/// comment; the caller compares against this text rather than the raw file.
+fn read_generated_rust(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
+    let decoded = canonical_projection::decoded_source_spellings(&fs::read_to_string(path)?);
+    Ok(canonical_projection::reformatted_after_decode(&decoded).unwrap_or(decoded))
+}
+
 use incan::frontend::module::{ExportedTypeLikeDoc, ExportedTypeLikeKind, exported_type_like_docs};
 use incan::frontend::{lexer, parser, typechecker};
 
@@ -337,7 +350,7 @@ def main() -> None:
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let generated = fs::read_to_string(out_dir.join("src/main.rs"))?;
+    let generated = read_generated_rust(&out_dir.join("src/main.rs"))?;
     assert!(
         generated.contains("fn replace_items(_: ProviderHandle<(&mut i64, &mut i64)>)"),
         "normal CLI codegen must preserve explicit mutable Rust references through an alias, got:\n{generated}"
@@ -430,7 +443,7 @@ def main() -> None:
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let generated = fs::read_to_string(out_dir.join("src/main.rs"))?;
+    let generated = read_generated_rust(&out_dir.join("src/main.rs"))?;
     let projected = "ProviderHandle<(&mut i64, &mut i64)>";
     assert!(
         generated.match_indices(projected).count() >= 3,
@@ -2560,6 +2573,107 @@ def main() -> None:
 }
 
 #[test]
+fn exact_f32_arithmetic_and_mixed_f64_operands_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_name = unique_test_project_name("exact_float_arithmetic");
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+    )?;
+    let source = r#"
+model ExactSamples:
+  narrow: f32
+  wide: f64
+
+
+def main() -> None:
+  narrow: f32 = 9.0
+  peer: f32 = 4.0
+  wide: f64 = 4.0
+  ieee: float = 0.5
+  count: int = 1
+  samples = ExactSamples(narrow=narrow, wide=wide)
+  exact_values: list[f64] = [wide]
+  println(narrow + peer)
+  println(narrow - peer)
+  println(narrow * peer)
+  println(narrow / peer)
+  println(narrow // peer)
+  println(narrow % peer)
+  println(narrow ** peer)
+  println(narrow + wide)
+  println(narrow / wide)
+  println(narrow // wide)
+  println(narrow % wide)
+  println(narrow ** wide)
+  println(narrow + ieee)
+  println(narrow + count)
+  println(samples.narrow.is_finite())
+  println(samples.wide.is_nan())
+  println(exact_values[0].is_finite())
+"#;
+    let main_path = src_dir.join("main.incn");
+    fs::write(&main_path, source)?;
+
+    let oven_home = tmp.path().join("incan-home");
+    let mut bake_command = incan_command();
+    bake_command
+        .args(["oven", "bake", "--project", "."])
+        .current_dir(tmp.path())
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("INCAN_HOME", &oven_home);
+    support::configure_explicit_oven_bake_command(&mut bake_command)?;
+    let bake_output = bake_command.output()?;
+    assert!(
+        bake_output.status.success(),
+        "expected explicit Oven bake to prepare exact-float arithmetic.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&bake_output.stdout),
+        String::from_utf8_lossy(&bake_output.stderr)
+    );
+
+    let out_dir = tmp.path().join("out");
+    let build_output = incan_command()
+        .args([
+            "build",
+            "--locked",
+            main_path.to_string_lossy().as_ref(),
+            out_dir.to_string_lossy().as_ref(),
+        ])
+        .current_dir(tmp.path())
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("INCAN_HOME", &oven_home)
+        .output()?;
+
+    assert!(
+        build_output.status.success(),
+        "expected mixed exact-f32 arithmetic to compile and run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let binary = out_dir.join("oven/release").join(&project_name);
+    assert!(
+        binary.is_file(),
+        "expected exact-float executable at {}",
+        binary.display()
+    );
+    let output = Command::new(&binary).output()?;
+    assert!(
+        output.status.success(),
+        "expected exact-float arithmetic executable to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "13\n5\n36\n2.25\n2\n1\n6561\n13\n2.25\n2\n1\n6561\n9.5\n10\ntrue\nfalse\ntrue\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn runtime_error_canonicalization_cases() -> Result<(), Box<dyn std::error::Error>> {
     // One CLI journey proves generated-main subprocess diagnostics. The same compiled program then exercises the
     // remaining independent runtime failures by selector, avoiding seven rebuilds of an otherwise identical project.
@@ -2573,6 +2687,16 @@ fn runtime_error_canonicalization_cases() -> Result<(), Box<dyn std::error::Erro
         ("swap", "IndexError", &["out of range for list"]),
         ("assert-int", "AssertionError", &["boom"]),
         ("assert-generic", "AssertionError", &["boom"]),
+        (
+            "exact-f32-overflow",
+            "ValueError",
+            &["non-finite float cannot initialize exact f32"],
+        ),
+        (
+            "exact-f64-overflow",
+            "ValueError",
+            &["non-finite float cannot initialize exact f64"],
+        ),
     ];
     let tmp = tempfile::tempdir()?;
     let project_name = unique_test_project_name("runtime_error_matrix");
@@ -2621,6 +2745,12 @@ def main() -> None:
     _ = fail_int("boom")
   elif scenario == "assert-generic":
     _ = fail_as[int]("boom")
+  elif scenario == "exact-f32-overflow":
+    let value: f32 = 3.4e38
+    println(value * value)
+  elif scenario == "exact-f64-overflow":
+    let value: f64 = 1.7e308
+    println(value * value)
 "#,
     )?;
 
@@ -3387,6 +3517,7 @@ mod codegen_tests {
     };
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
+    use incan_semantics_core::{SemanticSourceTargetKind, decode_incan_symbol_identity, encode_incan_symbol_identity};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
@@ -3596,7 +3727,7 @@ def main() -> None:
     }
 
     #[test]
-    fn test_method_alias_codegen_rewrites_to_target_method() {
+    fn test_method_alias_codegen_rewrites_to_target_method() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 model Stats:
   value: int
@@ -3609,23 +3740,27 @@ def main() -> None:
   let stats = Stats(value=10)
   println(stats.mean())
 "#;
-        let Ok(tokens) = lexer::lex(source) else {
-            panic!("lex failed");
-        };
-        let Ok(ast) = parser::parse(&tokens) else {
-            panic!("parse failed");
-        };
-        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
-            panic!("codegen failed");
-        };
+        let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex failed: {errors:?}")))?;
+        let ast =
+            parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse failed: {errors:?}")))?;
+        let rust_code = IrCodegen::new()
+            .try_generate(&ast)
+            .map_err(|error| std::io::Error::other(format!("codegen failed: {error:?}")))?;
+        let avg_identity = rust_code
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter_map(|token| decode_incan_symbol_identity(token).ok().flatten())
+            .find(|identity| identity.kind == SemanticSourceTargetKind::Method && identity.declaration_name == "avg")
+            .ok_or_else(|| std::io::Error::other("generated Rust did not carry the target method identity"))?;
+        let projection = encode_incan_symbol_identity(&avg_identity);
         assert!(
-            rust_code.contains(".avg("),
-            "expected method alias call to lower to target method, got:\n{rust_code}"
+            rust_code.contains(&format!(".{projection}(")),
+            "expected method alias call to lower to the target declaration's canonical projection, got:\n{rust_code}"
         );
         assert!(
             !rust_code.contains(".mean("),
             "method alias must not emit an independent wrapper call, got:\n{rust_code}"
         );
+        Ok(())
     }
 
     #[test]
@@ -3808,6 +3943,42 @@ def main() -> None:
             lines,
             vec!["GET/healthtext|HEAD/headtext"],
             "unexpected local partial output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generic_caller_inherits_selected_implementation_bounds_issue1280() -> Result<(), Box<dyn std::error::Error>> {
+        let stdout = compile_and_run_local_partial_project(
+            r#"
+from std.derives.collection import FallibleIterator
+
+model Stream[R] with FallibleIterator[int, str]:
+    value: R
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        return Ok(None)
+
+pub def drain[R](value: R) -> Result[int, str]:
+    mut count = 0
+    for _item in Stream[R](value=value)?:
+        count += 1
+    return Ok(count)
+
+pub def relay[R](value: R) -> Result[int, str]:
+    return drain(value)
+
+def main() -> Result[None, str]:
+    println(relay("ready")?)
+    return Ok(None)
+"#,
+            "generic_implementation_bound_contract",
+        )?;
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["0"],
+            "unexpected generic implementation-bound output:\n{stdout}"
         );
         Ok(())
     }
@@ -4298,7 +4469,8 @@ def main() -> None:
             .spawn()?;
 
         // A cold CI runner must compile the generated holder project before it can create the readiness file. Keep
-        // this deadline comfortably above observed cold MSRV compilation time while retaining a finite failure bound.
+        // this deadline comfortably above observed cold pinned-toolchain compilation time while retaining a finite
+        // failure bound.
         let holder_ready_started = std::time::Instant::now();
         let holder_ready_timeout = Duration::from_secs(120);
         let mut holder_ready = false;
@@ -6298,6 +6470,59 @@ def main() -> None:
     }
 
     #[test]
+    fn mixed_string_storage_isinstance_union_variants_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let stdout = compile_and_run_local_partial_project(
+            r#"
+const FROZEN_TEXT: FrozenStr = "frozen"
+
+def is_string(value: FrozenStr | str | int) -> bool:
+    return std.builtins.isinstance(value, str)
+
+def optional_is_string(value: Option[FrozenStr | str | int]) -> bool:
+    return std.builtins.isinstance(value, str)
+
+def render_string(value: FrozenStr | str | int) -> str:
+    if std.builtins.isinstance(value, str):
+        return str(value)
+    return "number"
+
+def render_optional_string(value: Option[FrozenStr | str | int]) -> str:
+    if std.builtins.isinstance(value, str):
+        return str(value)
+    return "other"
+
+def main() -> None:
+    println(is_string(FROZEN_TEXT))
+    println(is_string("runtime"))
+    println(is_string(7))
+    println(optional_is_string(FROZEN_TEXT))
+    println(optional_is_string("runtime"))
+    println(optional_is_string(7))
+    println(optional_is_string(None))
+    println(render_string(FROZEN_TEXT))
+    println(render_string("runtime"))
+    println(render_string(7))
+    println(render_optional_string(FROZEN_TEXT))
+    println(render_optional_string("runtime"))
+    println(render_optional_string(7))
+    println(render_optional_string(None))
+"#,
+            "mixed_string_storage_isinstance_contract",
+        )?;
+
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "true", "true", "false", "true", "true", "false", "false", "frozen", "runtime", "number", "frozen",
+                "runtime", "other", "other",
+            ],
+            "unexpected mixed string-storage isinstance output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_comprehension_and_generator_execution_matrix() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .args([
@@ -7218,13 +7443,16 @@ async def main() -> Result[None, str]:
             panic!("failed to read generated Rust source");
         };
         let normalized: String = main_rs.chars().filter(|c| !c.is_whitespace()).collect();
+        // Assert the ordering, not the callee's spelling. RFC 120 projections emit a linker-visible
+        // `__incan_v1_...` name for `register_sources`, so pinning the source spelling tested the projection rather
+        // than the await/try ordering this case exists for.
         assert!(
-            normalized.contains("register_sources().await?;"),
+            normalized.contains(").await?;"),
             "expected awaited-then-try ordering in generated Rust, got:\n{}",
             main_rs
         );
         assert!(
-            !normalized.contains("register_sources()?.await;"),
+            !normalized.contains(")?.await"),
             "generated Rust must not apply `?` before `.await`, got:\n{}",
             main_rs
         );
@@ -7291,12 +7519,14 @@ def main() -> None:
             normalized_main.contains("#[path=\"extern.rs\"]modr#extern;"),
             "expected top-level keyword module path attr in generated main.rs, got:\n{main_rs}"
         );
+        // The escape is `crate::r#extern::`; what follows it is the callee's emitted name, which RFC 120 projections
+        // now own. Asserting the raw `root_value` spelling tested the projection instead of the keyword escaping.
         assert!(
-            normalized_main.contains("crate::r#extern::root_value"),
+            normalized_main.contains("crate::r#extern::"),
             "expected generated use path to escape top-level keyword module, got:\n{main_rs}"
         );
         assert!(
-            normalized_main.contains("crate::api::r#extern::nested_value"),
+            normalized_main.contains("crate::api::r#extern::"),
             "expected generated use path to escape nested keyword module, got:\n{main_rs}"
         );
         assert!(
@@ -8128,8 +8358,21 @@ async def main() -> None:
         let artifact_root = compiled_sdk_provider_artifact_root(generated_project, "incan_stdlib_data")?;
         let generated_collections = fs::read_to_string(artifact_root.join("src/collections.rs"))
             .map_err(|error| format!("failed to read compiled std.collections artifact: {error}"))?;
+        // The splice now passes the two support functions it needs, and RFC 120 projects their names, so the
+        // invocation reads `!(<projection>, <projection>);` rather than the argument-free form this assertion was
+        // written against. Require the splice and both arguments without pinning either spelling or a line break.
+        let compact_collections: String = generated_collections.split_whitespace().collect();
+        let spliced_with_support_functions = compact_collections
+            .split_once("incan_stdlib::__incan_ordinal_map_string_fast_impls!(")
+            .and_then(|(_, rest)| rest.split_once(");"))
+            .is_some_and(|(arguments, _)| {
+                arguments.matches(',').count() == 1
+                    && arguments
+                        .split(',')
+                        .all(|argument| argument.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX))
+            });
         assert!(
-            generated_collections.contains("incan_stdlib::__incan_ordinal_map_string_fast_impls!();"),
+            spliced_with_support_functions,
             "the compiled std.collections artifact should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
         );
         Ok(())
@@ -10962,18 +11205,37 @@ def main() -> None:
         );
 
         let generated = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        // Assert the syntax, not the method's spelling. RFC 120 projects `add_static`, so pinning the source name
+        // tested the projection rather than the associated-function lowering this case exists for. Requiring the
+        // decorator's own argument to arrive at a `Registry::`-qualified callee keeps it specific to this decorator.
+        let normalized: String = generated
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        let lowered_as_associated_function = normalized.split("Registry::").skip(1).any(|tail| {
+            tail.split_once('(').is_some_and(|(callee, arguments)| {
+                callee.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                    && arguments.starts_with("\"static\".to_string()")
+            })
+        });
         assert!(
-            generated.contains("Registry :: add_static")
-                || generated.contains("Registry::add_static")
-                || generated.contains("Registry :: add_static ::"),
+            lowered_as_associated_function,
             "class static method decorator should lower as associated function syntax:\n{}",
             generated,
         );
+        // Same again for the instance half: `add` is projected, and the storage access is what this case pins.
+        // Requiring the materialized argument to arrive at a method on the borrowed static keeps that specific.
+        let reaches_receiver_through_static_storage = normalized.split("__incan_static_value.").skip(1).any(|tail| {
+            tail.split_once('(').is_some_and(|(method, arguments)| {
+                method.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
+                    && arguments.starts_with("__incan_static_arg_0")
+            })
+        });
         assert!(
-            generated.contains(".with_mut(|__incan_static_value|")
-                && (generated.contains("let __incan_static_arg_0 = \"instance\".to_string();")
-                    || generated.contains("let __incan_static_arg_0 = \"instance\".into();"))
-                && generated.contains("__incan_static_value.add(__incan_static_arg_0)"),
+            normalized.contains(".with_mut(|__incan_static_value|")
+                && (normalized.contains("let__incan_static_arg_0=\"instance\".to_string();")
+                    || normalized.contains("let__incan_static_arg_0=\"instance\".into();"))
+                && reaches_receiver_through_static_storage,
             "static registry receiver should lower through static storage access:\n{}",
             generated,
         );
@@ -11948,7 +12210,7 @@ def main() -> None:
         let source = r#"
 @derive(Clone)
 class FactoryBox[T with Clone]:
-  value: T
+  pub value: T
 
   @classmethod
   def make(cls, value: T) -> Self:
@@ -12512,7 +12774,14 @@ pub def exercise_callbacks() -> None:
         assert_eq!(factory_metadata.type_params, ["T", "U"]);
         assert!(!factory_metadata.has_const_params);
         let generated_provider = std::fs::read_to_string(provider_root.join("target/lib/src/lib.rs"))?;
-        let compact_generated_provider = generated_provider.split_whitespace().collect::<String>();
+        // `prettyplease` adds a trailing comma when it breaks an argument list across lines, so the same turbofish
+        // reads as `::<f32,_,_>` or `::<f32,_,_,>`, and the same call as `f(x)` or `f(x,)`, depending only on where
+        // the line happened to break. Compare against the form that does not depend on that.
+        let compact_generated_provider = generated_provider
+            .split_whitespace()
+            .collect::<String>()
+            .replace(",>", ">")
+            .replace(",)", ")");
         assert!(
             compact_generated_provider.contains(".build_output_stream::<f32,_,_>"),
             "expected the complete method turbofish in generated provider Rust:\n{generated_provider}"
@@ -12526,7 +12795,7 @@ pub def exercise_callbacks() -> None:
             "borrowed-slice callbacks must not lower to a borrowed Vec:\n{generated_provider}"
         );
         assert!(
-            compact_generated_provider.contains("PairFactory::<i64,String,>::new"),
+            compact_generated_provider.contains("PairFactory::<i64,String>::new"),
             "expected receiver-side turbofish for both owner type parameters:\n{generated_provider}"
         );
         assert!(
@@ -12534,8 +12803,12 @@ pub def exercise_callbacks() -> None:
             "expected owner specialization on a non-Self return:\n{generated_provider}"
         );
         assert!(
-            compact_generated_provider.contains("accept_pair(PairFactory::new(7,\"marker\".into()))")
-                || compact_generated_provider.contains("accept_pair(PairFactory::new(7,\"marker\".to_string()))"),
+            // Assert the specialization, not the callee's spelling. RFC 120 projects `accept_pair`, so pinning the
+            // source name tested the projection rather than the contextual receiver specialization this case exists
+            // for. The leading paren still requires the factory call to reach the callee as the argument itself,
+            // built without a turbofish and keeping its owned `String`.
+            compact_generated_provider.contains("(PairFactory::new(7,\"marker\".into()))")
+                || compact_generated_provider.contains("(PairFactory::new(7,\"marker\".to_string()))"),
             "expected contextual receiver specialization to preserve the owned String parameter:\n{generated_provider}"
         );
 
@@ -14404,8 +14677,11 @@ def main() -> None:
         );
         let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         let normalized: String = generated_main.chars().filter(|c| !c.is_whitespace()).collect();
+        // Assert the wrapping, not the callee's spelling. RFC 120 projections emit a linker-visible
+        // `__incan_v1_...` name for `lit`, so pinning the source spelling tested the projection rather than the union
+        // arm this case exists for. The leading `(` still proves the literal reaches the call as the argument itself.
         assert!(
-            normalized.contains("lit(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"),
+            normalized.contains("(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string())"),
             "expected string literal to be wrapped directly as the union string arm, got:\n{generated_main}"
         );
         assert!(
@@ -15375,6 +15651,37 @@ pub fn library_vocab() -> VocabRegistration {
         Ok(())
     }
 
+    /// Publish the root identity a schema-v2 manifest owes for one directly declared model export.
+    ///
+    /// A v2 identity graph publishes one root entry per raw declaration. A hand-built fixture that pushes a
+    /// `ModelExport` without one is rejected while the manifest is written, before the test reaches the diagnostic it
+    /// is actually checking.
+    fn push_root_model_identity(manifest: &mut LibraryManifest, library: &str, name: &str) {
+        let identity = incan_semantics_core::CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+            origin: incan_semantics_core::SymbolOrigin::Package {
+                library: library.to_string(),
+                module_path: Vec::new(),
+            },
+            declaration_name: name.to_string(),
+            kind: incan_semantics_core::SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: incan_semantics_core::HirSourceSpan::new(0, 1),
+        };
+        manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .push(incan::library_manifest::ExportIdentity {
+                public_name: name.to_string(),
+                public_path: vec![library.to_string(), name.to_string()],
+                source_path: vec![name.to_string()],
+                kind: incan::library_manifest::ExportIdentityKind::Model,
+                projection: incan::library_manifest::ExportIdentityProjection::Direct,
+                canonical: incan::library_manifest::CanonicalIdentityExport::from_canonical(library, &identity),
+            });
+    }
+
     fn mylib_manifest_with_widget() -> LibraryManifest {
         let mut manifest = LibraryManifest::new("mylib", "0.1.0");
         manifest.exports.models.push(ModelExport {
@@ -15387,6 +15694,7 @@ pub fn library_vocab() -> VocabRegistration {
             properties: Vec::new(),
             methods: Vec::new(),
         });
+        push_root_model_identity(&mut manifest, "mylib", "Widget");
         manifest
     }
 
@@ -15565,6 +15873,7 @@ pub fn library_vocab() -> VocabRegistration {
             properties: Vec::new(),
             methods: Vec::new(),
         });
+        push_root_model_identity(&mut manifest, "widgets_core", "Widget");
         manifest.write_to_path(&dep_artifact_root.join("widgets_core.incnlib"))?;
         write_minimal_library_crate(&dep_artifact_root, "different_package_name")?;
 

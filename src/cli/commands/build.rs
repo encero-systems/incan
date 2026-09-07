@@ -15,17 +15,19 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use incan_semantics_core::HirSourceSpan;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::project::runner::resolved_cargo_executable;
+use crate::backend::replacement::source_profile::{module_is_held_to_source_profile, source_profile_refusal};
 use crate::backend::replacement::{
-    ReplacementExecutionError, execute_prevalidated_free_function, prepare_free_function_execution,
+    ReplacementExecutionError, ReplacementExecutionGraph, execute_prevalidated_free_function,
+    prepare_free_function_execution_in_graph,
 };
 use crate::backend::selection::{
-    BackendExecutionReceipt, BackendKind, BackendSelection, FallbackOutcome, FallbackPolicy, ShadowComparisonState,
-    digest_output, finalize_receipt, resolve_execution, select_backend, unavailable_shadow_comparison,
+    BackendExecutionReceipt, BackendKind, BackendSelection, FallbackOutcome, FallbackPolicy, SemanticModuleProvenance,
+    ShadowComparisonState, digest_output, finalize_receipt, finalize_receipt_with_semantic_module, resolve_execution,
+    select_backend, unavailable_shadow_comparison,
 };
 use crate::backend::shadow::PROGRAM_ENTRYPOINT_UNAVAILABLE_REASON;
 use crate::backend::{IrCodegen, ProjectGenerator};
@@ -38,12 +40,11 @@ use crate::frontend::api_metadata::{
     materialize_checked_api_public_namespaces, validate_checked_api_docstrings,
 };
 use crate::frontend::ast::{Declaration, Decorator, Expr, ImportKind, Literal, Span, Spanned, Statement, Visibility};
-use crate::frontend::body_ir::{
-    build_body_ir_module_v0, is_direct_replacement_fieldless_enum, is_direct_replacement_plain_model,
-    is_direct_replacement_value_enum,
-};
+use crate::frontend::body_ir::build_body_ir_module_v0;
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
-use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
+use crate::frontend::library_exports::{
+    CheckedExportKind, CheckedNamedExport, LibraryExportBindingRegistry, collect_checked_public_exports,
+};
 use crate::frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     dependency_project_root, load_provider_dependency_artifact,
@@ -57,7 +58,7 @@ use crate::frontend::registry_metadata::{
     collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
-use crate::frontend::{body_ir, diagnostics, lexer, parser, typechecker};
+use crate::frontend::{diagnostics, typechecker};
 use crate::generated_cache::resolve_generated_cargo_target;
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
@@ -128,12 +129,12 @@ use super::build_report::{
 use super::common::dependency_specs_match;
 use super::common::{
     CargoPolicy, CompilationSession, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map,
-    cargo_command_flags, collect_incan_source_files, collect_project_requirements, collect_rust_dependency_uses,
-    discover_effective_project_manifest, effective_project_manifest_for_exact_root,
-    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
-    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
-    render_module_warnings, resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies,
-    validate_output_dir,
+    cargo_command_flags, collect_incan_source_files, collect_modules_detailed_with_session,
+    collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
+    effective_project_manifest_for_exact_root, enforce_project_toolchain_constraint,
+    extend_requirements_with_provider_plan, format_dependency_error, imported_module_deps_for_with_provider_plan,
+    merge_project_requirement_dependencies, module_key_index, register_module_path_segments, render_module_warnings,
+    resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{
@@ -2458,7 +2459,7 @@ const DEFAULT_BACKEND_RECEIPT_RELATIVE_PATH: &str = ".incan/backend/receipt.json
 /// This is distinct from the Oven build-report schema because this path has no generated Rust, artifacts, or Oven
 /// plan to report. Consumers must inspect its backend receipt and direct-execution evidence rather than treating it
 /// as a partial legacy build report.
-const REPLACEMENT_EXECUTION_REPORT_SCHEMA_VERSION: &str = "incan.replacement_execution.v0";
+const REPLACEMENT_EXECUTION_REPORT_SCHEMA_VERSION: &str = "incan.replacement_execution.v1";
 
 /// Return the compiler-owned project-relative destination for a backend-selection execution receipt.
 fn default_backend_receipt_path(project_root: &Path) -> PathBuf {
@@ -2510,51 +2511,22 @@ fn replacement_profile_cli_error(error: ReplacementExecutionError, entrypoint: &
     }
 }
 
-/// Return the first unsupported source-module boundary with its original Incan source span.
-fn replacement_module_profile_error(program: &crate::frontend::ast::Program) -> Option<ReplacementExecutionError> {
-    if let Some(rust_module) = &program.rust_module_path {
-        return Some(ReplacementExecutionError::unsupported_profile(
-            "Rust interop `rust.module` directive",
-            HirSourceSpan::new(rust_module.span.start, rust_module.span.end),
-        ));
-    }
-    let mut async_activation_seen = false;
-    for declaration in &program.declarations {
-        if matches!(declaration.node, Declaration::Function(_) | Declaration::Docstring(_))
-            || matches!(&declaration.node, Declaration::Model(model) if is_direct_replacement_plain_model(model))
-            || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_fieldless_enum(enum_decl))
-            || matches!(&declaration.node, Declaration::Enum(enum_decl) if is_direct_replacement_value_enum(enum_decl))
-        {
-            continue;
-        }
-        if let Declaration::Import(import) = &declaration.node {
-            let exact_async_activation = matches!(
-                (&import.visibility, &import.kind, &import.alias),
-                (Visibility::Private, ImportKind::Module(path), None)
-                    if !path.is_absolute
-                        && path.parent_levels == 0
-                        && path.segments == ["std", "async"]
-            );
-            if exact_async_activation && !async_activation_seen {
-                async_activation_seen = true;
-                continue;
-            }
-            let description = if exact_async_activation {
-                "duplicate `import std.async` replacement activation"
-            } else {
-                "import declaration"
-            };
-            return Some(ReplacementExecutionError::unsupported_profile(
-                description,
-                HirSourceSpan::new(declaration.span.start, declaration.span.end),
-            ));
-        }
-        return Some(ReplacementExecutionError::unsupported_profile(
-            "non-function top-level declaration",
-            HirSourceSpan::new(declaration.span.start, declaration.span.end),
-        ));
-    }
-    None
+/// Return the file a refusal's span was measured in, falling back to the executed entrypoint.
+///
+/// A refusal raised while walking a module the entrypoint merely reaches carries that module's identity. Resolving it
+/// back to a file keeps the reported location and the reported span describing the same source.
+fn replacement_refusal_source<'a>(
+    error: &ReplacementExecutionError,
+    entrypoint: &'a Path,
+    reachable: &'a [ReplacementModuleInputs],
+) -> &'a Path {
+    let Some(module_id) = error.measured_module() else {
+        return entrypoint;
+    };
+    reachable
+        .iter()
+        .find(|module| incan_semantics_core::module_identity_for_path(&module.module_path) == module_id)
+        .map_or(entrypoint, |module| module.file_path.as_path())
 }
 
 /// Refuse one unsupported replacement profile through the canonical #986 selection boundary.
@@ -2586,20 +2558,104 @@ fn resolve_available_replacement_execution(selection: &BackendSelection) -> CliR
     }
 }
 
-/// Refuse package-feature selections the manifest-free replacement profile cannot resolve faithfully.
+/// Checked entry facts the direct replacement executor may consume from one compilation session.
 ///
-/// Ordinary builds derive the active closure from `CompilationSession` and the project's manifest. The bounded
-/// direct Body-IR profile deliberately does neither: it accepts one source module with no package graph. Its shared
-/// input-contract helper therefore uses the empty projection, so accepting a caller-supplied feature selection here
-/// would silently compile a different program. A future project-aware replacement profile may consume the canonical
-/// session projection; this source-only profile must refuse it until then.
-fn reject_replacement_package_feature_selection(package_features: &FeatureSelection) -> CliResult<()> {
-    if package_features != &FeatureSelection::default() {
-        return Err(CliError::failure(
-            "the source-only replacement backend supports only the default package feature selection; remove `--features`, `--no-default-features`, or `--all-features`",
-        ));
-    }
-    Ok(())
+/// This private bundle is the replacement CLI's authority boundary: no later stage may lex, parse, re-resolve, or
+/// typecheck the source again. `TypeCheckInfo` is retained only as Body IR's transitional lowering bridge; semantic
+/// provenance comes from the sibling portable snapshot produced by that same analysis pass.
+struct ReplacementSessionInputs {
+    program: crate::frontend::ast::Program,
+    module_path: Vec<String>,
+    type_info: typechecker::TypeCheckInfo,
+    semantic_module: SemanticModuleProvenance,
+    /// Every non-entry module the one analysis already checked, in collection order.
+    ///
+    /// The session collects and analyzes the whole root source graph and previously kept only the entrypoint, which
+    /// is all the same-module #988 profile can execute. #1260 executes a call that leaves the entry module, so the
+    /// modules that call may reach have to survive the same analysis rather than be re-collected or re-checked
+    /// later: re-analysis would produce a second checker authority, and identities minted by two analyses cannot be
+    /// compared.
+    ///
+    /// The entrypoint is deliberately not repeated here. It stays in the fields above so existing readers keep
+    /// working unchanged, and the execution graph is assembled with the entry module as its primary.
+    reachable_modules: Vec<ReplacementModuleInputs>,
+}
+
+/// One checked non-entry module retained from the replacement session's single analysis.
+struct ReplacementModuleInputs {
+    program: crate::frontend::ast::Program,
+    module_path: Vec<String>,
+    type_info: typechecker::TypeCheckInfo,
+    /// The file this module was collected from, so a refusal raised in it can name its own source.
+    file_path: PathBuf,
+}
+
+/// Collect and analyze the replacement entrypoint once through the project-selected compilation session.
+///
+/// The entry AST, Body-IR lowering bridge, and semantic provenance are extracted as one product. This is deliberately
+/// the only constructor for [`ReplacementSessionInputs`], making an independent replacement CLI typecheck impossible
+/// without crossing this explicit boundary.
+fn replacement_session_inputs(
+    entrypoint: &Path,
+    compilation_session: &CompilationSession,
+) -> CliResult<ReplacementSessionInputs> {
+    let modules = collect_modules_detailed_with_session(entrypoint.to_path_buf(), compilation_session)
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let analysis = compilation_session
+        .analyze_modules(
+            &modules,
+            #[cfg(feature = "rust_inspect")]
+            None,
+        )
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let entry_module = modules
+        .iter()
+        .find(|module| module.file_path == entrypoint)
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "replacement session did not collect entrypoint {}",
+                entrypoint.display()
+            ))
+        })?;
+    let entry_analysis = analysis
+        .module_analysis_for_path(&entry_module.file_path)
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "replacement session did not retain checked analysis for entrypoint {}",
+                entrypoint.display()
+            ))
+        })?;
+    let semantic_snapshot = entry_analysis.semantic_snapshot();
+    let semantic_snapshot_rendering = semantic_snapshot.render_snapshot();
+    let source_identity = digest_output(&[entry_module.source.as_str()]);
+
+    let reachable_modules = modules
+        .iter()
+        .filter(|module| module.file_path != entry_module.file_path)
+        .filter_map(|module| {
+            analysis
+                .module_analysis_for_path(&module.file_path)
+                .map(|checked| ReplacementModuleInputs {
+                    program: module.ast.clone(),
+                    module_path: module.path_segments.clone(),
+                    type_info: checked.type_info().clone(),
+                    file_path: module.file_path.clone(),
+                })
+        })
+        .collect();
+
+    Ok(ReplacementSessionInputs {
+        program: entry_module.ast.clone(),
+        module_path: entry_module.path_segments.clone(),
+        type_info: entry_analysis.type_info().clone(),
+        reachable_modules,
+        semantic_module: SemanticModuleProvenance::new(
+            semantic_snapshot.hir.id.to_string(),
+            semantic_snapshot.hir.path.clone(),
+            source_identity,
+            digest_output(&[semantic_snapshot_rendering.as_str()]),
+        ),
+    })
 }
 
 /// Execute the first #988 replacement-backend profile directly from typed Body IR.
@@ -2609,19 +2665,21 @@ fn reject_replacement_package_feature_selection(package_features: &FeatureSelect
 /// requested replacement build therefore either records a replacement receipt over a real Body-IR result or fails
 /// visibly at the original Incan span; it can never reach `IrCodegen` as an implicit compatibility fallback.
 ///
-/// The pipeline is lex, parse, [`apply_body_ir_input_contract`], module-profile gate, typecheck, then
-/// [`build_body_ir_module_v0`]. The contract step is not optional sequencing: without it this path would hand
-/// lowering a program the legacy path would never have produced, which is the divergence #1166 closes.
-/// This deliberately accepts only the default package-feature selection. A non-default selection needs the
-/// project-aware `CompilationSession` projection and is refused before parsing rather than silently treated as
-/// featureless source.
+/// The pipeline constructs one [`CompilationSession`], collects and analyzes the selected module graph through it,
+/// applies the module-profile gate to its projected entry AST, and lowers only from the resulting checked facts. The
+/// session owns parsing, vocab desugaring, feature projection, and typechecking; this CLI path must never derive a
+/// second authority for the same source.
 fn build_replacement_file_report(
     file_path: &str,
     options: BuildCommandOptions,
     report_options: &BuildReportOptions,
 ) -> CliResult<serde_json::Value> {
+    if report_options.enabled() && report_options.output_path.is_none() {
+        return Err(CliError::failure(
+            "replacement execution keeps stdout and stderr for the program; use --report-output <file> with --report json",
+        ));
+    }
     reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-    reject_replacement_package_feature_selection(&options.package_features)?;
     let start = Instant::now();
     let entrypoint = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
@@ -2630,88 +2688,84 @@ fn build_replacement_file_report(
             .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
             .join(file_path)
     };
-    let source = fs::read_to_string(&entrypoint).map_err(|error| {
-        CliError::failure(format!(
-            "failed to read replacement entrypoint {}: {error}",
-            entrypoint.display()
-        ))
-    })?;
-    let tokens = lexer::lex(&source).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not lex {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
-    let program = parser::parse(&tokens).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not parse {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
-    let program = body_ir::apply_body_ir_input_contract(program, &entrypoint).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not desugar {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
+    let compilation_session = CompilationSession::discover_for_collection_with_selections(
+        &entrypoint,
+        &options.package_features,
+        options.sdk_profile.as_deref(),
+    )?;
+    let session_inputs = replacement_session_inputs(&entrypoint, &compilation_session)?;
     let selection = select_backend(
         options.backend.requested,
         options.backend.explicit,
         options.backend.shadow,
-        digest_output(&[source.as_str()]),
+        session_inputs.semantic_module.source_identity(),
         options.backend.fallback_policy,
     );
-    if let Some(error) = replacement_module_profile_error(&program) {
-        return refuse_replacement_profile(&selection, error, &entrypoint);
+    // Every module the call can reach has to satisfy the profile, not only the entrypoint. Allowing a local import
+    // means an unsupported declaration is now reachable from a file the entry never names, and refusing it here keeps
+    // the boundary a property of the executed graph rather than of whichever file happened to be the entrypoint.
+    // A refusal carries a span, and a span only means something beside the file it was measured in. Reporting every
+    // refusal against the entrypoint was harmless while only the entrypoint could raise one; now that a reachable
+    // module can, the pair has to travel together or the diagnostic points at the wrong file.
+    let profile_error = source_profile_refusal(&session_inputs.program)
+        .map(|error| (error, entrypoint.clone()))
+        .or_else(|| {
+            session_inputs
+                .reachable_modules
+                .iter()
+                .filter(|module| module_is_held_to_source_profile(&module.module_path))
+                .find_map(|module| {
+                    source_profile_refusal(&module.program).map(|error| (error, module.file_path.clone()))
+                })
+        });
+    if let Some((error, source_path)) = profile_error {
+        return refuse_replacement_profile(&selection, error, &source_path);
     }
-    let module_path = vec![
-        entrypoint
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("main")
-            .to_string(),
-    ];
-    let mut checker = typechecker::TypeChecker::new();
-    checker.set_current_module_path(Some(module_path.clone()));
-    checker.check_program(&program).map_err(|errors| {
-        CliError::failure(format!(
-            "replacement backend could not typecheck {}: {errors:?}",
-            entrypoint.display()
-        ))
-    })?;
-    let body_ir = build_body_ir_module_v0(&program, &module_path, checker.type_info());
-    let execution_plan = match prepare_free_function_execution(&body_ir, "main", &[]) {
-        Ok(plan) => plan,
+    let body_ir = build_body_ir_module_v0(
+        &session_inputs.program,
+        &session_inputs.module_path,
+        &session_inputs.type_info,
+    );
+    // Lower every module the one analysis checked, not just the entrypoint. A call that leaves the entry module can
+    // only resolve if its callee's module was lowered from that same analysis; lowering it later, or from a second
+    // analysis, would mint identities that cannot be compared with the ones the entry module carries.
+    let reachable_body_ir: Vec<_> = session_inputs
+        .reachable_modules
+        .iter()
+        .map(|module| build_body_ir_module_v0(&module.program, &module.module_path, &module.type_info))
+        .collect();
+    let execution_graph = match ReplacementExecutionGraph::new(&body_ir, reachable_body_ir.iter()) {
+        Ok(graph) => graph,
         Err(error) => return refuse_replacement_profile(&selection, error, &entrypoint),
     };
+    let execution_plan = match prepare_free_function_execution_in_graph(execution_graph, "main", &[], None) {
+        Ok(plan) => plan,
+        Err(error) => {
+            let source =
+                replacement_refusal_source(&error, &entrypoint, &session_inputs.reachable_modules).to_path_buf();
+            return refuse_replacement_profile(&selection, error, &source);
+        }
+    };
     let executed = resolve_available_replacement_execution(&selection)?;
-    let execution = execute_prevalidated_free_function(execution_plan)
-        .map_err(|error| replacement_profile_cli_error(error, &entrypoint))?;
+    let execution = execute_prevalidated_free_function(execution_plan).map_err(|error| {
+        let source = replacement_refusal_source(&error, &entrypoint, &session_inputs.reachable_modules);
+        replacement_profile_cli_error(error, source)
+    })?;
+    let result_type = execution.value.scalar_type_name().ok_or_else(|| {
+        CliError::failure("replacement execution produced a non-scalar value after scalar-result validation")
+    })?;
     let shadow_comparison = backend_shadow_comparison(&selection);
-    let backend_receipt = finalize_receipt(
+    let backend_receipt = finalize_receipt_with_semantic_module(
         &selection,
         executed,
         execution.output_identity.clone(),
         shadow_comparison,
         diagnostics::DIAGNOSTIC_SCHEMA_VERSION,
+        Some(session_inputs.semantic_module.clone()),
     )
     .map_err(|error| CliError::failure(error.to_string()))?;
     let project_root = resolve_project_root(&entrypoint);
     write_backend_receipt(&backend_receipt, &default_backend_receipt_path(&project_root))?;
-    for line in execution.emitted_output() {
-        print_build_progress(report_options, line);
-    }
-    print_build_progress(report_options, "✓ replacement backend executed typed Body IR directly");
-    print_build_progress(
-        report_options,
-        format!("Replacement result: {}", execution.value.observable_text()),
-    );
-    if !report_options.enabled() {
-        println!(
-            "✓ replacement backend executed `main`: {}",
-            execution.value.observable_text()
-        );
-    }
     Ok(serde_json::json!({
         "schema_version": REPLACEMENT_EXECUTION_REPORT_SCHEMA_VERSION,
         "compiler_version": crate::version::INCAN_VERSION,
@@ -2719,10 +2773,14 @@ fn build_replacement_file_report(
         "mode": "executable",
         "entrypoint": entrypoint,
         "backend": backend_receipt,
+        "semantic_module": session_inputs.semantic_module,
         "replacement_execution": {
             "result": execution.value.observable_text(),
+            "result_type": result_type,
             "output_identity": execution.output_identity,
             "emitted_output": execution.emitted_output(),
+            "stdout_bytes": execution.output.stdout(),
+            "stderr_bytes": execution.output.stderr(),
             "body_snapshot": execution.body_snapshot,
             "ownership_reads": execution.ownership_evidence(),
             "runtime_requirements": execution.runtime_requirement_evidence(),
@@ -2990,7 +3048,15 @@ fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> Ch
     match &mut renamed.kind {
         CheckedExportKind::Function(function_export) => function_export.name = exported_name.to_string(),
         CheckedExportKind::Partial(partial_export) => partial_export.name = exported_name.to_string(),
-        CheckedExportKind::Alias(alias_export) => alias_export.name = exported_name.to_string(),
+        CheckedExportKind::Alias(alias_export) => {
+            alias_export.name = exported_name.to_string();
+            // Rename the callable the alias projects along with the alias itself. The projection describes the
+            // binding a consumer resolves under this public name, so a renaming re-export must carry the new name
+            // here too; only `emitted_name` stays put, because the declaration behind the rename is unchanged.
+            if let Some(projected_function) = alias_export.projected_function.as_mut() {
+                projected_function.name = exported_name.to_string();
+            }
+        }
         CheckedExportKind::TypeAlias(type_alias_export) => type_alias_export.name = exported_name.to_string(),
         CheckedExportKind::Model(model_export) => model_export.name = exported_name.to_string(),
         CheckedExportKind::Class(class_export) => class_export.name = exported_name.to_string(),
@@ -3002,6 +3068,31 @@ fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> Ch
     }
 
     renamed
+}
+
+/// Project a checked provider export through the entrypoint binding that actually re-exports it.
+///
+/// The provider export retains the concrete declaration shape (model, trait, function, and so on), while the
+/// entrypoint's checked export owns the re-export path and target identity. Combining those two checked products
+/// avoids relabeling a renamed declaration as a direct export whose public name no longer matches its canonical
+/// declaration.
+fn project_checked_reexport(
+    export: &CheckedNamedExport,
+    exported_name: &str,
+    entrypoint_exports: Option<&HashMap<String, Vec<CheckedNamedExport>>>,
+) -> CheckedNamedExport {
+    let mut projected = rename_checked_export(export, exported_name);
+    let Some(candidates) = entrypoint_exports.and_then(|exports| exports.get(exported_name)) else {
+        return projected;
+    };
+    let checked_projection = candidates
+        .iter()
+        .find(|candidate| candidate.identity.canonical == export.identity.canonical)
+        .or_else(|| (candidates.len() == 1).then(|| &candidates[0]));
+    if let Some(checked_projection) = checked_projection {
+        projected.identity = checked_projection.identity.clone();
+    }
+    projected
 }
 
 /// Group checked exports by public source name while preserving same-name function overload entries.
@@ -3090,13 +3181,14 @@ impl<'a> LibraryReexportResolver<'a> {
     ) -> Result<Vec<CheckedNamedExport>, Vec<crate::frontend::diagnostics::CompileError>> {
         let mut errors = Vec::new();
         let mut resolved = Vec::new();
-        let mut exported_names: HashSet<String> = HashSet::new();
+        let mut exported_names = LibraryExportBindingRegistry::default();
         let known_modules: Vec<String> = self.module_exports.keys().cloned().collect();
+        let entrypoint_exports = self.module_exports.get(&module_key(&lib_module.path_segments));
 
         if let Some(exports_by_name) = self.module_exports.get(&module_key(&lib_module.path_segments)) {
             for (export_name, export_span) in Self::direct_public_exports(lib_module) {
-                if !exported_names.insert(export_name.clone()) {
-                    errors.push(diagnostics::errors::duplicate_library_export(&export_name, export_span));
+                if let Err(error) = exported_names.register(&export_name, export_span) {
+                    errors.push(error);
                     continue;
                 }
                 if let Some(exports) = exports_by_name.get(&export_name) {
@@ -3134,8 +3226,8 @@ impl<'a> LibraryReexportResolver<'a> {
 
                 for item in items {
                     let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
-                    if !exported_names.insert(exported_name.clone()) {
-                        errors.push(diagnostics::errors::duplicate_library_export(&exported_name, decl.span));
+                    if let Err(error) = exported_names.register(&exported_name, decl.span) {
+                        errors.push(error);
                         continue;
                     }
 
@@ -3171,8 +3263,8 @@ impl<'a> LibraryReexportResolver<'a> {
 
             for item in items {
                 let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
-                if !exported_names.insert(exported_name.clone()) {
-                    errors.push(diagnostics::errors::duplicate_library_export(&exported_name, decl.span));
+                if let Err(error) = exported_names.register(&exported_name, decl.span) {
+                    errors.push(error);
                     continue;
                 }
 
@@ -3190,7 +3282,7 @@ impl<'a> LibraryReexportResolver<'a> {
                 resolved.extend(
                     exports
                         .iter()
-                        .map(|export| rename_checked_export(export, &exported_name)),
+                        .map(|export| project_checked_reexport(export, &exported_name, entrypoint_exports)),
                 );
             }
         }
@@ -10539,16 +10631,23 @@ fn prepare_library_project(
     let typecheck_start = Instant::now();
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
+    let mut checked_exports_by_source_module: Vec<(Vec<String>, Vec<CheckedNamedExport>)> = Vec::new();
     let mut api_metadata_modules = Vec::new();
     let module_idx_by_key = module_key_index(&modules);
     let mut stdlib_cache = StdlibAstCache::new();
     let mut checked_type_info_by_path = BTreeMap::new();
 
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
+        let deps_for_module =
+            imported_module_deps_for_with_provider_plan(&modules, idx, &module_idx_by_key, &provider_plan);
         let mut checker = typechecker::TypeChecker::new();
         checker.stdlib_cache = stdlib_cache.clone();
+        checker.set_current_package_identity(crate::frontend::module::declaration_package_identity(
+            Some(&project_name),
+            Some(&module.path_segments),
+        ));
         checker.set_current_module_path(Some(module.path_segments.clone()));
+        register_module_path_segments(&mut checker, &modules);
         checker.set_declared_crate_names(declared.clone());
         checker.set_provider_plan(Arc::clone(&provider_plan));
         #[cfg(feature = "rust_inspect")]
@@ -10575,6 +10674,7 @@ fn prepare_library_project(
                     &checker,
                     module.path_segments.clone(),
                 ));
+                checked_exports_by_source_module.push((module.path_segments.clone(), module_exports.clone()));
                 checked_exports_by_module.insert(
                     module_key(&module.path_segments),
                     checked_exports_by_name(module_exports),
@@ -10696,6 +10796,11 @@ fn prepare_library_project(
     };
     materialize_checked_api_public_namespaces(&mut checked_api)
         .map_err(|error| CliError::failure(format!("failed to publish checked module namespaces: {error}")))?;
+    library_manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports(&project_name, &checked_api, &checked_exports_by_source_module)
+        .map_err(|error| CliError::failure(format!("failed to publish checked module identities: {error}")))?;
     library_manifest.contract_metadata.api = Some(checked_api);
     library_manifest.contract_metadata.provider = compiled_provider_metadata(CompiledProviderMetadataInputs {
         manifest: &manifest,
@@ -10737,6 +10842,7 @@ fn prepare_library_project(
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(true);
     codegen.set_registry_package_identity(Some(project_name.clone()));
+    codegen.set_canonical_emission_package_identity(Some(project_name.clone()));
     codegen.set_root_source_module_name(
         lib_module
             .file_path
@@ -10899,10 +11005,10 @@ fn prepare_library_project(
     // Keep the historical aggregate for existing consumers, while separating the stages that were previously
     // attributed misleadingly as one `library_generate_rust` cost in Oven performance evidence.
     let codegen_start = Instant::now();
-    let backend_output_identity = if emitted_dep_modules.is_empty() {
+    let (backend_output_identity, generation_metadata) = if emitted_dep_modules.is_empty() {
         let emit_rust_start = Instant::now();
-        let rust_code = codegen
-            .try_generate(&lib_module.ast)
+        let (rust_code, generation_metadata) = codegen
+            .try_generate_with_metadata(&lib_module.ast, &lib_module.path_segments)
             .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
         record_timing(&mut timings_ms, "library_codegen_emit_rust", emit_rust_start);
         let write_project_start = Instant::now();
@@ -10910,15 +11016,15 @@ fn prepare_library_project(
             .generate(&rust_code)
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
         record_timing(&mut timings_ms, "library_codegen_write_project", write_project_start);
-        digest_output(&[rust_code.as_str()])
+        (digest_output(&[rust_code.as_str()]), generation_metadata)
     } else {
         let module_paths: Vec<Vec<String>> = emitted_dep_modules
             .iter()
             .map(|module| module.path_segments.clone())
             .collect();
         let emit_rust_start = Instant::now();
-        let (main_code, rust_modules) = codegen
-            .try_generate_multi_file_nested(&lib_module.ast, &module_paths)
+        let ((main_code, rust_modules), generation_metadata) = codegen
+            .try_generate_multi_file_nested_with_metadata(&lib_module.ast, &module_paths, &lib_module.path_segments)
             .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
         record_timing(&mut timings_ms, "library_codegen_emit_rust", emit_rust_start);
         let write_project_start = Instant::now();
@@ -10926,8 +11032,18 @@ fn prepare_library_project(
             .generate_nested(&main_code, &rust_modules)
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
         record_timing(&mut timings_ms, "library_codegen_write_project", write_project_start);
-        multi_file_output_identity(&main_code, &rust_modules)
+        (
+            multi_file_output_identity(&main_code, &rust_modules),
+            generation_metadata,
+        )
     };
+    generation_metadata
+        .apply_to_library_manifest(&mut library_manifest)
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to publish inferred implementation requirements: {error}"
+            ))
+        })?;
     let backend_receipt = finalize_backend_receipt(&backend_selection, backend_executed, backend_output_identity)?;
     // Not persisted here — see the matching comment in `prepare_oven_project`: this function
     // also runs for internal/dependency callers, and real compilation still follows below. The
@@ -14717,6 +14833,8 @@ fn run_oven_prepared_project(prepared: OvenPreparedProject, profile: &str) -> Cl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::api_metadata::ApiDeclaration;
+    use crate::frontend::body_ir;
     use crate::frontend::lexer;
     use crate::frontend::library_exports::CheckedExportIdentity;
     use crate::frontend::parser;
@@ -18424,6 +18542,22 @@ impl ChildId {
             "widgets".to_string(),
             HashMap::from([(widget_export.name.clone(), vec![widget_export])]),
         );
+        let public_widget_projection = CheckedNamedExport {
+            name: "PublicWidget".to_string(),
+            identity: CheckedExportIdentity::reexport(
+                vec!["widgets".to_string(), "Widget".to_string()],
+                vec!["widgets".to_string(), "Widget".to_string()],
+            ),
+            kind: CheckedExportKind::Alias(crate::frontend::library_exports::CheckedAliasExport {
+                name: "PublicWidget".to_string(),
+                target_path: vec!["widgets".to_string(), "Widget".to_string()],
+                projected_function: None,
+            }),
+        };
+        module_exports.insert(
+            "main".to_string(),
+            HashMap::from([("PublicWidget".to_string(), vec![public_widget_projection])]),
+        );
 
         let resolved = LibraryReexportResolver::new(&module_exports)
             .resolve(&lib_module)
@@ -18433,6 +18567,80 @@ impl ChildId {
         match &resolved[0].kind {
             CheckedExportKind::TypeAlias(alias) => assert_eq!(alias.name, "PublicWidget"),
             _ => panic!("expected type alias export"),
+        }
+        assert!(
+            matches!(
+                resolved[0].identity.projection,
+                crate::frontend::library_exports::CheckedExportProjection::Reexport { .. }
+            ),
+            "the package-root export must retain the checked entrypoint re-export projection"
+        );
+        Ok(())
+    }
+
+    /// A renamed re-export of a callable alias must republish the callable under the new public name.
+    ///
+    /// The manifest's callable projection describes the binding a consumer resolves at this public name, so leaving
+    /// the inner hop's name on it makes the manifest advertise `run` for an export named `public_target`.
+    #[test]
+    fn resolve_library_reexports_renames_the_callable_an_alias_projects() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from provider import run as public_target\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let callable = crate::frontend::library_exports::CheckedFunctionExport {
+            name: "run".to_string(),
+            emitted_name: None,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            param_defaults: Vec::new(),
+            return_type: ResolvedType::Int,
+            is_async: false,
+        };
+        let run_export = CheckedNamedExport {
+            name: "run".to_string(),
+            identity: CheckedExportIdentity::alias(
+                vec!["provider".to_string(), "run".to_string()],
+                vec!["provider".to_string(), "helper".to_string()],
+            ),
+            kind: CheckedExportKind::Alias(crate::frontend::library_exports::CheckedAliasExport {
+                name: "run".to_string(),
+                target_path: vec!["provider".to_string(), "helper".to_string()],
+                projected_function: Some(callable),
+            }),
+        };
+        let mut module_exports: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
+        module_exports.insert(
+            "provider".to_string(),
+            HashMap::from([("run".to_string(), vec![run_export])]),
+        );
+
+        let resolved = LibraryReexportResolver::new(&module_exports)
+            .resolve(&lib_module)
+            .map_err(|errs| format!("{errs:?}"))?;
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "public_target");
+        match &resolved[0].kind {
+            CheckedExportKind::Alias(alias) => {
+                assert_eq!(alias.name, "public_target");
+                let projected = alias
+                    .projected_function
+                    .as_ref()
+                    .ok_or("the renamed re-export must keep the callable the alias projects")?;
+                assert_eq!(
+                    projected.name, "public_target",
+                    "the projected callable must carry the name the re-export published it under"
+                );
+            }
+            other => panic!("expected an alias export, got {other:?}"),
         }
         Ok(())
     }
@@ -18733,6 +18941,95 @@ impl ChildId {
         assert!(
             !generated_flat_dataset.exists(),
             "stale flat dataset.rs should not exist after nested library build"
+        );
+
+        Ok(())
+    }
+
+    /// Exercise the artifact-only `incan build --lib` publisher without mutating its process-wide internal mode flag.
+    #[test]
+    fn build_library_omits_private_generic_implementation_requirements_issue1280()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"privateimpl\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            r#"
+"""Exercise a private generic implementation without publishing its compiler metadata."""
+
+trait Copyable:
+    def copy(self) -> Self: ...
+
+model PrivateValue[T] with Copyable:
+    value: T
+
+    def copy(self) -> Self:
+        return self
+
+pub def answer() -> int:
+    """Return the public library value."""
+    return 42
+"#,
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path
+            .to_str()
+            .ok_or("lib path should be valid utf-8 for build_library test")?;
+        let mut prepared = prepare_library_project(
+            Some(lib_path_str),
+            None,
+            CargoPolicy::default(),
+            &FeatureSelection::default(),
+            None,
+            Vec::new(),
+            false,
+            false,
+            None,
+            false,
+            false,
+            OvenProjectPlanMode::ConsumeOnly,
+            None,
+            &BackendSelectionOptions::default(),
+        )?;
+        write_library_manifest_artifacts(&mut prepared)?;
+
+        let manifest_path = project_root.join("target/lib/privateimpl.incnlib");
+        let manifest = LibraryManifest::read_from_path(&manifest_path)?;
+        let checked_api = manifest
+            .contract_metadata
+            .api
+            .as_ref()
+            .ok_or("library should publish checked API metadata")?;
+        assert!(
+            !checked_api
+                .modules
+                .iter()
+                .flat_map(|module| &module.declarations)
+                .any(|declaration| {
+                    matches!(declaration, ApiDeclaration::Model(model) if model.name == "PrivateValue")
+                }),
+            "private implementation targets must not leak into checked API metadata"
+        );
+        assert!(
+            !manifest.exports.models.iter().any(|model| model.name == "PrivateValue"),
+            "private implementation targets must not leak into public model exports"
+        );
+        assert!(
+            !std::fs::read_to_string(manifest_path)?.contains("PrivateValue"),
+            "private implementation targets must not leak into the serialized library manifest"
         );
 
         Ok(())
@@ -20147,34 +20444,82 @@ pub model Nested:
     }
 
     #[test]
-    fn the_replacement_build_refuses_nondefault_package_feature_selection() -> Result<(), Box<dyn std::error::Error>> {
+    fn the_replacement_build_uses_the_session_selected_package_feature_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::create_dir_all(entrypoint.parent().ok_or("fixture entrypoint has no parent")?)?;
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"replacement_features\"\n\n[project.features]\nbeta = []\n",
+        )?;
+        fs::write(
+            &entrypoint,
+            "when feature(\"beta\"):\n    def main() -> int:\n        return 7\n",
+        )?;
+
+        let mut options = replacement_build_options();
+        options.package_features = FeatureSelection::new(["beta"]);
+        let report =
+            build_replacement_file_report(&entrypoint.to_string_lossy(), options, &BuildReportOptions::default())?;
+        assert_eq!(report["replacement_execution"]["result"], "7");
+        assert_eq!(report["semantic_module"]["module_path"], "main");
+        Ok(())
+    }
+
+    #[test]
+    fn the_replacement_report_retains_exact_numeric_result_type() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         let entrypoint = project.path().join("main.incn");
-        fs::write(&entrypoint, "def main() -> int:\n    return 7\n")?;
-        let feature_selections = [
-            FeatureSelection::new(["beta"]),
-            FeatureSelection {
-                no_default_features: true,
-                ..FeatureSelection::default()
-            },
-        ];
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"typed_report\"\n",
+        )?;
+        fs::write(&entrypoint, "def main() -> f32:\n    return 1.23456789\n")?;
 
-        for package_features in feature_selections {
-            let mut options = replacement_build_options();
-            options.package_features = package_features;
-            let error =
-                build_replacement_file_report(&entrypoint.to_string_lossy(), options, &BuildReportOptions::default())
-                    .err()
-                    .ok_or(
-                        "a non-default package feature selection must not enter the source-only replacement profile",
-                    )?;
-            assert!(
-                error
-                    .to_string()
-                    .contains("supports only the default package feature selection"),
-                "unexpected replacement feature-selection refusal: {error}"
-            );
-        }
+        let report = build_replacement_file_report(
+            &entrypoint.to_string_lossy(),
+            replacement_build_options(),
+            &BuildReportOptions::default(),
+        )?;
+        assert_eq!(report["schema_version"], REPLACEMENT_EXECUTION_REPORT_SCHEMA_VERSION);
+        assert_eq!(report["replacement_execution"]["result"], 1.234_567_9_f32.to_string());
+        assert_eq!(report["replacement_execution"]["result_type"], "f32");
+        assert!(
+            report["replacement_execution"]["output_identity"]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("sha256:"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_replacement_build_pipeline_analyzes_its_session_exactly_once() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::create_dir_all(entrypoint.parent().ok_or("fixture entrypoint has no parent")?)?;
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"replacement_one_analysis\"\n",
+        )?;
+        fs::write(
+            &entrypoint,
+            "def helper() -> int:\n    return 1\n\ndef main() -> int:\n    return helper()\n",
+        )?;
+
+        let analysis_scope = super::super::common::scoped_compilation_session_analysis_invocations();
+        let report = build_replacement_file_report(
+            &entrypoint.to_string_lossy(),
+            replacement_build_options(),
+            &BuildReportOptions::default(),
+        )?;
+
+        assert_eq!(report["replacement_execution"]["result"], "1");
+        assert_eq!(
+            analysis_scope.invocation_count(),
+            1,
+            "the actual replacement build pipeline must analyze its compilation session exactly once"
+        );
         Ok(())
     }
 
@@ -20185,6 +20530,10 @@ pub model Nested:
         // to lower, so the build must refuse rather than execute a body this compilation does not contain.
         let project = tempfile::tempdir()?;
         let entrypoint = project.path().join("main.incn");
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"replacement_inactive_feature\"\n\n[project.features]\nbeta = []\n",
+        )?;
         fs::write(
             &entrypoint,
             "when feature(\"beta\"):\n    def main() -> int:\n        return 7\n",

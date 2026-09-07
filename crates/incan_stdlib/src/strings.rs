@@ -8,8 +8,8 @@ use incan_core::errors::IncanError;
 use incan_core::strings::{
     StringAccessError, fstring as semantics_fstring, str_char_at as semantics_str_char_at,
     str_cmp as semantics_str_cmp, str_concat as semantics_str_concat, str_contains as semantics_str_contains,
-    str_ends_with as semantics_str_ends_with, str_join as semantics_str_join, str_lower as semantics_str_lower,
-    str_replace as semantics_str_replace, str_slice as semantics_str_slice,
+    str_ends_with as semantics_str_ends_with, str_join as semantics_str_join, str_len as semantics_str_len,
+    str_lower as semantics_str_lower, str_replace as semantics_str_replace, str_slice as semantics_str_slice,
     str_slice_byte_range as semantics_str_slice_byte_range,
     str_slice_from_byte_offset as semantics_str_slice_from_byte_offset, str_split as semantics_str_split,
     str_starts_with as semantics_str_starts_with, str_strip as semantics_str_strip, str_upper as semantics_str_upper,
@@ -107,6 +107,19 @@ pub fn str_slice_from_byte_offset(s: &str, start: i64) -> String {
 /// - (`String`): the concatenated string.
 pub fn str_concat(lhs: &str, rhs: &str) -> String {
     semantics_str_concat(lhs, rhs)
+}
+
+/// Count Unicode scalar values in a string at runtime.
+///
+/// ## Parameters
+///
+/// - `s`: the string to measure.
+///
+/// ## Returns
+///
+/// - (`i64`): number of Unicode scalar values.
+pub fn str_len<S: AsRef<str>>(s: S) -> i64 {
+    semantics_str_len(s.as_ref())
 }
 
 /// Compare two strings for equality.

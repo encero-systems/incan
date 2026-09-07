@@ -8,6 +8,7 @@ use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::IdentKind;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_semantics_core::SemanticSourceTargetKind;
 
 use super::TypeChecker;
 
@@ -45,7 +46,7 @@ impl TypeChecker {
             ));
         }
 
-        let Some(sym) = self.lookup_symbol(name) else {
+        let Some(sym_id) = self.symbols.lookup(name) else {
             if name == "log" {
                 self.type_info
                     .expressions
@@ -54,6 +55,26 @@ impl TypeChecker {
                 self.type_info.record_ambient_logger_binding(span);
                 return ResolvedType::Named("Logger".to_string());
             }
+            self.errors.push(errors::unknown_symbol(name, span));
+            return ResolvedType::Unknown;
+        };
+        if self.symbols.identity_of(sym_id).is_some_and(|identity| {
+            identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "cls"
+        }) {
+            // `cls` is only a constructor callee. Keeping the source receiver in the symbol table gives constructor
+            // calls a canonical identity without turning the class token into an ordinary runtime value.
+            self.errors.push(errors::unknown_symbol(name, span));
+            return ResolvedType::Unknown;
+        }
+        // ---- RFC 120: record which canonical identity this reference resolved to ----
+        //
+        // Strictly the resolved binding's own identity: import bindings carry their proven target identity (attached
+        // at definition or back-filled when the proof lands — see `SymbolTable::backfill_import_identity`), so no
+        // name-keyed fallback exists here that a shadowing definition could make stale.
+        if let Some(identity) = self.symbols.identity_of(sym_id).cloned() {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+        let Some(sym) = self.symbols.get(sym_id) else {
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;
         };
@@ -246,8 +267,24 @@ impl TypeChecker {
 
     /// Resolve the `self` expression inside a method body.
     pub(in crate::frontend::typechecker::check_expr) fn check_self(&mut self, span: Span) -> ResolvedType {
-        if let Some(var_info) = self.lookup_variable_info("self") {
-            return var_info.ty.clone();
+        if let Some(symbol_id) = self.symbols.lookup("self") {
+            let identity = self
+                .symbols
+                .identity_of(symbol_id)
+                .filter(|identity| {
+                    identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "self"
+                })
+                .cloned();
+            let ty = self.symbols.get(symbol_id).and_then(|symbol| match &symbol.kind {
+                SymbolKind::Variable(info) if identity.is_some() => Some(info.ty.clone()),
+                _ => None,
+            });
+            if let Some(identity) = identity {
+                self.type_info.record_resolved_identity(span, identity);
+            }
+            if let Some(ty) = ty {
+                return ty;
+            }
         }
         self.errors.push(errors::unknown_symbol("self", span));
         ResolvedType::Unknown

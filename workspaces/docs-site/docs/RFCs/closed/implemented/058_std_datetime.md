@@ -8,7 +8,7 @@
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 055 (`std.fs` path-centric filesystem APIs)
 - **Issue:** https://github.com/encero-systems/incan/issues/292
-- **RFC PR:** —
+- **RFC PR:** [#528](https://github.com/encero-systems/incan/pull/528)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

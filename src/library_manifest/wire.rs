@@ -9,7 +9,7 @@ use super::{
     AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
     LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport, NewtypeExport, PartialExport,
     SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact,
-    VocabExports, VocabKeywordRegistration, VocabProviderManifest,
+    VocabExports, VocabKeywordRegistration, VocabProviderManifest, legacy_library_contract_metadata,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,7 +22,7 @@ pub(super) struct RawLibraryManifest {
     #[serde(default)]
     pub(super) vocab: Option<RawVocabExports>,
     pub(super) soft_keywords: RawSoftKeywordExports,
-    #[serde(default)]
+    #[serde(default = "legacy_library_contract_metadata")]
     pub(super) contract_metadata: LibraryContractMetadata,
     #[serde(default)]
     pub(super) rust_abi: Option<LibraryRustAbi>,

@@ -126,6 +126,12 @@ pub(super) fn unsupported_expr_label(expr: &ast::Expr) -> String {
         ast::Expr::Yield(_) => "yield expression".to_string(),
         ast::Expr::Surface(surface) => surface_expr_label(&surface.payload),
         ast::Expr::VocabBlock(_) => undesugared_label("vocab block expression"),
+        // RFC 081 (#1023): unlike `VocabBlock`/`Surface`, an embedded fragment is *not* a `build_body_ir_module_v0`
+        // input-contract violation -- it is meant to reach lowering as itself (see `IrExprKind::EmbeddedFragment`'s
+        // rustdoc in `src/backend/ir/expr.rs`, the pipeline this replacement-backend Body IR does not yet share).
+        // This still-maturing pipeline simply does not cover it yet, so it falls through this fallback arm like
+        // any other not-yet-supported expression kind; only the label is specific enough to say which one.
+        ast::Expr::Embedded(_) => "embedded DSL fragment expression".to_string(),
         _ => "expression".to_string(),
     }
 }
