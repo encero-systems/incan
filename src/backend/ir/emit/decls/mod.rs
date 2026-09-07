@@ -700,7 +700,11 @@ impl<'a> IrEmitter<'a> {
                     // and `scale_alias` reach `scale`'s declaration, and an alias carries the identity of the
                     // declaration it renames. Such an item is not a repeat -- each public name has to stay reachable
                     // from this module -- so bind it under its own spelling rather than under the projection.
+                    // An overload set's members are already bound under their own generated names, and the provider
+                    // exports them only that way, so they are not an alias over another declaration in this sense --
+                    // importing one by its bare projection names something no module exports.
                     let renames_shared_projection = binding == emitted_name
+                        && !is_overload_emitted_name(&item.name)
                         && item
                             .canonical
                             .as_ref()
