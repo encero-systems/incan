@@ -5608,6 +5608,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -6078,6 +6082,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/hashing_guarantees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What hashing proves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/dsl_embeddings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedded language fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/ordinal_map/" class="md-nav__link">
         
   
@@ -6323,7 +6383,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_24" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -6345,14 +6405,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_24" id="__nav_3_5_24_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_24_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_24">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_26">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -9449,6 +9509,8 @@
       
         
       
+        
+      
     
     
     
@@ -9596,6 +9658,41 @@
   
   
     <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0003: Replacement program output contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft"></span>
   
 
   
@@ -11257,10 +11354,10 @@
 <td>Stdlib</td>
 <td style="text-align: right;">0.3</td>
 <td>Import from <code>std.hash</code>.</td>
-<td><code>from std.hash import Sha256Hasher, sha256, file_digest</code><br><code>sink: Sha256Hasher = sha256.new()</code><br><code>sha256.digest(payload)</code><br><code>xxh3_64.new()</code></td>
-<td><code>std.hash</code> provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. <code>Sha256Hasher</code> is a public stored-state handle for byte streams owned across model or class methods.</td>
-<td>Ad hoc hashing shims, hidden default algorithms, or <code>std.checksum</code> when the caller needs hash rather than checksum semantics.</td>
-<td><a href="../stdlib/hash/">std.hash</a>, <a href="../../how-to/hashing_data/">Hashing data</a>, <a href="../../../RFCs/closed/implemented/065_std_hash/">RFC 065</a>, <a href="../../../release_notes/0_3/">Release 0.3</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></td>
+<td><code>from std.hash import Sha256Hasher, sha256, file_digest</code><br><code>sink: Sha256Hasher = sha256.new()</code><br><code>sha256.digest(payload)</code><br><code>xxh3_64.new()</code><br><code>from std.hash import hmac_sha256</code><br><code>hmac_sha256.verify(key, payload, tag)</code></td>
+<td><code>std.hash</code> provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. <code>Sha256Hasher</code> is a public stored-state handle for byte streams owned across model or class methods. <code>hmac_sha256</code> adds keyed authentication with constant-time verification, for values that arrive across a boundary the caller does not trust.</td>
+<td>Ad hoc hashing shims, hidden default algorithms, <code>std.checksum</code> when the caller needs hash rather than checksum semantics, or an unkeyed digest where the caller actually needs to authenticate a value rather than detect corruption.</td>
+<td><a href="../stdlib/hash/">std.hash</a>, <a href="../../how-to/hashing_data/">Hashing data</a>, <a href="../../../RFCs/closed/implemented/065_std_hash/">RFC 065</a>, <a href="../../../release_notes/0_3/">Release 0.3</a>, <a href="../../../release_notes/0_5/">Release 0.5</a>, <a href="../../../release_notes/0_6/">Release 0.6</a></td>
 </tr>
 <tr>
 <td><code>std.environ</code> runtime environment access</td>
@@ -12269,16 +12366,18 @@
 <li><strong>RFC:</strong> <code>RFC 065</code></li>
 <li><strong>Stability:</strong> <code>Stable</code></li>
 <li><strong>Activation:</strong> Import from <code>std.hash</code>.</li>
-<li><strong>Use instead of:</strong> Ad hoc hashing shims, hidden default algorithms, or <code>std.checksum</code> when the caller needs hash rather than checksum semantics.</li>
-<li><strong>References:</strong> <a href="../stdlib/hash/">std.hash</a>, <a href="../../how-to/hashing_data/">Hashing data</a>, <a href="../../../RFCs/closed/implemented/065_std_hash/">RFC 065</a>, <a href="../../../release_notes/0_3/">Release 0.3</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></li>
+<li><strong>Use instead of:</strong> Ad hoc hashing shims, hidden default algorithms, <code>std.checksum</code> when the caller needs hash rather than checksum semantics, or an unkeyed digest where the caller actually needs to authenticate a value rather than detect corruption.</li>
+<li><strong>References:</strong> <a href="../stdlib/hash/">std.hash</a>, <a href="../../how-to/hashing_data/">Hashing data</a>, <a href="../../../RFCs/closed/implemented/065_std_hash/">RFC 065</a>, <a href="../../../release_notes/0_3/">Release 0.3</a>, <a href="../../../release_notes/0_5/">Release 0.5</a>, <a href="../../../release_notes/0_6/">Release 0.6</a></li>
 </ul>
-<p><code>std.hash</code> provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. <code>Sha256Hasher</code> is a public stored-state handle for byte streams owned across model or class methods.</p>
+<p><code>std.hash</code> provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. <code>Sha256Hasher</code> is a public stored-state handle for byte streams owned across model or class methods. <code>hmac_sha256</code> adds keyed authentication with constant-time verification, for values that arrive across a boundary the caller does not trust.</p>
 <p>Canonical forms:</p>
 <ul>
 <li><code>from std.hash import Sha256Hasher, sha256, file_digest</code></li>
 <li><code>sink: Sha256Hasher = sha256.new()</code></li>
 <li><code>sha256.digest(payload)</code></li>
 <li><code>xxh3_64.new()</code></li>
+<li><code>from std.hash import hmac_sha256</code></li>
+<li><code>hmac_sha256.verify(key, payload, tag)</code></li>
 </ul>
 <h3 id="stdenviron-runtime-environment-access"><code>std.environ</code> runtime environment access<a class="headerlink" href="#stdenviron-runtime-environment-access" title="Permanent link">&para;</a></h3>
 <ul>

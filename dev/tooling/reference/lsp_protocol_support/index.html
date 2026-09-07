@@ -4778,6 +4778,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -5248,6 +5252,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/hashing_guarantees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What hashing proves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/dsl_embeddings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedded language fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/ordinal_map/" class="md-nav__link">
         
   
@@ -5493,7 +5553,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_24" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5515,14 +5575,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_24" id="__nav_3_5_24_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_24_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_24">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_26">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8684,6 +8744,8 @@
       
         
       
+        
+      
     
     
     
@@ -8831,6 +8893,41 @@
   
   
     <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0003: Replacement program output contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft"></span>
   
 
   
@@ -9304,11 +9401,19 @@
 <td>Supported (basic)</td>
 </tr>
 <tr>
+<td><code>textDocument/references</code></td>
+<td>Supported</td>
+</tr>
+<tr>
+<td><code>textDocument/semanticTokens/full</code></td>
+<td>Supported</td>
+</tr>
+<tr>
 <td><code>workspace/executeCommand</code></td>
 <td>Supported for <code>incan.metadata.model.emit</code></td>
 </tr>
 <tr>
-<td><code>textDocument/references</code></td>
+<td><code>textDocument/semanticTokens/range</code></td>
 <td>Planned</td>
 </tr>
 <tr>
@@ -9322,6 +9427,7 @@
 </tbody>
 </table>
 <p><code>textDocument/hover</code> includes checked API metadata previews for public declarations, public partial callable presets, selected public model/class members, and public enum variants after successful typechecking. Hovering a canonical or supported-alias <code>@describe</code> decorator also shows the compiler-checked registry, key, descriptor, and described subject; go-to-definition on that decorator navigates to the described declaration. Partial hover displays the projected callable signature using the same default-parameter visual model as ordinary callables, plus target and preset provenance. Computed property hovers and completions include the owner and return type, such as <code>property Account.total -&gt; int</code>. Value enum hovers and completions include backing type and raw-value details where available. <code>textDocument/completion</code> includes local partial names as function-like completion items, <code>textDocument/definition</code> resolves local partial names and target identifiers, and <code>textDocument/documentSymbol</code> lists module-level partial declarations. <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code> emits contract-backed model source or bundle JSON for a selected project, bundle JSON file, or <code>.incnlib</code> artifact. There is currently no LSP command that returns the full checked API metadata JSON package; call <code>incan tools metadata api</code> for that.</p>
+<p><code>textDocument/semanticTokens/full</code> classifies every token in a file, which is what the protocol requires: a server publishes a legend of token types and answers with one entry per token, so there is no way to classify part of a file and leave the rest to the editor's own grammar. Declarations take the kind of the thing they declare, type positions are read from the parsed program rather than guessed from capitalisation, member access distinguishes a called method from a read property, and an f-string's interpolated expressions are classified as ordinary code rather than as string content. Embedded fragments — blocks where a library's DSL claims another language's syntax inside Incan source — are highlighted as their own submode, so a markup tag or a style selector never renders as if it were an Incan local; the expression holes inside a fragment are ordinary Incan and are highlighted as such. A file that does not currently parse still receives highlighting from the token stream alone, losing only type positions and fragment ownership, so colour does not disappear while you type. Only the <code>full</code> request is served today; <code>textDocument/semanticTokens/range</code> and delta requests are not advertised.</p>
 <p><code>textDocument/rename</code> remains planned. The current server does not advertise rename support, so partial rename behavior is not exposed through LSP yet.</p>
 <p>To learn more about LSP, see the <a href="https://microsoft.github.io/language-server-protocol/">Language Server Protocol</a> specification. See also: <a href="../../explanation/lsp_architecture/">LSP architecture</a>.</p>
 

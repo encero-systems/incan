@@ -2367,6 +2367,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#authenticate-a-value-that-crossed-a-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authenticate a value that crossed a boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#handle-invalid-requests" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4920,6 +4931,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -5390,6 +5405,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/hashing_guarantees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What hashing proves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/dsl_embeddings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedded language fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/ordinal_map/" class="md-nav__link">
         
   
@@ -5635,7 +5706,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_24" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5657,14 +5728,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_24" id="__nav_3_5_24_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_24_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_24">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_26">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8761,6 +8832,8 @@
       
         
       
+        
+      
     
     
     
@@ -8908,6 +8981,41 @@
   
   
     <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0003: Replacement program output contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft"></span>
   
 
   
@@ -9377,6 +9485,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#authenticate-a-value-that-crossed-a-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authenticate a value that crossed a boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#handle-invalid-requests" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9447,7 +9566,7 @@
 </tr>
 </tbody>
 </table>
-<p>Do not use <code>sha1</code> or <code>md5</code> for collision-resistant security decisions. Do not use <code>std.hash</code> for password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Use <a href="../../reference/stdlib/checksum/"><code>std.checksum</code></a> when a protocol or file format requires CRC32.</p>
+<p>Do not use <code>sha1</code> or <code>md5</code> for collision-resistant security decisions. Do not use <code>std.hash</code> for password hashing, signatures, authenticated encryption, CRC, or Adler checksums. For keyed authentication of untrusted input, see <a href="#authenticate-a-value-that-crossed-a-boundary">Authenticate a value that crossed a boundary</a>. Use <a href="../../reference/stdlib/checksum/"><code>std.checksum</code></a> when a protocol or file format requires CRC32.</p>
 <h2 id="hash-bytes-in-one-call">Hash bytes in one call<a class="headerlink" href="#hash-bytes-in-one-call" title="Permanent link">&para;</a></h2>
 <p>Use one-shot helpers when the payload is already in memory:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="nb">hex</span>
@@ -9536,6 +9655,25 @@
 <span class="n">digest</span> <span class="o">=</span> <span class="n">reader_digest</span><span class="p">(</span><span class="nc">BytesIO</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;payload&quot;</span><span class="p">),</span> <span class="s2">&quot;shake256&quot;</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="mi">32</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
 <p>Use <code>reader_hash_u32</code>, <code>reader_hash_u64</code>, and <code>reader_hash_u128</code> for matching non-cryptographic reader hashes.</p>
+<h2 id="authenticate-a-value-that-crossed-a-boundary">Authenticate a value that crossed a boundary<a class="headerlink" href="#authenticate-a-value-that-crossed-a-boundary" title="Permanent link">&para;</a></h2>
+<p>Use <code>hmac_sha256</code> when a value arrives from somewhere you do not control and you need to know it is one you issued. An unkeyed digest cannot answer that — see <a href="../../explanation/hashing_guarantees/">What hashing proves</a> for why.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.hash</span><span class="w"> </span><span class="kn">import</span> <span class="n">hmac_sha256</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">issue</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">hmac_sha256</span><span class="o">.</span><span class="n">digest</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">accept</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">submitted_tag</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">hmac_sha256</span><span class="o">.</span><span class="n">verify</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">payload</span><span class="p">,</span> <span class="n">submitted_tag</span><span class="p">)</span>
+</code></pre></div>
+<p>Verify with <code>verify</code>, not by recomputing a tag and comparing it with <code>==</code>. The comparison must be constant time, and <code>verify</code> is; an equality check on tag bytes is not.</p>
+<p>Keep the key out of whatever the value crossed to reach you. A key on the far side of that boundary makes the check decorative.</p>
+<p>For a value built up in pieces, keep a signer instead of concatenating first:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">mut</span> <span class="n">signer</span> <span class="o">=</span> <span class="n">hmac_sha256</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
+    <span class="n">signer</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+<span class="n">tag</span> <span class="o">=</span> <span class="n">signer</span><span class="o">.</span><span class="n">finalize_bytes</span><span class="p">()</span>
+</code></pre></div>
 <h2 id="handle-invalid-requests">Handle invalid requests<a class="headerlink" href="#handle-invalid-requests" title="Permanent link">&para;</a></h2>
 <p>Branch on <code>HashError.kind</code> when callers can recover:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
@@ -9548,6 +9686,7 @@
 <p>Common error categories include <code>unknown_algorithm</code>, <code>unsupported_width</code>, <code>invalid_length</code>, <code>invalid_chunk_size</code>, and I/O error kinds.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="../../explanation/hashing_guarantees/">What hashing proves</a></li>
 <li><a href="../../reference/stdlib/hash/"><code>std.hash</code> reference</a></li>
 <li><a href="../../reference/stdlib/checksum/"><code>std.checksum</code> reference</a></li>
 <li><a href="../../reference/stdlib/encoding/"><code>std.encoding</code> reference</a></li>

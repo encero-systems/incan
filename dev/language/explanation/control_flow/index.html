@@ -4785,6 +4785,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -5121,6 +5125,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Pattern matching with match">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#guards-and-the-two-ways-to-write-an-arm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guards, and the two ways to write an arm
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5390,6 +5411,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_guarantees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What hashing proves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dsl_embeddings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedded language fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../ordinal_map/" class="md-nav__link">
         
   
@@ -5635,7 +5712,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_24" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5657,14 +5734,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_24" id="__nav_3_5_24_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_24_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_24">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_26">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8761,6 +8838,8 @@
       
         
       
+        
+      
     
     
     
@@ -8908,6 +8987,41 @@
   
   
     <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0003: Replacement program output contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft"></span>
   
 
   
@@ -9341,6 +9455,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Pattern matching with match">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#guards-and-the-two-ways-to-write-an-arm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guards, and the two ways to write an arm
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -9489,6 +9620,22 @@
     <span class="k">case</span> <span class="nc">Failed</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>Alternatives that bind names must bind the same names with the same types. <code>Cached(port) | Fresh(port)</code> is valid because both payloads have the same type; <code>Some(value) | None</code> is rejected because only one alternative binds <code>value</code>.</p>
+<h3 id="guards-and-the-two-ways-to-write-an-arm">Guards, and the two ways to write an arm<a class="headerlink" href="#guards-and-the-two-ways-to-write-an-arm" title="Permanent link">&para;</a></h3>
+<p>Add <code>if &lt;condition&gt;</code> after a pattern when the pattern alone does not decide the arm. The guard runs only if the pattern matched, and the arm is taken only if the guard is also true; when it is false, matching continues with the next arm.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="n">lookup_port</span><span class="p">(</span><span class="n">raw</span><span class="p">):</span>
+    <span class="k">case</span> <span class="nc">Cached</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="k">if</span> <span class="n">port</span> <span class="o">&gt;</span> <span class="mi">1024</span><span class="p">:</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cached user port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nc">Cached</span><span class="p">(</span><span class="n">port</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cached reserved port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nc">Fresh</span><span class="p">(</span><span class="n">port</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;fresh port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nc">Failed</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>An arm can be written two ways. <code>case &lt;pattern&gt;:</code> introduces a body as an indented suite or on the same line, and <code>&lt;pattern&gt; =&gt; &lt;expression&gt;</code> is the shorter form for an arm whose body is a single expression:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">classify</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="k">match</span> <span class="n">n</span><span class="p">:</span>
+        <span class="n">x</span> <span class="k">if</span> <span class="n">x</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">=&gt;</span> <span class="s2">&quot;negative&quot;</span>
+        <span class="mi">0</span> <span class="o">=&gt;</span> <span class="s2">&quot;zero&quot;</span>
+        <span class="n">_</span> <span class="o">=&gt;</span> <span class="s2">&quot;positive&quot;</span>
+</code></pre></div>
+<p>These are two spellings of one arm, not two kinds of arm. Anything you can write in one you can write in the other, guards included; pick whichever reads better for the arm at hand. A guard sits between the pattern and the arm's <code>:</code> or <code>=&gt;</code> in both.</p>
 <h2 id="looping-while-a-pattern-keeps-matching-with-while-let">Looping while a pattern keeps matching with <code>while let</code><a class="headerlink" href="#looping-while-a-pattern-keeps-matching-with-while-let" title="Permanent link">&para;</a></h2>
 <p>Use <code>while let</code> when a loop should continue only while one pattern keeps matching.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">drain</span><span class="p">(</span><span class="n">rx</span><span class="p">:</span> <span class="kt">Receiver</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>

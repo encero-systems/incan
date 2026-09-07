@@ -4778,6 +4778,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -5248,6 +5252,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/hashing_guarantees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What hashing proves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/dsl_embeddings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedded language fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/ordinal_map/" class="md-nav__link">
         
   
@@ -5493,7 +5553,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_24" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5515,14 +5575,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_24" id="__nav_3_5_24_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_24_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_24">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_26">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8798,6 +8858,8 @@
       
         
       
+        
+      
     
     
     
@@ -8945,6 +9007,41 @@
   
   
     <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0003: Replacement program output contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft"></span>
   
 
   
@@ -9578,6 +9675,13 @@
 <h3 id="runtime-effects-become-governed-and-inspectable">Runtime effects become governed and inspectable<a class="headerlink" href="#runtime-effects-become-governed-and-inspectable" title="Permanent link">&para;</a></h3>
 <p>The runtime and embedded-language work in this release is there to make real programs and the new backend prove one another. Accepted embedded fragments have typed descriptors, diagnostics, LSP behavior, and a safe formatter contract: structured fragments format structurally; opaque fragments are preserved unchanged.</p>
 <p>Authority declarations, grants, execution receipts, redaction, replay, and policy inspection make runtime effects explainable. Source and packages state requirements; Loaf applies project policy and target selection; Oven enforces and records the resulting execution. Source code cannot grant itself host authority.</p>
+<ul>
+<li><strong>Stdlib</strong>: <code>std.hash</code> adds keyed authentication with <code>hmac_sha256</code>, covering one-shot tags, an incremental signer, and constant-time verification. An unkeyed digest can only prove a value is self-consistent, since the hash formula is public source; a keyed MAC is what lets a process prove a value it received across an untrusted boundary was one it produced earlier. Verified against the RFC 4231 vectors (#1075).</li>
+<li><strong>Compiler</strong>: The nine reserved <code>host.*</code> runtime capabilities are declared in the compiler's own bundled <code>std.runtime</code> source, using the same <code>capability</code> declaration a package uses rather than a separate built-in list. A <code>requires</code> entry can now name one — <code>from std.runtime import host</code>, then <code>requires = [host.fs.read]</code> — and a misspelled host capability is an unresolved-symbol compile error instead of a runtime denial reported somewhere else. Granting and enforcing this authority is not wired yet; this is the declaration and reference half. (RFC 104, #1029)</li>
+<li><strong>Compiler</strong>: <code>@provider_operation</code> can name a host capability, so an operation declares the authority it needs the same way it declares a package capability. The decorator resolved its capability reference only through package dependencies, which cannot see the compiler's own bundled <code>std.runtime</code>, so <code>@provider_operation(host.fs.read)</code> was unresolvable. (RFC 104, #1029)</li>
+<li><strong>Compiler</strong>: A <code>capability</code> declaration no longer fails compilation. It declares authority rather than code, so it emits no Rust item, but lowering treated it as an unhandled declaration and failed any module containing one — which meant <code>std.runtime</code> typechecked while refusing to build. (RFC 104, #1029)</li>
+<li><strong>Tooling</strong>: <code>incan inspect codegraph</code> publishes RFC 104 capability declarations, including each one's description, typed scope dimensions, and the resolved identities of the capabilities it requires. A policy, CI job, editor, or agent can read what a package declares it can do without executing source or parsing a <code>capability</code> block. (RFC 104, #1027)</li>
+</ul>
 <h3 id="inspection-becomes-a-first-class-product-surface">Inspection becomes a first-class product surface<a class="headerlink" href="#inspection-becomes-a-first-class-product-surface" title="Permanent link">&para;</a></h3>
 <p>The CLI, LSP, Architect, MCP tools, and Rust/Oven views will consume the same source and build facts. They should agree about a symbol's identity and range, a package or artifact's provenance, the selected target and provider, and whether information is stale. Rust-aware inspection is deliberately bounded to the workspace, package, target, artifact, and explicit interop edges that Oven needs—it is not a separate compiler.</p>
 <h2 id="what-must-be-true-before-06-ships">What must be true before 0.6 ships<a class="headerlink" href="#what-must-be-true-before-06-ships" title="Permanent link">&para;</a></h2>
@@ -9598,6 +9702,16 @@
 <li><strong>Compiler</strong>: Unreachable code after an unconditional return is reported. (#1117, #1134)</li>
 <li><strong>Compiler</strong>: A package that calls between its own modules again projects the callee's emitted name. A package origin identifies which library declares a method; it does not make that method foreign to the build producing it, and reading it as foreign made a package decline to name a wrapper it was itself emitting. (#1174)</li>
 <li><strong>Compiler</strong>: A <code>Result</code>-returning <code>main</code> retains ordinary runtime panic diagnostics and requested <code>import this</code> output, matching the existing setup in other entrypoint forms. (#1249)</li>
+<li><strong>Language</strong>: A <code>match</code> written as a function's last statement now returns its value instead of being discarded, and every arm converts to the type the <code>match</code> produces. The documented spelling for pattern alternation previously emitted <code>let _ = match ...;</code>, so a value-returning function built from it produced Rust that would not compile, and <code>str</code> arms stayed borrowed where an owned <code>String</code> was required. (#1386)</li>
+<li><strong>Tooling</strong>: A vocabulary companion may bind a helper to any callable spelling on its package's public surface, including a public partial and a reexport alias, and its own build now rejects a binding that resolves to something uncallable through a chain of aliases. The provider's build and every consumer's frontend read one export authority, so a helper the provider published can no longer be rejected as missing by the consumers that import it. (#1031)</li>
+<li><strong>Editor integration</strong>: Signature help, scoped-symbol resolution, completion context, and call-site type arguments now reach inside an embedded fragment's expression holes. A hole is ordinary Incan that the compiler already typechecks, but the editor treated the whole fragment as opaque, so a call written inside one silently lost tooling that works everywhere else. One shared traversal now answers which expressions a fragment owns, for the compiler and its tooling alike. (RFC 081, #1022)</li>
+<li><strong>Tooling</strong>: <code>incan fmt</code> renders an embedded fragment from its structured tree, and preserves the original source verbatim only when the claiming descriptor declares itself layout-sensitive. The formatter previously preserved every fragment verbatim regardless, which is the third fallback state RFC 081 rules out; a descriptor's <code>layout_sensitive</code> declaration was recorded and never read. (RFC 081, #1022)</li>
+<li><strong>Editor integration</strong>: Hover and go-to-definition now stop at an embedded fragment's ownership boundary. Both resolved names by scanning source text, so a markup tag name or a style declaration property — perfectly good ASCII identifiers — resolved against ordinary Incan scope and answered with whatever unrelated local happened to share the spelling. DSL-owned syntax now reports which submode and which library own it; expression holes, being ordinary Incan, keep every tooling path they already had. (RFC 081, #1022)</li>
+<li><strong>Tooling</strong>: <code>incan fmt</code> no longer rewrites a <code>RegexTemplate</code> fragment into source that will not parse, and no longer grows a file by a blank line on every run. A template string's backticks and <code>${...}</code> delimiters are consumed while parsing, so reformatting <code>`hello ${name}!`</code> emitted <code>hello {name}!</code> — a shape the submode rejects outright. Separately, both modes that preserve a fragment's text verbatim also emitted the newline the enclosing block supplies, so formatting was never a fixed point. All six accepted submodes now round-trip. (RFC 081, #1022)</li>
+<li><strong>Editor integration</strong>: The language server now answers <code>textDocument/semanticTokens/full</code>, so editors highlight Incan from the compiler's own reading of a file rather than from a regex grammar. Declarations take the kind of the thing they declare, type positions come from the parsed program instead of from capitalisation, member access separates a called method from a read property, and an f-string's interpolated expressions are highlighted as code rather than as string content. Embedded fragments are highlighted as their own submode, so a markup tag or a style selector never renders as an Incan local, while the expression holes inside a fragment do. A file that does not currently parse keeps its highlighting, losing only type positions and fragment ownership. (RFC 081, #1400)</li>
+<li><strong>Compiler</strong>: <code>import module::item</code> now binds the item with its declared signature. The last path segment was registered as if it named a module, so the name resolved and nothing reported an error, but every call through it inferred an unknown type — the failure surfaced later and elsewhere, as <code>expected 'numeric', found '? + ?'</code> on the first arithmetic using the result. Both import spellings now route through one symbol definition, so they cannot disagree about what an item is. <code>examples/advanced/multifile</code> typechecks again. (#1407)</li>
+<li><strong>Tooling</strong>: A vocabulary companion no longer has to declare a helper binding for every helper it emits. An unbound helper key resolves directly against its package's checked public surface, the same surface an ordinary consumer imports through; an explicit binding remains the override for a key whose export spelling deliberately differs. A companion that listed its own package's export names was maintaining a second copy of that surface, kept honest only by a test. (#1032)</li>
+<li><strong>Tooling</strong>: <code>incan fmt</code> no longer rewrites valid source into different or broken source. An <code>enum</code>'s <code>with &lt;Trait&gt;</code> adoption was dropped entirely, a byte literal's escaped quote and backslash were unescaped so the literal no longer terminated, and a guarded match arm was rewritten into an arrow form the parser rejects. Every committed example is now round-tripped by a property test that asserts the result still parses and is a fixed point. (#1401)</li>
 </ul>
 <h2 id="what-this-does-not-claim">What this does not claim<a class="headerlink" href="#what-this-does-not-claim" title="Permanent link">&para;</a></h2>
 <p>0.6 makes self-hosting work possible; it does not claim that Incan has already rewritten its compiler wholesale. It also does not introduce a broad GPU API or a general foreign-interop plugin system. Those need real runtime consumers and separately governed follow-up work.</p>

@@ -4778,6 +4778,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -5248,6 +5252,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/hashing_guarantees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What hashing proves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/dsl_embeddings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedded language fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/ordinal_map/" class="md-nav__link">
         
   
@@ -5493,7 +5553,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_24" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5515,14 +5575,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_24" id="__nav_3_5_24_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_24_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_24">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_26">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -6372,6 +6432,17 @@
     <span class="md-ellipsis">
       
         Real-time Diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantic-highlighting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic Highlighting
       
     </span>
   </a>
@@ -8895,6 +8966,8 @@
       
         
       
+        
+      
     
     
     
@@ -9042,6 +9115,41 @@
   
   
     <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0003: Replacement program output contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft"></span>
   
 
   
@@ -9529,6 +9637,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#semantic-highlighting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic Highlighting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#hover-information" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9713,6 +9832,10 @@
 <td><strong>Completions</strong></td>
 <td>Autocomplete for keywords and symbols</td>
 </tr>
+<tr>
+<td><strong>Highlighting</strong></td>
+<td>Semantic colouring from the compiler's own reading of the file</td>
+</tr>
 </tbody>
 </table>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
@@ -9762,6 +9885,17 @@ cargo<span class="w"> </span>install<span class="w"> </span>--path<span class="w
 note:<span class="w"> </span>In<span class="w"> </span>Incan,<span class="w"> </span>functions<span class="w"> </span>that<span class="w"> </span>can<span class="w"> </span>fail<span class="w"> </span><span class="k">return</span><span class="w"> </span>Result<span class="o">[</span>T,<span class="w"> </span>E<span class="o">]</span>
 hint:<span class="w"> </span>Wrap<span class="w"> </span>the<span class="w"> </span>value<span class="w"> </span>with<span class="w"> </span>Ok<span class="o">(</span>...<span class="o">)</span><span class="w"> </span>to<span class="w"> </span><span class="k">return</span><span class="w"> </span>success
 </code></pre></div>
+<h3 id="semantic-highlighting">Semantic Highlighting<a class="headerlink" href="#semantic-highlighting" title="Permanent link">&para;</a></h3>
+<p>Editors that support semantic tokens colour Incan from what the compiler actually parsed, rather than from a regex grammar that has to guess. The practical differences you should see:</p>
+<ul>
+<li>A declaration is coloured as the thing it declares, so <code>model User</code> and <code>trait Loggable</code> do not look like two ordinary identifiers.</li>
+<li>Type positions come from the parsed program, not from capitalisation. <code>str</code> in <code>label: str</code> is a type, and a local named <code>Total</code> is still a local.</li>
+<li><code>value.lower()</code> colours <code>lower</code> as a method while <code>value.length</code> colours <code>length</code> as a property.</li>
+<li>Inside an f-string, the interpolated expressions are coloured as code; only the literal text around them is string content.</li>
+<li>An embedded fragment — a block where a library's DSL claims another language's syntax inside Incan source, such as markup or style rules — is coloured as that submode, so a tag name or a selector never renders as if it were an Incan local. The expression holes inside a fragment <em>are</em> ordinary Incan, and are coloured as such, which is what makes the boundary between the two visible while reading.</li>
+</ul>
+<p>Highlighting does not disappear while you type. A file that does not currently parse is still coloured from its token stream; only type positions and embedded-fragment ownership need a successful parse, so those two degrade rather than the whole file going flat.</p>
+<p>If your editor shows no change, check that its Incan client requests semantic tokens — some clients only enable them when the server is registered as the document's semantic-tokens provider, and a stale server binary predating this support will not advertise it.</p>
 <h3 id="hover-information">Hover Information<a class="headerlink" href="#hover-information" title="Permanent link">&para;</a></h3>
 <p>Hover over any symbol to see its type:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]</span>

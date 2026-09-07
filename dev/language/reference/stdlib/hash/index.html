@@ -3911,6 +3911,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keyed-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keyed authentication
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#boundaries" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4933,6 +4944,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -5403,6 +5418,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/hashing_guarantees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What hashing proves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../explanation/dsl_embeddings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedded language fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/ordinal_map/" class="md-nav__link">
         
   
@@ -5648,7 +5719,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_24" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5670,14 +5741,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_24" id="__nav_3_5_24_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_24_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_24">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_26">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8774,6 +8845,8 @@
       
         
       
+        
+      
     
     
     
@@ -8921,6 +8994,41 @@
   
   
     <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0003: Replacement program output contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft"></span>
   
 
   
@@ -9401,6 +9509,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keyed-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keyed authentication
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#boundaries" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9646,11 +9765,56 @@
 </tbody>
 </table>
 <p>One-shot namespace helpers that are infallible raise <code>ValueError</code> for the same validation detail where applicable.</p>
+<h2 id="keyed-authentication">Keyed authentication<a class="headerlink" href="#keyed-authentication" title="Permanent link">&para;</a></h2>
+<p><code>hmac_sha256</code> is the only keyed namespace on this page; every other namespace is unkeyed.</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hmac_sha256.digest(key: bytes, data: bytes)</code></td>
+<td><code>bytes</code></td>
+<td>32-byte HMAC-SHA256 tag.</td>
+</tr>
+<tr>
+<td><code>hmac_sha256.verify(key: bytes, data: bytes, tag: bytes)</code></td>
+<td><code>bool</code></td>
+<td>Constant-time comparison; does not short-circuit on the first differing byte.</td>
+</tr>
+<tr>
+<td><code>hmac_sha256.new(key: bytes)</code></td>
+<td><code>HmacSha256Signer</code></td>
+<td>Incremental signer keyed with <code>key</code>.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Hasher family</th>
+<th>Methods</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keyed signer</td>
+<td><code>update(chunk: bytes) -&gt; None</code>, <code>finalize_bytes() -&gt; bytes</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>finalize_bytes</code> returns the tag for the bytes supplied so far and resets the signer for a subsequent stream under the same key.</p>
+<p>Keys of any length are accepted: shorter keys are zero-padded to the block size, longer keys are hashed first. Comparing tag bytes with <code>==</code> is not constant time; use <code>verify</code>.</p>
 <h2 id="boundaries">Boundaries<a class="headerlink" href="#boundaries" title="Permanent link">&para;</a></h2>
-<p><code>std.hash</code> does not provide password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Those require separate APIs because their security and compatibility contracts are different from ordinary byte hashing. Use <a href="../checksum/"><code>std.checksum</code></a> for CRC32 compatibility checksums.</p>
+<p><code>std.hash</code> does not provide password hashing, signatures, authenticated encryption, CRC, or Adler checksums. Those require separate APIs because their security and compatibility contracts are different from ordinary byte hashing. Use <a href="../checksum/"><code>std.checksum</code></a> for CRC32 compatibility checksums.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../../how-to/hashing_data/">Hashing data</a></li>
+<li><a href="../../../explanation/hashing_guarantees/">What hashing proves</a></li>
 <li><a href="../checksum/"><code>std.checksum</code> reference</a></li>
 <li><a href="../encoding/"><code>std.encoding</code> reference</a></li>
 <li><a href="../io/"><code>std.io</code> reference</a></li>
