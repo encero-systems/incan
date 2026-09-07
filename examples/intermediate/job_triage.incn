@@ -1,0 +1,76 @@
+"""
+Triaging a batch of incoming jobs, using the containers and pipelines the standard library provides for it.
+
+Each piece replaces something people otherwise hand-roll: a priority queue instead of re-sorting a list, a counter
+instead of a dict of tallies, a deque instead of shifting from the front of a list, and an iterator pipeline instead
+of a loop that accumulates into a temporary.
+"""
+
+from std.collections import Counter, Deque, PriorityQueue
+
+
+model Job:
+    name: str
+    severity: int
+
+
+def parse_job(raw: str) -> Result[Job, str]:
+    """Read one `name:marks` line, where each mark adds a severity point."""
+    parts = raw.split(":")
+    if len(parts) != 2:
+        return Err(f"expected 'name:marks', got '{raw}'")
+    return Ok(Job(name=parts[0], severity=len(parts[1])))
+
+
+def severity_of(raw: str) -> int:
+    """Return how many severity marks a line carries, ignoring its shape."""
+    parts = raw.split(":")
+    if len(parts) != 2:
+        return 0
+    return len(parts[1])
+
+
+def is_urgent(job: Job) -> bool:
+    """Return whether a job should jump the queue."""
+    return job.severity >= 3
+
+
+def is_positive(value: int) -> bool:
+    """Return whether a severity reading carries at least one mark."""
+    return value > 0
+
+
+def main() -> None:
+    values = ["deploy:!!!", "backup:!", "audit:!!!", "malformed"]
+
+    # An iterator pipeline: read each line's severity, drop the unreadable ones, and collect once at the end. The
+    # adapters are lazy, so nothing is materialized until `collect`.
+    severities = values.iter().map(severity_of).filter(is_positive).collect()
+    println(f"read {len(severities)} severities from {len(values)} lines")
+
+    # Result combinators describe the success path without unwrapping first, and a failure short-circuits rather
+    # than being re-checked at every step.
+    result = parse_job("deploy:!!!")
+    println(f"first job urgent: {result.map(is_urgent).unwrap_or(false)}")
+    println(f"bad line urgent:  {parse_job("malformed").map(is_urgent).unwrap_or(false)}")
+
+    # A priority queue keeps the most severe job at the front as jobs arrive, with no re-sorting.
+    mut queue = PriorityQueue[int].max_first()
+    mut tally = Counter[str]()
+    mut ready = Deque[str]()
+
+    for raw in values:
+        match parse_job(raw):
+            Ok(job) =>
+                queue.push(job.severity)
+                tally.increment(job.name)
+                if is_urgent(job):
+                    # Urgent work goes to the front; ordinary work waits its turn at the back.
+                    ready.push_front(job.name)
+                else:
+                    ready.push_back(job.name)
+            Err(reason) => println(f"skipped: {reason}")
+
+    println(f"highest severity: {queue.pop()}")
+    println(f"distinct jobs: {len(tally)}")
+    println(f"next up: {ready.pop_front()}")

@@ -4409,6 +4409,54 @@ fn test_value_enums_codegen() {
 }
 
 // ============================================================================
+// Statement-position `match` as a function's returned value (#1386)
+// ============================================================================
+
+#[test]
+fn test_trailing_match_statement_is_returned_not_discarded() {
+    // A statement-position `match` is the documented spelling for pattern alternation, so a function whose last
+    // statement is one has to hand that value back. Discarding it into `let _ = match ...;` leaves the function
+    // falling off the end of its block, which Rust rejects for any non-unit return type (#1386).
+    let source = "def pick(n: int) -> str:\n    match n:\n        1 => \"one\"\n        _ => \"other\"\n\ndef main() -> None:\n    println(pick(1))\n";
+    let rust_code = generate_rust(source);
+
+    assert!(
+        !rust_code.contains("let _ = match"),
+        "Trailing match should carry the return value, not be discarded:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("return match"),
+        "Trailing match should be emitted as the returned value:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_match_arms_convert_to_the_match_result_type() {
+    // Every arm has to produce the one type the `match` yields, so a `str` arm needs the same owned-`String`
+    // conversion a `let` of that type would apply. Without it the arms stay `&str` and no `String` slot accepts them.
+    let source = "def pick(n: int) -> str:\n    label = match n:\n        1 => \"one\"\n        _ => \"other\"\n    return label\n\ndef main() -> None:\n    println(pick(1))\n";
+    let rust_code = generate_rust(source);
+
+    assert!(
+        rust_code.contains("\"one\".to_string()"),
+        "Match arms should convert to the match's own result type:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_trailing_match_statement_in_unit_function_stays_a_statement() {
+    // A `match` run purely for effect has no value to hand back, so a `-> None` function must keep emitting it as a
+    // plain statement instead of turning it into a `return`.
+    let source = "def report(n: int) -> None:\n    match n:\n        1 => println(\"one\")\n        _ => println(\"other\")\n\ndef main() -> None:\n    report(1)\n";
+    let rust_code = generate_rust(source);
+
+    assert!(
+        !rust_code.contains("return match"),
+        "Effectful match in a unit function should stay a statement:\n{rust_code}"
+    );
+}
+
+// ============================================================================
 // Additional migration tests
 // ============================================================================
 

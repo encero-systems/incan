@@ -793,6 +793,54 @@ impl<'a> IrEmitter<'a> {
         self.emit_stmts_with_tail(stmts, &[], None)
     }
 
+    /// Emit a function body, treating a trailing value-producing expression statement as the return value.
+    ///
+    /// A statement-position `match` lowers to an expression statement, so a function whose last statement is a
+    /// value-producing `match` would otherwise emit `let _ = match ...;` and then fall off the end of the block.
+    /// Rust rejects that whenever the function declares a non-unit return type, so rewriting the trailing statement
+    /// into a `return` only reshapes output the Rust compiler would have refused anyway (#1386).
+    ///
+    /// Generators are excluded: their declared `Iterator[T]` return type describes what the generator yields, not a
+    /// value the body itself hands back.
+    pub(super) fn emit_function_body(
+        &self,
+        stmts: &[IrStmt],
+        is_generator: bool,
+    ) -> Result<Vec<TokenStream>, EmitError> {
+        if is_generator || !self.trailing_stmt_is_return_value(stmts) {
+            return self.emit_stmts(stmts);
+        }
+
+        let mut rewritten = stmts.to_vec();
+        if let Some(last) = rewritten.last_mut()
+            && let IrStmtKind::Expr(expr) = &last.kind
+        {
+            let value = expr.clone();
+            last.kind = IrStmtKind::Return(Some(value));
+        }
+        self.emit_stmts(&rewritten)
+    }
+
+    /// Check whether a function body's last statement carries the value the function has to return.
+    ///
+    /// The value-less block shape is excluded because lowering uses it to splice tuple-unpack and chained-assignment
+    /// bindings into the enclosing scope rather than to produce a value.
+    fn trailing_stmt_is_return_value(&self, stmts: &[IrStmt]) -> bool {
+        let Some(last) = stmts.last() else {
+            return false;
+        };
+        let IrStmtKind::Expr(expr) = &last.kind else {
+            return false;
+        };
+        if matches!(expr.kind, IrExprKind::Block { value: None, .. }) || matches!(expr.ty, IrType::Unit) {
+            return false;
+        }
+        self.current_function_return_type
+            .borrow()
+            .as_ref()
+            .is_some_and(|return_type| !matches!(return_type, IrType::Unit))
+    }
+
     /// Emit statements that precede a final expression in the same Rust block.
     pub(super) fn emit_stmts_before_expr(
         &self,
@@ -862,6 +910,33 @@ impl<'a> IrEmitter<'a> {
             quote! { incan_stdlib::storage::StaticBinding::from_value((#emitted).into()) }
         };
         Ok(quote! { #n = #v; })
+    }
+
+    /// Emit a value that has to satisfy a known target type, applying that site's ownership plan.
+    ///
+    /// `emit_assignment_value` already routes bare `Call`/`MethodCall` values through `emit_expr_for_use`, which
+    /// applies the ownership plan itself; re-applying it here would double-convert (e.g. `.clone().clone()`). Every
+    /// other expression shape still needs this application, because `emit_assignment_value`'s remaining exit paths
+    /// (its plain `emit_expr` fallback, and wrapped shapes like `Cast`/`InteropCoerce`) do not plan at this site.
+    ///
+    /// This is what turns a bare `str` literal into an owned `String` when the target asks for one, so every context
+    /// that hands a value to a typed slot goes through it: a `let`, or a `match` arm feeding the match's own result.
+    pub(super) fn emit_value_for_target(
+        &self,
+        value: &TypedExpr,
+        target_ty: &IrType,
+    ) -> Result<TokenStream, EmitError> {
+        let emitted = self.emit_assignment_value(value, Some(target_ty))?;
+        if matches!(value.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) {
+            return Ok(emitted);
+        }
+        Ok(plan_value_use(
+            value,
+            ValueUseSite::Assignment {
+                target_ty: Some(target_ty),
+            },
+        )
+        .apply(emitted))
     }
 
     /// Emit an assignment RHS, seeding `Result` constructors from the assignment type when possible.
@@ -1077,23 +1152,7 @@ impl<'a> IrEmitter<'a> {
                 };
                 let n = Self::rust_ident(&emitted_name);
                 let value_target_ty = type_annotation.as_ref().unwrap_or(ty);
-                let v = self.emit_assignment_value(value, Some(value_target_ty))?;
-                // `emit_assignment_value` already routes bare `Call`/`MethodCall` values through
-                // `emit_expr_for_use`, which now applies the ownership plan itself; re-applying it here would
-                // double-convert (e.g. `.clone().clone()`). Every other expression shape still needs this
-                // statement-level application, since `emit_assignment_value`'s other exit paths (its plain
-                // `emit_expr` fallback, and wrapped shapes like `Cast`/`InteropCoerce`) do not plan at this site.
-                let converted_v = if matches!(value.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) {
-                    v
-                } else {
-                    plan_value_use(
-                        value,
-                        ValueUseSite::Assignment {
-                            target_ty: Some(value_target_ty),
-                        },
-                    )
-                    .apply(v)
-                };
+                let converted_v = self.emit_value_for_target(value, value_target_ty)?;
                 let annotation = type_annotation
                     .as_ref()
                     .and_then(|annotated_ty| self.emit_local_let_annotation(annotated_ty));
@@ -1352,7 +1411,7 @@ impl<'a> IrEmitter<'a> {
                     .map(|arm| {
                         let pattern = erase_unused_pattern_bindings(&arm.pattern, arm);
                         let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&pattern, &scrutinee.ty);
-                        let body = self.emit_match_arm_body(arm)?;
+                        let body = self.emit_match_arm_body(arm, None)?;
                         let guard = self.emit_match_arm_guard(arm, pattern_guard)?;
                         if let Some(guard) = guard {
                             Ok(quote! { #pat if #guard => #body })

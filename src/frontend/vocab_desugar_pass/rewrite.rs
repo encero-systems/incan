@@ -1413,9 +1413,9 @@ fn rewrite_spanned_expr(
         // here, exactly like `Surface`'s operands above, so a hole that itself uses some other DSL's vocab block
         // or scoped surface still gets desugared correctly.
         ast::Expr::Embedded(fragment) => {
-            for node in &mut fragment.nodes {
-                rewrite_embedded_node(
-                    node,
+            for hole in fragment.holes_mut() {
+                rewrite_spanned_expr(
+                    hole,
                     module_path,
                     library_manifest_index,
                     runtime,
@@ -1429,98 +1429,6 @@ fn rewrite_spanned_expr(
         | ast::Expr::SelfExpr
         | ast::Expr::Yield(None)
         | ast::Expr::VocabBlock(_) => {}
-    }
-}
-
-/// Rewrite the expression holes nested inside one embedded-fragment node (RFC 081, `#1023`).
-///
-/// Mirrors `rewrite_spanned_expr`'s recursive-descent shape for `EmbeddedNode`: only `Hole` carries a real
-/// `Spanned<Expr>` to desugar; container kinds recurse into their children/attrs/selectors/declarations. The
-/// DSL-owned structural shape itself (tag names, selector text, declaration properties, ...) is not Incan syntax
-/// and is left untouched.
-fn rewrite_embedded_node(
-    node: &mut ast::Spanned<ast::EmbeddedNode>,
-    module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    match &mut node.node {
-        ast::EmbeddedNode::Text(_)
-        | ast::EmbeddedNode::EntityRef(_)
-        | ast::EmbeddedNode::Comment(_)
-        | ast::EmbeddedNode::Value(_)
-        | ast::EmbeddedNode::Regex { .. }
-        | ast::EmbeddedNode::TypeShape(_) => {}
-        ast::EmbeddedNode::Hole(expr) => {
-            rewrite_spanned_expr(
-                expr,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-        }
-        ast::EmbeddedNode::Element(element) => {
-            for attr in &mut element.attrs {
-                if let Some(value) = &mut attr.value {
-                    rewrite_embedded_node(
-                        value,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
-                }
-            }
-            for child in &mut element.children {
-                rewrite_embedded_node(
-                    child,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-            }
-        }
-        ast::EmbeddedNode::StyleRule(rule) => {
-            for selector in &mut rule.selectors {
-                rewrite_embedded_node(
-                    selector,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-            }
-            for declaration in &mut rule.declarations {
-                rewrite_embedded_node(
-                    declaration,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-            }
-        }
-        ast::EmbeddedNode::Declaration(declaration) => {
-            for value in &mut declaration.value {
-                rewrite_embedded_node(
-                    value,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-            }
-        }
     }
 }
 

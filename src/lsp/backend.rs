@@ -39,8 +39,8 @@ use crate::frontend::api_metadata::{
     validate_checked_api_docstrings,
 };
 use crate::frontend::ast::{
-    CallArg, Condition, Declaration, DictEntry, Expr, ListEntry, MatchBody, MethodDecl, Param, ParamKind, Program,
-    RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
+    CallArg, Condition, Declaration, DictEntry, EmbeddedOwnership, Expr, ListEntry, MatchBody, MethodDecl, Param,
+    ParamKind, Program, RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
 };
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
@@ -58,7 +58,7 @@ use crate::frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunction
 use crate::frontend::typechecker::{
     CAbiInteropArtifacts, CBindingType, COutputMode, CResourceAccess, TypeCheckInfo, c_binding_descriptor_identity,
 };
-use crate::frontend::{lexer, parser, typechecker};
+use crate::frontend::{ast_walk, lexer, parser, typechecker};
 #[cfg(all(test, feature = "rust_inspect"))]
 use crate::generated_cache::resolve_generated_cargo_target_in_cache_root;
 #[cfg(feature = "rust_inspect")]
@@ -74,6 +74,7 @@ use crate::lsp::diagnostics::{
     RelatedDeclarationSource, RelatedDeclarationSources, compile_error_to_diagnostic_with_phase,
     compile_error_to_diagnostic_with_phase_and_sources, position_to_offset, span_to_range,
 };
+use crate::lsp::semantic_tokens;
 use crate::manifest::ProjectManifest;
 use crate::provider::{ProviderModuleResolution, ProviderPlan, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
@@ -2875,11 +2876,13 @@ fn local_signature_in_expr(
             .iter()
             .find_map(|arg| local_signature_in_expr(arg, ast, source, offset))
             .or_else(|| local_signature_in_statements(&block.body, ast, source, offset)),
-        // Descriptor-gated embedded fragments (RFC 081, `#1023`) are not recursed into here: hover/signature-help
-        // for content nested inside a fragment's expression holes is `#1022`'s LSP-ownership territory, not part
-        // of what this issue delivers. Treating the fragment as opaque (no signature found inside it) is the
-        // correct conservative default rather than guessing at a traversal shape LSP tooling hasn't settled yet.
-        Expr::Embedded(_) => None,
+        // An embedded fragment's expression holes are ordinary Incan (RFC 081), so signature help has to reach them
+        // through the same traversal the typechecker uses. Treating the fragment as opaque made a call written
+        // inside a hole lose signature help even though nothing about that call is embedded.
+        Expr::Embedded(fragment) => fragment
+            .holes()
+            .into_iter()
+            .find_map(|hole| local_signature_in_expr(hole, ast, source, offset)),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }
 }
@@ -5347,6 +5350,115 @@ fn scoped_symbol_hover_markdown(dependency_key: &str, descriptor: &incan_vocab::
     markdown
 }
 
+// ============================================================================
+// Embedded-fragment ownership (RFC 081, #1022)
+// ============================================================================
+
+/// Ownership facts for a source offset that landed on an embedded fragment's DSL-owned syntax.
+///
+/// Only produced for the DSL-owned side of the boundary. An offset inside an expression hole is ordinary Incan and
+/// deliberately produces nothing here, so every ordinary resolution path keeps working there unchanged.
+#[derive(Debug, Clone)]
+struct EmbeddedDslOwnership {
+    /// The fixed submode grammar the claiming descriptor named.
+    submode: incan_vocab::EmbeddedFragmentSubmode,
+    /// Dependency the claiming descriptor came from, empty when the fragment was parsed without one.
+    dependency_key: String,
+    /// Stable descriptor key that claimed this fragment.
+    descriptor_key: String,
+    /// Source extent of the whole fragment, used to show the reader where DSL ownership starts and stops.
+    span: Span,
+}
+
+/// Find the embedded fragment whose *DSL-owned* syntax covers `offset`, if any.
+///
+/// Ordinary resolution in this server is identifier-driven and source-text-driven: `identifier_at_offset` scans
+/// raw bytes with no idea whether they belong to Incan. Inside `<section class="card">` the bytes `section` and
+/// `class` are perfectly good ASCII identifiers, so without this check hover would look them up in the document's
+/// value and symbol maps and answer with whatever unrelated Incan binding happens to share the spelling. RFC 081
+/// requires the opposite: tooling must make ownership visible enough that a reader can tell where ordinary Incan
+/// ends and the DSL-owned surface begins.
+///
+/// Traversal reuses the canonical [`ast_walk::any_expr_in_program`] rather than adding another walk, and the
+/// hole-versus-DSL decision is [`EmbeddedFragmentExpr::ownership_at`], which is itself built on
+/// [`EmbeddedFragmentExpr::holes`] — the single authority on which expressions a fragment owns. Because the walk
+/// descends through holes, a fragment nested inside another fragment's hole wins over its container, which is the
+/// innermost-descriptor rule RFC 081 states for overlapping claims.
+///
+/// [`EmbeddedFragmentExpr::holes`]: crate::frontend::ast::EmbeddedFragmentExpr::holes
+/// [`EmbeddedFragmentExpr::ownership_at`]: crate::frontend::ast::EmbeddedFragmentExpr::ownership_at
+fn embedded_dsl_ownership_at_offset(ast: &Program, offset: usize) -> Option<EmbeddedDslOwnership> {
+    let mut found: Option<EmbeddedDslOwnership> = None;
+    ast_walk::any_expr_in_program(ast, |expr| {
+        let Expr::Embedded(fragment) = expr else {
+            return false;
+        };
+        if !matches!(fragment.ownership_at(offset), Some(EmbeddedOwnership::DslOwned)) {
+            return false;
+        }
+        let Some(span) = fragment.node_extent() else {
+            return false;
+        };
+        let (dependency_key, descriptor_key) = match &fragment.key {
+            incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key,
+                descriptor_key,
+            } => (dependency_key.clone(), descriptor_key.clone()),
+            _ => (String::new(), String::new()),
+        };
+        found = Some(EmbeddedDslOwnership {
+            submode: fragment.submode,
+            dependency_key,
+            descriptor_key,
+            span,
+        });
+        true
+    });
+    found
+}
+
+/// Return a stable, human-readable label for an embedded-fragment submode.
+///
+/// These are the names RFC 081 and the vocab authoring guide use for the six accepted grammars, so a reader who
+/// hovers a fragment and then goes looking for what it accepts finds the same word in the docs. The enum is
+/// `#[non_exhaustive]`, so a submode added later falls back to `unknown` rather than failing to build here — the
+/// same fallback `scoped_symbol_family_label` uses.
+fn embedded_submode_label(submode: incan_vocab::EmbeddedFragmentSubmode) -> &'static str {
+    match submode {
+        incan_vocab::EmbeddedFragmentSubmode::Markup => "Markup",
+        incan_vocab::EmbeddedFragmentSubmode::Style => "Style",
+        incan_vocab::EmbeddedFragmentSubmode::RawText => "RawText",
+        incan_vocab::EmbeddedFragmentSubmode::RegexTemplate => "RegexTemplate",
+        incan_vocab::EmbeddedFragmentSubmode::SelectorDeclarationValue => "SelectorDeclarationValue",
+        incan_vocab::EmbeddedFragmentSubmode::TypePosition => "TypePosition",
+        _ => "unknown",
+    }
+}
+
+/// Build the hover markdown shown over an embedded fragment's DSL-owned syntax.
+///
+/// The message answers the two questions a reader actually has at that position: who owns this text, and why does
+/// nothing here resolve like ordinary Incan. It deliberately does not describe the construct under the cursor as a
+/// tag, selector, or property — RFC 081 assigns that meaning to the owning DSL, and inventing a name for it here
+/// would be the compiler guessing at a grammar it does not own.
+fn embedded_dsl_ownership_hover_markdown(ownership: &EmbeddedDslOwnership) -> String {
+    let mut markdown = format!(
+        "```incan\n{} fragment\n```\n\n*embedded fragment* — DSL-owned syntax, not ordinary Incan.",
+        embedded_submode_label(ownership.submode)
+    );
+    if !ownership.descriptor_key.is_empty() {
+        markdown.push_str(&format!("\n\nDescriptor: `{}`", ownership.descriptor_key));
+    }
+    if !ownership.dependency_key.is_empty() {
+        markdown.push_str(&format!("\n\nFrom: `pub::{}`", ownership.dependency_key));
+    }
+    markdown.push_str(
+        "\n\nNames written here resolve against the owning DSL, not against Incan scope. Only `{...}` expression \
+         holes inside this fragment are ordinary Incan (RFC 081).",
+    );
+    markdown
+}
+
 /// Return a stable, human-readable label for a scoped symbol family.
 fn scoped_symbol_family_label(family: incan_vocab::ScopedSymbolFamily) -> &'static str {
     match family {
@@ -5736,9 +5848,13 @@ fn scoped_symbol_in_expr<'a>(
         }
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
-        // Descriptor-gated embedded fragments (RFC 081, `#1023`) are opaque to scoped-symbol LSP lookups here:
-        // resolving scoped-DSL identifiers inside a fragment's expression holes is `#1022`'s territory.
-        Expr::Embedded(_) => {}
+        // A fragment's expression holes are ordinary Incan (RFC 081), so a scoped symbol written inside one
+        // resolves through the same traversal as anywhere else.
+        Expr::Embedded(fragment) => {
+            for hole in fragment.holes() {
+                scoped_symbol_in_expr(hole, ident, symbol_span, surfaces, found);
+            }
+        }
     }
 }
 
@@ -6280,9 +6396,13 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
         }
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_context_in_expr(inner, offset, context),
-        // Descriptor-gated embedded fragments (RFC 081, `#1023`) are opaque to scoped-symbol LSP context tracking
-        // here: this belongs to `#1022`'s LSP-ownership territory, not this issue's parser-to-lowering scope.
-        Expr::Embedded(_) => {}
+        // Completion context follows the cursor into a fragment's expression holes, which are ordinary Incan
+        // (RFC 081); the surrounding DSL syntax carries no scoped-symbol context of its own.
+        Expr::Embedded(fragment) => {
+            for hole in fragment.holes() {
+                scoped_symbol_context_in_expr(hole, offset, context);
+            }
+        }
     }
 }
 
@@ -6903,6 +7023,15 @@ impl LanguageServer for IncanLanguageServer {
                     commands: vec![EMIT_CONTRACT_MODEL_COMMAND.to_string()],
                     ..Default::default()
                 }),
+                // Semantic highlighting for the whole language, including RFC 081 embedded-fragment ownership.
+                semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    SemanticTokensOptions {
+                        legend: semantic_tokens::legend(),
+                        full: Some(SemanticTokensFullOptions::Bool(true)),
+                        range: Some(false),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -7008,6 +7137,20 @@ impl LanguageServer for IncanLanguageServer {
 
         if let Some(offset) = position_to_offset(&doc.source, position) {
             let aliases = collect_import_aliases(ast);
+
+            // Ownership first (RFC 081, #1022). Every path below this resolves names against ordinary Incan, and
+            // most of them start from a raw source-text identifier scan that cannot tell a tag name or a selector
+            // from an Incan binding that happens to share its spelling. Inside a fragment's DSL-owned syntax the
+            // only correct answer is who owns this text; an expression hole is ordinary Incan and falls through.
+            if let Some(ownership) = embedded_dsl_ownership_at_offset(ast, offset) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: embedded_dsl_ownership_hover_markdown(&ownership),
+                    }),
+                    range: Some(span_to_range(&doc.source, ownership.span.start, ownership.span.end)),
+                }));
+            }
 
             if let Some(preview) = registry_preview_at_offset(&doc.registry_previews, offset) {
                 return Ok(Some(Hover {
@@ -7270,6 +7413,24 @@ impl LanguageServer for IncanLanguageServer {
     }
 
     /// Return document symbols for the current parsed document, if available.
+    /// Answer `textDocument/semanticTokens/full` for an open document.
+    ///
+    /// The reply covers every token in the file, as the protocol requires: there is no way to classify one region
+    /// and leave the rest to the editor's grammar. A document with no stored state yields `None` so the client keeps
+    /// its previous result rather than briefly losing all colour; a document that failed to parse still answers,
+    /// from the token stream alone, because losing highlighting on every keystroke is worse than never having it.
+    async fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Result<Option<SemanticTokensResult>> {
+        let docs = self.documents.read().await;
+        let Some(doc) = docs.get(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        let data = semantic_tokens::semantic_tokens(&doc.source, doc.ast.as_ref());
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        })))
+    }
+
     async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
         let docs = self.documents.read().await;
@@ -7337,6 +7498,12 @@ impl LanguageServer for IncanLanguageServer {
         let Some(offset) = position_to_offset(&doc.source, position) else {
             return Ok(None);
         };
+        // Same ownership rule as `hover` (RFC 081, #1022): a tag name or selector inside a fragment has no
+        // definition in ordinary Incan, and jumping to an unrelated binding that shares its spelling is worse than
+        // answering nothing. Expression holes are ordinary Incan and fall through to every path below.
+        if embedded_dsl_ownership_at_offset(ast, offset).is_some() {
+            return Ok(None);
+        }
         if let Some(preview) = registry_preview_at_offset(&doc.registry_previews, offset) {
             return Ok(Some(GotoDefinitionResponse::Scalar(Location {
                 uri: uri.clone(),
@@ -9077,5 +9244,145 @@ mod lsp_scoped_symbol_tests {
             .expect("activating import span should be available");
 
         assert_eq!(&source[import_span.start..import_span.end], "import pub::analytics");
+    }
+}
+
+#[cfg(test)]
+mod lsp_embedded_fragment_tests {
+    //! Editor-facing ownership across an embedded fragment's boundary (RFC 081, #1022).
+
+    use std::collections::HashMap;
+
+    use super::{embedded_dsl_ownership_at_offset, embedded_dsl_ownership_hover_markdown};
+    use crate::frontend::ast::Program;
+    use crate::frontend::{lexer, parser};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Parse a markup-fragment fixture through the only entrypoint that produces embedded fragments.
+    ///
+    /// `parse_with_source` threads the original source to the submode tokenizer; the ordinary entrypoints are
+    /// fragment-blind and would hand back a program with no fragment in it, making every assertion below vacuous.
+    /// `lex_tolerant` matches it for the reason the parser fixtures document: fragment content routinely holds
+    /// bytes ordinary Incan tokenization rejects.
+    fn parse_markup_fixture(source: &str) -> Result<Program, String> {
+        let mut keyword_map = HashMap::new();
+        keyword_map.insert(
+            "webkit".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "webkit.html".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::block("html")],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = HashMap::new();
+        surface_map.insert(
+            "webkit".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("webkit.html")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("html"))
+                    .with_embedded_fragment(
+                        incan_vocab::EmbeddedFragmentDescriptor::new(
+                            "html.fragment",
+                            incan_vocab::EmbeddedFragmentSubmode::Markup,
+                            "fragment",
+                        )
+                        .in_declaration_body("html"),
+                    ),
+            ],
+        );
+
+        let (tokens, _lex_errors) = lexer::lex_tolerant(source);
+        parser::parse_with_source(&tokens, None, Some(&keyword_map), Some(&surface_map), source)
+            .map_err(|errors| format!("parse errors: {errors:?}"))
+    }
+
+    /// A fragment whose tag name is also a real local binding in the same function.
+    ///
+    /// The collision is the point: `section` is a perfectly good Incan identifier, so every source-text-driven
+    /// resolution path in this server would happily answer the tag name with the local's type unless ownership is
+    /// settled first.
+    const COLLIDING_FIXTURE: &str = "import pub::webkit\n\ndef render(title: str) -> None:\n    section = title\n    html:\n        <section class=\"card\">\n            <h1>{title}</h1>\n        </section>\n";
+
+    #[test]
+    fn a_tag_name_colliding_with_a_local_binding_is_still_dsl_owned() -> TestResult {
+        let program = parse_markup_fixture(COLLIDING_FIXTURE)?;
+        let tag_offset = COLLIDING_FIXTURE
+            .find("<section")
+            .ok_or("fixture should contain the opening tag")?
+            + 1;
+
+        let ownership = embedded_dsl_ownership_at_offset(&program, tag_offset)
+            .ok_or("the tag name must be claimed as DSL-owned")?;
+        assert_eq!(ownership.submode, incan_vocab::EmbeddedFragmentSubmode::Markup);
+        assert_eq!(ownership.descriptor_key, "html.fragment");
+        assert_eq!(ownership.dependency_key, "webkit");
+        Ok(())
+    }
+
+    #[test]
+    fn the_same_spelling_outside_the_fragment_is_ordinary_incan() -> TestResult {
+        // The other half of the collision. `section = title` is an ordinary assignment and must keep every
+        // resolution path it has; claiming it would trade one wrong answer for another.
+        let program = parse_markup_fixture(COLLIDING_FIXTURE)?;
+        let binding_offset = COLLIDING_FIXTURE
+            .find("section = title")
+            .ok_or("fixture should contain the local binding")?;
+
+        assert!(
+            embedded_dsl_ownership_at_offset(&program, binding_offset).is_none(),
+            "ordinary Incan outside a fragment must not be claimed by one"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_expression_hole_falls_through_to_ordinary_resolution() -> TestResult {
+        // A hole is ordinary Incan (RFC 081), so it must not be claimed as DSL-owned — that is what keeps hover,
+        // signature help and go-to-definition working for code that merely happens to sit inside a fragment.
+        let program = parse_markup_fixture(COLLIDING_FIXTURE)?;
+        let hole_offset = COLLIDING_FIXTURE
+            .find("{title}")
+            .ok_or("fixture should contain the expression hole")?
+            + 1;
+
+        assert!(
+            embedded_dsl_ownership_at_offset(&program, hole_offset).is_none(),
+            "an expression hole must fall through to ordinary Incan resolution"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_ownership_hover_names_the_submode_descriptor_and_dependency() -> TestResult {
+        // The hover has one job: tell the reader who owns this text and why nothing here resolves like Incan.
+        let program = parse_markup_fixture(COLLIDING_FIXTURE)?;
+        let tag_offset = COLLIDING_FIXTURE
+            .find("<section")
+            .ok_or("fixture should contain the opening tag")?
+            + 1;
+        let ownership = embedded_dsl_ownership_at_offset(&program, tag_offset)
+            .ok_or("the tag name must be claimed as DSL-owned")?;
+
+        let markdown = embedded_dsl_ownership_hover_markdown(&ownership);
+        assert!(
+            markdown.contains("Markup"),
+            "hover should name the submode:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("html.fragment"),
+            "hover should name the claiming descriptor:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("pub::webkit"),
+            "hover should name the dependency it came from:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("not ordinary Incan"),
+            "hover should say plainly that this is not ordinary Incan:\n{markdown}"
+        );
+        Ok(())
     }
 }

@@ -1,0 +1,98 @@
+"""
+Staging a build artifact: give it an identity, shrink it, and put it somewhere that cleans up after itself.
+
+Each step has its own failure mode and its own error type, so the pipeline declares one domain error and maps into
+it at each boundary. That is the point of the example as much as the three modules are: `?` only composes when the
+error types line up, and `map_err` is where they are made to.
+
+`UUID.v7()` is time-ordered, so ids sort by creation without a separate timestamp column. `gzip` is named at the
+call site rather than inferred, because the reader on the far end has to agree. `TemporaryDirectory` deletes its
+tree when the wrapper is dropped, unless the caller explicitly asks to keep it.
+
+Python equivalent:
+```python
+import gzip, tempfile, uuid
+from pathlib import Path
+
+def stage(payload):
+    with tempfile.TemporaryDirectory() as workspace:
+        artifact_id = uuid.uuid4()
+        blob = gzip.compress(payload)
+        (Path(workspace) / f"{artifact_id}.gz").write_bytes(blob)
+        return artifact_id, len(blob)
+```
+"""
+
+from std.compression import CompressionError, gzip
+from std.io import IoError
+from std.tempfile import TemporaryDirectory
+from std.uuid import UUID, UuidError
+
+
+enum StageError:
+    """Why staging an artifact stopped."""
+
+    Identity(str)
+    Compress(str)
+    Write(str)
+
+
+model Staged:
+    """What staging produced: the artifact's identity and how much smaller it got."""
+
+    artifact_id: UUID
+    file_name: str
+    raw_bytes: int
+    stored_bytes: int
+
+
+def stage(payload: bytes) -> Result[Staged, StageError]:
+    """
+    Compress one payload into a scratch directory under a fresh, time-ordered id.
+
+    The directory is removed when `workspace` goes out of scope, so nothing here has to remember to clean up on the
+    error paths.
+    """
+    workspace = TemporaryDirectory.try_new().map_err(write_failed)?
+    artifact_id = UUID.v7().map_err(identity_failed)?
+    stored = gzip.compress(payload).map_err(compression_failed)?
+
+    file_name = f"{artifact_id}.gz"
+    (workspace.path() / file_name).write_bytes(stored).map_err(write_failed)?
+
+    return Ok(Staged(
+        artifact_id=artifact_id,
+        file_name=file_name,
+        raw_bytes=len(payload),
+        stored_bytes=len(stored),
+    ))
+
+
+def identity_failed(error: UuidError) -> StageError:
+    """Report an id that could not be generated as a staging failure."""
+    return StageError.Identity(error.message())
+
+
+def compression_failed(error: CompressionError) -> StageError:
+    """Report a payload that could not be compressed as a staging failure."""
+    return StageError.Compress(error.message())
+
+
+def write_failed(error: IoError) -> StageError:
+    """Report anything the filesystem refused, the scratch directory or the artifact itself, as one failure."""
+    return StageError.Write(error.detail)
+
+
+def main() -> None:
+    payload = b"build log line one\nbuild log line two\nbuild log line two\nbuild log line two\n"
+
+    match stage(payload):
+        Ok(staged) =>
+            println(f"artifact {staged.artifact_id}")
+            println(f"wrote {staged.file_name}: {staged.raw_bytes} bytes in, {staged.stored_bytes} bytes stored")
+        Err(StageError.Identity(reason)) => println(f"no artifact id: {reason}")
+        Err(StageError.Compress(reason)) => println(f"payload not compressible: {reason}")
+        Err(StageError.Write(reason)) => println(f"nowhere to put it: {reason}")
+
+    # The scratch directory is already gone by this point: nothing persisted it.
+    println("workspace removed with its contents")

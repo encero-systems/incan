@@ -11,7 +11,7 @@ Use `std.hash` when a program needs deterministic byte digests, file fingerprint
 | Variable-length extendable output           | `shake128` or `shake256`                               |
 | Fast non-security partitioning or bucketing | `xxh3_64`, `xxh3_128`, `xxh64`, or `xxh32`             |
 
-Do not use `sha1` or `md5` for collision-resistant security decisions. Do not use `std.hash` for password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Use [`std.checksum`](../reference/stdlib/checksum.md) when a protocol or file format requires CRC32.
+Do not use `sha1` or `md5` for collision-resistant security decisions. Do not use `std.hash` for password hashing, signatures, authenticated encryption, CRC, or Adler checksums. For keyed authentication of untrusted input, see [Authenticate a value that crossed a boundary](#authenticate-a-value-that-crossed-a-boundary). Use [`std.checksum`](../reference/stdlib/checksum.md) when a protocol or file format requires CRC32.
 
 ## Hash bytes in one call
 
@@ -122,6 +122,34 @@ digest = reader_digest(BytesIO(b"payload"), "shake256", 1024, 32)?
 
 Use `reader_hash_u32`, `reader_hash_u64`, and `reader_hash_u128` for matching non-cryptographic reader hashes.
 
+## Authenticate a value that crossed a boundary
+
+Use `hmac_sha256` when a value arrives from somewhere you do not control and you need to know it is one you issued. An unkeyed digest cannot answer that — see [What hashing proves](../explanation/hashing_guarantees.md) for why.
+
+```incan
+from std.hash import hmac_sha256
+
+def issue(key: bytes, payload: bytes) -> bytes:
+    return hmac_sha256.digest(key, payload)
+
+
+def accept(key: bytes, payload: bytes, submitted_tag: bytes) -> bool:
+    return hmac_sha256.verify(key, payload, submitted_tag)
+```
+
+Verify with `verify`, not by recomputing a tag and comparing it with `==`. The comparison must be constant time, and `verify` is; an equality check on tag bytes is not.
+
+Keep the key out of whatever the value crossed to reach you. A key on the far side of that boundary makes the check decorative.
+
+For a value built up in pieces, keep a signer instead of concatenating first:
+
+```incan
+mut signer = hmac_sha256.new(key)
+for chunk in chunks:
+    signer.update(chunk)
+tag = signer.finalize_bytes()
+```
+
 ## Handle invalid requests
 
 Branch on `HashError.kind` when callers can recover:
@@ -139,6 +167,7 @@ Common error categories include `unknown_algorithm`, `unsupported_width`, `inval
 
 ## See also
 
+- [What hashing proves](../explanation/hashing_guarantees.md)
 - [`std.hash` reference](../reference/stdlib/hash.md)
 - [`std.checksum` reference](../reference/stdlib/checksum.md)
 - [`std.encoding` reference](../reference/stdlib/encoding.md)

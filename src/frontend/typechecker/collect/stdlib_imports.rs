@@ -271,11 +271,66 @@ impl TypeChecker {
         } else {
             self.validate_protected_builtin_binding(&name, span);
         }
+        // `import a::b::C` is ambiguous: it can name a module, or an item inside its parent module. Module
+        // resolution already tries the full path and then the parent (see `module::source_import_candidates`), and
+        // symbol collection has to follow the same order or the two disagree about what was imported.
+        if !self.full_path_names_a_module(path) && self.collect_module_import_as_item(path, alias, span) {
+            return;
+        }
+
         let normalized_path = canonicalize_source_module_segments(&path.segments);
         let resolved_path = self.resolved_source_module_path(path);
         let target_identity = resolved_path.as_deref().and_then(SymbolTable::module_path_identity);
         let canonical_path = resolved_path.unwrap_or(normalized_path);
         self.define_import_symbol(name, canonical_path, false, target_identity, span);
+    }
+
+    /// Whether the whole written path names a module, rather than an item inside its parent.
+    ///
+    /// Checked against the full path only, deliberately: the shared candidate helper also offers the parent, which
+    /// is the reading this is trying to distinguish from.
+    fn full_path_names_a_module(&self, path: &ImportPath) -> bool {
+        let normalized = canonicalize_source_module_segments(&path.segments);
+        if stdlib::is_any_stdlib_path(&normalized) && self.is_known_stdlib_module(&normalized) {
+            return true;
+        }
+        let key = normalized.join("_");
+        self.dependency_exports.contains_key(&key)
+            || self.dependency_member_symbols.contains_key(&key)
+            || self.dependency_module_path_segments.contains_key(&key)
+    }
+
+    /// Bind `import module::item` as the item it names, with the declaration's own symbol kind.
+    ///
+    /// Without this the last segment was bound as if it were a module: the name resolved, so nothing reported an
+    /// error, but the binding carried no signature and every call through it inferred `Unknown`. A local assigned
+    /// from such a call then had no type, and arithmetic on it failed with `expected 'numeric', found '? + ?'` —
+    /// pointing at the arithmetic rather than at the import that caused it (#1407).
+    ///
+    /// Routes through the same symbol definition `from module import item` uses, so the two import spellings cannot
+    /// disagree about what a given item is.
+    fn collect_module_import_as_item(&mut self, path: &ImportPath, alias: Option<&Ident>, span: Span) -> bool {
+        if path.segments.len() < 2 {
+            return false;
+        }
+        let Some((item_name, parent_segments)) = path.segments.split_last() else {
+            return false;
+        };
+        let parent = ImportPath {
+            segments: parent_segments.to_vec(),
+            is_absolute: path.is_absolute,
+            parent_levels: path.parent_levels,
+        };
+        let item = ImportItem {
+            name: item_name.clone(),
+            alias: alias.cloned(),
+        };
+        let Some(kind) = self.imported_source_dependency_symbol_kind(&parent, &item) else {
+            return false;
+        };
+        let projection = self.imported_source_dependency_partial_projection(&parent, &item);
+        self.define_resolved_source_import_symbol(&parent, &parent, &item, kind, projection, span);
+        true
     }
 
     /// Resolve a source import to the exact module graph node that accepted it.

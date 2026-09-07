@@ -34,7 +34,7 @@ full = [
 project = "components/stdlib-core"
 mandatory = true
 dependencies = []
-namespace-roots = ["features", "prelude", "registry", "result", "reflection", "this", "derives", "traits"]
+namespace-roots = ["features", "prelude", "registry", "result", "reflection", "this", "derives", "traits", "runtime"]
 
 [components.stdlib-interop]
 project = "components/stdlib-interop"
