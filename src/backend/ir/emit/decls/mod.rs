@@ -134,6 +134,14 @@ impl<'a> IrEmitter<'a> {
                         emitted_target_path
                             .last()
                             .filter(|name| name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX))
+                            // The module may already bind this projection: an import of the same declaration emits
+                            // exactly this `use`, and `pub run = alias helper` beside `from other import helper`
+                            // then bound it twice. One binding per module is the rule the imports already follow.
+                            .filter(|name| {
+                                self.emitted_projection_import_bindings
+                                    .borrow_mut()
+                                    .insert((*name).to_string())
+                            })
                             .map(|_| quote! { #vis use #target; })
                     })
                     .flatten()
