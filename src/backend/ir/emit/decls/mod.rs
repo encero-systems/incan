@@ -696,7 +696,7 @@ impl<'a> IrEmitter<'a> {
                         && item
                             .canonical
                             .as_ref()
-                            .is_some_and(|identity| identity.declaration_name != source_binding);
+                            .is_some_and(|identity| identity.declaration_name != item.name);
                     // A projection names one declaration, so reaching it through several facades binds the same
                     // Rust identifier every time. Keep the first `use` and drop the repeats, which Rust would
                     // otherwise reject as a redefinition.

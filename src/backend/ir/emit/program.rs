@@ -3550,6 +3550,10 @@ impl<'a> IrEmitter<'a> {
     /// Emit a complete IR program to formatted Rust code.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn emit_program(&mut self, program: &IrProgram) -> Result<String, EmitError> {
+        // Binding a projection once is a per-module rule: one `use` per Rust module, however many facades reach it.
+        // One emitter emits several modules in a batch, so carrying the record across them left the module that
+        // actually needed the import without one.
+        self.emitted_projection_import_bindings.borrow_mut().clear();
         self.iterator_sum_used.replace(false);
         self.const_bindings.clear();
         self.local_nominal_type_names = program
