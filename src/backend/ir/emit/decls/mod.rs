@@ -724,18 +724,37 @@ impl<'a> IrEmitter<'a> {
                     // Do not render `use path::projection as projection`: it is a duplicate self-alias and, in a
                     // provider module, can become a duplicate self-import. Non-canonical aliases retain their local
                     // Rust binding as before.
-                    let effective_alias = item.alias.as_ref().filter(|_| binding != emitted_name);
-                    let item_import = if renames_shared_projection {
+                    // The rust-facing reexport below already binds such an alias under its own name, but only for
+                    // an item this module re-exports. A module that merely imports one still needs a binding, so
+                    // suppress the import only when that reexport will actually carry it.
+                    let reexport_carries_alias = renames_shared_projection
+                        && should_reexport_item(item)
+                        && item
+                            .canonical
+                            .as_ref()
+                            .is_some_and(super::super::decl::is_projected_source_symbol)
+                        && source_binding != emitted_name;
+                    let effective_alias_ident = item
+                        .alias
+                        .as_ref()
+                        .filter(|_| binding != emitted_name)
+                        .map(|alias| {
+                            if item.canonical.is_some() {
+                                Self::rust_ident(&binding)
+                            } else {
+                                Self::rust_ident(alias)
+                            }
+                        })
+                        .or_else(|| {
+                            (renames_shared_projection && !reexport_carries_alias)
+                                .then(|| Self::rust_ident(source_binding))
+                        });
+                    let item_import = if reexport_carries_alias {
                         // The declaration this alias renames already binds the projection in this module, so
                         // importing it again would be a duplicate. Only the alias's own public name is still
                         // missing, and the rust-facing reexport below adds exactly that.
                         quote! {}
-                    } else if let Some(alias) = effective_alias {
-                        let alias_ident = if item.canonical.is_some() {
-                            Self::rust_ident(&binding)
-                        } else {
-                            Self::rust_ident(alias)
-                        };
+                    } else if let Some(alias_ident) = effective_alias_ident {
                         if let Some(runtime_path) = &runtime_surface_reexport_path {
                             quote! { pub use :: #runtime_path as #alias_ident; }
                         } else if should_reexport_item(item) {
