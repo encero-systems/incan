@@ -2095,15 +2095,39 @@ impl<'a> IrEmitter<'a> {
         api: &'api crate::frontend::api_metadata::CheckedApiMetadataPackage,
         target_path: &[String],
     ) -> Option<&'api ApiDeclaration> {
-        let name = target_path.last()?;
-        let path = target_path.strip_prefix(&["crate".to_string()]).unwrap_or(target_path);
-        let module_path = path.get(..path.len().saturating_sub(1))?;
-        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
-        module.declarations.iter().find(|declaration| match declaration {
-            ApiDeclaration::Model(model) => model.name == *name,
-            ApiDeclaration::Class(class) => class.name == *name,
-            _ => false,
-        })
+        let mut path = target_path.to_vec();
+        let mut seen = HashSet::new();
+        loop {
+            let name = path.last()?.clone();
+            let stripped = path.strip_prefix(&["crate".to_string()]).unwrap_or(&path).to_vec();
+            let module_path = stripped.get(..stripped.len().saturating_sub(1))?.to_vec();
+            let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+            if let Some(declaration) = module.declarations.iter().find(|declaration| match declaration {
+                ApiDeclaration::Model(model) => model.name == name,
+                ApiDeclaration::Class(class) => class.name == name,
+                _ => false,
+            }) {
+                return Some(declaration);
+            }
+            // A re-export chain may rename its export on every hop -- `Vault -> PublicVault -> ExportedVault` -- so
+            // the path recorded for the outermost name lands on an alias rather than the declaration. Follow the hop
+            // that alias names, requalifying a same-module target against the module it was written in, and stop on
+            // a repeat so a cyclic manifest cannot loop here.
+            let next = module.declarations.iter().find_map(|declaration| match declaration {
+                ApiDeclaration::Alias(alias) if alias.name == name => Some(alias.target_path.clone()),
+                _ => None,
+            })?;
+            if !seen.insert(path.clone()) {
+                return None;
+            }
+            path = if next.len() == 1 {
+                let mut qualified = module_path;
+                qualified.extend(next);
+                qualified
+            } else {
+                next
+            };
+        }
     }
 
     /// Return canonical provider candidates for one ordinary source import in source-resolution order.
