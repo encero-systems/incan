@@ -718,15 +718,15 @@ impl<'a> IrEmitter<'a> {
                     }
                     // A projection names one declaration, so reaching it through several facades binds the same
                     // Rust identifier every time. Keep the first `use` and drop the repeats, which Rust would
-                    // otherwise reject as a redefinition.
-                    if binding == emitted_name
-                        && !renames_shared_projection
+                    // otherwise reject as a redefinition. A repeat that also renames still owes its own name a
+                    // binding, so drop the projection half of it rather than the whole item.
+                    let repeats_projection_binding = binding == emitted_name
                         && emitted_name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)
                         && !self
                             .emitted_projection_import_bindings
                             .borrow_mut()
-                            .insert(emitted_name.clone())
-                    {
+                            .insert(emitted_name.clone());
+                    if repeats_projection_binding && !renames_shared_projection {
                         return quote! {};
                     }
                     if item.alias.is_none()
@@ -780,7 +780,7 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
-                    let item_import = if reexport_carries_alias {
+                    let item_import = if reexport_carries_alias || repeats_projection_binding {
                         // The declaration this alias renames already binds the projection in this module, so
                         // importing it again would be a duplicate. Only the alias's own public name is still
                         // missing, and the rust-facing reexport below adds exactly that.
