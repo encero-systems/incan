@@ -582,10 +582,6 @@ impl<'a> IrEmitter<'a> {
     /// The alias is emitted only at a Rust boundary: public/crate-visible functions and private functions called by
     /// compiler-generated harness code. It introduces no second linker symbol, while ordinary Incan-to-Incan calls
     /// continue to use the compiler-owned canonical projection.
-    ///
-    /// It exists for whoever reaches the declaration from outside, so this compilation usually has no use of its own
-    /// for it. That is not a defect worth a warning, and generated code is built with warnings denied, so the alias
-    /// carries its own allow rather than failing a build over a name it deliberately keeps alive.
     fn rust_facing_function_alias(
         &self,
         func: &super::super::super::decl::IrFunction,
@@ -603,7 +599,6 @@ impl<'a> IrEmitter<'a> {
         }
         let visibility = self.emit_visibility(&func.visibility);
         Some(quote! {
-            #[allow(unused_imports)]
             #visibility use #projected_name as #alias;
         })
     }
