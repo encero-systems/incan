@@ -21,6 +21,7 @@ mod error;
 mod extractor;
 mod generic_params;
 mod loader;
+mod receiver_contract;
 
 pub use cache::RustMetadataCache;
 pub use error::RustMetadataError;

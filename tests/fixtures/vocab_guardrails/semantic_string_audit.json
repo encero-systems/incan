@@ -20,15 +20,15 @@
     },
     {
       "path": "crates/rust_inspect/src/cache.rs",
-      "category": "rust-inspect cache migration and generated Rust syntax metadata compatibility",
-      "expected_count": 30,
-      "expected_fingerprint": "0xbeb929fcd9522080"
+      "category": "rust-inspect cache migration, generated Rust syntax metadata compatibility, and Rust prelude namespace shadowing",
+      "expected_count": 31,
+      "expected_fingerprint": "0x3adea7db74ff9e4a"
     },
     {
       "path": "crates/rust_inspect/src/cache_tests.rs",
       "category": "rust-inspect generated metadata regression assertions",
-      "expected_count": 23,
-      "expected_fingerprint": "0x9e431a3a1e74ae9a"
+      "expected_count": 26,
+      "expected_fingerprint": "0x5560cdfc009162f8"
     },
     {
       "path": "crates/rust_inspect/src/cache_timing.rs",
@@ -53,6 +53,12 @@
       "category": "rust-inspect Rust edition compatibility for compiler-authored direct projects",
       "expected_count": 1,
       "expected_fingerprint": "0x35f272a8fd839ee3"
+    },
+    {
+      "path": "crates/rust_inspect/src/receiver_contract.rs",
+      "category": "original Rust signature lifetime elision and static lifetime exclusions",
+      "expected_count": 3,
+      "expected_fingerprint": "0x1dc2b536c0293d40"
     },
     {
       "path": "src/backend/ir/codegen.rs",

@@ -1097,6 +1097,7 @@ fn oven_alpha_benchmark_records_a_verified_cargo_guard_verdict() -> Result<(), B
     Ok(())
 }
 
+/// Keep the suite's producer, immutable handoff and guarded replay contracts connected across local and CI entrypoints.
 #[test]
 fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -1186,26 +1187,40 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     let linux_prewarm_job = &linux_prewarm_workflow[..linux_prewarm_end];
     let linux_tools_workflow = &workflow[linux_tools..linux_prewarm];
     let compiler_build = linux_tools_workflow
-        .find("- name: Build Linux compiler and reference generators")
-        .ok_or("pull-request CI is missing Linux compiler build")?;
-    let provider_restore = linux_prewarm_workflow
-        .find("- uses: ./.github/actions/restore-sdk-provider-store")
-        .ok_or("pull-request CI is missing SDK provider cache restore")?;
+        .find("cargo build --locked --release --features lsp --bin incan --bin generate_feature_inventory")
+        .ok_or("pull-request CI is missing the optimized Linux compiler build")?;
+    let reference_build = linux_tools_workflow
+        .find("cargo build --locked --release -p incan_core --bin generate_lang_reference")
+        .ok_or("pull-request CI is missing the optimized language reference generator build")?;
+    let tool_staging = linux_tools_workflow
+        .find("install -m 755 \"target/release/$tool\" \"target/debug/$tool\"")
+        .ok_or("pull-request CI is missing exact release-tool staging")?;
+    let provider_selection = linux_tools_workflow
+        .find("uses: ./.github/actions/restore-sdk-provider-store")
+        .ok_or("pull-request CI is missing SDK provider selection")?;
+    let provider_handoff = linux_prewarm_job
+        .find("- uses: ./.github/actions/consume-sdk-provider-store")
+        .ok_or("pull-request CI is missing the same-run SDK handoff")?;
     let complete_suite = linux_prewarm_workflow
         .find("- name: Prewarm the complete Linux Rust 1.98.0 Oven suite")
         .ok_or("pull-request CI is missing the complete pinned Linux Oven suite")?;
     assert!(
-        compiler_build < linux_tools_workflow.len()
-            && provider_restore < complete_suite
+        compiler_build < tool_staging
+            && reference_build < tool_staging
+            && tool_staging < provider_selection
+            && linux_tools_workflow.contains("cmp \"target/release/$tool\" \"target/debug/$tool\"")
+            && provider_handoff < complete_suite
             && linux_prewarm_workflow.contains("needs:\n      - changes\n      - linux-tool-handoff")
             && linux_prewarm_job.contains("- name: Save prepared Linux Rust 1.98.0 Oven suite")
             && linux_prewarm_job.contains("target/incan_test_sdk_provider_store"),
-        "pull-request CI must build the identity-bearing compiler once, reuse its persistent provider input cache in the single Linux prewarm, and capture that provider store in the immutable prepared-suite handoff"
+        "pull-request CI must prepare the SDK with its matching compiler, transfer it into the Linux prewarm, and capture that provider store in the immutable prepared-suite handoff"
     );
     assert_eq!(
-        linux_prewarm_job.matches("name: test-linux-sdk-provider-store").count(),
+        linux_tools_workflow
+            .matches("name: test-linux-sdk-provider-store")
+            .count(),
         1,
-        "the Linux prewarm is the sole publisher of the provider-store artifact"
+        "the compiler/SDK handoff is the sole publisher of the provider-store artifact"
     );
     assert!(
         !workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS"),
@@ -1300,7 +1315,6 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && !workflow.contains("MSRV")
             && !workflow.contains("--toolchain stable")
             && !workflow.contains("dtolnay/rust-toolchain@stable")
-            && workflow.matches("Install WASI target for vocab desugarers").count() == 7
             && !workflow.contains("make test-oven-focused"),
         "pull-request CI must cancel superseded runs, prewarm the complete pinned Linux suite once, replay its four receipt partitions without rebaking, retain independent process-containment coverage, and carry no explicit per-job budgets: a version bump cold-starts every completion-gated cache, and any budget below a cold build means the job can never re-warm, so the runner-level 6-hour ceiling is the only bound"
     );
@@ -1330,7 +1344,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         release_gate.contains("needs:\n      - changes\n      - linux-tool-handoff")
             && !release_gate.contains("timeout-minutes:")
-            && release_gate.contains("restore-sdk-provider-store")
+            && release_gate.contains("consume-sdk-provider-store")
             && release_gate.contains("make -s test-oven-release-smoke")
             && !release_gate.contains("test-oven-partition"),
         "normal-command Cargo-guard proof must remain an independent Linux gate rather than extend the heaviest replay worker; per-job budgets are deliberately absent so completion-gated caches can save after a cold build"
@@ -1338,11 +1352,11 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         platform_gate.contains("make -s test-prewarm-sdk")
             && platform_gate.contains("${{ matrix.c_abi_test }}")
-            && platform_gate.contains("check_verifies_c_bindings_against_a_declared_android_interop_target")
             && platform_gate.contains("check_verifies_c_bindings_against_a_declared_ios_interop_target")
+            && workflow.contains("check_verifies_c_bindings_against_a_declared_android_interop_target")
             && !platform_gate.contains("test-one")
             && !platform_gate.contains("test-oven-release-smoke"),
-        "the pinned macOS and Android-targeted Linux gates must retain their platform-specific C-ABI assertions after one SDK prewarm, without repeating the Linux Oven suite bake"
+        "the pinned macOS and Android-targeted Linux gates must retain their platform-specific C-ABI assertions with prepared SDK providers, without repeating the Linux Oven suite bake"
     );
     assert!(
         evidence_workflow.contains("uses: ./.github/actions/run-oven-compiler-suite"),

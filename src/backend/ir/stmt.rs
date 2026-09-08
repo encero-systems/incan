@@ -104,8 +104,13 @@ pub enum IrStmtKind {
 /// Target of an assignment
 #[derive(Debug, Clone)]
 pub enum AssignTarget {
-    /// Simple variable
-    Var(String),
+    /// Local variable with its lowered storage type, retained for assignment ownership planning.
+    Var {
+        /// Destination binding in the resolved local scope.
+        name: String,
+        /// Storage type retained independently of the assigned expression's type.
+        ty: IrType,
+    },
     /// Local binding wrapper created from a module static.
     StaticBinding(String),
     /// Direct assignment into a compiler-managed module static storage cell.

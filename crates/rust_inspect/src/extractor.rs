@@ -1376,6 +1376,9 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
         return_type = source_return_type;
     }
     RustFunctionSig {
+        receiver_contract: f
+            .source(db)
+            .and_then(|source| crate::receiver_contract::receiver_contract(&source.value)),
         type_params: source_function_type_params(f, db),
         params,
         return_type,
