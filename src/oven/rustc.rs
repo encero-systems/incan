@@ -6297,8 +6297,7 @@ mod tests {
     use crate::oven::native_test::run_native_test_batch_all;
     use crate::oven::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits};
     use crate::oven::{
-        OVEN_COMPILER_TEST_PROFILE, OvenGeneratedProjectRequest, OvenImportRequest, digest_bytes,
-        import_frozen_project, receipt_generated_project,
+        OVEN_COMPILER_TEST_PROFILE, OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project,
     };
 
     fn fixture_registry_source() -> OvenRustcRegistrySource {
@@ -8965,17 +8964,18 @@ mod tests {
             &source,
             "#[test]\nfn cargo_is_not_visible_to_the_consumer() { assert!(option_env!(\"CARGO\").is_none()); assert!(option_env!(\"CARGO_PKG_NAME\").is_none()); }\n",
         )?;
-        let source_digest = digest_bytes(&fs::read(&source)?);
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("direct-rustc-source", source_digest),
+            .with_generated_source("direct-rustc-source", &source),
         )?;
         let artifact_root = tempfile::tempdir()?;
         let request = OvenDirectRustcTestRequest {
@@ -9025,15 +9025,17 @@ mod tests {
             "extern crate proc_macro;\nuse proc_macro::TokenStream;\n#[proc_macro]\npub fn passthrough(input: TokenStream) -> TokenStream { input }\n#[test]\nfn direct_proc_macro_test() {}\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("proc-macro-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("proc-macro-source", &source),
         )?;
         let bake = bake_trusted_direct_rustc_test(&OvenTrustedDirectRustcTargetRequest {
             receipt: &receipt,
@@ -9081,15 +9083,17 @@ mod tests {
         let source = project.path().join("src/materialized.rs");
         fs::write(&source, "pub fn oven_materialized() -> u32 { 42 }\n")?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("materialized-library", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("materialized-library", &source),
         )?;
         let request = OvenTrustedDirectRustcTargetRequest {
             receipt: &receipt,
@@ -9230,23 +9234,19 @@ mod tests {
             "fn main() { println!(\"{}\", oven_materialized::answer()); }\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest(
-                "materialized-library-one",
-                digest_bytes(&fs::read(&first_library_source)?),
-            )
-            .with_supplemental_source_digest(
-                "materialized-library-two",
-                digest_bytes(&fs::read(&second_library_source)?),
-            )
-            .with_supplemental_source_digest("materialized-consumer", digest_bytes(&fs::read(&binary_source)?)),
+            .with_generated_source("materialized-library-one", &first_library_source)
+            .with_generated_source("materialized-library-two", &second_library_source)
+            .with_generated_source("materialized-consumer", &binary_source),
         )?;
         let empty_artifacts = empty_manifest(&receipt);
         let library = bake_trusted_direct_rustc_library(&OvenTrustedDirectRustcTargetRequest {
@@ -9369,16 +9369,18 @@ mod tests {
             "fn main() { println!(\"{}\", oven_materialized::answer()); }\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("materialized-dylib", digest_bytes(&fs::read(&library_source)?))
-            .with_supplemental_source_digest("dylib-consumer", digest_bytes(&fs::read(&binary_source)?)),
+            .with_generated_source("materialized-dylib", &library_source)
+            .with_generated_source("dylib-consumer", &binary_source),
         )?;
         let empty_artifacts = empty_manifest(&receipt);
         let dylib = bake_trusted_direct_rustc_dylib(&OvenTrustedDirectRustcTargetRequest {
@@ -9457,16 +9459,18 @@ mod tests {
             "use oven_macros::answer;\nfn main() { println!(\"{}\", answer!()); }\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("materialized-proc-macro", digest_bytes(&fs::read(&macro_source)?))
-            .with_supplemental_source_digest("proc-macro-consumer", digest_bytes(&fs::read(&consumer_source)?)),
+            .with_generated_source("materialized-proc-macro", &macro_source)
+            .with_generated_source("proc-macro-consumer", &consumer_source),
         )?;
         let empty_artifacts = empty_manifest(&receipt);
         let proc_macro = bake_trusted_direct_rustc_proc_macro(&OvenTrustedDirectRustcTargetRequest {
@@ -9536,15 +9540,17 @@ mod tests {
             "//! ```\n//! assert!(std::env::var_os(\"CARGO\").is_none());\n//! ```\npub struct DoctestFixture;\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("doctest-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("doctest-source", &source),
         )?;
         let mut artifacts = empty_manifest(&receipt);
         artifacts
@@ -9611,15 +9617,17 @@ mod tests {
             permissions.set_mode(0o755);
             fs::set_permissions(executable, permissions)?;
         }
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 "fixture-target",
                 "rustc oven-timeout-fixture",
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("stalled-doctest", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("stalled-doctest", &source),
         )?;
 
         let started = Instant::now();
@@ -9666,15 +9674,17 @@ mod tests {
             "//! ```\n//! assert_eq!(2 + 2, 4);\n//! ```\npub struct DoctestFixture;\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("composed-doctest-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("composed-doctest-source", &source),
         )?;
         let mut thin_artifacts = empty_manifest(&receipt);
         thin_artifacts.supporting_artifacts.push(OvenRustcSupportingArtifact {
@@ -9725,16 +9735,18 @@ mod tests {
             "//! ```\n//! assert_eq!(oven_doctest_dylib::answer(), 42);\n//! ```\npub struct DynamicDoctestFixture;\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("dynamic-doctest-library", digest_bytes(&fs::read(&library_source)?))
-            .with_supplemental_source_digest("dynamic-doctest-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("dynamic-doctest-library", &library_source)
+            .with_generated_source("dynamic-doctest-source", &source),
         )?;
         let artifacts = empty_manifest(&receipt);
         let dylib = bake_trusted_direct_rustc_dylib(&OvenTrustedDirectRustcTargetRequest {
@@ -9806,15 +9818,17 @@ mod tests {
             "use proc_macro::TokenStream;\n\n#[proc_macro_derive(OvenFixture)]\npub fn oven_fixture(_input: TokenStream) -> TokenStream { TokenStream::new() }\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("proc-macro-doctest-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("proc-macro-doctest-source", &source),
         )?;
         let report = run_trusted_rustdoc_test(&OvenTrustedRustdocTestRequest {
             receipt: &receipt,
@@ -9848,15 +9862,17 @@ mod tests {
             "#[test]\nfn oven_plan_is_the_consumer_input() { assert!(option_env!(\"CARGO\").is_none()); }\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("direct-rustc-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("direct-rustc-source", &source),
         )?;
         let plan = empty_manifest(&receipt);
         let payload = serde_json::to_vec(&plan)?;
@@ -9956,15 +9972,17 @@ mod tests {
             "fn main() { assert!(option_env!(\"CARGO\").is_none()); assert!(option_env!(\"CARGO_PKG_NAME\").is_none()); }\n",
         )?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("direct-rustc-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("direct-rustc-source", &source),
         )?;
         let plan = empty_manifest(&receipt);
         let store = OvenStore::new(
@@ -10024,15 +10042,17 @@ mod tests {
         let source = output.path().join("consumer.rs");
         fs::write(&source, "#[test]\nfn first() {}\n")?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 rustc_identity(&rustc)?,
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("direct-rustc-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("direct-rustc-source", &source),
         )?;
         fs::write(&source, "#[test]\nfn changed() {}\n")?;
         let request = OvenDirectRustcTestRequest {
@@ -10060,15 +10080,17 @@ mod tests {
         let source = output.path().join("consumer.rs");
         fs::write(&source, "#[test]\nfn identity_is_checked() {}\n")?;
         let rustc = rustc_path()?;
-        let receipt = import_frozen_project(
-            &OvenImportRequest::new(
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
                 project.path(),
+                "rustc_fixture",
+                "0.1.0",
                 rustc_host_target(&rustc)?,
                 "rustc deliberately-not-the-selected-compiler",
                 "release",
                 Vec::new(),
             )
-            .with_supplemental_source_digest("direct-rustc-source", digest_bytes(&fs::read(&source)?)),
+            .with_generated_source("direct-rustc-source", &source),
         )?;
         let request = OvenDirectRustcTestRequest {
             artifacts: empty_manifest(&receipt),
@@ -10091,13 +10113,18 @@ mod tests {
 
     fn intent(project: &Path) -> Result<crate::oven::OvenReceipt, Box<dyn std::error::Error>> {
         write_project(project)?;
-        Ok(import_frozen_project(&OvenImportRequest::new(
-            project,
-            "aarch64-apple-darwin",
-            "rustc 1.96.0",
-            "release",
-            Vec::new(),
-        ))?)
+        Ok(receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project,
+                "rustc_fixture",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc 1.96.0",
+                "release",
+                Vec::new(),
+            )
+            .with_generated_source("fixture-source", project.join("fixture.rs")),
+        )?)
     }
 
     fn empty_manifest(receipt: &crate::oven::OvenReceipt) -> OvenRustcArtifactManifest {
@@ -10189,13 +10216,18 @@ mod tests {
             &[wrong_defaults]
         ));
 
-        let debug_receipt = import_frozen_project(&OvenImportRequest::new(
-            project.path(),
-            "aarch64-apple-darwin",
-            "rustc 1.96.0",
-            "debug",
-            Vec::new(),
-        ))?;
+        let debug_receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project.path(),
+                "rustc_fixture",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc 1.96.0",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("fixture-source", project.path().join("fixture.rs")),
+        )?;
         payload.constituents.push(OvenProjectInspectionConstituent::Stored {
             identity: "sha256:test-dependency-extension".to_string(),
             artifact_kind: OvenArtifactKind::ProjectPayload,
@@ -10489,11 +10521,6 @@ mod tests {
     }
 
     fn write_project(root: &Path) -> Result<(), std::io::Error> {
-        fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"rustc_fixture\"\nversion = \"0.1.0\"\n",
-        )?;
-        fs::write(root.join("Cargo.lock"), "version = 4\n")?;
-        Ok(())
+        fs::write(root.join("fixture.rs"), "pub fn fixture() {}\n")
     }
 }

@@ -3172,9 +3172,7 @@ mod tests {
         LEGACY_CARGO_PUBLISHER_LOCK_FILE, LEGACY_CARGO_STAGING_DIRECTORY, OvenArtifactKind,
         OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError, OvenStoreLimits,
     };
-    use crate::oven::{
-        OvenGeneratedProjectRequest, OvenImportRequest, import_frozen_project, receipt_generated_project,
-    };
+    use crate::oven::{OvenGeneratedProjectRequest, receipt_generated_project};
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
@@ -4285,13 +4283,18 @@ mod tests {
         domain: &str,
         payload: &[u8],
     ) -> Result<OvenArtifactPublishRequest, Box<dyn std::error::Error>> {
-        let receipt = import_frozen_project(&OvenImportRequest::new(
-            project,
-            "aarch64-apple-darwin",
-            "rustc 1.96.0",
-            "release",
-            Vec::new(),
-        ))?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project,
+                "store_fixture",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc 1.96.0",
+                "release",
+                Vec::new(),
+            )
+            .with_generated_source("fixture-source", project.join("fixture.rs")),
+        )?;
         Ok(OvenArtifactPublishRequest {
             receipt,
             domain: domain.to_string(),
@@ -4302,11 +4305,6 @@ mod tests {
     }
 
     fn write_project(root: &Path) -> Result<(), std::io::Error> {
-        fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"store_fixture\"\nversion = \"0.1.0\"\n",
-        )?;
-        fs::write(root.join("Cargo.lock"), "version = 4\n")?;
-        Ok(())
+        fs::write(root.join("fixture.rs"), "pub fn fixture() {}\n")
     }
 }
