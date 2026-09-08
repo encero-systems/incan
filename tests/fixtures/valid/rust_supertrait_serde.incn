@@ -1,6 +1,7 @@
 """Foreign supertraits constrain source-authored codecs without synthetic serde blanket implementations."""
 
-from rust::serde import Serialize as RustSerialize, Deserialize as RustDeserialize
+from std.serde import json
+from rust::serde import Serialize as RustSerialize
 from rust::serde::de import DeserializeOwned
 from rust::serde_json import from_str, to_string, Error as JsonError
 
@@ -17,9 +18,9 @@ trait Writable with RustSerialize:
     pass
 
 
-@rust.derive(RustSerialize, RustDeserialize)
+@derive(json)
 model Config with Readable, Writable:
-    """A concrete model whose derives satisfy both foreign parent requirements."""
+    """Incan serialization derives satisfy both foreign parent requirements."""
 
     name: str
     count: int
