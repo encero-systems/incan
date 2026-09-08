@@ -102,6 +102,12 @@ Incan function arguments, struct fields, collection elements, assignments, retur
 - Field reads clone when moving the field would move out of a parent object that remains borrowed or owned elsewhere.
 - Borrowed `as_ref()` and interop-unwrapped borrowed results clone when the sink expects an owned Incan value.
 
+### Reference targets and reassignment
+
+A binding or reassignment destination carries its storage type into `ValueUseSite::Assignment`. When that destination is an explicit Rust reference, an owned place is borrowed and an existing reference keeps its shape. At an owned destination, a known borrowed non-`Copy` value is materialized and generic bound inference records any compiler-inserted `Clone` requirement. Lowering merges binding and expression reference metadata once; two descriptions of `&T` do not imply an additional reference layer.
+
+Opaque Rust results are a remaining boundary: when their source type is unknown, assignment planning preserves their native shape rather than inventing a borrow or an unsupported `Clone` requirement. This does not establish that a Rust method returns a borrowed descendant. Inferring a traversal cursor or a read-only helper parameter still requires ownership and lifetime evidence; reference-aware assignment alone does not infer those borrows or eliminate subtree copies.
+
 ### Rust interop sinks
 
 External Rust calls are different from Incan calls. They often accept references, custom string wrappers, or generic `Into` targets. At these boundaries:

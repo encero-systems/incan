@@ -595,7 +595,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Scan an assignment target without treating field writes as field reads.
     fn scan_assign_target(&mut self, target: &AssignTarget) {
         match target {
-            AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => {
+            AssignTarget::Var { name, .. } | AssignTarget::StaticBinding(name) => {
                 self.mark_reachable_item(name);
             }
             AssignTarget::Static { name, .. } => self.mark_reachable_item(name),

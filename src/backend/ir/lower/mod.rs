@@ -4195,7 +4195,7 @@ def concat_slice(text: str) -> str:
             .iter()
             .find_map(|statement| match &statement.kind {
                 IrStmtKind::Assign {
-                    target: AssignTarget::Var(name),
+                    target: AssignTarget::Var { name, .. },
                     value,
                 } if name == "out" && matches!(value.kind, IrExprKind::BinOp { .. }) => Some(value),
                 _ => None,
