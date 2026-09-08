@@ -19,21 +19,34 @@ if ! rm -rf -- "$suite_tmp"; then
 fi
 
 if [ -n "$report" ]; then
+    if [ "$report" -ef "$suite_output/compiler-suite-report.json" ]; then
+        echo "Oven retained report must differ from the disposable source report" >&2
+        echo "Oven suite output retained at $suite_output" >&2
+        exit 1
+    fi
     if ! mkdir -p -- "$(dirname -- "$report")"; then
         retention_failed=true
     fi
-    # A repeated local replay must not pair this run's JSON with a previous run's transcript archive.
-    if ! rm -f -- "$report.transcripts.tar.gz"; then
-        retention_failed=true
+    # Invalidate both previous outputs before publication; any failure must leave current evidence or no evidence.
+    if ! rm -f -- "$report" "$report.transcripts.tar.gz"; then
+        echo "Oven previous evidence could not be cleared; retaining caller output at $suite_output" >&2
+        exit 1
     fi
     if [ -s "$suite_output/compiler-suite-report.json" ]; then
-        if ! cp -- "$suite_output/compiler-suite-report.json" "$report"; then
+        # Stage beside the requested destination so its final rename is on the same filesystem.
+        report_tmp=''
+        if report_tmp="$(mktemp "$report.tmp.XXXXXX")" \
+            && cp -- "$suite_output/compiler-suite-report.json" "$report_tmp" \
+            && mv -- "$report_tmp" "$report"; then
+            :
+        else
+            if [ -n "$report_tmp" ]; then
+                rm -f -- "$report_tmp"
+            fi
+            echo "Oven report publication failed; retaining complete caller output" >&2
             retention_failed=true
         fi
     else
-        if ! rm -f -- "$report"; then
-            retention_failed=true
-        fi
         if [ "$suite_succeeded" = true ]; then
             echo "Oven replay succeeded without its requested JSON report" >&2
             retention_failed=true

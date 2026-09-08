@@ -12,7 +12,10 @@ SCRIPT = Path(__file__).with_name("retain_oven_suite_output.sh")
 
 
 class TranscriptRetentionTests(unittest.TestCase):
-    def run_cleanup(self, *, report_exists=True, succeeded=True, broken_tar=False, previous_evidence=False):
+    def run_cleanup(
+        self, *, report_exists=True, succeeded=True, broken_tar=False, broken_copy=False,
+        previous_evidence=False, report_is_source=False
+    ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -26,18 +29,20 @@ class TranscriptRetentionTests(unittest.TestCase):
         (output / "caller-binary").write_bytes(b"not an artifact")
         if report_exists:
             (output / "compiler-suite-report.json").write_text('{"probe": true}\n')
-        destination = root / "retained" / "report.json"
+        destination = output / "compiler-suite-report.json" if report_is_source else root / "retained" / "report.json"
         if previous_evidence:
             destination.parent.mkdir()
             destination.write_text('{"previous_run": true}\n')
             Path(str(destination) + ".transcripts.tar.gz").write_bytes(b"previous run archive")
         environment = os.environ.copy()
-        if broken_tar:
+        if broken_tar or broken_copy:
             shim = root / "shim"
             shim.mkdir()
-            tar = shim / "tar"
-            tar.write_text("#!/bin/sh\nexit 37\n")
-            tar.chmod(0o755)
+            for command, broken in [("tar", broken_tar), ("cp", broken_copy)]:
+                if broken:
+                    executable = shim / command
+                    executable.write_text("#!/bin/sh\nexit 37\n")
+                    executable.chmod(0o755)
             environment["PATH"] = str(shim) + os.pathsep + environment["PATH"]
         result = subprocess.run(
             ["bash", str(SCRIPT), str(output), str(scratch), str(succeeded).lower(), str(destination), "0" if succeeded else "9"],
@@ -47,6 +52,7 @@ class TranscriptRetentionTests(unittest.TestCase):
             check=False,
         )
         self.assertFalse(scratch.exists())
+        self.assertEqual(list(destination.parent.glob(destination.name + ".tmp.*")), [])
         return result, output, transcript, destination
 
     def assert_archive(self, destination):
@@ -100,6 +106,21 @@ class TranscriptRetentionTests(unittest.TestCase):
         self.assertTrue(output.exists())
         self.assertEqual(destination.read_text(), '{"probe": true}\n')
         self.assertFalse(Path(str(destination) + ".transcripts.tar.gz").exists())
+
+    def test_report_copy_failure_cannot_pair_an_older_report_with_a_new_archive(self):
+        result, output, _, destination = self.run_cleanup(broken_copy=True, previous_evidence=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertTrue(output.exists())
+        self.assertFalse(destination.exists(), "copy failure left the previous report beside current diagnostics")
+        self.assertEqual((output / "compiler-suite-report.json").read_text(), '{"probe": true}\n')
+        self.assert_archive(destination)
+
+    def test_retained_report_cannot_remove_its_own_disposable_source(self):
+        result, output, _, destination = self.run_cleanup(report_is_source=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertTrue(output.exists())
+        self.assertEqual(destination.read_text(), '{"probe": true}\n')
+        self.assertIn("must differ", result.stderr)
 
 
 if __name__ == "__main__":
