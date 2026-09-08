@@ -154,39 +154,9 @@ You selected a public API, built its checked library artifact, locked the worksp
 </section>
 
 
-## Execute a published package without native linking
-
-In the 0.6 development compiler, a library build also publishes a binary executable surface. Its manifest selects
-one immutable file under `target/lib/semantic/`. Keep the generated library artifact together when copying it;
-copying only its `.incnlib` manifest omits both native output and executable content. Normal Oven materialization
-retains the selected semantic file with the manifest.
-
-A consumer can request the replacement backend after the library has been built:
-
-```bash
-incan build src/main.incn --backend replacement
-```
-
-This route uses the producer's checked public declarations, including supported default computations and public
-type context. Dependency aliases select the same declaring identities. The consumer does not need the producer's
-Incan source files, and does not compile or execute its generated Rust.
-
-Coverage is explicit and can be partial. A declaration that needs a private helper or private type layout remains
-uncovered. Unsupported execution forms also remain uncovered; serializing a body does not make that body executable.
-When a selected call or type lacks a usable representation, the compiler names the package, version and unmet
-requirement before program output or a successful execution receipt. A package without executable coverage remains
-usable through its native linking route.
-
-The reader verifies the manifest-selected content and decodes only the required declaration fragments and their
-public dependencies. A JSON build report requested with `--report json --report-output execution.json` records the
-number of decoded package declarations, selected payload bytes and bytes streamed for content verification separately.
-
-A failed library rebuild restores the previous generated library and its published receipt files. Rebuilding can
-make that output directory temporarily unavailable to other readers; this local workflow does not promise atomic
-publication across a process crash. Signed archive distribution requires its own package publication boundary.
-
 ## Continue
 
+- [Execute a published package without native linking](../how-to/execute_published_package.md)
 - [Managing dependencies](../how-to/dependencies.md)
 - [Project configuration](../reference/project_configuration.md)
 - [Imports and modules](../../language/reference/imports_and_modules.md)

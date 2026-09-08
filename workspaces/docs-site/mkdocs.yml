@@ -275,6 +275,7 @@ nav:
       - How-to:
           - Install/build/run: tooling/how-to/install_and_run.md
           - Managing dependencies: tooling/how-to/dependencies.md
+          - Execute a published package: tooling/how-to/execute_published_package.md
           - CI & automation: tooling/how-to/ci_and_automation.md
           - Troubleshooting: tooling/how-to/troubleshooting.md
           - Editor setup: tooling/how-to/editor_setup.md
@@ -296,6 +297,7 @@ nav:
           - Agent and tooling docs surfaces: tooling/reference/agent_docs_surfaces.md
           - Checked contract metadata: tooling/reference/contract_metadata.md
           - Checked API metadata: tooling/reference/checked_api_metadata.md
+          - Package executable representation: tooling/reference/package_executable_representation.md
           - Project configuration: tooling/reference/project_configuration.md
           - SDK components and package features: tooling/reference/sdk_components_and_package_features.md
           - Oven interop deployment plans: tooling/reference/interop_deployment_plans.md
