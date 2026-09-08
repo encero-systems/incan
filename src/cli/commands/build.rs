@@ -3655,16 +3655,15 @@ fn prepare_project_with_options(
     // Resolve lock payload before moving deps into generator (borrows resolved)
     let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root: &project_root,
-        project_name: project_name.as_str(),
         entry_file: Some(&normalized_file_path),
         manifest: manifest.as_ref(),
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
-        cargo_policy,
         semantic: Some(&semantic),
         package_features: Some(package_features),
         sdk_profile_override: options.sdk_profile_override,
+        command_session: Some(&compilation_session),
     })?;
     let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
     let lock_payload = cargo_lock_inputs.payload;
@@ -10014,16 +10013,15 @@ fn prepare_library_project(
         } else {
             resolve_lock_context(LockResolutionRequest {
                 project_root: &project_root,
-                project_name: project_name.as_str(),
                 entry_file: Some(&lib_entry),
                 manifest: Some(&manifest),
                 resolved: &resolved,
                 project_requirements: &project_requirements,
                 cargo_features: &cargo_features,
-                cargo_policy: &cargo_policy,
                 semantic: Some(&semantic),
                 package_features: Some(package_features),
                 sdk_profile_override,
+                command_session: Some(&compilation_session),
             })?
         };
         let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();

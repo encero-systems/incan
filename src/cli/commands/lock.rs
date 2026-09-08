@@ -65,11 +65,10 @@ use crate::workspace::WorkspaceGraph;
 use incan_core::lang::stdlib;
 
 use super::common::{
-    CargoPolicy, CompilationSession, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements, build_source_map,
-    cargo_command_flags, collect_modules_detailed_with_session, collect_project_requirements,
-    collect_rust_dependency_uses, enforce_project_toolchain_constraint, extend_requirements_with_provider_plan,
-    format_dependency_error, merge_project_requirement_dependencies, provider_used_module_paths,
-    semantic_sdk_path_dependencies,
+    CargoPolicy, CompilationSession, ProjectRequirements, build_source_map, cargo_command_flags,
+    collect_modules_detailed_with_session, collect_project_requirements, collect_rust_dependency_uses,
+    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
+    merge_project_requirement_dependencies, provider_used_module_paths, semantic_sdk_path_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{
@@ -297,42 +296,70 @@ fn collect_and_publish_project_lock(
     Ok(context)
 }
 
-/// Resolve the canonical dependency context and lock payload for a project build.
+/// Checked inputs for one caller's emission requirements and its canonical semantic lock facts.
 ///
-/// Manifest-less standalone builds retain their caller-local dependency context and have no lock payload.
-/// Manifest-backed builds keep caller-local resolved dependencies and requirements for generated Cargo manifests,
-/// while project- or workspace-wide aggregation owns canonical lock generation. A fresh canonical payload authorizes
-/// Cargo-owned projection onto the caller manifest only after package coordinates, checksums, and edges validate.
+/// A command-owned session retains the existing provider and feature decisions. Workspace collection still includes
+/// every member; its canonical lock must not be narrowed to the invoking entrypoint.
 pub(crate) struct LockResolutionRequest<'a> {
     pub project_root: &'a Path,
-    pub project_name: &'a str,
-    /// Active source entry, including entries outside `[project.scripts]`, that must participate in the lock context.
     pub entry_file: Option<&'a Path>,
     pub manifest: Option<&'a ProjectManifest>,
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
     pub cargo_features: &'a CargoFeatureSelection,
-    pub cargo_policy: &'a CargoPolicy,
     pub semantic: Option<&'a SemanticLockState>,
-    /// Incan package-feature selection used when rebuilding the canonical project-wide lock context.
     pub package_features: Option<&'a FeatureSelection>,
-    /// Command-local SDK profile used when rebuilding the canonical project-wide lock context.
     pub sdk_profile_override: Option<&'a str>,
+    pub command_session: Option<&'a CompilationSession>,
 }
 
-/// Cargo inputs that must be consumed together by generated projects.
+/// Caller-local emission requirements and the separately scoped canonical lock observation.
+///
+/// A semantic lock describes checked dependency/provider facts. It does not authorize a native or Rust inspection
+/// projection, and an absent lock is not permission to prepare one.
 pub(crate) struct LockResolution {
-    pub cargo_lock_authority: CargoLockAuthority,
-    pub cargo_package_name: String,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
+    pub canonical: Option<CanonicalLockFacts>,
 }
 
-/// Final generator-facing inputs derived from one closed lock authority state.
-pub(crate) struct CargoLockGeneratorInputs {
-    pub payload: Option<String>,
-    pub projection_root: Option<String>,
-    pub clear_existing: bool,
+/// Observed canonical lock state relative to one retained checked fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SemanticLockStatus {
+    /// No canonical lock file was present when the facts were observed.
+    Missing,
+    /// The observed lock fingerprint matches the retained checked inputs.
+    Current,
+    /// A canonical lock exists for a different checked fingerprint.
+    Stale { actual_fingerprint: String },
+}
+
+/// Expected checked lock contents and a read-only observation of the canonical file.
+///
+/// These facts are not a native admission token. Their observation does not create a publication guard or select an
+/// artifact; the invoking control plane decides whether to require or publish a lock.
+pub(crate) struct CanonicalLockFacts {
+    lock_path: PathBuf,
+    expected: IncanLock,
+    observed: SemanticLockStatus,
+    strict_input_error: Option<String>,
+}
+
+impl CanonicalLockFacts {
+    /// Return the standalone or workspace-root path observed by this fact collection.
+    pub(crate) fn lock_path(&self) -> &Path {
+        &self.lock_path
+    }
+
+    /// Return the canonical checked contents independently from whether a lock has been published.
+    pub(crate) fn expected(&self) -> &IncanLock {
+        &self.expected
+    }
+
+    /// Return the actual missing, current or stale observation without taking an execution decision.
+    pub(crate) fn status(&self) -> &SemanticLockStatus {
+        &self.observed
+    }
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -1159,16 +1186,15 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root,
-        project_name,
         entry_file: modules.last().map(|module| module.file_path.as_path()),
         manifest,
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features,
-        cargo_policy,
         semantic: None,
         package_features: None,
         sdk_profile_override: None,
+        command_session: None,
     })?;
     let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
     let rust_inspect_cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
@@ -1236,348 +1262,146 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
     }))
 }
 
-/// Resolve the canonical Oven lock context that normal generated-project callers consume as one unit.
+/// Collect caller requirements and observe the canonical semantic lock using the existing checked analysis.
 ///
-/// Manifest-less single-file builds retain their caller context and have no lock payload. Manifest-backed builds use
-/// the semantic Incan lock as their authority: a missing non-strict lock is published without constructing a Cargo
-/// project, while a stale lock is never reused as an authority. The explicit `legacy_cargo` publisher owns the
-/// separate historical Cargo-resolution boundary.
+/// This never publishes a missing lock or projects a Cargo payload. Caller emission requirements stay local, while the
+/// canonical expected lock uses every selected workspace member. An actual native or inspection plan must be admitted
+/// separately.
 pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let LockResolutionRequest {
         project_root,
-        project_name,
         entry_file,
         manifest,
         resolved,
         project_requirements,
         cargo_features,
-        cargo_policy,
         semantic,
         package_features,
         sdk_profile_override,
+        command_session,
     } = request;
-
+    if let Some(session) = command_session {
+        match (manifest, session.manifest.as_ref()) {
+            (Some(manifest), Some(selected))
+                if project_roots_match(manifest.project_root(), selected.project_root()) => {}
+            (None, None) => {}
+            _ => {
+                return Err(CliError::failure(
+                    "lock inputs do not match the command-owned manifest authority",
+                ));
+            }
+        }
+    }
     let mut caller_resolved = resolved.clone();
     merge_project_requirement_dependencies(&mut caller_resolved, project_requirements)?;
-
-    if manifest.is_none() {
-        return Ok(LockResolution {
-            cargo_lock_authority: CargoLockAuthority::None,
-            cargo_package_name: project_name.to_string(),
-            resolved: caller_resolved,
-            project_requirements: project_requirements.clone(),
-        });
-    }
-
-    if std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
-        && let Some(payload) = cargo_lock_payload_override(
-            std::env::var_os(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from),
-        )?
-    {
-        return Ok(LockResolution {
-            cargo_lock_authority: CargoLockAuthority::Exact { payload },
-            cargo_package_name: project_name.to_string(),
-            resolved: caller_resolved,
-            project_requirements: project_requirements.clone(),
-        });
-    }
-
-    let default_package_features = FeatureSelection::default();
-    if let Some(manifest) = manifest
-        && let Some(workspace) =
-            WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
-    {
-        return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
-            workspace: &workspace,
-            caller_project_name: project_name,
-            caller_resolved: &caller_resolved,
-            caller_project_requirements: project_requirements,
-            caller_entry_file: entry_file,
-            cargo_features,
-            cargo_policy,
-            package_features: package_features.unwrap_or(&default_package_features),
-            sdk_profile_override,
-        });
-    }
-    let project_context = if let Some(manifest) = manifest {
-        collect_project_lock_context(
-            manifest,
-            entry_file,
-            cargo_features,
-            package_features.unwrap_or(&default_package_features),
-            sdk_profile_override,
-            None,
-            None,
-        )?
-    } else {
-        None
-    };
-    let (canonical_resolved, canonical_project_requirements) = if let Some(context) = project_context.as_ref() {
-        (context.resolved.clone(), context.project_requirements.clone())
-    } else {
-        (caller_resolved.clone(), project_requirements.clone())
-    };
-    let lock_path = project_root.join(LOCK_FILENAME);
-    let mut canonical_resolved_with_requirements = canonical_resolved;
-    merge_project_requirement_dependencies(
-        &mut canonical_resolved_with_requirements,
-        &canonical_project_requirements,
-    )?;
-    // A manifest-backed lock is project-wide, so its canonical context must win over an entrypoint-local semantic
-    // snapshot. The supplied snapshot remains authoritative for manifest-less callers, where no project closure can
-    // be rebuilt.
-    let semantic = project_context
-        .as_ref()
-        .map(|context| context.semantic.clone())
-        .or_else(|| semantic.cloned())
-        .unwrap_or_default();
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(&canonical_project_requirements);
-    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
-        &canonical_resolved_with_requirements.dependencies,
-        &canonical_resolved_with_requirements.dev_dependencies,
-        cargo_features,
-        Some(project_root),
-        &semantic,
-        &semantic_sdk_paths,
-    );
-
-    let strict = cargo_policy.locked || cargo_policy.frozen;
-    if strict && let Some(message) = strict_git_source_error(&canonical_resolved_with_requirements) {
-        return Err(CliError::failure(message));
-    }
-    if lock_path.exists() {
-        let lock = IncanLock::load(&lock_path).map_err(|e| CliError::failure(e.to_string()))?;
-        if lock.deps_fingerprint != fingerprint {
-            if strict {
-                return Err(CliError::failure(format!(
-                    "oven.lock is out of date\n\n\
-                     \x20 expected deps-fingerprint: {fingerprint}\n\
-                     \x20   actual deps-fingerprint: {actual}\n\n\
-                     This usually means your dependency inputs changed since the lock was generated:\n\n\
-                     \x20 - loaf.toml dependency entries changed, and/or\n\
-                     \x20 - inline rust::... annotations changed, and/or\n\
-                     \x20 - toolchain known-good defaults changed (if you rely on defaults)\n\
-                     \x20 - Incan package-feature or SDK-profile selection changed, and/or\n\
-                     \x20 - Cargo feature selection changed\n\n\
-                     Fix:\n\n\
-                     \x20   incan lock\n\n\
-                     Tip: Pin crate versions/features explicitly in loaf.toml for stability \
-                     across toolchain upgrades.",
-                    actual = lock.deps_fingerprint,
-                )));
-            }
-            eprintln!(
-                "warning: oven.lock is out of date; continuing without using it as Oven lock authority or \
-                 rewriting it. Run `incan lock` to refresh it."
-            );
-            return Ok(LockResolution {
-                cargo_lock_authority: CargoLockAuthority::Stale,
-                cargo_package_name: project_name.to_string(),
-                resolved: caller_resolved,
-                project_requirements: project_requirements.clone(),
-            });
-        }
-        return Ok(LockResolution {
-            // Normal Oven execution must not materialize a generated Cargo.lock from the compatibility payload
-            // retained in oven.lock. The payload is inert for this route; the semantic fingerprint above is the
-            // authority that was just verified.
-            cargo_lock_authority: CargoLockAuthority::None,
-            cargo_package_name: project_name.to_string(),
-            resolved: caller_resolved,
-            project_requirements: project_requirements.clone(),
-        });
-    }
-
-    if strict {
-        return Err(CliError::failure("oven.lock is missing; run `incan lock`".to_string()));
-    }
-
-    generate_oven_lockfile(
-        project_root,
-        &canonical_resolved_with_requirements,
-        &canonical_project_requirements,
-        cargo_features,
-        &semantic,
-        None,
-    )?;
-    Ok(LockResolution {
-        cargo_lock_authority: CargoLockAuthority::None,
-        cargo_package_name: project_name.to_string(),
-        resolved: caller_resolved,
-        project_requirements: project_requirements.clone(),
-    })
-}
-
-/// Validate an existing canonical Incan lock for an Oven consumer without publishing any missing SDK/provider or
-/// dependency artifacts.
-///
-/// This derives the same manifest/source/semantic fingerprint from the active SDK inventory and parser-visible
-/// dependency metadata without launching Cargo to make missing state appear.
-pub(crate) struct OvenLockValidationRequest<'a> {
-    pub project_root: &'a Path,
-    pub manifest: Option<&'a ProjectManifest>,
-    pub entry_file: &'a Path,
-    pub cargo_features: &'a CargoFeatureSelection,
-    pub cargo_policy: &'a CargoPolicy,
-    pub package_features: &'a FeatureSelection,
-    pub sdk_profile_override: Option<&'a str>,
-}
-
-/// Validate strict Oven lock policy without a pre-existing command compilation session.
-pub(crate) fn validate_oven_lock_policy(
-    project_root: &Path,
-    manifest: Option<&ProjectManifest>,
-    entry_file: &Path,
-    cargo_features: &CargoFeatureSelection,
-    cargo_policy: &CargoPolicy,
-    package_features: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-) -> CliResult<()> {
-    validate_oven_lock_policy_impl(
-        OvenLockValidationRequest {
-            project_root,
-            manifest,
-            entry_file,
-            cargo_features,
-            cargo_policy,
-            package_features,
-            sdk_profile_override,
-        },
-        None,
-    )
-}
-
-/// Validate strict lock policy using the compilation session already owned by the invoking command.
-pub(crate) fn validate_oven_lock_policy_with_session(
-    request: OvenLockValidationRequest<'_>,
-    session: &CompilationSession,
-) -> CliResult<()> {
-    validate_oven_lock_policy_impl(request, Some(session))
-}
-
-/// Validate strict Oven lock policy using an optional command-owned compilation session.
-fn validate_oven_lock_policy_impl(
-    request: OvenLockValidationRequest<'_>,
-    command_session: Option<&CompilationSession>,
-) -> CliResult<()> {
-    let OvenLockValidationRequest {
-        project_root,
-        manifest,
-        entry_file,
-        cargo_features,
-        cargo_policy,
-        package_features,
-        sdk_profile_override,
-    } = request;
-    if !cargo_policy.locked && !cargo_policy.frozen {
-        return Ok(());
-    }
     let Some(manifest) = manifest else {
-        return Ok(());
+        return Ok(LockResolution {
+            resolved: caller_resolved,
+            project_requirements: project_requirements.clone(),
+            canonical: None,
+        });
     };
-
-    if let Some(workspace) =
-        WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
-    {
+    if !project_roots_match(project_root, manifest.project_root()) {
+        return Err(CliError::failure(format!(
+            "lock input root {} does not belong to manifest project {}",
+            project_root.display(),
+            manifest.project_root().display(),
+        )));
+    }
+    let default_package_features = FeatureSelection::default();
+    let package_features = package_features.unwrap_or(&default_package_features);
+    let workspace =
+        WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+    let (canonical_root, context) = if let Some(workspace) = workspace.as_ref() {
         let context = collect_workspace_lock_context(
-            &workspace,
-            Some(entry_file),
+            workspace,
+            entry_file,
             cargo_features,
             package_features,
             sdk_profile_override,
             command_session,
         )?;
-        let mut resolved = context.resolved;
-        merge_project_requirement_dependencies(&mut resolved, &context.project_requirements)?;
-        if let Some(message) = strict_git_source_error(&resolved) {
-            return Err(CliError::failure(message));
-        }
-        let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
-            &resolved.dependencies,
-            &resolved.dev_dependencies,
+        (workspace.root(), context)
+    } else {
+        let context = collect_project_lock_context(
+            manifest,
+            entry_file,
             cargo_features,
-            Some(workspace.root()),
-            &context.semantic,
-            &semantic_sdk_path_dependencies(&context.project_requirements),
-        );
-        return validate_oven_existing_lock(
-            &workspace.root().join(LOCK_FILENAME),
-            &fingerprint,
-            "workspace oven.lock is missing; run `incan lock` from any workspace member or the workspace root",
-            "workspace oven.lock",
-        );
-    }
-
-    let context = collect_project_lock_context(
-        manifest,
-        Some(entry_file),
+            package_features,
+            sdk_profile_override,
+            None,
+            command_session,
+        )?
+        .unwrap_or_else(|| ProjectLockContext {
+            resolved: caller_resolved.clone(),
+            project_requirements: project_requirements.clone(),
+            semantic: semantic.cloned().unwrap_or_default(),
+        });
+        (manifest.project_root(), context)
+    };
+    let strict_input_error = strict_git_source_error(&context.resolved);
+    let expected = checked_oven_lock(
+        canonical_root,
+        &context.resolved,
+        &context.project_requirements,
         cargo_features,
-        package_features,
-        sdk_profile_override,
-        None,
-        command_session,
-    )?
-    .ok_or_else(|| CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry"))?;
-    let mut resolved = context.resolved;
-    merge_project_requirement_dependencies(&mut resolved, &context.project_requirements)?;
-    if let Some(message) = strict_git_source_error(&resolved) {
+        &context.semantic,
+    );
+    let lock_path = canonical_root.join(LOCK_FILENAME);
+    let observed = observe_oven_lock(&lock_path, &expected.deps_fingerprint)?;
+    Ok(LockResolution {
+        resolved: caller_resolved,
+        project_requirements: project_requirements.clone(),
+        canonical: Some(CanonicalLockFacts {
+            lock_path,
+            expected,
+            observed,
+            strict_input_error,
+        }),
+    })
+}
+
+/// Observe an existing semantic lock without creating directories, guards or output files.
+///
+/// Only an absent file is Missing. Permission errors, malformed contents and unsupported formats remain explicit
+/// failures instead of weakening the observation into a cache miss.
+fn observe_oven_lock(lock_path: &Path, expected_fingerprint: &str) -> CliResult<SemanticLockStatus> {
+    let lock = match IncanLock::load(lock_path) {
+        Ok(lock) => lock,
+        Err(crate::lockfile::LockfileError::Read { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SemanticLockStatus::Missing);
+        }
+        Err(error) => return Err(CliError::failure(error.to_string())),
+    };
+    Ok(if lock.deps_fingerprint == expected_fingerprint {
+        SemanticLockStatus::Current
+    } else {
+        SemanticLockStatus::Stale {
+            actual_fingerprint: lock.deps_fingerprint,
+        }
+    })
+}
+
+/// Apply strict lock consistency to a retained observation without collecting a second graph or publishing state.
+///
+/// Mutable Git requirements retain their existing strict refusal. A Current observation only proves semantic
+/// fingerprint equality; native and inspection artifact admission still require their own selected inputs.
+pub(crate) fn validate_oven_existing_lock(facts: &CanonicalLockFacts) -> CliResult<()> {
+    if let Some(message) = facts.strict_input_error.as_ref() {
         return Err(CliError::failure(message));
     }
-    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
-        &resolved.dependencies,
-        &resolved.dev_dependencies,
-        cargo_features,
-        Some(project_root),
-        &context.semantic,
-        &semantic_sdk_path_dependencies(&context.project_requirements),
-    );
-    validate_oven_existing_lock(
-        &project_root.join(LOCK_FILENAME),
-        &fingerprint,
-        "oven.lock is missing; run `incan lock`",
-        "oven.lock",
-    )
-}
-
-/// Compare one already-published canonical lock with an Oven-derived fingerprint.
-fn validate_oven_existing_lock(
-    lock_path: &Path,
-    fingerprint: &str,
-    missing_message: &str,
-    lock_label: &str,
-) -> CliResult<()> {
-    if !lock_path.exists() {
-        return Err(CliError::failure(missing_message));
+    match facts.status() {
+        SemanticLockStatus::Missing => Err(CliError::failure(format!(
+            "oven.lock is missing; run `incan lock` (canonical path: {})",
+            facts.lock_path().display(),
+        ))),
+        SemanticLockStatus::Current => Ok(()),
+        SemanticLockStatus::Stale { actual_fingerprint } => Err(CliError::failure(format!(
+            "oven.lock is out of date at {}\n\n expected deps-fingerprint: {}\n   actual deps-fingerprint: {actual_fingerprint}\n\nRun `incan lock` to refresh the canonical lock before using strict Oven execution.",
+            facts.lock_path().display(),
+            facts.expected().deps_fingerprint,
+        ))),
     }
-    let lock = IncanLock::load(lock_path).map_err(|error| CliError::failure(error.to_string()))?;
-    if lock.deps_fingerprint == fingerprint {
-        return Ok(());
-    }
-    Err(CliError::failure(format!(
-        "{lock_label} is out of date\n\n\
-         \x20 expected deps-fingerprint: {fingerprint}\n\
-         \x20   actual deps-fingerprint: {}\n\n\
-         Run `incan lock` to refresh the canonical lock before using strict Oven execution.",
-        lock.deps_fingerprint
-    )))
-}
-
-/// Resolve or generate the canonical root lock for a workspace-aware compiler invocation.
-///
-/// The member that triggered this call is deliberately absent from the path calculation: a workspace lock is built
-/// from every member context and lives only at the workspace root.
-struct WorkspaceLockResolutionRequest<'a> {
-    workspace: &'a WorkspaceGraph,
-    caller_project_name: &'a str,
-    caller_resolved: &'a ResolvedDependencies,
-    caller_project_requirements: &'a ProjectRequirements,
-    caller_entry_file: Option<&'a Path>,
-    cargo_features: &'a CargoFeatureSelection,
-    cargo_policy: &'a CargoPolicy,
-    package_features: &'a FeatureSelection,
-    sdk_profile_override: Option<&'a str>,
 }
 
 /// Fully collected dependency inputs that define a project or workspace lock's freshness surface.
@@ -2204,6 +2028,26 @@ fn compute_library_dependency_preheat_fingerprint(
     )
 }
 
+/// Construct expected lock contents from retained checked facts without observing or publishing a file.
+fn checked_oven_lock(
+    project_root: &Path,
+    resolved: &ResolvedDependencies,
+    project_requirements: &ProjectRequirements,
+    cargo_features: &CargoFeatureSelection,
+    semantic: &SemanticLockState,
+) -> IncanLock {
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(project_requirements);
+    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+        &resolved.dependencies,
+        &resolved.dev_dependencies,
+        cargo_features,
+        Some(project_root),
+        semantic,
+        &semantic_sdk_paths,
+    );
+    IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone())
+}
+
 /// Publish the supplied checked dependency and provider facts as the canonical semantic `oven.lock`.
 ///
 /// The publication guard coordinates the physical write. This service does not select native inputs or materialize a
@@ -2226,16 +2070,7 @@ fn generate_oven_lockfile(
         None
     };
     let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(project_requirements);
-    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
-        &resolved.dependencies,
-        &resolved.dev_dependencies,
-        cargo_features,
-        Some(project_root),
-        semantic,
-        &semantic_sdk_paths,
-    );
-    let lock = IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone());
+    let lock = checked_oven_lock(project_root, resolved, project_requirements, cargo_features, semantic);
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
     lock.write_while_locked(&lock_path, publication_lock)
@@ -2415,27 +2250,6 @@ mod tests {
             ..requested.clone()
         };
         assert!(!registry_source_is_owned_by_catalog(&different_archive, &[requested]));
-    }
-
-    #[test]
-    fn cargo_lock_authority_exposes_only_closed_generator_input_pairs() {
-        let none = CargoLockAuthority::None.into_generator_inputs();
-        assert_eq!(none.payload, None);
-        assert_eq!(none.projection_root, None);
-        assert!(!none.clear_existing);
-
-        let stale = CargoLockAuthority::Stale.into_generator_inputs();
-        assert_eq!(stale.payload, None);
-        assert_eq!(stale.projection_root, None);
-        assert!(stale.clear_existing);
-
-        let exact = CargoLockAuthority::Exact {
-            payload: "exact".to_string(),
-        }
-        .into_generator_inputs();
-        assert_eq!(exact.payload, Some("exact".to_string()));
-        assert_eq!(exact.projection_root, None);
-        assert!(!exact.clear_existing);
     }
 
     #[test]
@@ -2720,8 +2534,8 @@ regex = "1"
     }
 
     #[test]
-    fn resolver_publishes_a_missing_semantic_lock_without_a_cargo_projection() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn resolver_observes_lock_state_without_publishing_or_rediscovering_the_session()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let project_root = temp_dir.path();
         let manifest_path = project_root.join("loaf.toml");
@@ -2732,34 +2546,161 @@ regex = "1"
             "[project]\nname = \"semantic_lock_demo\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(&entry_path, "def main() -> None:\n  pass\n")?;
-        let manifest = ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?;
-        let cargo_features = CargoFeatureSelection::default();
-        let cargo_policy = CargoPolicy::default();
+        let features = CargoFeatureSelection::default();
+        let package_features = FeatureSelection::default();
+        let session = CompilationSession::discover_for_oven(&entry_path, &package_features, None)?;
+        let collect = |session: &CompilationSession| {
+            let manifest = session
+                .manifest
+                .as_ref()
+                .ok_or_else(|| CliError::failure("session has no manifest"))?;
+            resolve_lock_context(LockResolutionRequest {
+                project_root,
+                entry_file: Some(&entry_path),
+                manifest: Some(manifest),
+                resolved: &empty_resolved(),
+                project_requirements: &empty_project_requirements(),
+                cargo_features: &features,
+                semantic: None,
+                package_features: Some(&package_features),
+                sdk_profile_override: None,
+                command_session: Some(session),
+            })
+        };
+        reset_project_lock_collection_metrics();
+        let missing = collect(&session)?.canonical.ok_or("canonical lock facts missing")?;
+        assert_eq!(missing.status(), &SemanticLockStatus::Missing);
+        assert!(validate_oven_existing_lock(&missing).is_err());
+        assert!(!missing.lock_path().exists());
+        assert!(!crate::lockfile::compiler_lock_state_dir(project_root).exists());
+        assert_eq!(project_lock_collection_counts(), (1, 0));
 
-        let resolution = resolve_lock_context(LockResolutionRequest {
-            project_root,
-            project_name: "semantic_lock_demo",
-            entry_file: Some(&entry_path),
-            manifest: Some(&manifest),
-            resolved: &empty_resolved(),
-            project_requirements: &empty_project_requirements(),
-            cargo_features: &cargo_features,
-            cargo_policy: &cargo_policy,
-            semantic: Some(&SemanticLockState::default()),
-            package_features: None,
-            sdk_profile_override: None,
-        })?;
+        missing.expected().write(missing.lock_path())?;
+        let bytes = fs::read(missing.lock_path())?;
+        let modified = fs::metadata(missing.lock_path())?.modified()?;
+        reset_project_lock_collection_metrics();
+        let current = collect(&session)?.canonical.ok_or("canonical lock facts missing")?;
+        assert_eq!(current.status(), &SemanticLockStatus::Current);
+        validate_oven_existing_lock(&current)?;
+        assert_eq!(fs::read(current.lock_path())?, bytes);
+        assert_eq!(fs::metadata(current.lock_path())?.modified()?, modified);
+        assert_eq!(project_lock_collection_counts(), (1, 0));
 
-        assert!(matches!(resolution.cargo_lock_authority, CargoLockAuthority::None));
-        let lock = IncanLock::load(&project_root.join("oven.lock"))?;
-        assert!(!lock.deps_fingerprint.is_empty());
-        let encoded: toml::Value = toml::from_str(&fs::read_to_string(project_root.join("oven.lock"))?)?;
-        assert!(encoded.get("cargo").is_none());
-        let state_dir = crate::lockfile::compiler_lock_state_dir(project_root);
-        assert!(
-            !state_dir.join("Cargo.toml").exists() && !state_dir.join("Cargo.lock").exists(),
-            "normal lock resolution must not construct a generated Cargo projection"
+        fs::write(
+            &entry_path,
+            "from rust::regex @ \"1\" import Regex\n\ndef main() -> None:\n  pass\n",
+        )?;
+        let changed_session = CompilationSession::discover_for_oven(&entry_path, &package_features, None)?;
+        let stale = collect(&changed_session)?
+            .canonical
+            .ok_or("canonical lock facts missing")?;
+        assert_eq!(
+            stale.status(),
+            &SemanticLockStatus::Stale {
+                actual_fingerprint: current.expected().deps_fingerprint.clone(),
+            }
         );
+        assert_ne!(stale.expected().deps_fingerprint, current.expected().deps_fingerprint);
+        assert!(validate_oven_existing_lock(&stale).is_err());
+        assert_eq!(fs::read(stale.lock_path())?, bytes);
+        fs::write(stale.lock_path(), "malformed oven lock")?;
+        assert!(collect(&session).is_err());
+        assert_eq!(fs::read(stale.lock_path())?, b"malformed oven lock");
+        Ok(())
+    }
+
+    #[test]
+    fn lock_facts_keep_workspace_scope_separate_from_caller_emission_requirements()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        fs::write(
+            workspace.path().join("loaf.toml"),
+            r#"[workspace]
+members = ["first", "second"]
+"#,
+        )?;
+        for (name, source) in [
+            (
+                "first",
+                "from rust::regex @ \"1\" import Regex\n\ndef main() -> None:\n  pass\n",
+            ),
+            (
+                "second",
+                "from rust::semver @ \"1\" import Version\n\ndef main() -> None:\n  pass\n",
+            ),
+        ] {
+            let root = workspace.path().join(name);
+            fs::create_dir_all(root.join("src"))?;
+            fs::write(
+                root.join("loaf.toml"),
+                format!(
+                    "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"src/main.incn\"\n"
+                ),
+            )?;
+            fs::write(root.join("src/main.incn"), source)?;
+        }
+        let entry = workspace.path().join("first/src/main.incn");
+        let feature_selection = FeatureSelection::default();
+        let session = CompilationSession::discover_for_oven(&entry, &feature_selection, None)?;
+        let manifest = session.manifest.as_ref().ok_or("session has no manifest")?;
+        let caller_dependencies = ResolvedDependencies {
+            dependencies: vec![registry_dependency("regex")],
+            dev_dependencies: Vec::new(),
+        };
+        let requirements = ProjectRequirements::default();
+        let cargo_features = CargoFeatureSelection::default();
+        let collect = |entry_file: &Path| {
+            resolve_lock_context(LockResolutionRequest {
+                project_root: manifest.project_root(),
+                entry_file: Some(entry_file),
+                manifest: Some(manifest),
+                resolved: &caller_dependencies,
+                project_requirements: &requirements,
+                cargo_features: &cargo_features,
+                semantic: None,
+                package_features: Some(&feature_selection),
+                sdk_profile_override: None,
+                command_session: Some(&session),
+            })
+        };
+        let resolution = collect(&entry)?;
+        assert_eq!(resolution.resolved.dependencies, caller_dependencies.dependencies);
+        assert!(
+            !resolution
+                .resolved
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.crate_name == "semver")
+        );
+        let canonical = resolution.canonical.ok_or("workspace lock facts missing")?;
+        assert_eq!(
+            canonical.lock_path(),
+            workspace.path().canonicalize()?.join(LOCK_FILENAME)
+        );
+        assert_eq!(canonical.status(), &SemanticLockStatus::Missing);
+        assert_eq!(canonical.expected().semantic.workspace_members.len(), 2);
+        assert!(!workspace.path().join(LOCK_FILENAME).exists());
+        assert!(!crate::lockfile::compiler_lock_state_dir(workspace.path()).exists());
+
+        fs::write(
+            workspace.path().join("second/src/main.incn"),
+            "from rust::semver @ \"2\" import Version\n\ndef main() -> None:\n  pass\n",
+        )?;
+        let changed = collect(&entry)?;
+        assert_eq!(changed.resolved.dependencies, caller_dependencies.dependencies);
+        let changed_canonical = changed.canonical.ok_or("changed workspace lock facts missing")?;
+        assert_ne!(
+            changed_canonical.expected().deps_fingerprint,
+            canonical.expected().deps_fingerprint,
+            "another member's authored dependency use must remain in the canonical fingerprint",
+        );
+        assert!(!workspace.path().join(LOCK_FILENAME).exists());
+        assert!(!crate::lockfile::compiler_lock_state_dir(workspace.path()).exists());
+
+        let outside = tempfile::tempdir()?;
+        let outside_entry = outside.path().join("main.incn");
+        fs::write(&outside_entry, "def main() -> None:\n  pass\n")?;
+        assert!(collect(&outside_entry).is_err());
         Ok(())
     }
 

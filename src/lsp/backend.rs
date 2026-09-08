@@ -1107,16 +1107,15 @@ where
     let cargo_flags = cargo_command_flags(&cargo_policy, &cargo_features);
     let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root: manifest.project_root(),
-        project_name: project_name.as_str(),
         entry_file: modules.first().map(|module| module.file_path.as_path()),
         manifest: Some(manifest),
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
-        cargo_policy: &cargo_policy,
         semantic: None,
         package_features: None,
         sdk_profile_override: None,
+        command_session: None,
     })
     .map_err(|error| error.to_string())?;
     let cargo_package_name = lock_resolution.cargo_package_name;
