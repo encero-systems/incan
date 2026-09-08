@@ -3209,7 +3209,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                         name: None,
                         value: ParamDefaultExport::ConstRef(vec!["defaults".to_string(), "FALLBACK".to_string()]),
                     }],
-                    signature: Some(ParamDefaultCallSignatureExport {
+                    signature: Some(Box::new(ParamDefaultCallSignatureExport {
                         params: vec![ParamExport {
                             name: "value".to_string(),
                             ty: TypeRef::Named {
@@ -3224,7 +3224,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                             origin: None,
                             name: "str".to_string(),
                         },
-                    }),
+                    })),
                 }),
                 alias: None,
                 description: None,
@@ -17095,7 +17095,7 @@ pub class Child extends Vault:
                     "FALLBACK".to_string(),
                 ]),
             }],
-            signature: Some(ParamDefaultCallSignatureExport {
+            signature: Some(Box::new(ParamDefaultCallSignatureExport {
                 params: vec![ParamExport {
                     name: "value".to_string(),
                     ty: TypeRef::Named {
@@ -17110,7 +17110,7 @@ pub class Child extends Vault:
                     origin: None,
                     name: "str".to_string(),
                 },
-            }),
+            })),
         }),
         "compiled parent defaults must retain their original provider path and checked call signature"
     );
@@ -19320,7 +19320,7 @@ pub def local_default(label: str = LOCAL_SENTINEL) -> str:
                 name: None,
                 value: ParamDefaultExport::ConstRef(vec!["defaults".to_string(), "FALLBACK".to_string()]),
             }],
-            signature: Some(ParamDefaultCallSignatureExport {
+            signature: Some(Box::new(ParamDefaultCallSignatureExport {
                 params: vec![ParamExport {
                     name: "value".to_string(),
                     ty: TypeRef::Named {
@@ -19335,7 +19335,7 @@ pub def local_default(label: str = LOCAL_SENTINEL) -> str:
                     origin: None,
                     name: "str".to_string(),
                 },
-            }),
+            })),
         })
     );
     assert_eq!(

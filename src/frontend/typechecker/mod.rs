@@ -2973,17 +2973,16 @@ impl TypeChecker {
         }
         // A value may shadow the source spelling after an annotation has already selected a nominal type. Retain
         // that accepted type's exact artifact/declaration identity rather than resolving the value as a type again.
-        if let Some(identity) = self.public_library_type_identities.get(name) {
-            if let Some(info) = self
+        if let Some(identity) = self.public_library_type_identities.get(name)
+            && let Some(info) = self
                 .public_library_type_identities
                 .iter()
                 .filter(|(binding, candidate)| {
                     split_canonical_public_library_type_name(binding).is_some() && *candidate == identity
                 })
                 .find_map(|(binding, _)| self.transitive_pub_types.get(binding).and_then(|infos| infos.first()))
-            {
-                return Some(info);
-            }
+        {
+            return Some(info);
         }
         // A project's own transitively-reachable type wins over a stdlib stub of the same name. Both are fallbacks
         // for a name the current module does not declare, but only one of them is a type this program actually
@@ -6321,10 +6320,9 @@ impl TypeChecker {
             | TypeRef::Applied {
                 name, origin: Some(_), ..
             } = ty
+                && let Some(identity) = self.public_library_type_identities.get(name)
             {
-                if let Some(identity) = self.public_library_type_identities.get(name) {
-                    roots.insert(identity.dependency_key.clone());
-                }
+                roots.insert(identity.dependency_key.clone());
             }
         });
         self.type_info.declarations.public_type_bridge_roots = roots;
