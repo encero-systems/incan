@@ -3392,6 +3392,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata {
             executable_representation: None,
+            native_unions: Vec::new(),
             models: Default::default(),
             api: Some(CheckedApiMetadataPackage {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
