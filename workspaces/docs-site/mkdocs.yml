@@ -81,7 +81,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2
+  - /shared/incapunk/incapunk.css?v=20260908-code-annotations
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js

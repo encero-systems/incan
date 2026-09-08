@@ -6,6 +6,8 @@ Use `std.toml` to read selected configuration fields or decode a complete model 
 
 Parse the source once, then state the type expected at each dotted path. Use `?` to propagate malformed input, missing required values, and type errors to the caller:
 
+Click or focus the **+** markers for a closer look at each step.
+
 ```incan
 """Read project settings without declaring the complete manifest schema."""
 
@@ -15,20 +17,27 @@ from std.toml import TomlError
 
 def describe_project(source: str) -> Result[str, TomlError]:
     """Read required project fields and supply a default only for an absent version."""
-    document = toml.parse(source)?
-    name = document.get[str]("project.name")?
-    targets = document.get[list[str]]("project.targets")?
-    version = document.get_optional[str]("project.version")?.unwrap_or("unversioned")
-    return Ok(f"{name} ({version}): {targets}")
+    document = toml.parse(source)?  # (1)!
+    name: str = document.get("project.name")?  # (2)!
+    targets = document.get[list[str]]("project.targets")?  # (3)!
+    version = document.get_optional[str]("project.version")?.unwrap_or("unversioned")  # (4)!
+    return Ok(f"{name} ({version}): {targets}")  # (5)!
 
 
 def main() -> None:
     """Print project settings or a path-bearing diagnostic."""
     source = "[project]\nname = \"demo\"\ntargets = [\"linux\", \"macos\"]\n"
-    match describe_project(source):
+    match describe_project(source):  # (6)!
         Ok(description) => println(description)
         Err(error) => println(error.message())
 ```
+
+1. `parse` reads the TOML text once and retains source locations for later diagnostics. The `?` extracts a successful document or returns its `TomlError` from `describe_project` immediately.
+2. `name: str` supplies the type expected from `get`. This is equivalent to `name = document.get[str]("project.name")?`. The dotted path selects the `name` key inside the `project` table; a missing key or a value of the wrong type returns an error.
+3. `get[list[str]]` requests a list whose members must all be strings. A wrong member reports its own path, such as `project.targets[2]`; the lookup does not silently convert it.
+4. `get_optional[str]` returns `Result[Option[str], TomlError]`. First, `?` propagates an invalid present value. Then `unwrap_or` supplies the default only when the remaining `Option` is `None` because the key is absent.
+5. The function promises `Result[str, TomlError]`, so wrap the completed description in `Ok`. The earlier `?` expressions already handle its error paths.
+6. Handle the final result at the program boundary: print the description on success, or the diagnostic on failure. The field-reading code can use `?` without a separate `match` for every lookup.
 
 If `project.version` is absent, the example uses `unversioned`. If it is present as an integer, the lookup returns an error; the default does not hide the invalid value. Likewise, an integer in `targets` reports the offending element's path, such as `project.targets[2]`.
 
@@ -47,7 +56,7 @@ from std import toml
 from std.toml import TomlError
 
 
-@derive(toml)
+@derive(toml)  # (1)!
 model Project:
     """Project identity read from the document."""
 
@@ -57,8 +66,8 @@ model Project:
 
 def rewrite_project(source: str) -> Result[str, TomlError]:
     """Validate project fields and produce TOML text."""
-    project = toml.deserialize[Project](source)?
-    return toml.serialize_pretty(project)
+    project = toml.deserialize[Project](source)?  # (2)!
+    return toml.serialize_pretty(project)  # (3)!
 
 
 def main() -> None:
@@ -68,6 +77,10 @@ def main() -> None:
         Ok(text) => println(text)
         Err(error) => println(error.message())
 ```
+
+1. `@derive(toml)` gives `Project` the TOML encoding and decoding support its fields require. Apply it to nested models too; no separate Rust derive is needed.
+2. `deserialize[Project]` decodes the complete document into the declared model. Missing required fields, invalid field types, and malformed TOML return an error through `?`.
+3. `serialize_pretty` returns `Result[str, TomlError]`, which already matches the function's return type. Return it directly. The output is newly formatted TOML; it does not preserve the input's comments, key order, or formatting.
 
 For a file, read its text first using the [file I/O APIs](file_io.md), then pass that text to `rewrite_project`. Write the returned text only when replacing authored formatting is acceptable.
 
