@@ -703,22 +703,25 @@ impl AstLowering {
     ///
     /// Decorator metadata can carry a Rust generic as a display string (for example `Vec<(i64, i64)>`). That spelling
     /// is not a nominal identifier and cannot be emitted through the normal resolved-type path. The source annotation
-    /// retains its import alias and generic argument tree, so use it for a top-level direct Rust handle; all other
-    /// callable parameters continue to take their typechecker-resolved type.
+    /// retains its import alias and generic argument tree, so use it for a top-level direct Rust handle. An unchanged
+    /// source annotation also retains admitted native union carriers erased by frontend alias expansion; ordinary
+    /// inferred leaves remain authoritative.
     fn lower_callable_surface_parameter_type(
         &self,
         callable_param: &CallableParam,
         source_param: Option<&ast::Spanned<ast::Param>>,
         source_surface_is_unchanged: bool,
     ) -> IrType {
-        source_surface_is_unchanged
-            .then_some(())
-            .and(source_param)
-            .filter(|source| self.type_is_top_level_direct_rust_import(&source.node.ty.node))
-            .map_or_else(
-                || self.lower_resolved_type(&callable_param.ty),
-                |source| self.lower_type(&source.node.ty.node),
-            )
+        let inferred = self.lower_resolved_type(&callable_param.ty);
+        let Some(source) = source_param.filter(|_| source_surface_is_unchanged) else {
+            return inferred;
+        };
+        let declared = self.lower_type(&source.node.ty.node);
+        if self.type_is_top_level_direct_rust_import(&source.node.ty.node) {
+            declared
+        } else {
+            Self::retain_native_union_representation(inferred, &declared)
+        }
     }
 
     /// Lower one typechecker-resolved callable surface into IR parameters, attaching an already-planned default
@@ -2359,7 +2362,12 @@ impl AstLowering {
                 }
                 let return_type = function_binding
                     .as_ref()
-                    .map(|binding| self.lower_resolved_type(&binding.return_type))
+                    .map(|binding| {
+                        Self::retain_native_union_representation(
+                            self.lower_resolved_type(&binding.return_type),
+                            &self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)),
+                        )
+                    })
                     .unwrap_or_else(|| self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)));
                 let identity = match self.emitted_function_identity(&f.name, decl.span) {
                     Ok(identity) => identity,

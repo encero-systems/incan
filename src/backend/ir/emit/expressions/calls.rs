@@ -283,6 +283,9 @@ impl<'a> IrEmitter<'a> {
         let index = target_ty
             .union_variant_index_for_member(&IrType::Struct(candidate_name.to_string()))
             .or_else(|| {
+                if matches!(target_ty, IrType::ExternalUnion { native: Some(_), .. }) {
+                    return None;
+                }
                 members
                     .iter()
                     .position(|member| member.nominal_type_name() == Some(candidate_name))

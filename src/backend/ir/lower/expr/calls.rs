@@ -3386,15 +3386,29 @@ impl AstLowering {
                 return_type,
             ));
         }
-        let call_site_signature = self.callable_signature_for_call_span(call_span);
+        let mut call_site_signature = self.callable_signature_for_call_span(call_span);
         let local_callable_signature = match &f.node {
-            ast::Expr::Ident(name) => selected_emitted_name
-                .as_deref()
-                .and_then(|emitted_name| self.lookup_local_callable_signature(emitted_name))
-                .or_else(|| self.lookup_local_callable_signature(name)),
+            ast::Expr::Ident(name) => match selected_emitted_name.as_deref() {
+                Some(emitted_name) => self.lookup_local_callable_signature(emitted_name),
+                None => self.lookup_local_callable_signature(name),
+            },
             ast::Expr::Partial(_) => self.partial_expr_signature_for_span(f.span),
             _ => None,
         };
+        if let (Some(call), Some(declared)) = (&mut call_site_signature, &local_callable_signature)
+            && call.params.len() == declared.params.len()
+            && call
+                .params
+                .iter()
+                .zip(&declared.params)
+                .all(|(call, declared)| call.kind == declared.kind)
+        {
+            for (call, declared) in call.params.iter_mut().zip(&declared.params) {
+                call.ty = Self::retain_native_union_representation(std::mem::take(&mut call.ty), &declared.ty);
+            }
+            call.return_type =
+                Self::retain_native_union_representation(std::mem::take(&mut call.return_type), &declared.return_type);
+        }
         let callable_signature = imported_source_callee_path
             .as_deref()
             .map(|path| {

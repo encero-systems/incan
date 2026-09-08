@@ -619,6 +619,58 @@ impl AstLowering {
         Some(self.lower_pub_manifest_type_ref(library, &alias.target))
     }
 
+    /// Retain native carriers from the same checked callable declaration while keeping call-site specialization.
+    ///
+    /// The caller must already have joined the declaration through its selected binding. This does not compare names,
+    /// select overloads, or change ordinary inferred leaves; it restores only admitted native unions at matching typed
+    /// positions after frontend alias expansion erased their representation.
+    pub(super) fn retain_native_union_representation(mut inferred: IrType, declared: &IrType) -> IrType {
+        match (&mut inferred, declared) {
+            (target, IrType::ExternalUnion { native: Some(_), .. }) if target.is_union() => {
+                *target = declared.clone();
+            }
+            (IrType::List(left), IrType::List(right))
+            | (IrType::Set(left), IrType::Set(right))
+            | (IrType::Option(left), IrType::Option(right))
+            | (IrType::Ref(left), IrType::Ref(right))
+            | (IrType::RefMut(left), IrType::RefMut(right))
+            | (IrType::TypeToken(left), IrType::TypeToken(right)) => {
+                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
+            }
+            (IrType::Dict(left, value), IrType::Dict(right, other))
+            | (IrType::Result(left, value), IrType::Result(right, other)) => {
+                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
+                **value = Self::retain_native_union_representation(std::mem::take(value.as_mut()), other);
+            }
+            (IrType::Tuple(left), IrType::Tuple(right)) if left.len() == right.len() => {
+                for (left, right) in left.iter_mut().zip(right) {
+                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                }
+            }
+            (IrType::NamedGeneric(left_name, left), IrType::NamedGeneric(right_name, right))
+                if left_name == right_name && left.len() == right.len() =>
+            {
+                for (left, right) in left.iter_mut().zip(right) {
+                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                }
+            }
+            (
+                IrType::Function { params, ret },
+                IrType::Function {
+                    params: declared_params,
+                    ret: declared_ret,
+                },
+            ) if params.len() == declared_params.len() => {
+                for (param, declared) in params.iter_mut().zip(declared_params) {
+                    *param = Self::retain_native_union_representation(std::mem::take(param), declared);
+                }
+                **ret = Self::retain_native_union_representation(std::mem::take(ret.as_mut()), declared_ret);
+            }
+            _ => {}
+        }
+        inferred
+    }
+
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
     /// placeholders that the typechecker may have normalized to nominal names.
     pub(super) fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
