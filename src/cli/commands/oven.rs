@@ -40,11 +40,10 @@ use crate::oven::interop::{
     write_interop_execution_receipt,
 };
 use crate::oven::legacy_cargo::{
-    OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1, OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV,
-    OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource,
-    OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, legacy_cargo_inspection_sources,
-    legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite, prepare_direct_rustc_plan,
-    stage_locked_loaf_fixture,
+    OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, OvenLegacyCargoCompilerSuiteResult,
+    OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest,
+    OvenLegacyCargoPublicationKind, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
+    prepare_compiler_test_suite, prepare_direct_rustc_plan, stage_locked_loaf_fixture,
 };
 use crate::oven::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafBakerContext,
@@ -56,9 +55,10 @@ use crate::oven::loaf::{
 };
 use crate::oven::native_contract::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
-    OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION,
-    OvenCompilerTestSuiteFoundationPayload, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,
-    OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteToolchainDataPayload,
+    OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
+    OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION, OvenCompilerTestSuiteFoundationPayload,
+    OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
+    OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteToolchainDataPayload,
     OvenCompilerTestSuiteToolchainDataReference, OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
 };
 use crate::oven::native_test::{
@@ -4906,13 +4906,13 @@ mod tests {
         write_native_test_transcript,
     };
     use crate::cli::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
-    use crate::oven::legacy_cargo::OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1;
     use crate::oven::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
         OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole,
         acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
     };
     use crate::oven::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
+    use crate::oven::native_contract::OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1;
     use crate::oven::native_contract::{
         OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OvenCompilerTestSuiteArtifactClosure,
         OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,

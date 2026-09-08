@@ -340,7 +340,7 @@ pub struct OvenReceipt {
     pub compatibility: OvenCompatibility,
 }
 
-/// Typed failure while importing or atomically publishing an Oven receipt.
+/// Typed failure while validating selected Oven inputs or atomically publishing a receipt.
 #[derive(Debug, thiserror::Error)]
 pub enum OvenError {
     /// A persisted receipt uses an unsupported schema version.
@@ -386,6 +386,14 @@ pub enum OvenError {
     /// Supplemental source evidence cannot identify a portable build unit.
     #[error("Oven import requires a non-empty supplemental source {field}")]
     EmptySupplementalSource { field: &'static str },
+    /// Native execution was requested without a compatible already-selected dependency plan.
+    ///
+    /// This is a terminal input refusal. The physical executor cannot discover a graph or prepare dependencies;
+    /// the Incan Oven control plane must supply the selected closure before execution can proceed.
+    #[error(
+        "Oven selected native plan unavailable for build unit {build_unit_identity}; execution requires a compatible dependency closure"
+    )]
+    SelectedNativePlanUnavailable { build_unit_identity: String },
     /// A requested receipt transformation named a build-unit input that was not present.
     #[error("Oven receipt has no build-unit input `{input}`")]
     MissingBuildUnitInput { input: String },

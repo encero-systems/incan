@@ -19,8 +19,6 @@ use std::os::unix::fs::PermissionsExt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
-use crate::backend::project::runner::resolved_cargo_executable;
 use crate::backend::replacement::source_profile::{module_is_held_to_source_profile, source_profile_refusal};
 use crate::backend::replacement::{
     ReplacementExecutionError, ReplacementExecutionGraph, execute_prevalidated_free_function,
@@ -5709,46 +5707,22 @@ fn prepare_oven_project(
     let receipt_path =
         prepared_oven_receipt_path(&project_root, oven_plan_mode, &receipt.intent.target, path, profile)?;
     write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
-    let required_registry_dependencies = format_oven_registry_dependency_requirements(&oven_plan_dependencies);
-    // An imported package Loaf is sufficient only for consume-only commands. The explicit baker must publish the
-    // consumer's own direct registry roots with its complete generated source closure; otherwise the provider's
-    // catalog would incorrectly become the registry authority for a consumer-declared dependency.
+    // Consume-only commands may use an imported package closure. Explicit preparation requires the caller's
+    // selected dependency closure; publishing that closure belongs to the Incan Oven control plane.
     let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
         select_packaged_provider_plan(&oven_store, &checked_provider_profiles, profile, &receipt)?
     } else {
         None
     };
     let plan_preparation = if let Some(selection) = packaged_provider_selection {
-        Some(OvenDirectRustcPlanPreparation {
+        OvenDirectRustcPlanPreparation {
             plan_selection: selection,
             materialization: OvenToolchainMaterialization::Reused,
             cargo_process_started: false,
-        })
+        }
     } else {
-        select_or_bake_generated_project_plan(
-            oven_plan_mode,
-            &oven_store,
-            &receipt,
-            OvenProjectDependencySurface {
-                selection: &oven_plan_dependencies,
-            },
-            generator.output_dir(),
-            &generator.crate_root_path(),
-            &rustc,
-        )?
+        require_oven_direct_rustc_plan(&oven_store, &receipt, &oven_plan_dependencies)?
     };
-    let plan_preparation = plan_preparation.ok_or_else(|| {
-        CliError::failure(format!(
-            "{}. `incan build` and `incan run` {}. {} (Needs: {}. Build record {}; generated project: {}; receipt: {}.)",
-            OVEN_DEPENDENCY_MISS_SUMMARY,
-            OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
-            OVEN_LOAF_MISS_GUIDANCE,
-            required_registry_dependencies,
-            receipt.identity,
-            generator.output_dir().display(),
-            receipt_path.display(),
-        ))
-    })?;
     let plan_selection = plan_preparation.plan_selection;
     let registry_authority = registry_leaf_authority_for_plan_selection(&plan_selection)?;
     let full_artifact_plan = plan_selection.artifact_plan();
@@ -6011,12 +5985,12 @@ fn select_oven_direct_rustc_plan_with_materialization(
                 cargo_process_started: false,
             }));
         }
-        return Err(CliError::failure(format!(
-            "{}. Nested build and run {}. (Needs: {}.)",
-            OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
-            OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
-            format_oven_registry_dependency_requirements(registry_dependencies),
-        )));
+        return Err(CliError::failure(
+            crate::oven::OvenError::SelectedNativePlanUnavailable {
+                build_unit_identity: receipt.build_unit_identity.clone(),
+            }
+            .to_string(),
+        ));
     }
 
     if receipt_requires_final_interop_plan(receipt) {
@@ -6041,6 +6015,32 @@ fn select_oven_direct_rustc_plan_with_materialization(
         }));
     }
     Ok(None)
+}
+
+/// Require an already-selected native closure without entering a dependency planner or publisher.
+///
+/// Existing receipt, artifact, compiler and lease validation remains in the shared selector. A miss is terminal
+/// until the Incan Oven control plane supplies a compatible plan; explicit bake intent does not authorize an
+/// alternate Rust graph producer.
+fn require_oven_direct_rustc_plan(
+    store: &OvenStore,
+    receipt: &crate::oven::OvenReceipt,
+    registry_dependencies: &[DependencySpec],
+) -> CliResult<OvenDirectRustcPlanPreparation> {
+    // The final interop publication is an exact stored plan, including for nested native callers. Preserve the
+    // pre-cut selected-input path before considering a broad compiler-suite/toolchain closure.
+    if receipt_requires_final_interop_plan(receipt) {
+        return select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)?
+            .ok_or_else(interop_final_plan_required_error);
+    }
+    select_oven_direct_rustc_plan_with_materialization(store, receipt, registry_dependencies)?.ok_or_else(|| {
+        CliError::failure(
+            crate::oven::OvenError::SelectedNativePlanUnavailable {
+                build_unit_identity: receipt.build_unit_identity.clone(),
+            }
+            .to_string(),
+        )
+    })
 }
 
 /// Select the immutable full-stdlib base that supplies the release-owned Incan dependency cohort.
@@ -10687,46 +10687,23 @@ fn prepare_library_project(
                 crate::oven::default_receipt_path(&project_root).with_file_name("library-debug-receipt.json")
             };
             write_receipt(&receipt, receipt_path.clone()).map_err(|error| CliError::failure(error.to_string()))?;
-            let required_registry_dependencies = format_oven_registry_dependency_requirements(&oven_plan_dependencies);
             let oven_select_direct_rustc_plan_start = Instant::now();
-            // An imported package Loaf is sufficient only for consume-only commands. An explicit library bake must
-            // instead publish the library's own direct registry roots with its complete generated source closure.
+            // Consume-only commands may use an imported package closure. Explicit library preparation requires
+            // the library's selected dependency closure, supplied by the Incan Oven control plane.
             let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
                 select_packaged_provider_plan(store, &checked_provider_profiles, profile, &receipt)?
             } else {
                 None
             };
             let plan_preparation = if let Some(selection) = packaged_provider_selection {
-                Some(OvenDirectRustcPlanPreparation {
+                OvenDirectRustcPlanPreparation {
                     plan_selection: selection,
                     materialization: OvenToolchainMaterialization::Reused,
                     cargo_process_started: false,
-                })
+                }
             } else {
-                select_or_bake_generated_project_plan(
-                    oven_plan_mode,
-                    store,
-                    &receipt,
-                    OvenProjectDependencySurface {
-                        selection: &oven_plan_dependencies,
-                    },
-                    generator.output_dir(),
-                    &generator.crate_root_path(),
-                    &rustc,
-                )?
-            }
-            .ok_or_else(|| {
-                CliError::failure(format!(
-                    "{}. `incan build --lib` {}. {} (Needs: {}. `{profile}` build record {}; generated project: {}; receipt: {}.)",
-                    OVEN_DEPENDENCY_MISS_SUMMARY,
-                    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
-                    OVEN_LOAF_MISS_GUIDANCE,
-                    required_registry_dependencies,
-                    receipt.identity,
-                    generator.output_dir().display(),
-                    receipt_path.display(),
-                ))
-            })?;
+                require_oven_direct_rustc_plan(store, &receipt, &oven_plan_dependencies)?
+            };
             record_timing(
                 &mut timings_ms,
                 "library_oven_select_direct_rustc_plan",
@@ -15401,21 +15378,19 @@ headers = ["interop/include/bridge.h"]
             materialized_files: Vec::new(),
         })?;
 
-        let selected = select_or_bake_generated_project_plan(
-            OvenProjectPlanMode::ConsumeOnly,
-            &store,
-            &receipt,
-            OvenProjectDependencySurface { selection: &[] },
-            project.path(),
-            &generated,
-            &PathBuf::from("/usr/bin/rustc"),
-        )?
-        .ok_or("normal Oven consumer did not select its exact final interop plan")?;
+        let selected = require_oven_direct_rustc_plan(&store, &receipt, &[])?;
         assert!(matches!(
             selected.plan_selection,
             OvenDirectRustcPlanSelection::Stored(_)
         ));
         assert!(!selected.cargo_process_started);
+        let repeated = require_oven_direct_rustc_plan(&store, &receipt, &[])?;
+        assert_eq!(
+            selected.plan_selection.report_identity(),
+            repeated.plan_selection.report_identity()
+        );
+        assert_eq!(repeated.materialization, OvenToolchainMaterialization::Reused);
+        assert!(!repeated.cargo_process_started);
         Ok(())
     }
 
@@ -17129,122 +17104,38 @@ headers = ["interop/include/bridge.h"]
     }
 
     #[test]
-    fn explicit_project_bake_publishes_a_generated_receipt_closure() -> Result<(), Box<dyn std::error::Error>> {
+    fn native_plan_miss_does_not_prepare_a_dependency_closure() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        let generated_root = project.path().join("src/main.rs");
-        let dependency_root = project.path().join("dependency");
-        fs::create_dir_all(generated_root.parent().ok_or("generated root has no parent")?)?;
-        fs::create_dir_all(dependency_root.join("src"))?;
-        fs::write(
-            project.path().join("Cargo.toml"),
-            "[package]\nname = \"oven_explicit_bake_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\noven_bake_dependency = { path = \"dependency\" }\n",
-        )?;
-        fs::write(
-            dependency_root.join("Cargo.toml"),
-            "[package]\nname = \"oven_bake_dependency\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-        )?;
-        fs::write(dependency_root.join("src/lib.rs"), "pub fn value() -> u8 { 7 }\n")?;
-        fs::write(
-            &generated_root,
-            "fn main() { let _ = oven_bake_dependency::value(); }\n",
-        )?;
-
-        let rustc = resolve_active_rustc()?;
+        let generated_root = project.path().join("main.rs");
+        fs::write(&generated_root, "fn main() {}\n")?;
+        let manifest = project.path().join("Cargo.toml");
+        let poison = "invalid Cargo manifest: this input must not become selection authority\n";
+        fs::write(&manifest, poison)?;
         let receipt = receipt_generated_project(
             &OvenGeneratedProjectRequest::new(
                 project.path(),
-                "oven_explicit_bake_fixture",
+                "missing_selected_closure",
                 "0.1.0",
-                rustc_host_target(&rustc)?,
-                rustc_identity(&rustc)?,
+                "aarch64-apple-darwin",
+                "unavailable-native-plan-test-toolchain",
                 "debug",
                 Vec::new(),
             )
-            .with_generated_source("generated-root", &generated_root)
-            .with_build_unit_input("provider-plan", digest_bytes(b"")),
+            .with_generated_source("generated-root", &generated_root),
         )?;
         let store = OvenStore::new(
             project.path().join("oven-store"),
-            crate::oven::store::OvenStoreLimits::new(1024 * 1024 * 1024, 1024 * 1024 * 1024, 1024 * 1024 * 1024),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
         );
-
-        let consume_only = select_or_bake_generated_project_plan(
-            OvenProjectPlanMode::ConsumeOnly,
-            &store,
-            &receipt,
-            OvenProjectDependencySurface { selection: &[] },
-            project.path(),
-            &generated_root,
-            &rustc,
-        );
-        let compiler_suite_native = env::var_os("INCAN_INTERNAL_OVEN_LOAF_EXECUTION").is_some_and(|value| value == "1");
-        if compiler_suite_native {
-            let Err(error) = consume_only else {
-                return Err("a compiler-suite normal consumer must reject a caller-owned Loaf miss".into());
-            };
-            let message = error.to_string();
-            assert!(
-                message.contains(OVEN_NESTED_DEPENDENCY_MISS_SUMMARY)
-                    && message.contains(OVEN_NO_IMPLICIT_DEPENDENCY_BUILD),
-                "compiler-suite normal consumers must remain Cargo-free even when the explicit baker is tested, got: {message}"
-            );
-        } else {
-            let consume_only = consume_only?;
-            assert!(
-                consume_only.is_none(),
-                "a normal consumer must not invoke the compatibility baker on a miss"
-            );
-        }
-        assert!(
-            !project.path().join("Cargo.lock").exists(),
-            "a consume-only normal command must not create Cargo publisher state"
-        );
-        fs::write(
-            project.path().join("Cargo.lock"),
-            "version = 4\n\n[[package]]\nname = \"oven_bake_dependency\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"oven_explicit_bake_fixture\"\nversion = \"0.1.0\"\ndependencies = [\"oven_bake_dependency\"]\n",
-        )?;
-
-        let first = select_or_bake_generated_project_plan(
-            OvenProjectPlanMode::ExplicitBake,
-            &store,
-            &receipt,
-            OvenProjectDependencySurface { selection: &[] },
-            project.path(),
-            &generated_root,
-            &rustc,
-        )?
-        .ok_or("explicit Oven bake did not select its published plan")?;
-        assert_eq!(first.materialization, OvenToolchainMaterialization::CompatibilityBaked);
-        assert!(project.path().join("Cargo.lock").is_file());
-        let OvenDirectRustcPlanSelection::Stored(first_stored) = &first.plan_selection else {
-            return Err("an explicit project bake must select its project Loaf".into());
+        let Err(error) = require_oven_direct_rustc_plan(&store, &receipt, &[]) else {
+            return Err("an absent native dependency plan must refuse execution".into());
         };
-        let loaf_root = first_stored
-            .artifact_root
-            .parent()
-            .ok_or("a project Loaf artifact root must have its owning entry directory")?;
-        assert_eq!(
-            loaf_root.extension().and_then(|extension| extension.to_str()),
-            Some("loaf")
-        );
-        assert!(loaf_root.join("loaf.json").is_file());
-
-        let second = select_or_bake_generated_project_plan(
-            OvenProjectPlanMode::ExplicitBake,
-            &store,
-            &receipt,
-            OvenProjectDependencySurface { selection: &[] },
-            project.path(),
-            &generated_root,
-            &rustc,
-        )?
-        .ok_or("repeated explicit Oven bake lost its selected plan")?;
-        assert_eq!(second.materialization, OvenToolchainMaterialization::Reused);
-        assert_eq!(
-            first.plan_selection.report_identity(),
-            second.plan_selection.report_identity(),
-            "an unchanged project receipt must reuse the already published direct-rustc plan"
-        );
+        assert!(error.to_string().contains("selected native plan unavailable"));
+        assert!(error.to_string().contains(&receipt.build_unit_identity));
+        assert_eq!(fs::read_to_string(&manifest)?, poison);
+        assert!(!project.path().join("Cargo.lock").exists());
+        assert!(!project.path().join("target").exists());
+        assert!(store.inspect()?.entries.is_empty());
         Ok(())
     }
 

@@ -298,11 +298,6 @@ impl ProjectGenerator {
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
             include_dev_dependencies: false,
-            cargo_lock_payload: None,
-            cargo_lock_projection_root: None,
-            clear_cargo_lock: false,
-            cargo_policy_flags: Vec::new(),
-            cargo_target_dir_override: None,
             generated_source_identity: RwLock::new(None),
             #[cfg(feature = "cli")]
             generated_cache_lease: RwLock::new(None),

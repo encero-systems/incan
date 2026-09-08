@@ -4026,7 +4026,7 @@ mod tests {
         let shard_identity = store.manifest_for_publication(&shard)?.identity;
         let reached_commit_point = Cell::new(false);
 
-        let interrupted = store.publish_batch_with_commit_hook(&[index.clone(), shard.clone()], false, || {
+        let interrupted = store.publish_batch_with_commit_hook(&[index.clone(), shard.clone()], || {
             reached_commit_point.set(true);
             assert!(store.entry_root(&shard_identity).is_dir());
             assert!(!store.entry_root(&index_identity).exists());
