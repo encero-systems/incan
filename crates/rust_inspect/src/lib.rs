@@ -1,4 +1,4 @@
-//! Rust inspect metadata extraction on top of a generated Cargo workspace (typically `target/incan_lock`).
+//! Rust metadata extraction from an explicitly selected, physically validated inspection projection.
 //!
 //! The `Inspector` API separates eager extraction (`prewarm`) from cache-only reads (`get`) so compiler hot paths can
 //! remain extraction-free.
@@ -21,6 +21,9 @@ mod error;
 mod extractor;
 mod generic_params;
 mod loader;
+mod selection;
+#[cfg(test)]
+mod selection_test_support;
 
 pub use cache::RustMetadataCache;
 pub use error::RustMetadataError;
@@ -31,13 +34,14 @@ pub use loader::{
     read_generated_out_dirs_map, write_generated_out_dirs_map, write_oven_generated_out_dirs,
     write_oven_inspection_source_authority, write_sealed_oven_inspection_source_authority,
 };
+pub use selection::{InspectionSourceInput, SelectedInspectionInputs, ValidatedInspectionProject};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// How faithfully the returned metadata matches the query path.
 pub enum Fidelity {
     /// Exact canonical-path cache hit.
     Exact,
-    /// Resolved via a normalized alias (for example underscore/hyphen crate-name mapping).
+    /// Resolved via normalized raw-identifier spelling or a checked definition alias.
     Normalized,
     /// Metadata exists, but contains unknown shapes/displays (`?`) and should be treated conservatively.
     Unknown,
@@ -89,10 +93,10 @@ impl Inspector {
         })
     }
 
-    /// Create an inspector bound to one generated lock workspace.
+    /// Create an inspector for one caller-owned cache context.
     ///
-    /// The workspace should be compiler-managed, usually the generated lock workspace used for Rust interop
-    /// preparation rather than the user's live application tree.
+    /// Preparation must bind a selected database through [`RustMetadataCache::bind_selected_workspace`] before
+    /// extraction or persisted-cache access. A directory alone does not establish dependency/source authority.
     pub fn new(config: InspectorConfig) -> Self {
         Self {
             config,
@@ -326,6 +330,8 @@ mod tests {
             "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )?;
         let inspector = Inspector::new(InspectorConfig::new(tmp.path()));
+        let fixture = crate::selection_test_support::InspectionFixture::new("#![no_std]\npub struct Thing;\n")?;
+        inspector.cache().bind_selected_workspace(tmp.path(), fixture.load()?)?;
         inspector
             .cache()
             .insert_test_item(tmp.path(), dummy_type_metadata("demo::Thing"))?;

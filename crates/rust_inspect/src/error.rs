@@ -1,4 +1,4 @@
-//! Errors produced while loading Cargo workspaces or extracting Rust item metadata.
+//! Errors produced while validating selected inspection inputs or extracting Rust metadata.
 
 use std::path::PathBuf;
 
@@ -8,9 +8,20 @@ pub enum RustMetadataError {
     /// Local filesystem error (creating temp projects, canonical paths, …).
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    /// `ra_ap_load_cargo` failed to build a `RootDatabase` for the manifest.
-    #[error("failed to load Cargo workspace at {path}: {message}")]
+    /// The neutral rust-analyzer loader failed to build a database for the selected projection.
+    #[error("failed to load selected Rust workspace at {path}: {message}")]
     LoadWorkspace { path: PathBuf, message: String },
+    /// No explicit selected projection is bound to this inspection context.
+    #[error(
+        "selected Rust inspection inputs are unavailable at {path}; Oven must supply the admitted projection (#991, #1037)"
+    )]
+    SelectedInputUnavailable { path: PathBuf },
+    /// A supplied projection or physical input does not match its declared binding.
+    #[error("invalid selected Rust inspection input at {path}: {message}")]
+    InvalidSelectedInput { path: PathBuf, message: String },
+    /// The bounded host has no implementation for a requested physical operation.
+    #[error("selected Rust inspection operation is unavailable: {operation}")]
+    UnsupportedSelectedOperation { operation: &'static str },
     /// No crate in the resolved graph matches the first `rust::` path segment.
     #[error("Rust crate `{0}` not found in loaded workspace")]
     CrateNotFound(String),
