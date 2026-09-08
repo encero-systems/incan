@@ -2237,6 +2237,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let target_ty = IrType::ExternalUnion {
             library: "widgets".to_string(),
+            native: None,
             union: Box::new(IrType::NamedGeneric(
                 IR_UNION_TYPE_NAME.to_string(),
                 vec![

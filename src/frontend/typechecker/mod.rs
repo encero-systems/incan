@@ -6329,6 +6329,7 @@ impl TypeChecker {
         });
         self.type_info.declarations.public_type_bridge_roots = roots;
         self.type_info.declarations.foreign_pub_type_remappings = self.foreign_pub_type_remappings.clone();
+        self.type_info.declarations.named_type_origins = self.checked_nominal_type_origins();
         self.type_info.declarations.named_type_identities = self
             .public_library_type_identities
             .iter()

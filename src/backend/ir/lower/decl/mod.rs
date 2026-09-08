@@ -193,7 +193,8 @@ impl AstLowering {
                         ty: self.lower_type(&n.underlying.node),
                         is_rusttype: true,
                         interop_edges,
-                    }));
+                    })
+                    .with_span(span.into()));
                 }
                 // Note: newtype checked construction hook selection is done in `lower_program` when we see the full
                 // newtype declaration.
@@ -233,7 +234,7 @@ impl AstLowering {
                 });
             }
         };
-        Ok(IrDecl::new(kind))
+        Ok(IrDecl::new(kind).with_span(span.into()))
     }
 
     /// Materialize the canonical source identity for a frontend-approved explicit registry entry.

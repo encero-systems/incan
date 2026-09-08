@@ -833,6 +833,7 @@ pub fn collect_checked_api_alias_metadata(program: &Program, module_path: Vec<St
 /// function's decorators and checked callable shape onto facade aliases.
 pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
     let mut projections = HashMap::new();
+    let mut type_projections = HashMap::new();
     let mut aliases = Vec::new();
 
     for module in modules.iter() {
@@ -848,13 +849,34 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                         },
                     );
                 }
-                ApiDeclaration::Alias(alias) => aliases.push(ApiAliasProjectionRequest {
-                    path: declaration_path(&module.module_path, &alias.name),
-                    target_path: normalized_api_target_path(&alias.target_path),
-                    module_path: module.module_path.clone(),
-                    name: alias.name.clone(),
-                    anchor: alias.anchor.clone(),
-                }),
+                ApiDeclaration::TypeAlias(alias) if alias.type_alias.target.has_native_union() => {
+                    type_projections.insert(
+                        declaration_path(&module.module_path, &alias.name),
+                        alias.type_alias.target.clone(),
+                    );
+                }
+                ApiDeclaration::Alias(alias) => {
+                    let path = declaration_path(&module.module_path, &alias.name);
+                    // External projections are already bound to admitted artifacts. Local aliases are refreshed
+                    // from their current declaration after native representation publication updates that target.
+                    if alias.target_path.first().is_some_and(|root| root == "pub") {
+                        if let Some(function) = &alias.projected_function {
+                            projections.insert(path.clone(), function.clone());
+                        }
+                        if let Some(ty) = &alias.projected_type {
+                            if ty.has_native_union() {
+                                type_projections.insert(path.clone(), ty.clone());
+                            }
+                        }
+                    }
+                    aliases.push(ApiAliasProjectionRequest {
+                        path: declaration_path(&module.module_path, &alias.name),
+                        target_path: normalized_api_target_path(&alias.target_path),
+                        module_path: module.module_path.clone(),
+                        name: alias.name.clone(),
+                        anchor: alias.anchor.clone(),
+                    });
+                }
                 _ => {}
             }
         }
@@ -864,7 +886,7 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
     while changed {
         changed = false;
         for alias in &aliases {
-            if projections.contains_key(&alias.path) {
+            if projections.contains_key(&alias.path) && type_projections.contains_key(&alias.path) {
                 continue;
             }
             // An alias whose target lives in its own module records that target unqualified, because that is how the
@@ -882,10 +904,23 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                 .as_ref()
                 .and_then(|path| projections.get(path))
                 .or_else(|| projections.get(&alias.target_path));
-            if let Some(target) = resolved {
-                let projection = projected_function_for_alias(alias, target);
-                projections.insert(alias.path.clone(), projection);
-                changed = true;
+            if !projections.contains_key(&alias.path) {
+                if let Some(target) = resolved {
+                    let projection = projected_function_for_alias(alias, target);
+                    projections.insert(alias.path.clone(), projection);
+                    changed = true;
+                }
+            }
+            if !type_projections.contains_key(&alias.path) {
+                let target = qualified
+                    .as_ref()
+                    .and_then(|path| type_projections.get(path))
+                    .or_else(|| type_projections.get(&alias.target_path))
+                    .cloned();
+                if let Some(target) = target {
+                    type_projections.insert(alias.path.clone(), target);
+                    changed = true;
+                }
             }
         }
     }
@@ -895,6 +930,9 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
             if let ApiDeclaration::Alias(alias) = declaration {
                 let alias_path = declaration_path(&module.module_path, &alias.name);
                 alias.projected_function = projections.get(&alias_path).cloned();
+                if let Some(ty) = type_projections.get(&alias_path) {
+                    alias.projected_type = Some(ty.clone());
+                }
             }
         }
     }
@@ -2755,6 +2793,12 @@ fn type_ref_doc_name(ty: &TypeRef) -> String {
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("&{}", type_ref_doc_name(inner)),
         TypeRef::RustPath { path } => path.clone(),
+        TypeRef::NativeUnion(native) => native
+            .members
+            .iter()
+            .map(type_ref_doc_name)
+            .collect::<Vec<_>>()
+            .join(" | "),
         TypeRef::Unknown => "Unknown".to_string(),
     }
 }

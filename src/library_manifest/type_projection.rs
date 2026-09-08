@@ -54,6 +54,7 @@ impl VisitTypeRefs for TypeRef {
         visit(self);
         match self {
             Self::Applied { args, .. } => args.visit_type_refs(visit),
+            Self::NativeUnion(native) => native.members.visit_type_refs(visit),
             Self::Function { params, return_type } => {
                 params.visit_type_refs(visit);
                 return_type.visit_type_refs(visit);
@@ -177,6 +178,12 @@ pub(crate) fn with_checked_type_routes<T: VisitTypeRefs>(
     mut value: T,
     routes: Option<&std::collections::HashMap<String, String>>,
 ) -> T {
+    let mut native_members = Vec::new();
+    value.visit_type_refs(&mut |ty| {
+        if let TypeRef::NativeUnion(native) = ty {
+            native_members.push((native.owner.clone(), native.rust_name.clone(), native.members.clone()));
+        }
+    });
     value.visit_type_refs(&mut |leaf| {
         if let TypeRef::Named { name, origin } | TypeRef::Applied { name, origin, .. } = leaf {
             if let Some(identity) = origin.take() {
@@ -188,6 +195,18 @@ pub(crate) fn with_checked_type_routes<T: VisitTypeRefs>(
                 } else {
                     *leaf = TypeRef::Unknown;
                 }
+            }
+        }
+    });
+    // Native wire members remain semantic evidence. The admitted projection already carries its separately routed
+    // member copy, so this general nominal rewrite must not replace the producer's immutable member identities.
+    value.visit_type_refs(&mut |ty| {
+        if let TypeRef::NativeUnion(native) = ty {
+            if let Some((_, _, members)) = native_members
+                .iter()
+                .find(|(owner, name, _)| owner == &native.owner && name == &native.rust_name)
+            {
+                native.members = members.clone();
             }
         }
     });
@@ -314,5 +333,88 @@ mod tests {
             }
         });
         assert_eq!(seen, 3);
+    }
+}
+
+/// Bind native carriers through the existing admitted provider graph before projecting a compiler-owned API copy.
+///
+/// The original producer members stay immutable. Only the non-serialized physical projection is routed for emission;
+/// its owner is selected by the admitted artifact, never inferred from a generated wrapper spelling.
+pub(crate) fn with_checked_native_unions<T: VisitTypeRefs>(
+    mut value: T,
+    library: &str,
+    plan: Option<&crate::provider::ProviderPlan>,
+    routes: Option<&std::collections::HashMap<String, String>>,
+) -> Result<T, String> {
+    let mut failure = None;
+    value.visit_type_refs(&mut |ty| {
+        if failure.is_some() {
+            return;
+        }
+        let TypeRef::NativeUnion(native) = ty else {
+            return;
+        };
+        if native.checked_projection.is_some() {
+            return;
+        }
+        let Some(plan) = plan else {
+            failure = Some(format!(
+                "native union `{}` has no admitted provider plan",
+                native.rust_name
+            ));
+            return;
+        };
+        let (mut bound, route) = match plan.public_native_union_projection(library, native) {
+            Ok(projection) => projection,
+            Err(error) => {
+                failure = Some(error);
+                return;
+            }
+        };
+        let mut owner_path = vec![library.to_string()];
+        for dependency in route {
+            owner_path.push(crate::frontend::rust_type_display::PROVIDER_RUST_BRIDGE_MODULE.to_string());
+            owner_path.push(dependency);
+        }
+        let rust_owner = format!("::{}", owner_path.join("::"));
+        let mut members = match with_checked_native_unions(bound.members.clone(), library, Some(plan), routes) {
+            Ok(members) => with_checked_type_routes(members, routes),
+            Err(error) => {
+                failure = Some(error);
+                return;
+            }
+        };
+        members.visit_type_refs(&mut |member| match member {
+            TypeRef::Named { name, origin: None } if !name.starts_with("::") => {
+                if matches!(
+                    super::resolved_type_from_manifest_type_ref(&TypeRef::Named {
+                        name: name.clone(),
+                        origin: None
+                    }),
+                    crate::frontend::symbols::ResolvedType::Named(_)
+                ) {
+                    *name = format!("{rust_owner}::{name}");
+                }
+            }
+            TypeRef::Applied { name, origin: None, .. } if !name.starts_with("::") => {
+                if incan_core::lang::types::collections::from_str(name).is_none()
+                    && name != incan_core::lang::types::UNION_TYPE_NAME
+                    && name != "decimal"
+                {
+                    *name = format!("{rust_owner}::{name}");
+                }
+            }
+            _ => {}
+        });
+        bound.checked_projection = Some(Box::new(super::model::NativeUnionProjection {
+            rust_owner,
+            members,
+            nominal_origins: BTreeMap::new(),
+        }));
+        *native = bound;
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(value),
     }
 }

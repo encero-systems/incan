@@ -11341,6 +11341,7 @@ fn prepare_library_project(
 
     // Keep the historical aggregate for existing consumers, while separating the stages that were previously
     // attributed misleadingly as one `library_generate_rust` cost in Oven performance evidence.
+    codegen.set_publication_api(library_manifest.contract_metadata.api.clone());
     let codegen_start = Instant::now();
     let (backend_output_identity, generation_metadata) = if emitted_dep_modules.is_empty() {
         let emit_rust_start = Instant::now();

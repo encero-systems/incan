@@ -156,6 +156,8 @@ pub struct AstLowering {
     pub(super) type_info: Option<TypeCheckInfo>,
     /// Shared provider and feature projection used to rehydrate compiled dependency metadata.
     pub(super) provider_plan: Option<Arc<ProviderPlan>>,
+    /// Metadata-admission errors discovered at infallible type readers, reported by the enclosing lowering pass.
+    pub(super) metadata_errors: std::cell::RefCell<Vec<String>>,
     /// Whether this lowering pass emits one compiled SDK-provider artifact.
     ///
     /// Provider source addresses stdlib contracts through its crate-local `__incan_std` facade. Ordinary consumers
@@ -639,6 +641,7 @@ impl AstLowering {
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             provider_plan: None,
+            metadata_errors: std::cell::RefCell::new(Vec::new()),
             sdk_provider_build: false,
             newtype_construction: HashMap::new(),
             current_impl_type: None,
@@ -2931,6 +2934,15 @@ impl AstLowering {
             .is_some_and(|info| info.c_abi.uses_checked_c_span_buffers);
         ir_program.member_projections = self.emitted_member_projections.clone();
 
+        errors.extend(
+            self.metadata_errors
+                .borrow_mut()
+                .drain(..)
+                .map(|message| LoweringError {
+                    message,
+                    span: IrSpan::default(),
+                }),
+        );
         if errors.is_empty() {
             Ok(ir_program)
         } else {

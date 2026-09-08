@@ -404,6 +404,12 @@ pub struct LibraryContractMetadata {
     /// Optional executable publication selected by this exact manifest; linking-only packages may omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_representation: Option<ExecutableRepresentationExport>,
+    /// Publicly referenced union definitions captured from this artifact's final native emission.
+    ///
+    /// Entries are owned by this containing artifact and retain the exact emitted name and payload order. Typed
+    /// references forwarded from another artifact retain that selected owner and do not add a local definition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_unions: Vec<NativeUnionExport>,
     /// Generic compiled-provider facts used by SDK and ordinary package consumers.
     #[serde(default, skip_serializing_if = "CompiledProviderMetadata::is_empty")]
     pub provider: CompiledProviderMetadata,
@@ -1265,6 +1271,65 @@ impl NominalTypeOriginExport {
     }
 }
 
+impl TypeRef {
+    /// Return whether this typed position contains an explicit emitted-union carrier at any nesting depth.
+    pub(crate) fn has_native_union(&self) -> bool {
+        let mut found = false;
+        super::type_projection::VisitTypeRefs::visit_type_refs(&mut self.clone(), &mut |ty| {
+            found |= matches!(ty, TypeRef::NativeUnion(_));
+        });
+        found
+    }
+}
+
+/// Artifact ownership of an emitted anonymous-union wrapper.
+///
+/// A producer cannot include its own final artifact digest in that artifact. Admission binds `ContainingArtifact`
+/// to the selected containing provider; forwarding retains that exact selection as `SelectedArtifact`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NativeUnionOwnerExport {
+    ContainingArtifact,
+    SelectedArtifact(crate::provider::ProviderIdentity),
+}
+
+/// Native representation captured from the producer's final emitted union definition.
+///
+/// `members` retain producer payload order: their indices are the emitted `V0`, `V1`, ... variants. A consumer may
+/// project their nominal leaves to different physical Rust routes, but may neither reorder them nor recompute the
+/// wrapper name from those routes. The containing selected artifact authenticates this representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeUnionExport {
+    pub owner: NativeUnionOwnerExport,
+    pub rust_name: String,
+    pub members: Vec<TypeRef>,
+    /// Checked consumer-only physical projection; never accepted from or written to the manifest wire.
+    #[serde(skip)]
+    pub(crate) checked_projection: Option<Box<NativeUnionProjection>>,
+}
+
+/// Physical projection of an admitted union, separate from its immutable producer representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeUnionProjection {
+    pub rust_owner: String,
+    pub members: Vec<TypeRef>,
+    /// Exact accepted nominal bindings under the Rust spellings selected by the consumer's lowering pass.
+    pub nominal_origins: BTreeMap<String, NominalTypeOriginExport>,
+}
+
+impl NativeUnionExport {
+    /// Remove consumer-only physical projections while preserving the admitted producer's wire representation.
+    pub(crate) fn for_publication(&self) -> Self {
+        let mut native = self.clone();
+        native.checked_projection = None;
+        super::type_projection::VisitTypeRefs::visit_type_refs(&mut native.members, &mut |ty| {
+            if let TypeRef::NativeUnion(nested) = ty {
+                nested.checked_projection = None;
+            }
+        });
+        native
+    }
+}
+
 /// Stable manifest-level type reference used by library exports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeRef {
@@ -1302,6 +1367,12 @@ pub enum TypeRef {
     RustPath { path: String },
     /// A placeholder used when the manifest intentionally preserves unknown type information.
     Unknown,
+    /// An ordinary union with its producer-owned native wrapper and ordered semantic payloads.
+    ///
+    /// Legacy manifests retain `Applied { name: "Union", .. }`; this explicit carrier is emitted only when the
+    /// producer supplied actual native representation evidence. Appending the variant preserves earlier positional
+    /// discriminants; readers still need the containing payload's version to accept new representation evidence.
+    NativeUnion(NativeUnionExport),
 }
 
 /// Exported field metadata for models and classes.
@@ -2017,6 +2088,11 @@ fn rewrite_type_ref_names(
         TypeRef::Tuple { elements } => {
             for element in elements {
                 rewrite_type_ref_names(element, owner_module_path, public_names, source_paths_by_leaf);
+            }
+        }
+        TypeRef::NativeUnion(native) => {
+            for member in &mut native.members {
+                rewrite_type_ref_names(member, owner_module_path, public_names, source_paths_by_leaf);
             }
         }
         TypeRef::TypeParam { .. } | TypeRef::SelfType | TypeRef::RustPath { .. } | TypeRef::Unknown => {}

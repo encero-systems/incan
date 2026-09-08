@@ -2792,6 +2792,7 @@ mod tests {
         );
         let target_ty = IrType::List(Box::new(IrType::ExternalUnion {
             library: "right_provider".to_string(),
+            native: None,
             union: Box::new(provider_union.clone()),
         }));
         let expr = TypedExpr::new(
