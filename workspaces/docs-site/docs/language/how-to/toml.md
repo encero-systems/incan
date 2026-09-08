@@ -1,6 +1,38 @@
 # Read and write TOML data
 
-Use `std.toml` to read a document into a model and produce TOML text from that model. This is suitable for reading configuration or writing generated data. Serializing an existing document discards its comments, key order, and formatting.
+Use `std.toml` to read selected configuration fields or decode a complete model and produce TOML text. This is suitable for reading configuration or writing generated data. Serializing an existing document discards its comments, key order, and formatting.
+
+## Read required and optional fields
+
+Parse the source once, then state the type expected at each dotted path. Use `?` to propagate malformed input, missing required values, and type errors to the caller:
+
+```incan
+"""Read project settings without declaring the complete manifest schema."""
+
+from std import toml
+from std.toml import TomlError
+
+
+def describe_project(source: str) -> Result[str, TomlError]:
+    """Read required project fields and supply a default only for an absent version."""
+    document = toml.parse(source)?
+    name = document.get[str]("project.name")?
+    targets = document.get[list[str]]("project.targets")?
+    version = document.get_optional[str]("project.version")?.unwrap_or("unversioned")
+    return Ok(f"{name} ({version}): {targets}")
+
+
+def main() -> None:
+    """Print project settings or a path-bearing diagnostic."""
+    source = "[project]\nname = \"demo\"\ntargets = [\"linux\", \"macos\"]\n"
+    match describe_project(source):
+        Ok(description) => println(description)
+        Err(error) => println(error.message())
+```
+
+If `project.version` is absent, the example uses `unversioned`. If it is present as an integer, the lookup returns an error; the default does not hide the invalid value. Likewise, an integer in `targets` reports the offending element's path, such as `project.targets[2]`.
+
+For a key literally named `project.name`, use `document.get_key[str]("project.name")?`. Dotted lookup always traverses tables. To inspect an unknown shape, select a dynamic subtree with `document.get_value("project")?`, then use its `kind`, `as_table`, or `as_array` methods.
 
 ## Decode a model and serialize the result
 
@@ -45,8 +77,8 @@ Changing `version = "0.1.0"` to `version = 1` produces a decode error because th
 
 For a diagnostic with coordinates, inspect `error.line` and `error.column` before displaying them: both are optional. `error.message()` supplies the diagnostic text even when there is no source position.
 
-## Read a document with an open schema
+## Report an application validation error
 
-When the complete structure is not known, call `toml.parse(source)` and inspect the resulting `TomlValue`. Retain a successful lookup when traversing a subtree repeatedly, because `get` and `get_index` return owned copies. For an application validation error, `toml.locate(source, path)` can recover the selected value's source span from the original text.
+Keep the original `TomlValue` when you need to associate a policy failure with an input field. `document.get_value("project.name")?.location()` returns the selected value's original span without reparsing. Both `line` and `column` are one-based; columns count Unicode characters. A value without an authored span returns `None`.
 
 See the [`std.toml` reference](../reference/stdlib/toml.md) for the complete function, value, and error contracts.

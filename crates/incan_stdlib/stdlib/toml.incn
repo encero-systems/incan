@@ -2,14 +2,26 @@
 TOML documents for project manifests and generated lock files.
 
 `parse` reads an open document as `TomlValue`; `deserialize[T]` validates a declared model directly against the original
-source so structural errors keep their source locations. `serialize` writes models and dynamic values as TOML.
+source so structural errors keep their source locations. `serialize` writes models; `TomlValue.to_toml` writes dynamic documents.
 Serialization preserves values, including date/time kinds, but discards comments, key order, and authored formatting.
 """
 
 from rust::toml import Value as RawValue, from_str, to_string, to_string_pretty
 from rust::toml::value import Datetime as RawDatetime
 from rust::toml::de import Error as DecodeError
-from rust::toml_edit import Document as SpannedDocument, TomlError as SpanParseError
+from rust::toml::ser import Error as EncodeError
+from rust::toml_edit import (
+    Document as SpannedDocument,
+    DocumentMut as MutableDocument,
+    Item as SpannedItem,
+    Value as EditValue,
+    Table as EditTable,
+    TomlError as SpanParseError,
+)
+from rust::toml_edit::de import Deserializer as EditDeserializer, Error as EditDecodeError
+from rust::toml_edit::ser import ValueSerializer, Error as EditEncodeError
+from rust::serde_path_to_error import Deserializer as TrackingDeserializer, Track
+from rust::std::sync import Arc
 from rust::std::string import String as RustString
 from rust::serde import Serialize as RustSerialize, Deserialize as RustDeserialize
 from rust::serde::de import DeserializeOwned
@@ -53,16 +65,16 @@ pub enum TomlKind(str):
         return self.value()
 
 
-def _value_kind(value: &RawValue) -> TomlKind:
+def _value_kind(value: &EditValue) -> TomlKind:
     """Classify a borrowed TOML value without copying its contents."""
     match value:
-        RawValue.String(_) => return TomlKind.String
-        RawValue.Integer(_) => return TomlKind.Integer
-        RawValue.Float(_) => return TomlKind.Float
-        RawValue.Boolean(_) => return TomlKind.Boolean
-        RawValue.Datetime(_) => return TomlKind.Datetime
-        RawValue.Array(_) => return TomlKind.Array
-        RawValue.Table(_) => return TomlKind.Table
+        EditValue.String(_) => return TomlKind.String
+        EditValue.Integer(_) => return TomlKind.Integer
+        EditValue.Float(_) => return TomlKind.Float
+        EditValue.Boolean(_) => return TomlKind.Boolean
+        EditValue.Datetime(_) => return TomlKind.Datetime
+        EditValue.Array(_) => return TomlKind.Array
+        EditValue.InlineTable(_) => return TomlKind.Table
 
 
 pub enum TomlErrorKind(str):
@@ -70,6 +82,9 @@ pub enum TomlErrorKind(str):
 
     Decode = "decode"
     Encode = "serialize"
+    Missing = "missing"
+    InvalidPath = "invalid_path"
+    Type = "type"
 
     def as_str(self) -> str:
         """Return the stable error category spelling."""
@@ -97,13 +112,17 @@ pub model TomlError:
 
     pub kind: TomlErrorKind
     pub detail: str
+    pub path: Option[str]
     pub line: Option[int]
     pub column: Option[int]
     pub byte_start: Option[int]
     pub byte_end: Option[int]
 
     def message(self) -> str:
-        """Return the underlying diagnostic detail without discarding its structured location fields."""
+        """Return the diagnostic with its document path when a nonempty path is available."""
+        if let Some(path) = self.path:
+            if path != "":
+                return f"{path}: {self.detail}"
         return self.detail
 
 
@@ -123,92 +142,302 @@ pub type TomlDatetime = newtype RawDatetime with TomlSerialize, TomlDeserialize:
         return str(self.0)
 
 
-@rust.derive(RustSerialize)
 @rust.derive(RustDeserialize)
-@derive(Clone)
-pub type TomlValue = newtype RawValue with TomlSerialize, TomlDeserialize:
-    """
-    A typed TOML value with checked table and array access.
+model _Decoded[T]:
+    """A private document slot lets serde decode any selected value while retaining its original span."""
 
-    `kind` returns a `TomlKind` enum variant. TOML has no null value:
-    `None` from an accessor means a missing key, an out-of-range index, or a different runtime kind.
-    Lookups return owned snapshots: retrieving a table or array member copies its entire selected subtree. Array
-    and table conversions likewise copy their member payloads; retain the result when traversing it repeatedly.
+    value: T
+
+
+@derive(Clone)
+pub class TomlValue:
     """
+    A parsed TOML value with its original source context.
+
+    Typed lookups validate required values with `get[T]` and optional values with `get_optional[T]`. Dot-separated
+    paths traverse tables; `get_key[T]` addresses a single literal key. Dynamic inspection uses `get_value`,
+    `get_value_key`, and `get_index`. Selected subtrees are owned snapshots; source text is shared between snapshots.
+    """
+
+    _item: SpannedItem
+    _source: Arc[str]
+    _path: str
 
     @staticmethod
     def parse(source: str) -> Result[Self, TomlError]:
-        """Parse a complete TOML document, returning located syntax errors."""
+        """Parse a complete document, preserving the source spans needed by subsequent typed lookups."""
         return parse(source)
 
     def kind(self) -> TomlKind:
-        """Return the TOML runtime kind without conflating dates with strings or integers with floats."""
-        return _value_kind(self.0)
+        """Return the runtime TOML kind; absent entries never construct a `TomlValue`."""
+        return _item_kind(self._item)
+
+    def get[T with (DeserializeOwned, RustSerialize)](self, path: str) -> Result[T, TomlError]:
+        """
+        Read a required table path as a scalar, collection, datetime, or model with `@derive(toml)`.
+
+        Dot-separated components traverse tables. Missing values, invalid paths, and type mismatches return
+        distinct errors with a document path and source coordinates when available. Collection members are
+        checked individually; integer-to-float and datetime-to-string coercions are rejected.
+
+        Example:
+            name = document.get[str]("project.name")?
+            targets = document.get[list[str]]("project.targets")?
+        """
+        return self.get_value(path)?._read[T]()
+
+    def get_optional[T with (DeserializeOwned, RustSerialize)](self, path: str) -> Result[Option[T], TomlError]:
+        """
+        Read an optional table path without hiding malformed configuration.
+
+        An absent key returns `Ok(None)`. A present value must satisfy `T`, and every intermediate value must
+        be a table. Invalid path syntax is rejected before traversal, even when an earlier key is absent.
+
+        Example:
+            version = document.get_optional[str]("project.version")?
+        """
+        match self._lookup(path)?:
+            Some(value) => return Ok(Some(value._read[T]()?))
+            None => return Ok(None)
+
+    def get_key[T with (DeserializeOwned, RustSerialize)](self, key: str) -> Result[T, TomlError]:
+        """Read one required literal table key; dots and brackets in `key` have no special meaning."""
+        return self.get_value_key(key)?._read[T]()
+
+    def get_value(self, path: str) -> Result[TomlValue, TomlError]:
+        """Select a required dot-separated path for dynamic inspection while retaining its source context."""
+        match self._lookup(path)?:
+            Some(value) => return Ok(value)
+            None => return Err(self._error(TomlErrorKind.Missing, "missing TOML value", self._joined_path(path), None))
+
+    def get_value_key(self, key: str) -> Result[TomlValue, TomlError]:
+        """Select a required literal table key for dynamic inspection."""
+        match self._lookup_key(key)?:
+            Some(value) => return Ok(value)
+            None => return Err(self._error(TomlErrorKind.Missing, "missing TOML key", _key_path(self._path, key), None))
+
+    def get_index(self, index: int) -> Result[TomlValue, TomlError]:
+        """Select an array element; non-arrays are type errors and negative or unavailable indices are missing."""
+        path = f"{self._path}[{index}]"
+        if self.kind() != TomlKind.Array:
+            return Err(self._type_error("array", self._path))
+        if index >= 0:
+            offset: Option[usize] = index.try_resize()
+            if let Some(position) = offset:
+                if let Some(value) = self._item.get(position):
+                    return Ok(TomlValue(_item=value.clone(), _source=self._source.clone(), _path=path))
+        return Err(self._error(TomlErrorKind.Missing, "missing TOML array element", path, None))
+
+    def as_int(self) -> Result[int, TomlError]:
+        """Extract an integer without converting another TOML kind."""
+        return self._read[int]()
+
+    def as_float(self) -> Result[float, TomlError]:
+        """Extract a float, including infinity and NaN; integer values are rejected."""
+        return self._read[float]()
+
+    def as_bool(self) -> Result[bool, TomlError]:
+        """Extract a boolean without converting another TOML kind."""
+        return self._read[bool]()
+
+    def as_str(self) -> Result[str, TomlError]:
+        """Extract a string; datetime values are not converted to strings."""
+        return self._read[str]()
+
+    def as_datetime(self) -> Result[TomlDatetime, TomlError]:
+        """Extract a TOML datetime without assuming a timezone for local forms."""
+        return self._read[TomlDatetime]()
+
+    def as_array(self) -> Result[list[TomlValue], TomlError]:
+        """Extract array snapshots with source context, or report a type error."""
+        if self.kind() != TomlKind.Array:
+            return Err(self._type_error("array", self._path))
+        mut values: list[TomlValue] = []
+        mut index = 0
+        loop:
+            offset: Option[usize] = index.try_resize()
+            if let Some(position) = offset:
+                if let Some(item) = self._item.get(position):
+                    values.append(
+                        TomlValue(_item=item.clone(), _source=self._source.clone(), _path=f"{self._path}[{index}]"),
+                    )
+                    index += 1
+                    continue
+            break
+        return Ok(values)
+
+    def as_table(self) -> Result[Dict[str, TomlValue], TomlError]:
+        """Extract table snapshots with literal keys and source context, or report a type error."""
+        if let Some(table) = self._item.as_table_like():
+            mut values: Dict[str, TomlValue] = {}
+            for key, item in table.iter():
+                values[str(key)] = TomlValue(
+                    _item=item.clone(),
+                    _source=self._source.clone(),
+                    _path=_key_path(self._path, str(key)),
+                )
+            return Ok(values)
+        return Err(self._type_error("table", self._path))
 
     def to_toml(self) -> Result[str, TomlError]:
-        """Serialize this document; top-level scalar values are rejected by TOML's document grammar."""
-        return to_string(self.0).map_err((error) => _serialization_error(str(error)))
+        """Serialize a table-valued document with default formatting, discarding authored comments and order."""
+        value = self._decode[RawValue]()?
+        return to_string(value).map_err((error) => _serialization_error(str(error)))
 
-    def get(self, key: str) -> Option[TomlValue]:
-        """Return a table member, or `None` when the key is absent or this value is not a table."""
-        if let Some(value) = self.0.get(key):
-            return Some(TomlValue(value.clone()))
+    def to_toml_pretty(self) -> Result[str, TomlError]:
+        """Serialize a table-valued document with expanded formatting; authored formatting is not preserved."""
+        value = self._decode[RawValue]()?
+        return to_string_pretty(value).map_err((error) => _serialization_error(str(error)))
+
+    def location(self) -> Option[TomlLocation]:
+        """Return this value's original source span when it has one."""
+        if let Some(span) = self._item.span():
+            return _span_location(self._source.as_str(), span.start, span.end)
         return None
 
-    def get_index(self, index: int) -> Option[TomlValue]:
-        """Return an array member; negative and out-of-range indices return `None`."""
-        if index < 0:
-            return None
-        offset: Option[usize] = index.try_resize()
-        if let Some(position) = offset:
-            if let Some(value) = self.0.get(position):
-                return Some(TomlValue(value.clone()))
-        return None
+    def _lookup(self, path: str) -> Result[Option[TomlValue], TomlError]:
+        """Validate a table-only path before traversal so absence cannot hide malformed syntax."""
+        keys = path.split(".")
+        for key in keys:
+            if key == "":
+                return Err(
+                    self._error(
+                        TomlErrorKind.InvalidPath,
+                        "TOML paths require nonempty dot-separated keys; use get_key for a literal key",
+                        self._joined_path(path),
+                        None,
+                    ),
+                )
+        return self._traverse(self._item, keys)
 
-    def as_int(self) -> Option[int]:
-        """Return an integer payload without coercing another TOML kind."""
-        return self.0.as_integer()
+    def _traverse(self, item: &SpannedItem, keys: list[str]) -> Result[Option[TomlValue], TomlError]:
+        """Walk borrowed parser nodes and copy only the selected subtree into its public snapshot."""
+        mut current = item
+        mut selected_path = self._path
+        for key in keys:
+            if _item_kind(current) != TomlKind.Table:
+                mut location: Option[TomlLocation] = None
+                if let Some(span) = current.span():
+                    location = _span_location(self._source.as_str(), span.start, span.end)
+                return Err(
+                    self._error(TomlErrorKind.Type, "expected table while traversing TOML path", selected_path, location),
+                )
+            selected_path = _key_path(selected_path, key)
+            match current.get(key):
+                Some(child) =>
+                    current = child
+                None => return Ok(None)
+        return Ok(Some(TomlValue(_item=current.clone(), _source=self._source.clone(), _path=selected_path)))
 
-    def as_float(self) -> Option[float]:
-        """Return a floating-point payload, including TOML infinity and NaN."""
-        return self.0.as_float()
+    def _lookup_key(self, key: str) -> Result[Option[TomlValue], TomlError]:
+        """Distinguish an absent table member from an incompatible intermediate value."""
+        if self.kind() != TomlKind.Table:
+            return Err(self._type_error("table", self._path))
+        path = _key_path(self._path, key)
+        if let Some(value) = self._item.get(key):
+            return Ok(Some(TomlValue(_item=value.clone(), _source=self._source.clone(), _path=path)))
+        return Ok(None)
 
-    def as_bool(self) -> Option[bool]:
-        """Return a boolean payload without coercing another TOML kind."""
-        return self.0.as_bool()
+    def _joined_path(self, path: str) -> str:
+        """Join an already-validated relative path to this snapshot's document path."""
+        if self._path == "":
+            return path
+        return f"{self._path}.{path}"
 
-    def as_str(self) -> Option[str]:
-        """Return a string payload; dates and times keep their separate typed accessor."""
-        if let Some(value) = self.0.as_str():
-            return Some(str(value))
-        return None
+    def _decode[T with DeserializeOwned](self) -> Result[T, TomlError]:
+        """Use a serde document slot to decode scalars and containers without losing original spans."""
+        mut table = EditTable.new()
+        table.insert("value", self._item.clone())
+        document = MutableDocument.from(table)
+        decoder = EditDeserializer.from(document)
+        mut track = Track.new()
+        tracked = TrackingDeserializer.new(decoder, track)
+        result: Result[_Decoded[T], EditDecodeError] = RustDeserialize.deserialize(tracked)
+        decoded = result.map_err((error) => self._decode_failure(error, str(track.path())))?
+        return Ok(decoded.value)
 
-    def as_datetime(self) -> Option[TomlDatetime]:
-        """Return the typed date/time payload without inferring a timezone."""
-        if let Some(value) = self.0.as_datetime():
-            return Some(TomlDatetime(value.clone()))
-        return None
+    def _read[T with (DeserializeOwned, RustSerialize)](self) -> Result[T, TomlError]:
+        """Reject serde's kind coercions by checking the decoded value's TOML shape against the source tree."""
+        decoded = self._decode[T]()?
+        self._validate_decoded(decoded)?
+        return Ok(decoded)
 
-    def as_array(self) -> Option[list[TomlValue]]:
-        """Return an owned list of typed array members, or `None` for other kinds."""
-        if let Some(values) = self.0.as_array():
-            return Some([TomlValue(value.clone()) for value in values])
-        return None
+    def _validate_decoded[T with RustSerialize](self, decoded: &T) -> Result[None, TomlError]:
+        """
+        Compare the decoded type's serialized shape without taking ownership of the caller's value.
 
-    def as_table(self) -> Option[Dict[str, TomlValue]]:
-        """Return an owned dictionary of typed table members, or `None` for other kinds."""
-        if let Some(values) = self.0.as_table():
-            mut table: Dict[str, TomlValue] = {}
-            for key, value in values:
-                table[str(key)] = TomlValue(value.clone())
-            return Some(table)
-        return None
+        Serde accepts conversions such as integer-to-float during decoding. Its existing TOML value serializer
+        exposes the decoded type's kind for comparison, including inside models and collections. This requires
+        Serialize as well as DeserializeOwned but writes no text and reparses nothing.
+        """
+        encoded_result: Result[EditValue, EditEncodeError] = RustSerialize.serialize(decoded, ValueSerializer.new())
+        encoded = encoded_result.map_err(
+            (error) => self._error(TomlErrorKind.Type, str(error), self._path, self.location()),
+        )?
+        return self._validate_kinds(encoded)
+
+    def _validate_kinds(self, expected: &EditValue) -> Result[None, TomlError]:
+        """Validate the selected subtree, including every collection member, without reparsing TOML text."""
+        expected_kind = _value_kind(expected)
+        if self.kind() != expected_kind:
+            return Err(self._type_error(expected_kind.as_str(), self._path))
+        if let Some(values) = expected.as_array():
+            for index, value in enumerate(values):
+                self.get_index(index)?._validate_kinds(value)?
+        if let Some(table) = expected.as_inline_table():
+            for key, value in table:
+                # Missing optional/defaulted model fields need not have an authored source entry.
+                if let Some(child) = self._lookup_key(str(key))?:
+                    child._validate_kinds(value)?
+        return Ok(None)
+
+    def _decode_failure(self, error: EditDecodeError, relative: str) -> TomlError:
+        """Remove the private serde slot from the error path and retain the original failing token's span."""
+        mut path = self._path
+        if relative.startswith("value."):
+            path = self._joined_path(relative[6:])
+        elif relative.startswith("value["):
+            path = f"{self._path}{relative[5:]}"
+        mut location = self.location()
+        if let Some(span) = error.span():
+            location = _span_location(self._source.as_str(), span.start, span.end)
+        return self._error(TomlErrorKind.Type, str(error.message()), path, location)
+
+    def _type_error(self, expected: str, path: str) -> TomlError:
+        """Report a kind mismatch at the existing value, retaining its original source location."""
+        actual = self.kind().as_str()
+        return self._error(TomlErrorKind.Type, f"expected {expected}, found {actual}", path, self.location())
+
+    def _error(self, kind: TomlErrorKind, detail: str, path: str, location: Option[TomlLocation]) -> TomlError:
+        """Construct a structured lookup error with a canonical display path and optional source coordinates."""
+        return _located_error(kind, detail, Some(path), location)
+
+
+def _item_kind(item: &SpannedItem) -> TomlKind:
+    """Classify the parsed Rust enum, combining authored and inline container representations."""
+    match item:
+        SpannedItem.Table(_) => return TomlKind.Table
+        SpannedItem.ArrayOfTables(_) => return TomlKind.Array
+        SpannedItem.Value(value) => return _value_kind(value)
+        SpannedItem.None =>
+            assert false, "an absent parser item must not construct a TomlValue"
+
+
+def _key_path(parent: str, key: str) -> str:
+    """Quote literal keys containing path punctuation so diagnostic paths distinguish them from traversal."""
+    if key == "" or "." in key or "[" in key or "]" in key or "\"" in key or "\\" in key:
+        literal = str(RawValue.String(key))
+        return f"{parent}[{literal}]"
+    if parent == "":
+        return key
+    return f"{parent}.{key}"
 
 
 pub def parse(source: str) -> Result[TomlValue, TomlError]:
-    """Read an entire TOML document into typed values, preserving dates and located parse failures."""
-    result: Result[RawValue, DecodeError] = from_str(source)
-    return result.map((value) => TomlValue(value)).map_err((error) => _decode_error(source, error))
+    """Parse once into a source-bearing TOML tree for typed reads and dynamic inspection."""
+    parsed: Result[SpannedDocument[str], SpanParseError] = SpannedDocument.parse(RustString.from(source))
+    document = parsed.map_err((error) => _span_parse_error(source, error))?
+    return Ok(TomlValue(_item=document.as_item().clone(), _source=Arc.new(RustString.from(source)), _path=""))
 
 
 pub def locate(source: str, path: list[str]) -> Result[Option[TomlLocation], TomlError]:
@@ -301,18 +530,24 @@ def _span_parse_error(source: str, error: SpanParseError) -> TomlError:
 
 def _document_error(detail: str, location: Option[TomlLocation]) -> TomlError:
     """Attach an optional source location to a decode or structural validation diagnostic."""
+    return _located_error(TomlErrorKind.Decode, detail, None, location)
+
+
+def _serialization_error(detail: str) -> TomlError:
+    """Construct an unlocated write error, since no source document exists at serialization time."""
+    return _located_error(TomlErrorKind.Encode, detail, None, None)
+
+
+def _located_error(kind: TomlErrorKind, detail: str, path: Option[str], location: Option[TomlLocation]) -> TomlError:
+    """Keep path and location fields uniform across lookup errors."""
     if let Some(position) = location:
         return TomlError(
-            kind=TomlErrorKind.Decode,
+            kind=kind,
             detail=detail,
+            path=path,
             line=Some(position.line),
             column=Some(position.column),
             byte_start=Some(position.byte_start),
             byte_end=Some(position.byte_end),
         )
-    return TomlError(kind=TomlErrorKind.Decode, detail=detail, line=None, column=None, byte_start=None, byte_end=None)
-
-
-def _serialization_error(detail: str) -> TomlError:
-    """Construct an unlocated write error, since no source document exists at serialization time."""
-    return TomlError(kind=TomlErrorKind.Encode, detail=detail, line=None, column=None, byte_start=None, byte_end=None)
+    return TomlError(kind=kind, detail=detail, path=path, line=None, column=None, byte_start=None, byte_end=None)

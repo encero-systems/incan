@@ -3,6 +3,51 @@
 use super::*;
 use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitInfo, RustVisibility};
 
+/// Imported Rust bounds are preserved for native checking, including primitive and collection instantiations.
+#[test]
+fn imported_rust_generic_bounds_accept_native_scalars_and_collections() {
+    assert_check_ok(
+        r#"
+from rust::serde::de import DeserializeOwned as Owned
+
+def identity[T with Owned](value: T) -> T:
+    return value
+
+class Reader:
+    def identity[T with Owned](self, value: T) -> T:
+        return identity(value)
+
+def main() -> None:
+    reader = Reader()
+    assert identity("demo") == "demo"
+    assert reader.identity(["linux", "macos"]) == ["linux", "macos"]
+"#,
+    );
+}
+
+/// A same-spelled local trait still requires an explicit source adoption.
+#[test]
+fn local_trait_bound_is_not_treated_as_a_foreign_capability() {
+    let errors = check_str(
+        r#"
+trait DeserializeOwned:
+    pass
+
+def identity[T with DeserializeOwned](value: T) -> T:
+    return value
+
+def main() -> None:
+    identity("demo")
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("violates generic bound"))
+    );
+}
+
 /// Build a checker with one imported foreign item whose metadata has a known kind.
 fn checker_with_foreign_parent(kind: RustItemKind) -> TypeChecker {
     let mut checker = TypeChecker::new();
@@ -23,6 +68,21 @@ fn checker_with_foreign_parent(kind: RustItemKind) -> TypeChecker {
         scope: 0,
     });
     checker
+}
+
+/// Positive Rust item metadata distinguishes a deferred trait obligation from a value masquerading as a bound.
+#[test]
+fn imported_rust_generic_bound_requires_trait_metadata() {
+    let checker = checker_with_foreign_parent(RustItemKind::Trait(RustTraitInfo {
+        items: vec![],
+        derive_macro: None,
+    }));
+    assert!(checker.type_satisfies_explicit_bound(&ResolvedType::Str, "ForeignParent"));
+    let checker = checker_with_foreign_parent(RustItemKind::Constant {
+        type_display: "i32".to_string(),
+    });
+    assert!(!checker.type_satisfies_explicit_bound(&ResolvedType::Str, "ForeignParent"));
+    assert!(checker.imported_generic_rust_bound_path("ForeignParent").is_none());
 }
 
 /// Foreign traits remain usable when metadata is absent, with native validation delegated to rustc.

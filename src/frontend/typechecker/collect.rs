@@ -967,6 +967,31 @@ impl TypeChecker {
         name.to_string()
     }
 
+    /// Retain a generic bound's foreign identity before its declaring module's imports leave scope.
+    ///
+    /// Source imports and checked SDK signatures carry the absolute Rust path rather than a local alias. Known
+    /// non-trait items keep their binding so ordinary bound validation can reject them instead of deferring them.
+    pub(crate) fn resolve_generic_bound_name(&mut self, name: &str, span: Span) -> String {
+        if let Some(path) = self.imported_generic_rust_bound_path(name) {
+            return path;
+        }
+        self.resolve_trait_bound_name(name, span)
+    }
+
+    /// Resolve a foreign generic bound for both declaration collection and checked public export metadata.
+    pub(crate) fn imported_generic_rust_bound_path(&self, name: &str) -> Option<String> {
+        if let Some(symbol) = self.lookup_symbol(name)
+            && let SymbolKind::RustItem(info) = &symbol.kind
+            && info
+                .metadata
+                .as_ref()
+                .is_none_or(|metadata| matches!(metadata.kind, incan_core::interop::RustItemKind::Trait(_)))
+        {
+            return Some(format!("::{}", info.path.trim_start_matches("::")));
+        }
+        None
+    }
+
     /// Collect synthetic trait adoptions introduced by RFC 024 `@derive(...)` arguments.
     pub(crate) fn collect_derive_trait_adoption_infos(&mut self, derives: &[String]) -> Vec<TypeBoundInfo> {
         let mut out = Vec::new();
@@ -1715,7 +1740,7 @@ impl TypeChecker {
                     tp.name.clone(),
                     tp.bounds
                         .iter()
-                        .map(|bound| self.resolve_trait_bound_name(&bound.name, Span::default()))
+                        .map(|bound| self.resolve_generic_bound_name(&bound.name, Span::default()))
                         .collect(),
                 )
             })
@@ -1729,7 +1754,7 @@ impl TypeChecker {
                     tp.bounds
                         .iter()
                         .map(|bound| TypeBoundInfo {
-                            name: self.resolve_trait_bound_name(&bound.name, Span::default()),
+                            name: self.resolve_generic_bound_name(&bound.name, Span::default()),
                             source_name: self.trait_bound_source_name(&bound.name),
                             type_args: bound
                                 .type_args

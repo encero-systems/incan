@@ -1,4 +1,4 @@
-"""Prove module-only std.toml SDK ownership and qualified codecs."""
+"""Prove module-only std.toml SDK ownership, typed lookup and qualified codecs."""
 
 from std import toml
 
@@ -11,28 +11,37 @@ model Settings:
 
 
 def main() -> None:
-    """Round-trip both codec forms through the selected SDK provider."""
-
-    match toml.deserialize[Settings]("name = \"café\"\n"):
+    """Round-trip both codecs and use typed reads through the selected SDK provider."""
+    # Keep this module-only import proof independent of the qualified error annotation bug tracked by #1437.
+    source = "name = \"café\"\n"
+    restored = toml
+        .deserialize[Settings](source)
+        .and_then((settings) => toml.serialize(settings))
+        .and_then((encoded) => toml.deserialize[Settings](encoded))
+    match restored:
+        Ok(settings) =>
+            assert settings.name == "café"
         Err(error) =>
             assert false, error.message()
+    pretty = toml
+        .deserialize[Settings](source)
+        .and_then((settings) => toml.serialize_pretty(settings))
+        .and_then((encoded) => toml.deserialize[Settings](encoded))
+    match pretty:
         Ok(settings) =>
-            match toml.serialize(settings):
-                Err(error) =>
-                    assert false, error.message()
-                Ok(encoded) =>
-                    match toml.deserialize[Settings](encoded):
-                        Err(error) =>
-                            assert false, error.message()
-                        Ok(restored) =>
-                            assert restored.name == "café"
-            match toml.serialize_pretty(settings):
-                Err(error) =>
-                    assert false, error.message()
-                Ok(encoded) =>
-                    match toml.deserialize[Settings](encoded):
-                        Err(error) =>
-                            assert false, error.message()
-                        Ok(restored) =>
-                            assert restored.name == "café"
+            assert settings.name == "café"
+        Err(error) =>
+            assert false, error.message()
+    name = toml.parse(source).and_then((document) => document.get[str]("name"))
+    match name:
+        Ok(value) =>
+            assert value == "café"
+        Err(error) =>
+            assert false, error.message()
+    optional = toml.parse(source).and_then((document) => document.get_optional[str]("missing"))
+    match optional:
+        Ok(value) =>
+            assert value == None
+        Err(error) =>
+            assert false, error.message()
     println("TOML root module-only roundtrip passed")
