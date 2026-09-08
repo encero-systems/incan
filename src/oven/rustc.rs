@@ -48,7 +48,7 @@ pub const OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH: &str = "registry-sources/Cargo
 /// Crate-name prefix reserved for the runtime family owned by one Incan release Loaf.
 pub const OVEN_COMPILER_RUNTIME_CRATE_PREFIX: &str = "incan_";
 /// Schema version for caller-owned native-output reuse evidence.
-const OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION: u32 = 2;
+const OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION: u32 = 3;
 
 /// One registry leaf and the immutable Loaf root that seals its relative artifact path.
 #[derive(Debug, Clone)]
@@ -1612,10 +1612,10 @@ fn default_direct_rustc_output_kind() -> String {
     OvenDirectRustcOutputKind::Binary.receipt_value().to_string()
 }
 
-/// Small sidecar persisted beside a caller-owned native output so an unchanged normal command does not rebuild it.
+/// Complete input binding retained beside a caller-owned native output.
 ///
-/// The sidecar is not Oven store state and never authorizes execution by itself: the caller still verifies the
-/// receipt, compiler identity, source digest, and immutable plan before this record can admit a reuse.
+/// This is not Oven store state and never authorizes execution by itself: the caller still verifies the receipt,
+/// compiler identity, source digest, and immutable plan before matching these inputs and the persisted output digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct OvenDirectRustcOutputReceipt {
     schema_version: u32,
@@ -1632,6 +1632,17 @@ struct OvenDirectRustcOutputReceipt {
     output_kind: String,
     #[serde(default)]
     caller_owned_library_digests: BTreeMap<String, String>,
+}
+
+/// Successful compilation evidence binding the complete verified inputs to the exact produced output bytes.
+///
+/// Flattening preserves the sidecar's input field names. The schema bump and required digest ensure readers cannot
+/// reuse older evidence that never bound the output; a malformed or interrupted record is a cache miss.
+#[derive(Debug, Serialize, Deserialize)]
+struct OvenDirectRustcOutputRecord {
+    #[serde(flatten)]
+    inputs: OvenDirectRustcOutputReceipt,
+    output_digest: String,
 }
 
 /// Backwards-compatible name for a direct-rustc libtest bake.
@@ -5040,8 +5051,7 @@ fn bake_direct_rustc(
             .map(|plan| plan.caller_owned_library_digests.clone())
             .unwrap_or_default(),
     };
-    if caller_output_is_reusable(&output, &output_receipt) {
-        let output_digest = digest_regular_file(&output, "output")?;
+    if let Some(output_digest) = caller_output_reusable_digest(&output, &output_receipt) {
         return Ok(OvenDirectRustcBake {
             source_digest,
             output,
@@ -5131,7 +5141,13 @@ fn bake_direct_rustc(
     }
     verified_regular_file(&output, "output")?;
     let output_digest = digest_regular_file(&output, "output")?;
-    write_caller_output_receipt(&output, &output_receipt)?;
+    write_caller_output_record(
+        &output,
+        &OvenDirectRustcOutputRecord {
+            inputs: output_receipt,
+            output_digest: output_digest.clone(),
+        },
+    )?;
     Ok(OvenDirectRustcBake {
         source_digest,
         output,
@@ -5182,31 +5198,29 @@ fn caller_output_receipt_path(output: &Path) -> Result<PathBuf, OvenRustcError> 
     Ok(output.with_file_name(format!("{name}.oven-output.json")))
 }
 
-/// Check only a fully matching regular output/sidecar pair; malformed or interrupted sidecars trigger a rebuild.
-fn caller_output_is_reusable(output: &Path, expected: &OvenDirectRustcOutputReceipt) -> bool {
-    if verified_regular_file(output, "output").is_err() {
-        return false;
+/// Verify complete input evidence and hash the current regular output once, returning the digest only on a match.
+///
+/// Missing, malformed, old or mismatched evidence is a cache miss. Returning the verified digest lets the caller
+/// report reuse without rereading the output. The caller must perform receipt/compiler/input admission first.
+fn caller_output_reusable_digest(output: &Path, expected: &OvenDirectRustcOutputReceipt) -> Option<String> {
+    let receipt_path = caller_output_receipt_path(output).ok()?;
+    let bytes = fs::read(&receipt_path).ok()?;
+    let record: OvenDirectRustcOutputRecord = serde_json::from_slice(&bytes).ok()?;
+    if record.inputs != *expected {
+        return None;
     }
-    let Ok(receipt_path) = caller_output_receipt_path(output) else {
-        return false;
-    };
-    let Ok(bytes) = fs::read(&receipt_path) else {
-        return false;
-    };
-    serde_json::from_slice::<OvenDirectRustcOutputReceipt>(&bytes)
-        .ok()
-        .as_ref()
-        == Some(expected)
+    let output_digest = digest_regular_file(output, "output").ok()?;
+    (output_digest == record.output_digest).then_some(output_digest)
 }
 
-/// Atomically publish reuse evidence only after rustc has produced and verified its regular caller-owned output.
-fn write_caller_output_receipt(output: &Path, receipt: &OvenDirectRustcOutputReceipt) -> Result<(), OvenRustcError> {
+/// Atomically publish the input/output binding only after rustc has produced and verified its regular output.
+fn write_caller_output_record(output: &Path, record: &OvenDirectRustcOutputRecord) -> Result<(), OvenRustcError> {
     let path = caller_output_receipt_path(output)?;
     let parent = path.parent().ok_or_else(|| OvenRustcError::InvalidInput {
         field: "output",
         message: "reuse evidence has no parent directory".to_string(),
     })?;
-    let bytes = serde_json::to_vec(receipt).map_err(|error| OvenRustcError::InvalidInput {
+    let bytes = serde_json::to_vec(record).map_err(|error| OvenRustcError::InvalidInput {
         field: "output receipt",
         message: format!("cannot serialize reuse evidence: {error}"),
     })?;
@@ -9056,6 +9070,7 @@ mod tests {
         Ok(())
     }
 
+    /// A real native library rebuilds changed output or invalid evidence and preserves an unchanged warm result.
     #[test]
     fn trusted_direct_rustc_materializes_a_reusable_library_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
@@ -9095,9 +9110,64 @@ mod tests {
         assert!(!bake.cargo_process_started);
         assert!(!bake.reused);
         assert!(bake.output.is_file());
+        let sidecar = super::caller_output_receipt_path(&bake.output)?;
+        let original_output = fs::read(&bake.output)?;
+        let original_sidecar = fs::read(&sidecar)?;
+        let output_modified = fs::metadata(&bake.output)?.modified()?;
+        let sidecar_modified = fs::metadata(&sidecar)?.modified()?;
         let reused = bake_trusted_direct_rustc_library(&request)?;
         assert!(reused.reused);
         assert_eq!(reused.output, bake.output);
+        assert_eq!(reused.output_digest, bake.output_digest);
+        assert_eq!(fs::read(&bake.output)?, original_output);
+        assert_eq!(fs::read(&sidecar)?, original_sidecar);
+        assert_eq!(fs::metadata(&bake.output)?.modified()?, output_modified);
+        assert_eq!(fs::metadata(&sidecar)?.modified()?, sidecar_modified);
+
+        // A still-valid input sidecar cannot authorize replacement output bytes.
+        fs::write(&bake.output, b"changed output bytes")?;
+        let rebuilt = bake_trusted_direct_rustc_library(&request)?;
+        assert!(!rebuilt.reused);
+        assert!(!rebuilt.cargo_process_started);
+        assert_eq!(rebuilt.output_digest, bake.output_digest);
+        assert_eq!(rebuilt.output_digest, digest_bytes(&fs::read(&rebuilt.output)?));
+        let record: serde_json::Value = serde_json::from_slice(&fs::read(&sidecar)?)?;
+        assert_eq!(record["output_digest"], rebuilt.output_digest);
+        assert_eq!(
+            record["schema_version"],
+            super::OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION
+        );
+
+        let mut missing_digest = record.clone();
+        missing_digest
+            .as_object_mut()
+            .ok_or("output sidecar must be an object")?
+            .remove("output_digest");
+        let mut legacy = missing_digest.clone();
+        legacy["schema_version"] = serde_json::json!(2);
+        let mut malformed_digest = record.clone();
+        malformed_digest["output_digest"] = serde_json::json!(42);
+        let mut wrong_digest = record.clone();
+        wrong_digest["output_digest"] = serde_json::json!(digest_bytes(b"another output"));
+        let mut wrong_inputs = record.clone();
+        wrong_inputs["receipt_identity"] = serde_json::json!(digest_bytes(b"another receipt"));
+        for (case, invalid_record) in [
+            ("legacy sidecar", legacy),
+            ("missing digest", missing_digest),
+            ("malformed digest", malformed_digest),
+            ("wrong digest", wrong_digest),
+            ("wrong input receipt", wrong_inputs),
+        ] {
+            fs::write(&sidecar, serde_json::to_vec(&invalid_record)?)?;
+            let rebuilt = bake_trusted_direct_rustc_library(&request)?;
+            assert!(!rebuilt.reused, "{case} must rebuild");
+            assert_eq!(rebuilt.output_digest, bake.output_digest, "{case}");
+            let warm = bake_trusted_direct_rustc_library(&request)?;
+            assert!(warm.reused, "{case} must publish reusable repaired evidence");
+            assert_eq!(warm.output_digest, rebuilt.output_digest, "{case}");
+        }
+        fs::write(&sidecar, b"{interrupted sidecar")?;
+        assert!(!bake_trusted_direct_rustc_library(&request)?.reused);
         Ok(())
     }
 
