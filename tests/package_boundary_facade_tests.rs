@@ -10,10 +10,12 @@
 //! everything through a facade, consumed across a `[dependencies]` path package through `pub::`.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use incan::library_manifest::{ExportIdentityKind, ExportIdentityProjection, LibraryManifest};
+use sha2::{Digest, Sha256};
 
 mod support;
 
@@ -61,7 +63,9 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
 
 /// Publish the producer closure through Oven's explicit project-bake boundary.
 fn run_explicit_oven_bake(current_dir: &Path) -> Result<Output, Box<dyn std::error::Error>> {
-    Ok(configured_incan_command(current_dir, &["oven", "bake", "--project", "."]).output()?)
+    let mut command = configured_incan_command(current_dir, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut command)?;
+    Ok(command.output()?)
 }
 
 /// Fail with the command's own output, which carries the diagnostic worth reading.
@@ -187,5 +191,119 @@ fn a_consumer_resolves_facade_published_declarations_across_a_dependency() -> Te
         stdout.contains("boundary") && stdout.contains('2') && stdout.contains("fast"),
         "the consumer must execute the facade's model, function and enum across the boundary, got:\n{stdout}"
     );
+    Ok(())
+}
+
+/// Hash every published file and retain empty directories, including store bookkeeping and lock files.
+fn artifact_inventory(
+    root: &Path,
+) -> Result<std::collections::BTreeMap<PathBuf, Option<String>>, Box<dyn std::error::Error>> {
+    let mut inventory = std::collections::BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    let mut buffer = [0_u8; 64 * 1024];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let relative = path.strip_prefix(root)?.to_path_buf();
+            if entry.file_type()?.is_dir() {
+                inventory.insert(relative, None);
+                pending.push(path);
+            } else {
+                assert!(entry.file_type()?.is_file(), "unexpected package entry: {path:?}");
+                let mut file = fs::File::open(path)?;
+                let mut digest = Sha256::new();
+                loop {
+                    let count = file.read(&mut buffer)?;
+                    if count == 0 {
+                        break;
+                    }
+                    digest.update(&buffer[..count]);
+                }
+                inventory.insert(relative, Some(format!("{:x}", digest.finalize())));
+            }
+        }
+    }
+    Ok(inventory)
+}
+
+#[test]
+fn source_free_native_diamond_preserves_published_store_inventory_issue1458() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let catalog = fixture.path().join("catalog");
+    let pricing = fixture.path().join("pricing");
+    let home = fixture.path().join("incan-home");
+    write_fixture_file(
+        &catalog,
+        "loaf.toml",
+        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nbitflags = \"=1.3.2\"\n",
+    )?;
+    // The named Rust dependency forces a portable project entry, rather than an empty package store whose entire
+    // native closure happens to be supplied by the compiler's release envelope.
+    write_fixture_file(
+        &catalog,
+        "src/lib.incn",
+        "rust.module(\"bitflags\")\n\npub def answer() -> int:\n    return 42\n",
+    )?;
+    write_fixture_file(
+        &pricing,
+        "loaf.toml",
+        "[project]\nname = \"immutable_pricing\"\nversion = \"0.1.0\"\n\n[dependencies]\ncatalog = { path = \"../catalog\" }\n",
+    )?;
+    write_fixture_file(
+        &pricing,
+        "src/lib.incn",
+        "from pub::catalog import answer\n\npub def quote() -> int:\n    return answer()\n",
+    )?;
+    let bake = |project: &Path| -> Result<Output, Box<dyn std::error::Error>> {
+        let mut command = configured_incan_command(project, &["oven", "bake", "--project", "."]);
+        support::configure_explicit_oven_bake_command(&mut command)?;
+        command.env("INCAN_HOME", &home);
+        Ok(command.output()?)
+    };
+    assert_success(&bake(&catalog)?, "catalog publication with a packaged Rust dependency");
+    let catalog_artifact = catalog.join("target/lib");
+    let catalog_before = artifact_inventory(&catalog_artifact)?;
+    assert!(
+        catalog_before
+            .keys()
+            .any(|path| path.starts_with("oven/loafs/entries")
+                && path.file_name().is_some_and(|name| name == "loaf.json")),
+        "the regression requires actual packaged store entries"
+    );
+    assert_success(&bake(&pricing)?, "pricing publication through catalog");
+    assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
+    let pricing_artifact = pricing.join("target/lib");
+    let pricing_before = artifact_inventory(&pricing_artifact)?;
+    for project in [&catalog, &pricing] {
+        fs::remove_dir_all(project.join("src"))?;
+        fs::remove_file(project.join("loaf.toml"))?;
+    }
+    for name in ["first", "second"] {
+        let consumer = fixture.path().join(name);
+        write_fixture_file(
+            &consumer,
+            "loaf.toml",
+            &format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[dependencies]\nstock = {{ path = \"../catalog\" }}\npricing = {{ path = \"../pricing\" }}\n"
+            ),
+        )?;
+        write_fixture_file(
+            &consumer,
+            "src/main.incn",
+            "from pub::stock import answer\nfrom pub::pricing import quote\n\ndef main() -> None:\n    println(answer() + quote())\n",
+        )?;
+        assert_success(
+            &bake(&consumer)?,
+            "fresh native diamond publication without provider sources",
+        );
+        let mut command = configured_incan_command(&consumer, &["run", "--locked", "src/main.incn"]);
+        command.env_remove("CARGO").env("INCAN_HOME", &home);
+        let output = command.output()?;
+        assert_success(&output, "source-free native diamond execution");
+        assert_eq!(String::from_utf8(output.stdout)?.trim(), "84");
+        assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
+        assert_eq!(artifact_inventory(&pricing_artifact)?, pricing_before);
+    }
     Ok(())
 }
