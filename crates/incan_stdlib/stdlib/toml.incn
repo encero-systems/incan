@@ -78,7 +78,7 @@ def _value_kind(value: &EditValue) -> TomlKind:
 
 
 pub enum TomlErrorKind(str):
-    """Distinguish reading/validation failures from write failures."""
+    """Classify decode, encode, missing-value, invalid-path, and type failures."""
 
     Decode = "decode"
     Encode = "serialize"
@@ -414,7 +414,13 @@ pub class TomlValue:
 
 
 def _item_kind(item: &SpannedItem) -> TomlKind:
-    """Classify the parsed Rust enum, combining authored and inline container representations."""
+    """
+    Classify the parsed Rust enum, combining authored and inline container representations.
+
+    Only parsed roots and existing children reach this helper. The parser creates a table root; toml_edit's
+    table lookup and iteration omit absent items, and arrays contain values. This module exposes no item mutation
+    or public constructor that can introduce an absent item. `None` therefore indicates an internal invariant failure.
+    """
     match item:
         SpannedItem.Table(_) => return TomlKind.Table
         SpannedItem.ArrayOfTables(_) => return TomlKind.Array
@@ -435,9 +441,9 @@ def _key_path(parent: str, key: str) -> str:
 
 pub def parse(source: str) -> Result[TomlValue, TomlError]:
     """Parse once into a source-bearing TOML tree for typed reads and dynamic inspection."""
-    parsed: Result[SpannedDocument[str], SpanParseError] = SpannedDocument.parse(RustString.from(source))
+    parsed: Result[SpannedDocument[&str], SpanParseError] = SpannedDocument.parse(source)
     document = parsed.map_err((error) => _span_parse_error(source, error))?
-    return Ok(TomlValue(_item=document.as_item().clone(), _source=Arc.new(RustString.from(source)), _path=""))
+    return Ok(TomlValue(_item=document.into_item(), _source=Arc.new(RustString.from(source)), _path=""))
 
 
 pub def locate(source: str, path: list[str]) -> Result[Option[TomlLocation], TomlError]:

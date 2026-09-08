@@ -1187,7 +1187,7 @@ const std_toml_forms: FrozenList[str] = ["from std import toml", "document = tom
 const std_toml_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="std.toml",
     path="stdlib/toml.md",
-)]
+), CapabilityReference(label="API contract: issue #1409", path="https://github.com/encero-systems/incan/issues/1409")]
 static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdToml"),
     subject=RegistrySubject.current_unit(),
@@ -1196,7 +1196,7 @@ static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         name="`std.toml` project documents",
         category=FeatureCategory.Stdlib,
         since="0.6",
-        rfc="RFC 119",
+        rfc="None (API contract: issue #1409)",
         stability=FeatureStability.Stable,
         activation="Import from `std.toml`.",
         summary="Read typed TOML values and declared models with located diagnostics, and serialize generated documents while retaining date/time kinds. Locate table values for application-owned validation diagnostics.",

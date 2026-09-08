@@ -1176,6 +1176,12 @@ body::after {
   overflow-x: auto;
 }
 
+/* The article clips its decorative panel; keep annotation text inside the code frame. */
+.md-typeset div.highlight .md-tooltip {
+  left: clamp(0.8rem, var(--md-tooltip-x), calc(100% - var(--md-tooltip-width) - 0.8rem));
+  max-width: calc(100% - 1.6rem);
+}
+
 .md-typeset .md-clipboard {
   color: rgba(255, 240, 183, 0.64);
 }

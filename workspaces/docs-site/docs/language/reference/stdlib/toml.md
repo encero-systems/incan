@@ -131,10 +131,10 @@ The error returned by parsing, deserialization, source-location lookup, and seri
 | `kind` | `TomlErrorKind` | Parse, lookup, type, or serialization category. |
 | `detail` | `str` | Diagnostic text. |
 | `path` | `Option[str]` | Document path for a lookup or extraction error, including array indices. An empty string identifies the root; non-lookup errors have `None`. |
-| `line` | `Result[int, TomlError]` | One-based starting line, when a source span is available. |
-| `column` | `Result[int, TomlError]` | One-based Unicode character column, when available. |
-| `byte_start` | `Result[int, TomlError]` | Zero-based UTF-8 start offset, when available. |
-| `byte_end` | `Result[int, TomlError]` | Exclusive zero-based UTF-8 end offset, when available. |
+| `line` | `Option[int]` | One-based starting line, when a source span is available. |
+| `column` | `Option[int]` | One-based Unicode character column, when available. |
+| `byte_start` | `Option[int]` | Zero-based UTF-8 start offset, when available. |
+| `byte_end` | `Option[int]` | Exclusive zero-based UTF-8 end offset, when available. |
 
 `error.message() -> str` returns `"{path}: {detail}"` for a nonempty path, and `detail` otherwise.
 

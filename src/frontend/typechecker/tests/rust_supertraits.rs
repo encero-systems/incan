@@ -28,7 +28,7 @@ def main() -> None:
 /// A same-spelled local trait still requires an explicit source adoption.
 #[test]
 fn local_trait_bound_is_not_treated_as_a_foreign_capability() {
-    let errors = check_str(
+    let errors = check_str_err(
         r#"
 trait DeserializeOwned:
     pass
@@ -39,8 +39,8 @@ def identity[T with DeserializeOwned](value: T) -> T:
 def main() -> None:
     identity("demo")
 "#,
-    )
-    .unwrap_err();
+        "a native scalar must not implicitly adopt a same-spelled Incan trait",
+    );
     assert!(
         errors
             .iter()
