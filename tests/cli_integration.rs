@@ -8747,6 +8747,15 @@ fn build_frozen_does_not_read_a_pre_rename_lock() -> Result<(), Box<dyn std::err
 #[test]
 fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "invalid manifest, unrelated to executable discovery",
+    )?;
+    fs::create_dir(tmp.path().join(".cargo"))?;
+    fs::write(
+        tmp.path().join(".cargo/config.toml"),
+        "invalid configuration, unrelated to executable discovery",
+    )?;
 
     let text_output = run_incan(tmp.path(), &["tools", "doctor"])?;
     assert_success(&text_output, "incan tools doctor");
@@ -8764,12 +8773,8 @@ fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>
         "text report should include editor recovery guidance, got:\n{text}"
     );
     assert!(
-        text.contains("offline readiness"),
-        "text report should include offline-readiness diagnostics, got:\n{text}"
-    );
-    assert!(
-        text.contains("advisory local signals only"),
-        "offline-readiness text should avoid guaranteeing offline success, got:\n{text}"
+        !text.contains("offline readiness"),
+        "executable discovery must not report removed Cargo readiness heuristics: {text}"
     );
 
     let json_output = run_incan(tmp.path(), &["tools", "doctor", "--format", "json"])?;
@@ -8811,53 +8816,9 @@ fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
-    assert_eq!(
-        json.pointer("/offline_readiness/advisory_only")
-            .and_then(serde_json::Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        json.pointer("/offline_readiness/source_of_truth")
-            .and_then(serde_json::Value::as_str),
-        Some("Cargo and RFC 020 policy flags")
-    );
     assert!(
-        matches!(
-            json.pointer("/offline_readiness/status")
-                .and_then(serde_json::Value::as_str),
-            Some("present" | "missing" | "unknown")
-        ),
-        "doctor JSON should include stable offline-readiness status: {json}"
-    );
-    assert!(
-        json.pointer("/offline_readiness/cargo/available")
-            .and_then(serde_json::Value::as_bool)
-            .is_some(),
-        "doctor JSON should include cargo availability: {json}"
-    );
-    assert!(
-        json.pointer("/offline_readiness/cargo_home/source")
-            .and_then(serde_json::Value::as_str)
-            .is_some(),
-        "doctor JSON should include effective Cargo home source: {json}"
-    );
-    assert!(
-        json.pointer("/offline_readiness/caches/registry_cache/exists")
-            .and_then(serde_json::Value::as_bool)
-            .is_some(),
-        "doctor JSON should include registry cache hints: {json}"
-    );
-    assert!(
-        json.pointer("/offline_readiness/cargo_config/source_replacement_detected")
-            .and_then(serde_json::Value::as_bool)
-            .is_some(),
-        "doctor JSON should include Cargo config source replacement hints: {json}"
-    );
-    assert!(
-        json.pointer("/offline_readiness/next_steps")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|steps| !steps.is_empty()),
-        "doctor JSON should include concrete next steps: {json}"
+        json.get("offline_readiness").is_none(),
+        "doctor JSON must not expose the removed Cargo readiness contract: {json}"
     );
     Ok(())
 }

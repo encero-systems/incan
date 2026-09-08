@@ -1,10 +1,8 @@
 //! Local toolchain inspection commands.
 
-use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use clap::ValueEnum;
 use incan_core::lang::stdlib as core_stdlib;
@@ -947,7 +945,6 @@ struct DoctorReport {
     path_incan_lsp: ToolPath,
     cargo_bin_incan: CargoBinEntry,
     cargo_bin_incan_lsp: CargoBinEntry,
-    offline_readiness: OfflineReadiness,
 }
 
 impl DoctorReport {
@@ -957,12 +954,11 @@ impl DoctorReport {
         Self {
             version: crate::version::INCAN_VERSION,
             current_exe: env::current_exe().ok(),
-            cwd: cwd.clone(),
+            cwd,
             path_incan: ToolPath::resolve("incan"),
             path_incan_lsp: ToolPath::resolve("incan-lsp"),
             cargo_bin_incan: CargoBinEntry::from_home("incan"),
             cargo_bin_incan_lsp: CargoBinEntry::from_home("incan-lsp"),
-            offline_readiness: OfflineReadiness::collect(cwd.as_deref()),
         }
     }
 
@@ -985,8 +981,6 @@ impl DoctorReport {
             "  if either setting is explicit, use a literal executable path; shell syntax like $HOME or ~ is not expanded"
         );
         println!("  after rebuilding or changing paths, reload VS Code/Cursor so it starts a fresh incan-lsp process");
-        println!();
-        self.offline_readiness.print_text();
     }
 
     /// Print the doctor report as pretty JSON for editor integrations and issue templates.
@@ -1008,8 +1002,7 @@ impl DoctorReport {
                 "recommended_compiler_path": "",
                 "literal_path_settings": true,
                 "reload_after_rebuild": true
-            },
-            "offline_readiness": self.offline_readiness.as_json()
+            }
         });
         let output = serde_json::to_string_pretty(&value)
             .map_err(|error| CliError::failure(format!("failed to serialize doctor report: {error}")))?;
@@ -1096,13 +1089,6 @@ impl CargoBinEntry {
             "executable": self.executable,
         })
     }
-}
-
-/// Return whether a directory can be read and contains at least one entry.
-fn path_has_entries(path: &Path) -> bool {
-    fs::read_dir(path)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
 }
 
 /// Resolve the current user's home directory from platform-standard environment variables.
@@ -1240,18 +1226,6 @@ mod tests {
         assert!(rendered.contains("Fallible iteration and combinators"));
         assert!(rendered.contains("crates/incan_stdlib/stdlib/features.incn"));
         Ok(())
-    }
-
-    #[test]
-    fn oven_compiler_suite_marks_cargo_as_intentionally_unavailable() {
-        let cargo = CargoCommandInfo::unavailable_for_oven_compiler_suite();
-        assert!(!cargo.available);
-        assert_eq!(cargo.command, "cargo");
-        assert_eq!(cargo.version, None);
-        assert_eq!(
-            cargo.error.as_deref(),
-            Some("Cargo is intentionally unavailable in the receipt-bound Oven compiler-suite environment.")
-        );
     }
 
     #[test]
@@ -1498,11 +1472,11 @@ def private_function() -> None:
         Ok(())
     }
 
+    /// Publish the fixture's empty dependency selection without importing the compiler's Cargo lock.
     fn write_test_incan_lock(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let cargo_lock_payload = fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let features = CargoFeatureSelection::default();
         let fingerprint = compute_deps_fingerprint(&[], &[], &features, Some(project_root));
-        IncanLock::new(fingerprint, features, cargo_lock_payload).write(&project_root.join("oven.lock"))?;
+        IncanLock::new(fingerprint, features).write(&project_root.join("oven.lock"))?;
         Ok(())
     }
 
@@ -1646,34 +1620,6 @@ pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
             }),
             "expected projected decorator metadata with decorated callable context, got {projection:?}"
         );
-        Ok(())
-    }
-
-    #[test]
-    fn cargo_config_hints_detect_vendor_source_replacement() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let cargo_dir = tmp.path().join(".cargo");
-        fs::create_dir_all(&cargo_dir)?;
-        let config = cargo_dir.join("config.toml");
-        fs::write(
-            config,
-            r#"
-[net]
-offline = true
-
-[source.crates-io]
-replace-with = "vendored-sources"
-
-[source.vendored-sources]
-directory = "vendor"
-"#,
-        )?;
-
-        let hints = CargoConfigHints::collect(Some(tmp.path()), None);
-        assert!(hints.source_replacement_detected);
-        assert!(hints.vendor_source_detected);
-        assert!(hints.net_offline_detected);
-        assert_eq!(hints.files.len(), 1);
         Ok(())
     }
 }
