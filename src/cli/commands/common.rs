@@ -522,7 +522,10 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
 }
 
-/// Hash only compiler-authoritative checkout inputs, excluding generated output and test-only trees.
+/// Hash compiler-authoritative checkout inputs, excluding generated output, test trees, and root CI administration.
+///
+/// The root `.github` directory configures repository automation; compilation does not read it. This exclusion is
+/// deliberately root-only so similarly named directories within compiler sources retain their existing authority.
 fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
     let mut entries = fs::read_dir(current)
         .map_err(|error| {
@@ -554,6 +557,9 @@ fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &
                 path.display()
             ))
         })?;
+        if file_type.is_dir() && relative == Path::new(".github") {
+            continue;
+        }
         if file_type.is_dir()
             && relative.components().any(|component| {
                 matches!(
@@ -5705,6 +5711,24 @@ mod tests {
             "test-only source must not republish SDK providers"
         );
 
+        let workflow_dir = checkout.join(".github/workflows");
+        fs::create_dir_all(&workflow_dir)?;
+        fs::write(workflow_dir.join("ci.yml"), "name: original CI\n")?;
+        let with_workflow =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, with_workflow,
+            "CI configuration does not change SDK compilation inputs"
+        );
+        fs::write(workflow_dir.join("ci.yml"), "name: reordered CI\n")?;
+        fs::rename(workflow_dir.join("ci.yml"), workflow_dir.join("renamed.yml"))?;
+        let changed_workflow =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, changed_workflow,
+            "CI edits and administrative path changes must reuse SDK providers"
+        );
+
         fs::write(
             checkout.join("src/compiler.rs"),
             "pub fn compile() { let changed = true; }\n",
@@ -5714,6 +5738,24 @@ mod tests {
         assert_ne!(
             initial, changed_source,
             "a compiler source change must still invalidate SDK provider artifacts"
+        );
+        fs::write(
+            stdlib_root.join("components/core.incn"),
+            "pub def core() -> int:\n  return 2\n",
+        )?;
+        let changed_stdlib =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            changed_source, changed_stdlib,
+            "stdlib source remains part of SDK provider identity"
+        );
+        fs::create_dir_all(checkout.join("src/.github"))?;
+        fs::write(checkout.join("src/.github/input.txt"), "compiler-owned input")?;
+        let nested_directory =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            changed_stdlib, nested_directory,
+            "only root CI administration is excluded"
         );
         Ok(())
     }
