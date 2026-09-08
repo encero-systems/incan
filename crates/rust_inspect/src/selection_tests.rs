@@ -321,3 +321,178 @@ fn selected_neutral_loader_does_not_spawn_ambient_tools() -> Result<(), Box<dyn 
     );
     Ok(())
 }
+
+/// Replacing source bytes at the same selected path requires a new binding and exposes the new metadata.
+#[test]
+fn selected_source_replacement_changes_binding_and_metadata_issue911() -> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = InspectionFixture::new("#![no_std]\npub struct Item { pub before: u8 }\n")?;
+    let before = fixture.validate()?;
+    let workspace = RustWorkspace::load_selected(&before, fixture.output.path(), &|_| {})?;
+    let incan_core::interop::RustItemKind::Type(original) = extract_rust_item(&workspace, "demo::Item")?.kind else {
+        return Err("original selected type absent".into());
+    };
+    assert_eq!(original.fields[0].name, "before");
+    fs::write(fixture.module()?, "#![no_std]\npub struct Item { pub after: bool }\n")?;
+    assert!(matches!(
+        RustWorkspace::load_selected(&before, fixture.output.path(), &|_| {}),
+        Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+    fixture.inputs.sources[0].digest = super::digest_oven_source_tree(fixture.source.path())?;
+    let after = fixture.validate()?;
+    assert_ne!(before.fingerprint(), after.fingerprint());
+    let workspace = RustWorkspace::load_selected(&after, fixture.output.path(), &|_| {})?;
+    let incan_core::interop::RustItemKind::Type(replacement) = extract_rust_item(&workspace, "demo::Item")?.kind else {
+        return Err("replacement selected type absent".into());
+    };
+    assert_eq!(replacement.fields[0].name, "after");
+    assert_eq!(fs::read_dir(fixture.output.path())?.count(), 0);
+    Ok(())
+}
+
+/// A Rust-safe query spelling binds its selected unit without generating or consulting a Cargo dependency key.
+#[test]
+fn selected_rust_safe_alias_preserves_its_explicit_package_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = InspectionFixture::new("#![no_std]\npub struct Conversion;\n")?;
+    let mut project: serde_json::Value = serde_json::from_slice(&fixture.inputs.project_json)?;
+    project["crates"][0]["display_name"] = serde_json::json!("datafusion-substrait");
+    fixture.set_project(project)?;
+    fixture.inputs.query_roots.clear();
+    fixture
+        .inputs
+        .query_roots
+        .insert("datafusion_substrait".to_string(), fixture.module()?);
+    let workspace = fixture.load()?;
+    assert!(extract_rust_item(&workspace, "datafusion_substrait::Conversion").is_ok());
+    assert!(matches!(
+        extract_rust_item(&workspace, "datafusion-substrait::Conversion"),
+        Err(RustMetadataError::CrateNotFound(_))
+    ));
+    assert_eq!(fs::read_dir(fixture.output.path())?.count(), 0);
+    assert_eq!(
+        fs::read_to_string(fixture.source.path().join("Cargo.toml"))?,
+        "invalid cargo manifest: do not read\n"
+    );
+    Ok(())
+}
+
+/// The admitted active SDK edge supports both metadata and direct native compilation without rewriting providers.
+#[test]
+fn selected_sdk_dependency_projection_compiles_all_three_units_issue911() -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let runtime = InspectionFixture::new("#![no_std]\npub fn value() -> u8 { 3 }\n")?;
+    let mut provider = InspectionFixture::new("#![no_std]\npub fn value() -> u8 { issue911_runtime::value() }\n")?;
+    let mut probe = InspectionFixture::new("#![no_std]\npub fn value() -> u8 { issue911_compiled::value() }\n")?;
+    let absent_sdk = probe.output.path().join("absent-old-sdk");
+    fs::write(
+        provider.source.path().join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"issue911_compiled\"\nversion = \"0.1.0\"\n[dependencies.issue911_runtime]\npath = {:?}\n",
+            absent_sdk.to_string_lossy()
+        ),
+    )?;
+    provider.inputs.sources[0].digest = super::digest_oven_source_tree(provider.source.path())?;
+    let runtime_project: serde_json::Value = serde_json::from_slice(&runtime.inputs.project_json)?;
+    let provider_project: serde_json::Value = serde_json::from_slice(&provider.inputs.project_json)?;
+    let probe_project: serde_json::Value = serde_json::from_slice(&probe.inputs.project_json)?;
+    let mut selected = serde_json::json!({"crates": [
+        runtime_project["crates"][0], provider_project["crates"][0], probe_project["crates"][0]
+    ]});
+    for index in 0..3 {
+        selected["crates"][index]["edition"] = serde_json::json!("2024");
+    }
+    selected["crates"][1]["deps"] = serde_json::json!([{"crate": 0, "name": "issue911_runtime"}]);
+    selected["crates"][2]["deps"] = serde_json::json!([{"crate": 1, "name": "issue911_compiled"}]);
+    probe.set_project(selected)?;
+    probe.inputs.sources.extend(runtime.inputs.sources.clone());
+    probe.inputs.sources.extend(provider.inputs.sources.clone());
+    probe.inputs.query_roots = std::collections::BTreeMap::from([
+        ("issue911_runtime".to_string(), runtime.module()?),
+        ("issue911_compiled".to_string(), provider.module()?),
+        ("issue911_probe".to_string(), probe.module()?),
+    ]);
+    let validated = probe.validate()?;
+    let workspace = RustWorkspace::load_selected(&validated, probe.output.path(), &|_| {})?;
+    for name in ["issue911_runtime", "issue911_compiled", "issue911_probe"] {
+        let incan_core::interop::RustItemKind::Function(function) =
+            extract_rust_item(&workspace, &format!("{name}::value"))?.kind
+        else {
+            return Err(format!("selected function `{name}::value` absent").into());
+        };
+        assert_eq!(function.return_type, "u8");
+    }
+    let before = [&runtime, &provider, &probe]
+        .map(|fixture| super::digest_oven_source_tree(fixture.source.path()))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let rustc = std::env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC")
+        .or_else(|| std::env::var_os("RUSTC"))
+        .unwrap_or_else(|| "rustc".into());
+    let compile = |source: &Path,
+                   name: &str,
+                   output: &Path,
+                   externs: &[(&str, &Path)]|
+     -> Result<(), Box<dyn std::error::Error>> {
+        let mut command = Command::new(&rustc);
+        command
+            .args(["--edition", "2024", "--crate-name", name, "--crate-type", "lib"])
+            .arg(source)
+            .arg("-o")
+            .arg(output)
+            .env_remove("CARGO")
+            .env_remove("CARGO_MANIFEST_DIR")
+            .env_remove("CARGO_MANIFEST_PATH");
+        for (dependency, artifact) in externs {
+            let parent = artifact.parent().ok_or("selected dependency output has no parent")?;
+            command
+                .arg("-L")
+                .arg(format!("dependency={}", parent.display()))
+                .arg("--extern")
+                .arg(format!("{dependency}={}", artifact.display()));
+        }
+        let result = command.output()?;
+        assert!(
+            result.status.success(),
+            "selected direct-rustc unit `{name}` failed:\n{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            output.is_file(),
+            "selected unit `{name}` did not produce its native output"
+        );
+        Ok(())
+    };
+    let runtime_output = probe.output.path().join("libissue911_runtime.rlib");
+    let provider_output = probe.output.path().join("libissue911_compiled.rlib");
+    let probe_output = probe.output.path().join("libissue911_probe.rlib");
+    compile(&runtime.module()?, "issue911_runtime", &runtime_output, &[])?;
+    compile(
+        &provider.module()?,
+        "issue911_compiled",
+        &provider_output,
+        &[("issue911_runtime", runtime_output.as_path())],
+    )?;
+    compile(
+        &probe.module()?,
+        "issue911_probe",
+        &probe_output,
+        &[("issue911_compiled", provider_output.as_path())],
+    )?;
+    for (fixture, digest) in [&runtime, &provider, &probe].into_iter().zip(before) {
+        assert_eq!(super::digest_oven_source_tree(fixture.source.path())?, digest);
+    }
+    assert!(!absent_sdk.exists());
+    fs::write(provider.module()?, "#![no_std]\npub fn corrupt() {}\n")?;
+    assert!(matches!(
+        RustWorkspace::load_selected(&validated, probe.output.path(), &|_| {}),
+        Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(provider.module()?)?,
+        "#![no_std]\npub fn corrupt() {}\n",
+        "inspection must refuse changed immutable inputs, not silently rewrite them"
+    );
+    Ok(())
+}
