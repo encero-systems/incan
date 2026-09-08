@@ -2468,7 +2468,7 @@ impl AstLowering {
                                 .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                             ir_program
                                 .declarations
-                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
+                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
                             match self.lower_decorated_method_statics(&struct_ir.name, &model_methods) {
                                 Ok(statics) => ir_program.declarations.extend(statics),
                                 Err(e) => errors.push(e),
@@ -2557,7 +2557,7 @@ impl AstLowering {
                                 .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                             ir_program
                                 .declarations
-                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
+                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
 
                             // Collect methods from this class and all parent classes
                             let mut all_methods = Vec::new();
@@ -2689,7 +2689,7 @@ impl AstLowering {
                                 .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                             ir_program
                                 .declarations
-                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
+                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
 
                             // Generate impl block for newtype methods (if any).
                             if !newtype_methods.is_empty() {
@@ -2746,7 +2746,7 @@ impl AstLowering {
                             .insert(enum_ir.name.clone(), IrType::Enum(enum_ir.name.clone()));
                         ir_program
                             .declarations
-                            .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())));
+                            .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())).with_span(decl.span.into()));
 
                         if !e.methods.is_empty() {
                             match self.lower_decorated_method_statics(&enum_ir.name, &e.methods) {
@@ -2860,7 +2860,7 @@ impl AstLowering {
                                     );
                                     self.update_root_function_binding(&func.name, &func.params, &func.return_type);
                                 }
-                                ir_program.declarations.push(ir_decl);
+                                ir_program.declarations.push(ir_decl.with_span(decl.span.into()));
                             }
                             Err(e) => errors.push(e),
                         },
@@ -3026,7 +3026,7 @@ impl AstLowering {
                 ]);
             }
             let lowered = self.lower_function_named(f, emitted_name, self.map_callable_visibility(f.visibility))?;
-            return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered))]);
+            return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered)).with_span(span.into())]);
         };
         let crate::frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty else {
             return Err(LoweringError {
@@ -3066,7 +3066,7 @@ impl AstLowering {
             )?;
             return Ok(vec![
                 IrDecl::new(IrDeclKind::Function(original)),
-                IrDecl::new(IrDeclKind::Function(wrapper)),
+                IrDecl::new(IrDeclKind::Function(wrapper)).with_span(span.into()),
             ]);
         }
 
@@ -3101,7 +3101,7 @@ impl AstLowering {
                 ty: decorated_ty,
                 value,
             }),
-            IrDecl::new(IrDeclKind::Function(wrapper)),
+            IrDecl::new(IrDeclKind::Function(wrapper)).with_span(span.into()),
         ])
     }
 
