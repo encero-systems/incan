@@ -4225,6 +4225,33 @@ def main() -> None:
         )]))
     }
 
+    #[test]
+    fn canonical_module_item_import_keeps_function_projection_for_both_spellings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let helper = parse_program("pub def value() -> int:\n  return 42\n");
+        for (import, binding) in [
+            ("import helper::value", "value"),
+            ("import helper::value as answer", "answer"),
+            ("from helper import value", "value"),
+            ("from helper import value as answer", "answer"),
+        ] {
+            let main = parse_program(&format!(
+                "{import}\n\ndef main() -> None:\n  assert {binding}() == 42\n"
+            ));
+            let mut codegen = IrCodegen::new();
+            codegen.add_module("helper", &helper);
+            let (main_code, modules) = codegen.try_generate_multi_file(&main, &["helper"])?;
+            let helper_code = modules.get("helper").ok_or("missing helper output")?;
+            let projection = projected_name(helper_code, "value", SemanticSourceTargetKind::Function);
+            assert!(
+                main_code.contains(&format!("use crate::helper::{projection}")),
+                "{import}: {main_code}"
+            );
+            assert!(main_code.contains(&format!("{projection}()")), "{import}: {main_code}");
+        }
+        Ok(())
+    }
+
     fn generate_nested_store_code(store_source: &str) -> String {
         let db_module = db_module_program();
         let store_module = parse_program(store_source);
