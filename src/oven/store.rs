@@ -3390,14 +3390,16 @@ mod tests {
     use crate::oven::{
         OvenGeneratedProjectRequest, OvenImportRequest, import_frozen_project, receipt_generated_project,
     };
+    use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    /// Relative directory entries and exact file bytes in a published store.
+    type PublishedInventory = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
     /// Capture every directory and file, including mutable-store bookkeeping, without following links.
-    fn published_inventory(
-        root: &Path,
-    ) -> Result<std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>>, Box<dyn std::error::Error>> {
-        let mut inventory = std::collections::BTreeMap::new();
+    fn published_inventory(root: &Path) -> Result<PublishedInventory, Box<dyn std::error::Error>> {
+        let mut inventory = PublishedInventory::new();
         let mut pending = vec![root.to_path_buf()];
         while let Some(directory) = pending.pop() {
             for entry in fs::read_dir(directory)? {

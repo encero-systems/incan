@@ -20252,7 +20252,7 @@ pub model Nested:
                 .ok_or("fixture has no materialized leaf")?;
             let source = entry_artifacts.join(&leaf.relative_path);
             let original = fs::metadata(&source)?.permissions();
-            fs::set_permissions(&source, fs::Permissions::from_mode(0))?;
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o0))?;
             let unreadable = fs::File::open(&source).is_err();
             let warm = import_checked_packaged_library_loaf(&consumer_store, &checked);
             fs::set_permissions(&source, original)?;
