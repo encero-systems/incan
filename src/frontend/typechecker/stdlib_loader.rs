@@ -707,12 +707,13 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
 fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> {
     let mut fns = Vec::new();
     let stdlib_imports = stdlib_import_aliases(program);
+    let rust_imports = rust_import_aliases(program);
     for decl in &program.declarations {
         if let ast::Declaration::Function(func) = &decl.node {
             if !matches!(func.visibility, ast::Visibility::Public) {
                 continue;
             }
-            let info = function_decl_to_info(func, &stdlib_imports);
+            let info = function_decl_to_info(func, &stdlib_imports, &rust_imports);
             fns.push(StdlibFunctionEntry {
                 name: func.name.clone(),
                 info,
@@ -1368,6 +1369,14 @@ fn apply_method_aliases(
     method_aliases
 }
 
+/// Retain imported Rust trait identities when extracting callable signatures without a live declaring scope.
+fn generic_bound_name(name: &str, rust_imports: &HashMap<String, String>) -> String {
+    rust_imports.get(name).map_or_else(
+        || name.to_string(),
+        |path| format!("::{}", path.trim_start_matches("::")),
+    )
+}
+
 /// Convert one AST method declaration into lightweight semantic method metadata.
 fn method_info_from_ast_method(
     method: &ast::Spanned<ast::MethodDecl>,
@@ -1384,7 +1393,10 @@ fn method_info_from_ast_method(
         .map(|tp| {
             (
                 tp.name.clone(),
-                tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                tp.bounds
+                    .iter()
+                    .map(|bound| generic_bound_name(&bound.name, rust_imports))
+                    .collect(),
             )
         })
         .collect();
@@ -1399,7 +1411,7 @@ fn method_info_from_ast_method(
                 tp.bounds
                     .iter()
                     .map(|bound| crate::frontend::symbols::TypeBoundInfo {
-                        name: bound.name.clone(),
+                        name: generic_bound_name(&bound.name, rust_imports),
                         source_name: None,
                         type_args: bound
                             .type_args
@@ -1462,7 +1474,11 @@ fn method_info_from_ast_method(
 }
 
 /// Convert an AST `FunctionDecl` to a typechecker `FunctionInfo`.
-fn function_decl_to_info(func: &ast::FunctionDecl, stdlib_imports: &HashMap<String, Vec<String>>) -> FunctionInfo {
+fn function_decl_to_info(
+    func: &ast::FunctionDecl,
+    stdlib_imports: &HashMap<String, Vec<String>>,
+    rust_imports: &HashMap<String, String>,
+) -> FunctionInfo {
     // Extract just the type parameter names for type resolution.
     let tp_names: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
     let tp_bounds: HashMap<String, Vec<String>> = func
@@ -1471,7 +1487,10 @@ fn function_decl_to_info(func: &ast::FunctionDecl, stdlib_imports: &HashMap<Stri
         .map(|tp| {
             (
                 tp.name.clone(),
-                tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                tp.bounds
+                    .iter()
+                    .map(|bound| generic_bound_name(&bound.name, rust_imports))
+                    .collect(),
             )
         })
         .collect();
@@ -1484,7 +1503,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl, stdlib_imports: &HashMap<Stri
                 tp.bounds
                     .iter()
                     .map(|bound| TypeBoundInfo {
-                        name: bound.name.clone(),
+                        name: generic_bound_name(&bound.name, rust_imports),
                         source_name: None,
                         type_args: bound
                             .type_args
@@ -1972,6 +1991,52 @@ pub trait ConvertText with Convert[Text]:
                     "std::string::String".to_string()
                 )]
             )]
+        );
+        Ok(())
+    }
+
+    /// Lightweight signatures must not leave foreign generic bounds dependent on the declaring module's aliases.
+    #[test]
+    fn imported_rust_generic_bounds_survive_signature_extraction() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::serde::de import DeserializeOwned as Owned
+
+pub def identity[T with Owned](value: T) -> T:
+    return value
+
+pub class Reader:
+    def identity[T with Owned](self, value: T) -> T:
+        return value
+"#;
+        let tokens = crate::frontend::lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
+        let program = crate::frontend::parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+        let functions = extract_function_entries(&program);
+        let function = &functions.first().ok_or("missing exported function")?.info;
+        assert_eq!(function.type_param_bounds["T"], vec!["::serde::de::DeserializeOwned"]);
+        assert_eq!(
+            function.type_param_bound_details["T"][0].name,
+            "::serde::de::DeserializeOwned"
+        );
+        let rust_imports = rust_import_aliases(&program);
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                ast::Declaration::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or("missing class")?;
+        let method = method_info_from_ast_method(
+            class.methods.first().ok_or("missing method")?,
+            &[],
+            &rust_imports,
+            &HashMap::new(),
+            &[],
+        );
+        assert_eq!(method.type_param_bounds["T"], vec!["::serde::de::DeserializeOwned"]);
+        assert_eq!(
+            method.type_param_bound_details["T"][0].name,
+            "::serde::de::DeserializeOwned"
         );
         Ok(())
     }

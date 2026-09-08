@@ -3039,16 +3039,19 @@ mod tests {
             modules: vec![
                 CheckedApiMetadata {
                     schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                    derivable_traits: Vec::new(),
                     module_path: vec!["traits".to_string()],
                     declarations: vec![alias("SharedItem", &["traits", "covered", "SharedItem"], false)],
                 },
                 CheckedApiMetadata {
                     schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                    derivable_traits: Vec::new(),
                     module_path: vec!["traits".to_string(), "covered".to_string()],
                     declarations: vec![alias("SharedItem", &["traits", "covered", "SharedItem"], true)],
                 },
                 CheckedApiMetadata {
                     schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                    derivable_traits: Vec::new(),
                     module_path: vec!["traits".to_string(), "partial".to_string()],
                     declarations: vec![
                         alias("SharedItem", &["traits", "partial", "SharedItem"], true),
