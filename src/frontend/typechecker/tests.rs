@@ -25037,3 +25037,5 @@ def f() -> None:
 
 mod rust_supertrait_codegen;
 mod rust_supertraits;
+
+mod borrowed_rust_enum;
