@@ -16,24 +16,12 @@ use crate::compiled_sdk::CompiledSdkModules;
 use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
 #[cfg(feature = "cli")]
 use crate::generated_cache::GeneratedCacheLease;
-use crate::library_manifest::{LibraryManifest, ProviderDependencyKind, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
-
-/// One checked dependency edge and its effective projected artifact root.
-struct ProjectedArtifactEdge {
-    dependency_key: String,
-    provider_name: String,
-    source_root: PathBuf,
-    target_root: PathBuf,
-    kind: ProviderDependencyKind,
-    default_features: bool,
-    optional: bool,
-}
 
 // ============================================================================
 // RFC 023: Stdlib module naming
@@ -71,54 +59,6 @@ pub(super) fn is_sdk_provider_build() -> bool {
     std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
 }
 
-/// Normalize an artifact coordinate through its nearest existing ancestor so absent cache tails remain comparable.
-fn normalize_artifact_path(path: &Path) -> PathBuf {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|current| current.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    };
-    let mut cursor = absolute.as_path();
-    let mut tail = Vec::new();
-    loop {
-        if let Ok(mut canonical) = fs::canonicalize(cursor) {
-            for component in tail.iter().rev() {
-                canonical.push(component);
-            }
-            return canonical;
-        }
-        let Some(name) = cursor.file_name() else {
-            return absolute;
-        };
-        tail.push(name.to_os_string());
-        let Some(parent) = cursor.parent() else {
-            return absolute;
-        };
-        cursor = parent;
-    }
-}
-
-/// Render a filesystem-safe prefix for one deterministic rebound artifact directory.
-fn sanitize_artifact_name(name: &str) -> String {
-    let normalized = name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    if normalized.is_empty() {
-        "compiled-library".to_string()
-    } else {
-        normalized
-    }
-}
-
 /// Render a path-independent dependency identity for generated root-artifact naming.
 fn dependency_spec_identity(dependency: &DependencySpec) -> String {
     let mut features = dependency.features.clone();
@@ -127,8 +67,8 @@ fn dependency_spec_identity(dependency: &DependencySpec) -> String {
     let source = match &dependency.source {
         DependencySource::Registry => "registry".to_string(),
         DependencySource::Git { url, reference } => format!("git:{url}:{reference:?}"),
-        // Cargo fingerprints the path crate and rebuilds the shared root in place when its contents differ. Hashing
-        // the physical path here would only multiply top-level root identities across compatible worktrees.
+        // Root naming excludes delivery coordinates. Native reuse separately requires the selected source and
+        // dependency evidence; this name alone never establishes that a path dependency is unchanged.
         DependencySource::Path { .. } => "path".to_string(),
     };
     format!(
@@ -1095,7 +1035,9 @@ impl ProjectGenerator {
 mod tests {
     use super::*;
     use crate::frontend::library_manifest_index::{LibraryArtifactMetadata, LibraryManifestIndex};
-    use crate::library_manifest::ProviderDependencyMetadata;
+    use crate::library_manifest::{
+        LibraryManifest, ProviderDependencyKind, ProviderDependencyMetadata, digest_provider_artifact,
+    };
     use crate::manifest::DependencySource;
     use crate::provider::{
         NamespaceAuthority, ProviderIdentity, ProviderPlanError, ProviderProvenance, ProviderRecord,
