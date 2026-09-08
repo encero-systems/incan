@@ -8533,15 +8533,40 @@ fn select_baked_project_output_with_source_authority(
     source_authority_digest: &str,
     required_target_toolchain: Option<(&str, &str)>,
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
+    Ok(matching_baked_project_outputs_with_source_authority(
+        store,
+        project_root,
+        entrypoint,
+        target,
+        profile,
+        source_authority_digest,
+        required_target_toolchain,
+    )?
+    .into_iter()
+    .next())
+}
+
+/// Collect verified source-current outputs, preferring the local explicit-bake receipt and then canonical lock.
+///
+/// Keep older candidates available for coherent multi-profile selection and non-strict stale-lock warnings.
+fn matching_baked_project_outputs_with_source_authority(
+    store: &OvenStore,
+    project_root: &Path,
+    entrypoint: &Path,
+    target: OvenBakeProjectTarget,
+    profile: &str,
+    source_authority_digest: &str,
+    required_target_toolchain: Option<(&str, &str)>,
+) -> CliResult<Vec<OvenStoredProjectOutput>> {
     let Some(entrypoint_relative_path) = project_relative_entrypoint(project_root, entrypoint) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let target_identity = oven_bake_project_target_identity(project_root, target, entrypoint)?;
     if !project_root.join(LOAF_MANIFEST_FILENAME).is_file() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let Some(native_target) = native_project_output_target() else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let selected = store
         .select_payloads_matching_for_execution(|manifest| {
@@ -8580,12 +8605,37 @@ fn select_baked_project_output_with_source_authority(
             lease,
         )?);
     }
-    // An interrupted or repeated explicit bake may legitimately leave more than one fully verified result for the same
-    // source, receipt, plan, profile, and native target. They are interchangeable at the completed project-output
-    // boundary, so normal selection is deterministic and bounded retention can reclaim inactive duplicates without
-    // asking the user to bake again.
-    matches.sort_by(|left, right| left.identity.cmp(&right.identity));
-    Ok(matches.into_iter().next())
+    let current_receipt = current_project_output_receipt(project_root, target, entrypoint, profile)?;
+    let current_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
+    // Prefer the explicit bake's verified lineage before the derived lock fingerprint: a non-strict stale lock
+    // must not make an older SDK output outrank the current bake. Missing local receipts still permit store reuse.
+    matches.sort_by_key(|output| {
+        let current_lineage = current_receipt.as_ref().is_some_and(|receipt| {
+            output.payload.receipt_identity == receipt.identity
+                && output.payload.build_unit_identity == receipt.build_unit_identity
+                && output.intent == receipt.intent
+        });
+        (
+            !current_lineage,
+            output.payload.lock_dependencies_fingerprint != current_fingerprint,
+            output.identity.clone(),
+        )
+    });
+    Ok(matches)
+}
+
+/// Read a verified local bake lineage when available without requiring a mutable caller projection for reuse.
+fn current_project_output_receipt(
+    project_root: &Path,
+    target: OvenBakeProjectTarget,
+    entrypoint: &Path,
+    profile: &str,
+) -> CliResult<Option<crate::oven::OvenReceipt>> {
+    let path = project_bake_receipt_path(project_root, target, entrypoint, profile)?;
+    Ok(fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<crate::oven::OvenReceipt>(&bytes).ok())
+        .filter(|receipt| receipt.verify_identity().is_ok()))
 }
 
 /// Select every source-current baked debug output through one leased ProjectOutput candidate scan.
@@ -9629,9 +9679,10 @@ fn select_default_library_project_outputs(
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
     let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let mut outputs = Vec::new();
+    let mut profile_candidates = Vec::new();
+    let mut current_receipts = Vec::new();
     for profile in explicit_bake_profiles() {
-        let Some(selected) = select_baked_project_output_with_source_authority(
+        let candidates = matching_baked_project_outputs_with_source_authority(
             &store,
             &project_root,
             &entrypoint,
@@ -9639,8 +9690,8 @@ fn select_default_library_project_outputs(
             profile,
             &source_authority_digest,
             Some((&target, &toolchain)),
-        )?
-        else {
+        )?;
+        if candidates.is_empty() {
             if has_stale_baked_project_output(
                 &store,
                 &project_root,
@@ -9654,10 +9705,83 @@ fn select_default_library_project_outputs(
             }
             return Ok(None);
         };
-        if completed_output_default_backend_receipt(&selected).is_none() {
+        if let Some(receipt) =
+            current_project_output_receipt(&project_root, OvenBakeProjectTarget::Library, &entrypoint, profile)?
+        {
+            current_receipts.push(receipt);
+        }
+        profile_candidates.push(candidates);
+    }
+    select_coherent_library_outputs(
+        profile_candidates,
+        &current_receipts,
+        baked_project_lock_dependencies_fingerprint(&project_root)?.as_deref(),
+    )
+}
+
+/// Retain one shared lock cohort across all requested library profiles, including a coherent stale fallback.
+fn select_coherent_library_outputs(
+    profile_candidates: Vec<Vec<OvenStoredProjectOutput>>,
+    current_receipts: &[crate::oven::OvenReceipt],
+    current_fingerprint: Option<&str>,
+) -> CliResult<Option<Vec<OvenStoredProjectOutput>>> {
+    // Score semantic preferences directly: retained duplicates must never outweigh a verified local lineage.
+    let fingerprints = profile_candidates
+        .first()
+        .map(|candidates| {
+            candidates
+                .iter()
+                .map(|output| output.payload.lock_dependencies_fingerprint.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let selected_fingerprint = fingerprints
+        .into_iter()
+        .filter_map(|fingerprint| {
+            if !profile_candidates.iter().all(|candidates| {
+                candidates
+                    .iter()
+                    .any(|output| output.payload.lock_dependencies_fingerprint == fingerprint)
+            }) {
+                return None;
+            }
+            let lineage_matches = current_receipts
+                .iter()
+                .filter(|receipt| {
+                    profile_candidates.iter().flatten().any(|output| {
+                        output.payload.lock_dependencies_fingerprint == fingerprint
+                            && output.payload.receipt_identity == receipt.identity
+                            && output.payload.build_unit_identity == receipt.build_unit_identity
+                            && output.intent == receipt.intent
+                    })
+                })
+                .count();
+            Some((
+                (
+                    std::cmp::Reverse(lineage_matches),
+                    fingerprint.as_deref() != current_fingerprint,
+                ),
+                fingerprint,
+            ))
+        })
+        .min_by(|left, right| left.0.cmp(&right.0));
+    let Some((_, fingerprint)) = selected_fingerprint else {
+        return Err(CliError::failure(
+            "Oven has no coherent completed library output cohort across the requested profiles. Run `incan oven bake --project .` before a normal library build.",
+        ));
+    };
+    let mut outputs = Vec::new();
+    for candidates in profile_candidates {
+        let Some(output) = candidates
+            .into_iter()
+            .find(|output| output.payload.lock_dependencies_fingerprint == fingerprint)
+        else {
+            return Ok(None);
+        };
+        if completed_output_default_backend_receipt(&output).is_none() {
             return Ok(None);
         }
-        outputs.push(selected);
+        outputs.push(output);
     }
     Ok(Some(outputs))
 }
@@ -16074,6 +16198,147 @@ headers = ["interop/include/bridge.h"]
             build_report: None,
         })?;
         Ok((receipt, payload, files))
+    }
+
+    #[test]
+    fn completed_output_selection_prefers_current_receipt_then_lock_and_keeps_stale_fallback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let store_dir = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_dir.path(),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let lock_path = project.path().join("oven.lock");
+        let write_lock = |fingerprint: &str| {
+            IncanLock::new(
+                fingerprint.to_string(),
+                CargoFeatureSelection::default(),
+                "version = 4\n".to_string(),
+            )
+            .write(&lock_path)
+        };
+        write_lock("sha256:old")?;
+        let (old_receipt, old_payload, old_files) =
+            fixture_project_output_publication(project.path(), "release", "old")?;
+        publish_project_output_loaf(&store, &old_receipt, &old_payload, &old_files)?;
+        write_lock("sha256:current")?;
+        let (receipt, payload, files) = fixture_project_output_publication(project.path(), "release", "current")?;
+        publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let entrypoint = project.path().join("src/main.incn");
+        let select = || {
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release",
+            )
+        };
+        let selected = select()?.ok_or("missing output without local receipt")?;
+        assert_eq!(
+            selected.payload.lock_dependencies_fingerprint.as_deref(),
+            Some("sha256:current")
+        );
+        let receipt_path = project_bake_receipt_path(
+            project.path(),
+            OvenBakeProjectTarget::Executable,
+            &entrypoint,
+            "release",
+        )?;
+        write_receipt(&receipt, &receipt_path)?;
+        write_lock("sha256:old")?;
+        let selected = select()?.ok_or("missing current lineage with stale lock")?;
+        assert_eq!(selected.payload.receipt_identity, receipt.identity);
+        warn_for_completed_output_lock_fingerprint_drift(project.path(), [&selected])?;
+        Ok(())
+    }
+
+    #[test]
+    fn completed_output_library_selection_keeps_one_cohort_across_profiles() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let store_dir = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_dir.path(),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let mut current_receipts = Vec::new();
+        for profile in ["debug", "release"] {
+            for cohort in ["old", "current"] {
+                let (receipt, mut payload, files) =
+                    fixture_project_output_publication(project.path(), profile, cohort)?;
+                payload.lock_dependencies_fingerprint = Some(format!("sha256:{cohort}"));
+                publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+                if profile == "debug" && cohort == "current" {
+                    current_receipts.push(receipt);
+                }
+            }
+        }
+        let (receipt, mut duplicate, files) =
+            fixture_project_output_publication(project.path(), "release", "old_duplicate")?;
+        duplicate.lock_dependencies_fingerprint = Some("sha256:old".to_string());
+        publish_project_output_loaf(&store, &receipt, &duplicate, &files)?;
+        let entrypoint = project.path().join("src/main.incn");
+        let authority = digest_baked_project_source_authority(project.path())?;
+        let mut groups = Vec::new();
+        for profile in ["debug", "release"] {
+            let mut candidates = matching_baked_project_outputs_with_source_authority(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                profile,
+                &authority,
+                None,
+            )?;
+            // Model opposing hash order across profiles; both profiles must still choose one cohort.
+            candidates.sort_by_key(|output| {
+                (output.payload.lock_dependencies_fingerprint.as_deref() == Some("sha256:current"))
+                    == (profile == "debug")
+            });
+            groups.push(candidates);
+        }
+        let outputs = select_coherent_library_outputs(groups, &current_receipts, Some("sha256:old"))?
+            .ok_or("missing coherent cohort")?;
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(
+            outputs[0].payload.lock_dependencies_fingerprint.as_deref(),
+            Some("sha256:current"),
+            "a current debug receipt outranks a stale lock even with duplicate stale release outputs and no local release receipt"
+        );
+        assert_eq!(
+            outputs[0].payload.lock_dependencies_fingerprint,
+            outputs[1].payload.lock_dependencies_fingerprint
+        );
+        let mut disjoint = Vec::new();
+        for (profile, fingerprint) in [("debug", "sha256:old"), ("release", "sha256:current")] {
+            let candidates = matching_baked_project_outputs_with_source_authority(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                profile,
+                &authority,
+                None,
+            )?;
+            disjoint.push(
+                candidates
+                    .into_iter()
+                    .filter(|output| output.payload.lock_dependencies_fingerprint.as_deref() == Some(fingerprint))
+                    .collect(),
+            );
+        }
+        let Err(error) = select_coherent_library_outputs(disjoint, &[], None) else {
+            return Err("disjoint profile cohorts must require an explicit bake".into());
+        };
+        assert!(error.message.contains("no coherent completed library output cohort"));
+        Ok(())
     }
 
     #[test]
