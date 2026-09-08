@@ -231,10 +231,29 @@ impl MemberBindingKind {
 /// Local aliases and provider-qualified internal signature spellings map to this value. The dependency key prevents
 /// same-named declarations from separate providers from unifying, while the provider-local source path lets multiple
 /// public spellings of one declaration compare as the same type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub(crate) struct PublicLibraryTypeIdentity {
     dependency_key: String,
     source_path: Vec<String>,
+    /// Declaration identity retained from the admitted manifest, including provider-only signature types.
+    canonical: Option<CanonicalSymbolId>,
+}
+
+impl PartialEq for PublicLibraryTypeIdentity {
+    /// Preserve selected-provider type equality; retained canonical evidence does not change its instance key.
+    fn eq(&self, other: &Self) -> bool {
+        self.dependency_key == other.dependency_key && self.source_path == other.source_path
+    }
+}
+
+impl Eq for PublicLibraryTypeIdentity {}
+
+impl std::hash::Hash for PublicLibraryTypeIdentity {
+    /// Hash the same provider instance and source path used by type compatibility.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.dependency_key, state);
+        std::hash::Hash::hash(&self.source_path, state);
+    }
 }
 
 impl PublicLibraryTypeIdentity {
@@ -243,7 +262,14 @@ impl PublicLibraryTypeIdentity {
         Self {
             dependency_key: dependency_key.to_string(),
             source_path: source_path.to_vec(),
+            canonical: None,
         }
+    }
+
+    /// Retain the declaration identity already supplied by this checked provider type binding.
+    fn with_canonical(mut self, canonical: Option<CanonicalSymbolId>) -> Self {
+        self.canonical = canonical;
+        self
     }
 }
 
@@ -2330,7 +2356,7 @@ impl TypeChecker {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
-    /// Project named leaves of an already checked type through the same identity query as source annotations.
+    /// Project named leaves through the module/provider type binding retained by the accepting compilation.
     fn collect_expression_type_identities(
         &self,
         ty: &ResolvedType,
@@ -2339,7 +2365,13 @@ impl TypeChecker {
     ) {
         match ty {
             ResolvedType::Named(name) => {
-                if let Some(identity) = self.named_type_reference_identity(name) {
+                // Resolved nominal types keep their accepted module/provider binding even when a local value
+                // shadows the source alias. Provider-only return types may have no lexical symbol at all.
+                let identity = match self.public_library_type_identities.get(name) {
+                    Some(binding) => binding.canonical.clone(),
+                    None => self.symbols.module_type_identity(name).cloned(),
+                };
+                if let Some(identity) = identity {
                     identities.insert(path.clone(), identity);
                 }
             }
