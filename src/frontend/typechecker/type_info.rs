@@ -765,6 +765,9 @@ pub struct ConstArtifacts {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Source-proven receiver and returned-borrow relationships keyed by the exact checked method-call span.
+    /// Unknown metadata never authorizes a shared alias; lowering must not reconstruct this from method names.
+    pub receiver_contracts: HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
     /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
     /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
     /// paths without re-running import resolution.

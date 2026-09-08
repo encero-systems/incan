@@ -1195,20 +1195,15 @@ impl AstLowering {
             // Preserve reference wrappers introduced by lowering (e.g. mutable parameters are tracked as
             // `RefMut(T)` in IR), while still benefiting from the typechecker's inner type information.
             //
-            // The frontend type system does not model references, so `expr_type` typically returns `T` where
-            // lowering may have already marked the same binding as `Ref(T)`/`RefMut(T)`.
+            // Inferred source values can be owned where lowering introduced a receiver borrow, but explicit Rust
+            // reference annotations already occur in both sources. Merge the complete shapes once so `&T` does not
+            // become `&&T` merely because both the binding and expression metadata know it is borrowed.
             //
             // Likewise, RFC-008 const lowering may have already refined `str`/`bytes` to their static IR forms.
             // Keep those backend-specific const representations intact so later emission can materialize owned
             // values only when required.
             let inferred = self.lower_resolved_type(res_ty);
             lowered.ty = match &lowered.ty {
-                IrType::Ref(existing_inner) => {
-                    IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
-                }
-                IrType::RefMut(existing_inner) => {
-                    IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
-                }
                 IrType::StaticStr => IrType::StaticStr,
                 IrType::StaticBytes => IrType::StaticBytes,
                 existing => Self::merge_inferred_ir_type(existing, inferred),
@@ -1266,6 +1261,7 @@ impl AstLowering {
         lowered = self.wrap_with_rust_return_coercion(lowered, expr.span)?;
         // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
+        lowered.span = expr.span.into();
         Ok(lowered)
     }
 

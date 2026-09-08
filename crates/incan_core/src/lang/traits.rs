@@ -249,6 +249,7 @@ pub fn as_str(id: TraitId) -> &'static str {
 pub const fn rust_paths(id: TraitId) -> &'static [&'static str] {
     match id {
         TraitId::Default => &["core::default::Default", "std::default::Default"],
+        TraitId::Clone => &["core::clone::Clone", "std::clone::Clone"],
         _ => &[],
     }
 }
