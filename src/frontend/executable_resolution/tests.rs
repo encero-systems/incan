@@ -306,6 +306,70 @@ fn public_default_calls_and_plain_model_context_execute_from_fragments() -> Resu
     Ok(())
 }
 
+/// Child frames share the complete checked graph, including a canonical backedge into its entry module.
+#[test]
+fn canonical_frames_reenter_the_entry_module_through_a_checked_cycle() -> Result<(), Box<dyn Error>> {
+    use crate::cli::commands::common::{
+        CompilationSession, collect_modules_detailed_with_session, scoped_compilation_session_analysis_invocations,
+    };
+
+    let temporary = tempfile::tempdir()?;
+    fs::create_dir(temporary.path().join("src"))?;
+    fs::write(
+        temporary.path().join("loaf.toml"),
+        "[project]\nname = \"frame_cycle\"\n",
+    )?;
+    let entry_path = temporary.path().join("src/main.incn");
+    fs::write(
+        &entry_path,
+        "from helper import bounce\n\npub def step(value: int) -> int:\n    if value == 0:\n        return 42\n    return bounce(value - 1)\n\ndef main() -> int:\n    return step(4)\n",
+    )?;
+    fs::write(
+        temporary.path().join("src/helper.incn"),
+        "from main import step\n\npub def bounce(value: int) -> int:\n    return step(value)\n",
+    )?;
+    let count = scoped_compilation_session_analysis_invocations();
+    let session = CompilationSession::discover_for_collection_with_feature_selection(&entry_path, &Default::default())?;
+    let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
+        .map_err(|failure| failure.render_human())?;
+    let analysis = session
+        .analyze_modules(
+            &modules,
+            #[cfg(feature = "rust_inspect")]
+            None,
+        )
+        .map_err(|failure| failure.render_human())?;
+    let lowered = modules
+        .iter()
+        .map(|module| {
+            let info = analysis
+                .type_info_for_path(&module.file_path)
+                .ok_or("module analysis absent")?;
+            Ok(build_body_ir_module_v0(&module.ast, &module.path_segments, info))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let entry_index = modules
+        .iter()
+        .position(|module| module.file_path == entry_path)
+        .ok_or("entry absent")?;
+    let graph = ReplacementExecutionGraph::new(
+        &lowered[entry_index],
+        lowered
+            .iter()
+            .enumerate()
+            .filter_map(|(index, module)| (index != entry_index).then_some(module)),
+    )?;
+    let execution = crate::backend::replacement::prepare_free_function_execution_in_graph(graph, "main", &[], None)?;
+    assert_eq!(
+        crate::backend::replacement::execute_prevalidated_free_function(execution)?
+            .value
+            .observable_text(),
+        "42"
+    );
+    assert_eq!(count.invocation_count(), 1);
+    Ok(())
+}
+
 /// Package identity and version remain attached to absent and incompatible representation refusals.
 #[test]
 fn missing_and_future_representations_are_package_refusals() -> Result<(), Box<dyn Error>> {
@@ -419,10 +483,10 @@ fn aliased_public_model_and_enum_execute_without_a_package_function_call() -> Re
     let manifest = artifact(
         temporary.path(),
         "types",
-        "pub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n",
+        "pub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n\npub enum Count(int):\n    Answer = 42\n",
     )?;
     let index = index(temporary.path(), "renamed", &manifest);
-    let source = "from pub::renamed import Pair as Item, Mode as State\n\ndef main() -> int:\n    item = Item(value=42)\n    mode = State.Ready\n    match mode:\n        case State.Ready:\n            match item:\n                case Item(value=number):\n                    return number\n        case State.Idle:\n            return 0\n    return 0\n";
+    let source = "from pub::renamed import Pair as Item, Mode as State, Count as Tally\n\ndef main() -> int:\n    item = Item(value=0)\n    mode = State.Ready\n    match mode:\n        case State.Ready:\n            match item:\n                case Item(value=number):\n                    return number + Tally.Answer.value()\n        case State.Idle:\n            return 0\n    return 0\n";
     let tokens = lexer::lex(source).map_err(|error| format!("{error:?}"))?;
     let program = parser::parse(&tokens).map_err(|error| format!("{error:?}"))?;
     let module_path = vec!["main".to_string()];
@@ -439,7 +503,7 @@ fn aliased_public_model_and_enum_execute_without_a_package_function_call() -> Re
         .cloned()
         .collect();
     let resolved = resolve_executable_requirements(&index, &required)?;
-    assert_eq!(resolved.decoded_declarations, 2);
+    assert_eq!(resolved.decoded_declarations, 3);
     let module = crate::frontend::body_ir::build_body_ir_module_v0_with_executable_context(
         &program,
         &module_path,
