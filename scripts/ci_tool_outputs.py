@@ -630,4 +630,3 @@ if __name__ == "__main__":
             state.mkdir(parents=True, exist_ok=True)
             (state / (sys.argv[1] + "-unavailable.json")).write_text(
                 json.dumps({"status": "unavailable", "detail": str(error)}, indent=2) + "\n")
-
