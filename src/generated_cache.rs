@@ -1,33 +1,20 @@
-//! Managed storage for Cargo artifacts produced by generated Rust projects.
+//! Maintenance and physical leases for existing generated-project cache domains.
 //!
-//! Generated source remains project-local. This module only shares Cargo's rebuildable `target` data across compatible
-//! Incan projects and worktrees, then bounds that shared data with lease-aware pruning.
+//! The legacy layout remains inspectable and prunable after Cargo target selection was removed. Recorded metadata
+//! describes stored bytes; it does not select or authorize a native compilation.
 
-use std::collections::BTreeMap;
 use std::env;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::lockfile::CargoFeatureSelection;
-use crate::oven::compiler_suite_env::OVEN_COMPILER_SUITE_RUSTC_ENV;
-
-/// Marker exported by a receipt-bound compiler-suite child. Its presence means that Cargo is not an execution
-/// capability and must not be probed while deriving a compatibility identity.
-const OVEN_SEALED_CARGO_COMMAND_IDENTITY: &str = "oven-sealed-no-cargo";
-const OVEN_SEALED_CARGO_VERSION_IDENTITY: &str = "not-consulted";
-const OVEN_SEALED_CARGO_CONFIG_IDENTITY: &str = "not-consulted";
 
 pub(crate) const GENERATED_CACHE_MAX_BYTES_ENV: &str = "INCAN_GENERATED_CACHE_MAX_BYTES";
-pub(crate) const GENERATED_CACHE_MAX_ENTRY_BYTES_ENV: &str = "INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES";
-pub(crate) const GENERATED_CACHE_ENABLED_ENV: &str = "INCAN_GENERATED_CACHE";
 const DEFAULT_GENERATED_CACHE_MAX_BYTES: u64 = 20 * 1024 * 1024 * 1024;
-const DEFAULT_GENERATED_CACHE_MAX_ENTRY_BYTES: u64 = DEFAULT_GENERATED_CACHE_MAX_BYTES;
 const CACHE_LAYOUT_VERSION: &str = "v1";
 const CACHE_METADATA_FILE: &str = "entry.json";
 const CACHE_ACTIVE_LOCK_FILE: &str = ".active.lock";
@@ -35,17 +22,6 @@ const CACHE_MANAGER_LOCK_FILE: &str = ".manager.lock";
 const CACHE_MEASUREMENT_INTERVAL_SECONDS: u64 = 10;
 const CACHE_CATEGORY: &str = "generated-cargo";
 const CACHE_REPORT_SCHEMA_VERSION: u32 = 1;
-const RUST_BACKEND_IDENTITY_ENV: &[&str] = &[
-    "RUSTC",
-    "RUSTC_WRAPPER",
-    "RUSTC_WORKSPACE_WRAPPER",
-    "RUSTUP_TOOLCHAIN",
-    "CARGO",
-    "CARGO_BUILD_TARGET",
-    "RUSTFLAGS",
-    "CARGO_ENCODED_RUSTFLAGS",
-];
-
 /// One resolved generated-project Cargo target and its optional active-use lease.
 pub(crate) struct GeneratedCargoTarget {
     path: PathBuf,
@@ -82,7 +58,7 @@ impl Drop for GeneratedCacheLease {
 }
 
 impl GeneratedCacheLease {
-    /// Finish one compiler-owned Cargo operation before user code may continue outside the cache lease.
+    /// End active use of the recorded output domain before user code continues outside its cache lease.
     pub(crate) fn finish(mut self) -> io::Result<()> {
         self.release_activity_lock();
         let result = self
@@ -249,11 +225,6 @@ fn require_default_cache_root() -> io::Result<PathBuf> {
     })
 }
 
-/// Parse the cache enable switch while keeping managed reuse on by default.
-fn generated_cache_enabled(raw: Option<&str>) -> bool {
-    !raw.is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
-}
-
 /// Parse the cache size limit in bytes.
 fn configured_max_bytes(raw: Option<&str>) -> io::Result<u64> {
     match raw {
@@ -265,165 +236,6 @@ fn configured_max_bytes(raw: Option<&str>) -> io::Result<u64> {
             )
         }),
     }
-}
-
-/// Parse the retained per-domain bound enforced whenever a compatibility domain becomes idle.
-fn configured_max_entry_bytes(raw: Option<&str>) -> io::Result<u64> {
-    match raw {
-        None | Some("") => Ok(DEFAULT_GENERATED_CACHE_MAX_ENTRY_BYTES),
-        Some(raw) => raw.parse::<u64>().map_err(|error| {
-            io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("invalid {GENERATED_CACHE_MAX_ENTRY_BYTES_ENV} value `{raw}`: {error}"),
-            )
-        }),
-    }
-}
-
-/// Resolve one path relative to the current process directory.
-fn resolve_path(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Ok(cwd) = env::current_dir() {
-        cwd.join(path)
-    } else {
-        path.to_path_buf()
-    }
-}
-
-/// Resolve a project root before choosing its legacy project-local fallback target.
-fn absolute_project_root(project_root: &Path) -> PathBuf {
-    resolve_path(project_root)
-}
-
-/// Resolve the directory context for toolchain probes before a generated output directory necessarily exists.
-fn nearest_existing_directory(path: &Path) -> PathBuf {
-    let absolute = resolve_path(path);
-    absolute
-        .ancestors()
-        .find(|ancestor| ancestor.is_dir())
-        .map(Path::to_path_buf)
-        .or_else(|| env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
-/// Collect every inherited selector that can alter Cargo's emitted artifacts without recording process-local paths.
-fn rust_backend_identity_selectors() -> BTreeMap<String, String> {
-    let mut selectors = BTreeMap::new();
-    for name in RUST_BACKEND_IDENTITY_ENV {
-        selectors.insert(
-            (*name).to_string(),
-            env::var_os(name).unwrap_or_default().to_string_lossy().into_owned(),
-        );
-    }
-    for (name, value) in env::vars_os() {
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        // Managed commands replace this output-only path with the selected lifecycle target, so inheriting a
-        // worktree-specific outer target must not fragment otherwise compatible domains.
-        if inherited_selector_affects_managed_artifacts(name) {
-            selectors.insert(name.to_string(), value.to_string_lossy().into_owned());
-        }
-    }
-    selectors
-}
-
-/// Format backend identity inputs deterministically for hashing and metadata.
-fn format_rust_backend_identity(
-    rustc_command: &str,
-    verbose_version: &str,
-    selectors: impl IntoIterator<Item = (String, String)>,
-) -> String {
-    let mut identity = format!("rustc_command={rustc_command}\nrustc_verbose_version=\n{verbose_version}\n");
-    for (name, value) in selectors {
-        identity.push_str(&name);
-        identity.push('=');
-        identity.push_str(&value);
-        identity.push('\n');
-    }
-    identity
-}
-
-/// Derive the complete deterministic metadata and digest for one compatibility domain.
-fn cache_entry_metadata(
-    generated_package_name: &str,
-    profile: &str,
-    lock_payload: Option<&str>,
-    cargo_features: &CargoFeatureSelection,
-    cargo_flags: &[String],
-    rust_backend_identity: &str,
-) -> io::Result<CacheEntryMetadata> {
-    let cargo_flags = cargo_flags_identity(cargo_flags);
-    let lock_digest = normalized_lock_digest(lock_payload, generated_package_name)?;
-    let mut identity_hasher = Sha256::new();
-    identity_hasher.update(b"incan-generated-cargo-cache-v1\0");
-    identity_hasher.update(crate::version::INCAN_VERSION.as_bytes());
-    identity_hasher.update(b"\0rust-backend\0");
-    identity_hasher.update(rust_backend_identity.as_bytes());
-    identity_hasher.update(b"\0profile\0");
-    identity_hasher.update(profile.as_bytes());
-    identity_hasher.update(b"\0lock\0");
-    identity_hasher.update(lock_digest.as_bytes());
-    identity_hasher.update(b"\0features\0");
-    for feature in &cargo_features.cargo_features {
-        identity_hasher.update(feature.as_bytes());
-        identity_hasher.update(b"\0");
-    }
-    identity_hasher.update([u8::from(cargo_features.cargo_no_default_features)]);
-    identity_hasher.update([u8::from(cargo_features.cargo_all_features)]);
-    identity_hasher.update(b"\0cargo-flags\0");
-    for flag in &cargo_flags {
-        identity_hasher.update(flag.as_bytes());
-        identity_hasher.update(b"\0");
-    }
-    Ok(CacheEntryMetadata {
-        identity: hex::encode(identity_hasher.finalize()),
-        incan_version: crate::version::INCAN_VERSION.to_string(),
-        rust_backend_identity: rust_backend_identity.to_string(),
-        profile: profile.to_string(),
-        lock_digest,
-        cargo_features: cargo_features.clone().normalized(),
-        cargo_flags,
-        last_used_unix_seconds: now_unix_seconds(),
-        logical_bytes: 0,
-        last_measured_unix_seconds: 0,
-    })
-}
-
-/// Hash a Cargo lock after replacing the generated root package's project-specific coordinates.
-fn normalized_lock_digest(lock_payload: Option<&str>, generated_package_name: &str) -> io::Result<String> {
-    let Some(lock_payload) = lock_payload else {
-        return Ok(hex::encode(Sha256::digest([])));
-    };
-    let mut lock = toml::from_str::<toml::Value>(lock_payload).map_err(|error| {
-        io::Error::new(
-            ErrorKind::InvalidData,
-            format!("failed to parse generated Cargo lock for cache identity: {error}"),
-        )
-    })?;
-    if let Some(packages) = lock.get_mut("package").and_then(toml::Value::as_array_mut) {
-        for package in packages {
-            let is_generated_root = package
-                .get("name")
-                .and_then(toml::Value::as_str)
-                .is_some_and(|name| name == generated_package_name);
-            if is_generated_root && let Some(table) = package.as_table_mut() {
-                table.insert(
-                    "name".to_string(),
-                    toml::Value::String("__incan_generated_root".to_string()),
-                );
-                table.insert("version".to_string(), toml::Value::String("0.0.0".to_string()));
-            }
-        }
-    }
-    let normalized = toml::to_string(&lock).map_err(|error| {
-        io::Error::new(
-            ErrorKind::InvalidData,
-            format!("failed to serialize normalized Cargo lock for cache identity: {error}"),
-        )
-    })?;
-    Ok(hex::encode(Sha256::digest(normalized.as_bytes())))
 }
 
 /// Acquire the root manager guard, prune old domains, publish metadata, and retain a shared activity lease.
@@ -797,53 +609,20 @@ fn now_unix_seconds() -> u64 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn compatibility_identity_changes_for_every_declared_domain_input() -> io::Result<()> {
-        let features = CargoFeatureSelection::default();
-        let baseline = cache_entry_metadata("root", "release", None, &features, &[], "rustc-a")?;
-        let profile = cache_entry_metadata("root", "debug", None, &features, &[], "rustc-a")?;
-        let lock = cache_entry_metadata("root", "release", Some("version = 4"), &features, &[], "rustc-a")?;
-        let rustc = cache_entry_metadata("root", "release", None, &features, &[], "rustc-b")?;
-        let selected_features = CargoFeatureSelection {
-            cargo_features: vec!["serde".to_string()],
-            ..CargoFeatureSelection::default()
-        };
-        let feature = cache_entry_metadata("root", "release", None, &selected_features, &[], "rustc-a")?;
-        let cargo_flag = cache_entry_metadata(
-            "root",
-            "release",
-            None,
-            &features,
-            &["--target".to_string(), "wasm32-wasip1".to_string()],
-            "rustc-a",
-        )?;
-        let execution_policy = cache_entry_metadata(
-            "root",
-            "release",
-            None,
-            &features,
-            &["--offline".to_string(), "--locked".to_string(), "--timings".to_string()],
-            "rustc-a",
-        )?;
-
-        assert_ne!(baseline.identity, profile.identity);
-        assert_ne!(baseline.identity, lock.identity);
-        assert_ne!(baseline.identity, rustc.identity);
-        assert_ne!(baseline.identity, feature.identity);
-        assert_ne!(baseline.identity, cargo_flag.identity);
-        assert_eq!(baseline.identity, execution_policy.identity);
-        Ok(())
-    }
-
-    #[test]
-    fn compatibility_identity_ignores_generated_root_coordinates() -> io::Result<()> {
-        let first_lock = "version = 4\n\n[[package]]\nname = \"first\"\nversion = \"1.2.3\"\ndependencies = [\"serde\"]\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n";
-        let second_lock = "version = 4\n\n[[package]]\nname = \"second\"\nversion = \"9.8.7\"\ndependencies = [\"serde\"]\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n";
-        let features = CargoFeatureSelection::default();
-        let first = cache_entry_metadata("first", "release", Some(first_lock), &features, &[], "rustc")?;
-        let second = cache_entry_metadata("second", "release", Some(second_lock), &features, &[], "rustc")?;
-        assert_eq!(first.identity, second.identity);
-        Ok(())
+    /// Construct an existing-layout record for physical maintenance tests, without selecting a compiler domain.
+    fn legacy_entry(identity: &str) -> CacheEntryMetadata {
+        CacheEntryMetadata {
+            identity: identity.to_string(),
+            incan_version: "recorded-version".to_string(),
+            rust_backend_identity: "recorded-backend".to_string(),
+            profile: "release".to_string(),
+            lock_digest: "recorded-lock".to_string(),
+            cargo_features: CargoFeatureSelection::default(),
+            cargo_flags: Vec::new(),
+            last_used_unix_seconds: now_unix_seconds(),
+            logical_bytes: 0,
+            last_measured_unix_seconds: 0,
+        }
     }
 
     #[test]
@@ -863,8 +642,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let cache_root = temp.path().join("cache");
         fs::create_dir_all(&cache_root)?;
-        let features = CargoFeatureSelection::default();
-        let mut old = cache_entry_metadata("root", "release", None, &features, &[], "rustc")?;
+        let mut old = legacy_entry("root");
         old.identity = "old".to_string();
         old.last_used_unix_seconds = 1;
         let old_root = cache_root.join(&old.identity);
@@ -872,7 +650,7 @@ mod tests {
         write_metadata(&old_root, &old)?;
         fs::write(old_root.join("target/artifact"), [0_u8; 16])?;
 
-        let mut active = cache_entry_metadata("root", "release", None, &features, &[], "rustc")?;
+        let mut active = legacy_entry("root");
         active.identity = "active".to_string();
         active.last_used_unix_seconds = 2;
         let active_root = cache_root.join(&active.identity);
@@ -909,97 +687,11 @@ mod tests {
     }
 
     #[test]
-    fn rust_backend_identity_includes_compiler_and_cargo_selectors() {
-        let identity = format_complete_backend_identity(
-            "/toolchains/nightly/bin/rustc",
-            "rustc 1.99.0\nhost: aarch64-apple-darwin",
-            [
-                ("RUSTUP_TOOLCHAIN".to_string(), "nightly".to_string()),
-                ("CARGO_BUILD_TARGET".to_string(), "x86_64-unknown-linux-gnu".to_string()),
-            ],
-            "/toolchains/nightly/bin/cargo",
-            "cargo 1.99.0\nrelease: 1.99.0",
-            "config-sha256",
-        );
-        assert!(identity.contains("rustc_command=/toolchains/nightly/bin/rustc"));
-        assert!(identity.contains("host: aarch64-apple-darwin"));
-        assert!(identity.contains("RUSTUP_TOOLCHAIN=nightly"));
-        assert!(identity.contains("CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu"));
-        assert!(identity.contains("cargo_command=/toolchains/nightly/bin/cargo"));
-        assert!(identity.contains("cargo 1.99.0"));
-        assert!(identity.contains("cargo_config_identity=config-sha256"));
-    }
-
-    #[test]
-    fn sealed_oven_backend_identity_records_that_cargo_was_not_consulted() {
-        let identity = format_oven_sealed_backend_identity(
-            "/toolchains/nightly/bin/rustc",
-            "rustc 1.99.0\nhost: aarch64-apple-darwin",
-            [("RUSTFLAGS".to_string(), "-Cdebuginfo=0".to_string())],
-        );
-        assert!(identity.contains("rustc_command=/toolchains/nightly/bin/rustc"));
-        assert!(identity.contains("cargo_command=oven-sealed-no-cargo"));
-        assert!(identity.contains("cargo_verbose_version=\nnot-consulted"));
-        assert!(identity.contains("cargo_config_identity=not-consulted"));
-    }
-
-    #[test]
-    fn managed_identity_ignores_overridden_outer_target_directory() {
-        assert!(!inherited_selector_affects_managed_artifacts("CARGO_TARGET_DIR"));
-        assert!(inherited_selector_affects_managed_artifacts(
-            "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"
-        ));
-        assert!(inherited_selector_affects_managed_artifacts(
-            "CARGO_PROFILE_RELEASE_LTO"
-        ));
-    }
-
-    #[test]
-    fn rejects_cargo_passthrough_that_can_escape_managed_target() {
-        for flags in [
-            vec!["--target-dir".to_string(), "/tmp/other".to_string()],
-            vec!["--target-dir=/tmp/other".to_string()],
-            vec!["--config".to_string(), "build.target-dir='/tmp/other'".to_string()],
-            vec!["--config".to_string(), "build.'target-dir'='/tmp/other'".to_string()],
-            vec![
-                "--config".to_string(),
-                "build = { build-dir = '/tmp/other' }".to_string(),
-            ],
-            vec!["--config=other.toml".to_string()],
-        ] {
-            assert!(validate_managed_cargo_flags(&flags).is_err());
-        }
-        assert!(validate_managed_cargo_flags(&["--config".to_string(), "net.retry=3".to_string()]).is_ok());
-    }
-
-    #[test]
-    fn explicit_target_override_bypasses_managed_cargo_flag_validation() -> io::Result<()> {
-        let temp = tempfile::tempdir()?;
-        let target = temp.path().join("caller-owned-target");
-        let resolved = resolve_generated_cargo_target(
-            Some(&target),
-            temp.path(),
-            temp.path(),
-            "root",
-            "release",
-            None,
-            &CargoFeatureSelection::default(),
-            &["--target-dir=/tmp/caller-owned".to_string()],
-        )?;
-
-        assert_eq!(resolved.path, target);
-        assert!(resolved.lease.is_none());
-        assert!(resolved.identity.is_none());
-        Ok(())
-    }
-
-    #[test]
     fn acquisition_protects_requested_domain_while_pruning() -> io::Result<()> {
         let temp = tempfile::tempdir()?;
         let cache_root = temp.path().join("cache");
         fs::create_dir_all(&cache_root)?;
-        let features = CargoFeatureSelection::default();
-        let mut requested = cache_entry_metadata("root", "release", None, &features, &[], "rustc")?;
+        let mut requested = legacy_entry("root");
         requested.identity = "requested".to_string();
         requested.last_used_unix_seconds = 1;
         let requested_root = cache_root.join(&requested.identity);
@@ -1027,9 +719,8 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let cache_root = temp.path().join("cache");
         fs::create_dir_all(&cache_root)?;
-        let features = CargoFeatureSelection::default();
 
-        let mut interrupted = cache_entry_metadata("root", "release", None, &features, &[], "rustc")?;
+        let mut interrupted = legacy_entry("root");
         interrupted.identity = "interrupted".to_string();
         interrupted.last_used_unix_seconds = 1;
         interrupted.logical_bytes = 8;
@@ -1076,8 +767,7 @@ mod tests {
     fn reacquiring_interrupted_domain_discards_oversized_rebuildable_target() -> io::Result<()> {
         let temp = tempfile::tempdir()?;
         let cache_root = temp.path().join("cache");
-        let features = CargoFeatureSelection::default();
-        let mut metadata = cache_entry_metadata("root", "release", None, &features, &[], "rustc")?;
+        let mut metadata = legacy_entry("root");
         metadata.identity = "interrupted".to_string();
         let entry_root = cache_root.join(&metadata.identity);
 
@@ -1141,8 +831,7 @@ mod tests {
     fn acquisition_discards_known_oversized_rebuildable_target() -> io::Result<()> {
         let temp = tempfile::tempdir()?;
         let cache_root = temp.path().join("cache");
-        let features = CargoFeatureSelection::default();
-        let mut metadata = cache_entry_metadata("root", "release", None, &features, &[], "rustc")?;
+        let mut metadata = legacy_entry("root");
         metadata.identity = "oversized".to_string();
         metadata.logical_bytes = 9;
         let entry_root = cache_root.join(&metadata.identity);
@@ -1161,8 +850,7 @@ mod tests {
     fn completed_lease_releases_domain_and_discards_oversized_rebuildable_target() -> io::Result<()> {
         let temp = tempfile::tempdir()?;
         let cache_root = temp.path().join("cache");
-        let features = CargoFeatureSelection::default();
-        let mut metadata = cache_entry_metadata("root", "release", None, &features, &[], "rustc")?;
+        let mut metadata = legacy_entry("root");
         metadata.identity = "completed".to_string();
         let entry_root = cache_root.join(&metadata.identity);
 
@@ -1184,11 +872,10 @@ mod tests {
     fn completed_concurrent_domains_are_pruned_to_the_aggregate_limit() -> io::Result<()> {
         let temp = tempfile::tempdir()?;
         let cache_root = temp.path().join("cache");
-        let features = CargoFeatureSelection::default();
-        let mut first_metadata = cache_entry_metadata("first", "release", None, &features, &[], "rustc-a")?;
+        let mut first_metadata = legacy_entry("first");
         first_metadata.identity = "first".to_string();
         first_metadata.last_used_unix_seconds = 1;
-        let mut second_metadata = cache_entry_metadata("second", "release", None, &features, &[], "rustc-b")?;
+        let mut second_metadata = legacy_entry("second");
         second_metadata.identity = "second".to_string();
         second_metadata.last_used_unix_seconds = 2;
 
