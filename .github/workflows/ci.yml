@@ -20,7 +20,9 @@ on:
         default: true
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Irrelevant label events skip the scope job, but still enter workflow concurrency. Give them a separate group so
+  # auto-labelling cannot cancel the substantive PR run before its tests finish.
+  group: ci-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && format('label-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
