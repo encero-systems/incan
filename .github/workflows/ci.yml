@@ -244,10 +244,19 @@ jobs:
           make fetch-locked-cargo-sources
           make fetch-oven-loaf-sources
           make fetch-release-support-workspace-sources
-      - name: Build Linux compiler and reference generators
+      - name: Build optimized Linux compiler and reference generators
         run: |
-          CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
-          CARGO_BUILD_JOBS=2 cargo build --locked -p incan_core --bin generate_lang_reference
+          CARGO_BUILD_JOBS=2 cargo build --locked --release --features lsp --bin incan --bin generate_feature_inventory
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_core --bin generate_lang_reference
+      - name: Stage exact release tools for SDK preparation and consumers
+        run: |
+          # Consumers use these stable delivery paths; all three executables were built with the release profile.
+          mkdir -p target/debug
+          for tool in incan generate_lang_reference generate_feature_inventory; do
+            install -m 755 "target/release/$tool" "target/debug/$tool"
+            cmp "target/release/$tool" "target/debug/$tool"
+            sha256sum "target/release/$tool" "target/debug/$tool"
+          done
       # Only this Linux job restores/saves the cross-run SDK cache. Same-run consumers receive an artifact even
       # when another workflow wins the immutable-cache reservation or saving the cache is unavailable.
       - uses: ./.github/actions/restore-sdk-provider-store
@@ -358,12 +367,17 @@ jobs:
       - name: Restore executable permissions
         run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
       - uses: ./.github/actions/consume-sdk-provider-store
-      # Cargo still compiles this test executable; downloading the CLI does not transfer its Cargo target graph.
+      # Cargo builds test dependencies and enabled binaries in a separate target so it cannot replace the handoff CLI.
       - name: Run platform C ABI verification
-        run: >-
-          CARGO_NET_OFFLINE=true
-          cargo test --locked --test cli_integration
-          check_verifies_c_bindings_against_a_declared_android_interop_target -- --exact
+        env:
+          CARGO_NET_OFFLINE: "true"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/incan-platform-test-target
+          CARGO_BIN_EXE_incan: ${{ github.workspace }}/target/debug/incan
+        run: |
+          sha256sum target/debug/incan > "$RUNNER_TEMP/compiler-handoff.sha256"
+          cargo test --locked --test cli_integration \
+            check_verifies_c_bindings_against_a_declared_android_interop_target -- --exact
+          sha256sum --check "$RUNNER_TEMP/compiler-handoff.sha256"
 
   linux-oven-prewarm:
     name: Linux Oven prewarm
@@ -501,10 +515,14 @@ jobs:
         run: chmod +x target/debug/incan
       - uses: ./.github/actions/consume-sdk-provider-store
       - name: Prove the source-observable comparison ran and agreed
-        run: >-
-          CARGO_NET_OFFLINE=true
-          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+        env:
+          CARGO_NET_OFFLINE: "true"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/incan-shadow-test-target
+          INCAN_TEST_COMPILER_ALREADY_BUILT: "1"
+        run: |
+          sha256sum target/debug/incan > "$RUNNER_TEMP/compiler-handoff.sha256"
           make -s shadow-comparison-evidence
+          sha256sum --check "$RUNNER_TEMP/compiler-handoff.sha256"
       - name: Upload the parity corpus summary
         if: always()
         uses: actions/upload-artifact@v5

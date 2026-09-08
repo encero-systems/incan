@@ -1097,6 +1097,7 @@ fn oven_alpha_benchmark_records_a_verified_cargo_guard_verdict() -> Result<(), B
     Ok(())
 }
 
+/// Keep the suite's producer, immutable handoff and guarded replay contracts connected across local and CI entrypoints.
 #[test]
 fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -1186,8 +1187,17 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     let linux_prewarm_job = &linux_prewarm_workflow[..linux_prewarm_end];
     let linux_tools_workflow = &workflow[linux_tools..linux_prewarm];
     let compiler_build = linux_tools_workflow
-        .find("- name: Build Linux compiler and reference generators")
-        .ok_or("pull-request CI is missing Linux compiler build")?;
+        .find("cargo build --locked --release --features lsp --bin incan --bin generate_feature_inventory")
+        .ok_or("pull-request CI is missing the optimized Linux compiler build")?;
+    let reference_build = linux_tools_workflow
+        .find("cargo build --locked --release -p incan_core --bin generate_lang_reference")
+        .ok_or("pull-request CI is missing the optimized language reference generator build")?;
+    let tool_staging = linux_tools_workflow
+        .find("install -m 755 \"target/release/$tool\" \"target/debug/$tool\"")
+        .ok_or("pull-request CI is missing exact release-tool staging")?;
+    let provider_selection = linux_tools_workflow
+        .find("uses: ./.github/actions/restore-sdk-provider-store")
+        .ok_or("pull-request CI is missing SDK provider selection")?;
     let provider_handoff = linux_prewarm_job
         .find("- uses: ./.github/actions/consume-sdk-provider-store")
         .ok_or("pull-request CI is missing the same-run SDK handoff")?;
@@ -1195,9 +1205,11 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .find("- name: Prewarm the complete Linux Rust 1.98.0 Oven suite")
         .ok_or("pull-request CI is missing the complete pinned Linux Oven suite")?;
     assert!(
-        compiler_build < linux_tools_workflow.len()
+        compiler_build < tool_staging
+            && reference_build < tool_staging
+            && tool_staging < provider_selection
+            && linux_tools_workflow.contains("cmp \"target/release/$tool\" \"target/debug/$tool\"")
             && provider_handoff < complete_suite
-            && linux_tools_workflow.contains("uses: ./.github/actions/restore-sdk-provider-store")
             && linux_prewarm_workflow.contains("needs:\n      - changes\n      - linux-tool-handoff")
             && linux_prewarm_job.contains("- name: Save prepared Linux Rust 1.98.0 Oven suite")
             && linux_prewarm_job.contains("target/incan_test_sdk_provider_store"),
