@@ -1408,3 +1408,17 @@ mod tests {
         assert_eq!(SemanticSourceTargetKind::from_kind_str("macro").as_str(), "macro");
     }
 }
+
+/// Stable package-owned module identity; unlike a source path, it cannot collide between packages.
+pub fn package_module_identity(library: &str, module_path: &[String]) -> String {
+    format!("pub::{library}::{}", crate::module_identity_for_path(module_path))
+}
+
+/// Resolve the physical module scope of an existing canonical identity without minting a new semantic identity.
+pub fn canonical_module_identity(identity: &CanonicalSymbolId) -> Option<String> {
+    match &identity.origin {
+        SymbolOrigin::Module(path) => Some(crate::module_identity_for_path(path)),
+        SymbolOrigin::Package { library, module_path } => Some(package_module_identity(library, module_path)),
+        SymbolOrigin::RustCrate(_) | SymbolOrigin::Builtin => None,
+    }
+}

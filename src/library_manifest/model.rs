@@ -398,9 +398,24 @@ pub struct LibraryContractMetadata {
     /// Stable semantic identities for public exports.
     #[serde(default = "legacy_library_identity_graph")]
     pub identity_graph: LibraryIdentityGraph,
+    /// Optional executable publication selected by this exact manifest; linking-only packages may omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable_representation: Option<ExecutableRepresentationExport>,
     /// Generic compiled-provider facts used by SDK and ordinary package consumers.
     #[serde(default, skip_serializing_if = "CompiledProviderMetadata::is_empty")]
     pub provider: CompiledProviderMetadata,
+}
+
+/// Immutable binary executable sidecar published before the manifest that selects it.
+///
+/// A content-addressed filename makes manifest replacement the publication commit point: concurrent readers keep
+/// seeing a complete old or new surface, and stale files cannot be selected by a rebuilt manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutableRepresentationExport {
+    /// Encoding version, separate from the manifest and package versions.
+    pub representation_version: u32,
+    /// SHA-256 content identity, encoded as lowercase hexadecimal and used as the semantic sidecar filename.
+    pub content_digest: String,
 }
 
 /// Generic backend-neutral provider facts embedded in one checked library artifact.
@@ -1724,15 +1739,20 @@ impl LibraryManifest {
     /// Validation happens before serialization so producer mistakes fail early instead of emitting an invalid
     /// `.incnlib` file.
     pub fn write_to_path(&self, path: &Path) -> Result<(), LibraryManifestError> {
-        let raw = RawLibraryManifest::from_semantic(self);
-        validate_raw_manifest(&raw)?;
-        let content =
-            serde_json::to_string_pretty(&raw).map_err(|err| LibraryManifestError::Serialize(err.to_string()))?;
-        fs::write(path, format!("{content}\n")).map_err(|source| LibraryManifestError::Write {
+        fs::write(path, self.to_json_string()?).map_err(|source| LibraryManifestError::Write {
             path: path.to_path_buf(),
             source,
         })?;
         Ok(())
+    }
+
+    /// Validate and encode this manifest before a caller atomically publishes it beside immutable sidecars.
+    pub fn to_json_string(&self) -> Result<String, LibraryManifestError> {
+        let raw = RawLibraryManifest::from_semantic(self);
+        validate_raw_manifest(&raw)?;
+        let content =
+            serde_json::to_string_pretty(&raw).map_err(|error| LibraryManifestError::Serialize(error.to_string()))?;
+        Ok(format!("{content}\n"))
     }
 
     /// Read, decode, validate, and convert a manifest from disk.

@@ -309,11 +309,9 @@ struct PreparedLibraryProject {
     out_dir: PathBuf,
     manifest_path: PathBuf,
     library_manifest: LibraryManifest,
-    /// Executable representation of each module's public surface, keyed by module path (RFC 123).
-    ///
-    /// Built where the checked type information is still live, because that is the compilation that declares these
-    /// symbols and RFC 123 requires the representation to be produced by it rather than reconstructed later.
-    executable_surfaces: Vec<(Vec<String>, Vec<u8>)>,
+    /// One identity-addressed public executable closure selected from the finalized manifest and the same checked
+    /// compilation.
+    executable_surface: Vec<u8>,
     timings_ms: BTreeMap<String, u64>,
     report: BuildReportDraft,
     oven: Option<OvenPreparedLibrary>,
@@ -2728,19 +2726,48 @@ fn build_replacement_file_report(
     if let Some((error, source_path)) = profile_error {
         return refuse_replacement_profile(&selection, error, &source_path);
     }
-    let body_ir = build_body_ir_module_v0(
+    let required_packages = replacement_package_requirements(&session_inputs);
+    let published = crate::frontend::executable_resolution::resolve_executable_requirements(
+        &compilation_session.library_manifest_index,
+        &required_packages,
+    )
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    // Imported type context comes from selected executable fragments. Local source is lowered once from the
+    // session's existing checked facts; neither dependency source nor a second typecheck participates.
+    let body_ir = crate::frontend::body_ir::build_body_ir_module_v0_with_executable_context(
         &session_inputs.program,
         &session_inputs.module_path,
         &session_inputs.type_info,
+        &published.modules,
     );
-    // Lower every module the one analysis checked, not just the entrypoint. A call that leaves the entry module can
-    // only resolve if its callee's module was lowered from that same analysis; lowering it later, or from a second
-    // analysis, would mint identities that cannot be compared with the ones the entry module carries.
-    let reachable_body_ir: Vec<_> = session_inputs
+    let mut reachable_body_ir: Vec<_> = session_inputs
         .reachable_modules
         .iter()
-        .map(|module| build_body_ir_module_v0(&module.program, &module.module_path, &module.type_info))
+        .map(|module| {
+            crate::frontend::body_ir::build_body_ir_module_v0_with_executable_context(
+                &module.program,
+                &module.module_path,
+                &module.type_info,
+                &published.modules,
+            )
+        })
         .collect();
+    let package_versions = published.package_versions;
+    let decoded_package_declarations = published.decoded_declarations;
+    let package_payload_bytes_read = published.payload_bytes_read;
+    let package_content_bytes_verified = published.content_bytes_verified;
+    for module in &published.modules {
+        for body in &module.bodies {
+            if let Err(error) = crate::backend::replacement::validate_published_body_profile(body) {
+                return Err(package_execution_requirement_error(
+                    body,
+                    &package_versions,
+                    error.to_string(),
+                ));
+            }
+        }
+    }
+    reachable_body_ir.extend(published.modules);
     let execution_graph = match ReplacementExecutionGraph::new(&body_ir, reachable_body_ir.iter()) {
         Ok(graph) => graph,
         Err(error) => return refuse_replacement_profile(&selection, error, &entrypoint),
@@ -2748,6 +2775,22 @@ fn build_replacement_file_report(
     let execution_plan = match prepare_free_function_execution_in_graph(execution_graph, "main", &[], None) {
         Ok(plan) => plan,
         Err(error) => {
+            if let Some(owner) = error.measured_module() {
+                if let Some(module) = reachable_body_ir.iter().find(|module| module.module_id.path() == owner) {
+                    if let Some(body) = module.bodies.first().filter(|body| {
+                        matches!(
+                            body.canonical.as_ref().map(|identity| &identity.origin),
+                            Some(incan_semantics_core::SymbolOrigin::Package { .. })
+                        )
+                    }) {
+                        return Err(package_execution_requirement_error(
+                            body,
+                            &package_versions,
+                            error.to_string(),
+                        ));
+                    }
+                }
+            }
             let source =
                 replacement_refusal_source(&error, &entrypoint, &session_inputs.reachable_modules).to_path_buf();
             return refuse_replacement_profile(&selection, error, &source);
@@ -2782,6 +2825,9 @@ fn build_replacement_file_report(
         "backend": backend_receipt,
         "semantic_module": session_inputs.semantic_module,
         "replacement_execution": {
+            "package_declarations_decoded": decoded_package_declarations,
+            "package_payload_bytes_read": package_payload_bytes_read,
+            "package_content_bytes_verified": package_content_bytes_verified,
             "result": execution.value.observable_text(),
             "result_type": result_type,
             "output_identity": execution.output_identity,
@@ -2795,6 +2841,83 @@ fn build_replacement_file_report(
         },
         "timings_ms": { "total": elapsed_ms(start) },
     }))
+}
+
+/// Collect the package requirements reachable from the checked entrypoint, including defaults and deferred frames.
+///
+/// The worklist follows local calls by their existing canonical identity or exact owner-local physical identity.
+/// Package targets are retained for artifact resolution; no dependency source is parsed or lowered here.
+fn replacement_package_requirements(
+    inputs: &ReplacementSessionInputs,
+) -> BTreeSet<incan_semantics_core::CanonicalSymbolId> {
+    use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+    let mut declarations = BTreeMap::new();
+    for type_info in
+        std::iter::once(&inputs.type_info).chain(inputs.reachable_modules.iter().map(|module| &module.type_info))
+    {
+        for identity in type_info
+            .declarations
+            .declaration_identities
+            .values()
+            .chain(type_info.declarations.member_declaration_identities.values())
+        {
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
+            ) {
+                declarations.insert(identity.clone(), type_info);
+            }
+        }
+    }
+    let mut pending = inputs
+        .type_info
+        .declarations
+        .declaration_identities
+        .values()
+        .filter(|identity| identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "main")
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut visited = BTreeSet::new();
+    let mut packages = BTreeSet::new();
+    while let Some(identity) = pending.pop() {
+        if !visited.insert(identity.clone()) {
+            continue;
+        }
+        let Some(type_info) = declarations.get(&identity) else {
+            continue;
+        };
+        for (&(start, end), target) in &type_info.references.resolved_identities {
+            if start < identity.declaration_span.start || end > identity.declaration_span.end {
+                continue;
+            }
+            if matches!(target.origin, SymbolOrigin::Package { .. }) {
+                packages.insert(target.clone());
+            } else if matches!(
+                target.kind,
+                SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
+            ) {
+                pending.push(target.clone());
+            }
+        }
+    }
+    packages
+}
+
+/// Render a package preflight refusal before program effects or receipt publication.
+fn package_execution_requirement_error(
+    body: &incan_semantics_core::body_ir::Body,
+    versions: &BTreeMap<String, String>,
+    reason: String,
+) -> CliError {
+    let library = match body.canonical.as_ref().map(|identity| &identity.origin) {
+        Some(incan_semantics_core::SymbolOrigin::Package { library, .. }) => library.as_str(),
+        _ => "<unresolved>",
+    };
+    let version = versions.get(library).map(String::as_str).unwrap_or("<unresolved>");
+    CliError::failure(format!(
+        "package `{library}` version {version} cannot satisfy the executable representation requirement for `{}`: {reason}",
+        body.name
+    ))
 }
 
 /// Build the project identity block used by build and generated Rust inspection reports.
@@ -7178,28 +7301,48 @@ fn library_project_output_sidecars(
     manifest: &LibraryManifest,
     artifact_root: &Path,
 ) -> CliResult<Vec<(PathBuf, String)>> {
-    let Some(desugarer) = manifest
+    let mut relative_paths = Vec::new();
+    if let Some(desugarer) = manifest
         .vocab
         .as_ref()
         .and_then(|vocab| vocab.desugarer_artifact.as_ref())
-    else {
-        return Ok(Vec::new());
-    };
-    let relative = validated_project_output_relative_path(&desugarer.relative_path, "vocab desugarer artifact")?;
-    let source = artifact_root.join(&relative);
-    if !source.is_file() {
-        return Err(CliError::failure(format!(
-            "completed Oven library output is missing manifest-declared vocab desugarer artifact {}",
-            source.display()
-        )));
+    {
+        relative_paths.push(validated_project_output_relative_path(
+            &desugarer.relative_path,
+            "vocab desugarer artifact",
+        )?);
     }
-    Ok(vec![(
-        source,
-        format!(
-            "generated/provider-sidecars/{}",
-            relative.to_string_lossy().replace('\\', "/")
-        ),
-    )])
+    if manifest.contract_metadata.executable_representation.is_some() {
+        let path = crate::library_manifest::published_layout::executable_surface_path(
+            &artifact_root.join("manifest.incnlib"),
+            manifest,
+        )
+        .ok_or_else(|| CliError::failure("invalid executable artifact descriptor"))?;
+        relative_paths.push(
+            path.strip_prefix(artifact_root)
+                .map_err(|error| CliError::failure(error.to_string()))?
+                .to_path_buf(),
+        );
+    }
+    relative_paths
+        .into_iter()
+        .map(|relative| {
+            let source = artifact_root.join(&relative);
+            if !source.is_file() {
+                return Err(CliError::failure(format!(
+                    "completed Oven library output is missing manifest-declared sidecar {}",
+                    source.display()
+                )));
+            }
+            Ok((
+                source,
+                format!(
+                    "generated/provider-sidecars/{}",
+                    relative.to_string_lossy().replace('\\', "/")
+                ),
+            ))
+        })
+        .collect()
 }
 
 /// Seal the checked provider manifest and every sidecar it authorizes as one package handoff.
@@ -10768,7 +10911,7 @@ fn prepare_library_project(
     let module_idx_by_key = module_key_index(&modules);
     let mut stdlib_cache = StdlibAstCache::new();
     let mut checked_type_info_by_path = BTreeMap::new();
-    let mut executable_surfaces = Vec::new();
+    let mut executable_modules = Vec::new();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module =
@@ -10813,9 +10956,11 @@ fn prepare_library_project(
                     checked_exports_by_name(module_exports),
                 );
                 checked_type_info_by_path.insert(module.file_path.clone(), checker.type_info().clone());
-                if let Some(surface) = build_module_executable_surface(module, checker.type_info()) {
-                    executable_surfaces.push((module.path_segments.clone(), surface));
-                }
+                executable_modules.push(crate::frontend::body_ir::build_body_ir_module_v0(
+                    &module.ast,
+                    &module.path_segments,
+                    checker.type_info(),
+                ));
                 stdlib_cache = checker.stdlib_cache.clone();
             }
             Err(errs) => {
@@ -10938,6 +11083,27 @@ fn prepare_library_project(
         .extend_checked_api_exports(&project_name, &checked_api, &checked_exports_by_source_module)
         .map_err(|error| CliError::failure(format!("failed to publish checked module identities: {error}")))?;
     library_manifest.contract_metadata.api = Some(checked_api);
+    let public_identities = crate::library_manifest::published_layout::public_executable_identities(&library_manifest);
+    let unrepresentable = executable_modules
+        .iter()
+        .flat_map(|module| module.bodies.iter())
+        .filter(|body| crate::backend::replacement::validate_published_body_profile(body).is_err())
+        .filter_map(|body| body.canonical.clone())
+        .collect();
+    let executable_surface = incan_semantics_core::executable_representation::build_surface(
+        &executable_modules,
+        &project_name,
+        &project_version,
+        &public_identities,
+        &unrepresentable,
+    )
+    .map_err(|error| CliError::failure(format!("failed to produce public executable representation: {error}")))?;
+    library_manifest.contract_metadata.executable_representation =
+        Some(crate::library_manifest::ExecutableRepresentationExport {
+            representation_version: incan_semantics_core::executable_representation::EXECUTABLE_REPRESENTATION_VERSION,
+            content_digest: hex::encode(Sha256::digest(&executable_surface)),
+        });
+
     library_manifest.contract_metadata.provider = compiled_provider_metadata(CompiledProviderMetadataInputs {
         manifest: &manifest,
         feature_plan: &package_feature_plan,
@@ -11469,7 +11635,7 @@ fn prepare_library_project(
     record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
 
     Ok(PreparedLibraryProject {
-        executable_surfaces,
+        executable_surface,
         generator,
         project_root,
         entrypoint: lib_entry,
@@ -12312,59 +12478,65 @@ fn provider_declaration_is_registry_entry(declaration: &Declaration) -> bool {
     decorators.iter().any(|decorator| decorator.node.name == "describe")
 }
 
-/// Build one module's executable representation from the compilation that declared its symbols.
+/// Publish an immutable semantic sidecar before atomically selecting it through the accompanying manifest.
 ///
-/// Returns `None` rather than an error, and deliberately so. RFC 123 permits coverage to be partial, and Body IR
-/// lowers a documented subset of the language: a module it cannot represent is a package that publishes less, not a
-/// build that should fail. Producing the representation is additive, so nothing here may turn a library that builds
-/// into one that does not.
-fn build_module_executable_surface(
-    module: &ParsedModule,
-    type_info: &crate::frontend::typechecker::TypeCheckInfo,
-) -> Option<Vec<u8>> {
-    let lowered = crate::frontend::body_ir::build_body_ir_module_v0(&module.ast, &module.path_segments, type_info);
-    incan_semantics_core::executable_representation::build_surface(&lowered).ok()
+/// The digest filename means an interrupted rebuild leaves the previously selected representation intact. Removed
+/// declarations and modules disappear from the new index; old immutable files are never searched or selected.
+fn write_library_executable_surfaces(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
+    let path = crate::library_manifest::published_layout::executable_surface_path(
+        &prepared.manifest_path,
+        &prepared.library_manifest,
+    )
+    .ok_or_else(|| CliError::failure("prepared library has no valid executable artifact descriptor"))?;
+    publish_library_file(&path, &prepared.executable_surface)?;
+    prepared
+        .report
+        .artifacts
+        .push(artifact_report("incan_executable_representation", &path));
+    Ok(())
 }
 
-/// Write every built executable representation beside the manifest it belongs to.
-///
-/// A write failure is a real failure: the surfaces were built successfully, so being unable to publish them means
-/// the package on disk does not match what this build produced.
-fn write_library_executable_surfaces(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
-    let mut written = Vec::new();
-    for (module_path, surface) in &prepared.executable_surfaces {
-        let Some(path) =
-            crate::library_manifest::published_layout::executable_surface_path(&prepared.manifest_path, module_path)
-        else {
-            continue;
-        };
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to create executable representation directory {}: {error}",
-                    parent.display()
-                ))
-            })?;
-        }
-        fs::write(&path, surface)
-            .map_err(|error| CliError::failure(format!("failed to write {}: {error}", path.display())))?;
-        written.push(path);
+/// Use the artifact publisher's staged-write durability for one same-directory atomic file replacement.
+fn publish_library_file(path: &Path, bytes: &[u8]) -> CliResult<()> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| CliError::failure("library artifact has no parent"))?;
+    fs::create_dir_all(parent).map_err(|error| CliError::failure(error.to_string()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| CliError::failure("library artifact has no file name"))?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .as_nanos();
+    let staged = parent.join(format!(".{name}.publish-{}-{nonce}", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&staged)
+        .map_err(|error| CliError::failure(format!("failed to stage {}: {error}", path.display())))?;
+    let result = (|| -> io::Result<()> {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&staged, path)?;
+        fs::File::open(parent)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&staged);
     }
-    for path in written {
-        prepared
-            .report
-            .artifacts
-            .push(artifact_report("incan_executable_representation", &path));
-    }
-    Ok(())
+    result.map_err(|error| CliError::failure(format!("failed to publish {}: {error}", path.display())))
 }
 
 /// Write the `.incnlib` manifest and build-report artifact paths for a prepared library project.
 fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
-    prepared
+    let manifest = prepared
         .library_manifest
-        .write_to_path(&prepared.manifest_path)
-        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", prepared.manifest_path.display())))?;
+        .to_json_string()
+        .map_err(|error| CliError::failure(format!("failed to encode library manifest: {error}")))?;
+    write_library_executable_surfaces(prepared)?;
+    publish_library_file(&prepared.manifest_path, manifest.as_bytes())?;
 
     prepared
         .report
@@ -12374,7 +12546,6 @@ fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> Cl
         "generated_cargo_manifest",
         &prepared.generator.cargo_manifest_path(),
     ));
-    write_library_executable_surfaces(prepared)?;
     Ok(())
 }
 
@@ -14287,7 +14458,6 @@ pub(crate) fn bake_oven_project_targets(
                 if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {
                     rust_inspect_manifest_dirs.insert(manifest_dir.clone());
                 }
-                write_library_manifest_artifacts(&mut prepared)?;
                 let selected = prepared.oven.as_ref().ok_or_else(|| {
                     CliError::failure("explicit Oven library preparation did not produce a direct-rustc selection")
                 })?;
@@ -14392,6 +14562,7 @@ pub(crate) fn bake_oven_project_targets(
                         action: selected_profile.materialization.as_str(),
                     });
                 }
+                write_library_manifest_artifacts(&mut prepared)?;
                 published_project_lock = Some(publish_project_lock_after_provider_bake(
                     &project_root,
                     &dependency_surface_entrypoint,
@@ -14698,7 +14869,6 @@ pub(crate) fn build_library_report(
     }
 
     if prepared.oven.is_some() {
-        write_library_manifest_artifacts(&mut prepared)?;
         let oven_build_start = Instant::now();
         let oven = prepared
             .oven
@@ -14708,6 +14878,8 @@ pub(crate) fn build_library_report(
         for profile in explicit_bake_profiles() {
             bakes.push((profile, bake_oven_library(&prepared, oven, profile, None)?));
         }
+        // The manifest selects this build's immutable semantic content only after every native profile succeeds.
+        write_library_manifest_artifacts(&mut prepared)?;
         let oven_build_ms = elapsed_ms(oven_build_start);
         print_build_progress(report_options, "✓ Oven library build successful!");
         for (profile, bake) in &bakes {
@@ -19337,11 +19509,11 @@ impl ChildId {
         // The module path comes from the published identity, never from the source file's name. A consumer has only
         // the identity, so a test that hardcodes a path tests something no consumer can do — and would still pass
         // against a producer that wrote the file somewhere else entirely.
-        let SymbolOrigin::Package { module_path, .. } = &published.origin else {
+        let SymbolOrigin::Package { .. } = &published.origin else {
             return Err("a published library export must carry a package origin".into());
         };
         let surface_path =
-            crate::library_manifest::published_layout::executable_surface_path(&manifest_path, module_path)
+            crate::library_manifest::published_layout::executable_surface_path(&manifest_path, &manifest)
                 .ok_or("the surface path must be derivable from the manifest path")?;
         assert!(
             surface_path.is_file(),

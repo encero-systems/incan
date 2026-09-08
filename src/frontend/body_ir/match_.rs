@@ -303,7 +303,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 // declaration from the printed constructor spelling. The direct profile accepts only canonical
                 // named fields of a plain model; every other structurally lowered constructor remains the
                 // name-only fallback below and is visibly refused by replacement execution.
-                if let Some(declaration) = self.local_nominal_declarations.get(&name.node)
+                if let Some(declaration) = self
+                    .local_nominal_declarations
+                    .values()
+                    .find(|declaration| self.type_info.resolved_identity(name.span) == Some(&declaration.canonical))
                     && matches!(expected_ty, IncanType::Named(type_name) if type_name == &name.node)
                     && args.iter().all(|arg| matches!(arg, ast::PatternArg::Named(_, _)))
                     && self.type_info.resolved_identity(name.span) == Some(&declaration.canonical)
@@ -347,7 +350,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     name.node.rsplit_once("::").or_else(|| name.node.rsplit_once('.'))
                     && args.is_empty()
                     && matches!(expected_ty, IncanType::Named(type_name) if type_name == enum_name)
-                    && let Some(declaration) = self.local_fieldless_enum_declarations.get(enum_name)
+                    && let Some(declaration) = self.local_fieldless_enum_declarations.values().find(|declaration| {
+                        declaration
+                            .variants
+                            .iter()
+                            .any(|variant| self.type_info.resolved_identity(name.span) == Some(&variant.canonical))
+                    })
                     && let Some(variant) = declaration.variants.iter().find(|variant| variant.name == variant_name)
                     && self.type_info.resolved_identity(name.span) == Some(&variant.canonical)
                 {
