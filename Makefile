@@ -563,9 +563,10 @@ generated-rust-audit-gate:
 	@echo "\033[32m✓ Generated Rust audit helper checks passed\033[0m"
 
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
-examples: release
+examples: release test-prewarm-oven-loafs test-prewarm-oven-release-loafs
 	@echo "\033[1mRunning examples...\033[0m"
-	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
+	@$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" INCAN_NO_BANNER=1 \
+		INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
 
 .PHONY: benchmarks  ## test - Run benchmark suite (requires hyperfine)
 benchmarks: release

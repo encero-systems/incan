@@ -140,6 +140,18 @@ is_runnable_entrypoint() {
   grep -Eq '^[[:space:]]*def[[:space:]]+main[[:space:]]*[(]' "$file"
 }
 
+is_check_only_example() {
+  # These RFC 081 conformance consumers deliberately have no runtime lowering hook (see their READMEs).
+  case "$1" in
+    examples/pro/vocab_markform/consumer/src/main.incn|\
+    examples/pro/vocab_scriptkit/consumer/src/main.incn|\
+    examples/pro/vocab_styleforge/consumer/src/main.incn)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 should_skip_run() {
   local file="$1"
   # Skip web examples (typically start a server)
@@ -205,7 +217,8 @@ prebuild_example_libraries() {
     if grep -q -e '^\[rust-dependencies\]' -e '^\[dependencies\]' "$manifest"; then
       needs_explicit_bake=true
     fi
-    if [[ "$needs_explicit_bake" == true ]]; then
+    # Their producer still needs publication, but frontend-only conformance consumers cannot be baked.
+    if [[ "$needs_explicit_bake" == true ]] && ! is_check_only_example "$project_dir/src/main.incn"; then
       bake_example_project "$project_dir"
     fi
 
@@ -250,7 +263,7 @@ while IFS= read -r f; do
     continue
   fi
   found_any=1
-  if is_runnable_entrypoint "$f" && ! should_skip_run "$f"; then
+  if is_runnable_entrypoint "$f" && ! should_skip_run "$f" && ! is_check_only_example "$f"; then
     # For runnable entrypoints, `incan run` already performs compile-time validation,
     # so we avoid a redundant prior `--check`.
     echo "==> run:   $f"
@@ -287,7 +300,10 @@ while IFS= read -r f; do
   log_file="$(log_file_for "check" "$f")"
   if "$INCAN_BIN" --check "$f" >"$log_file" 2>&1; then
     checked=$((checked + 1))
-    if is_runnable_entrypoint "$f" && should_skip_run "$f"; then
+    if is_check_only_example "$f"; then
+      echo "==> skip:  $f (check-only: no runtime lowering hook)"
+      skipped=$((skipped + 1))
+    elif is_runnable_entrypoint "$f" && should_skip_run "$f"; then
       echo "==> skip:  $f (excluded: long-running)"
       skipped=$((skipped + 1))
     fi
