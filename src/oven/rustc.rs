@@ -9138,7 +9138,7 @@ mod tests {
         assert!(!bake.cargo_process_started);
         assert!(!bake.reused);
         assert!(bake.output.is_file());
-        let sidecar = caller_output_receipt_path(&bake.output)?;
+        let sidecar = super::caller_output_receipt_path(&bake.output)?;
         let original_output = fs::read(&bake.output)?;
         let original_sidecar = fs::read(&sidecar)?;
         let output_modified = fs::metadata(&bake.output)?.modified()?;
@@ -9163,7 +9163,7 @@ mod tests {
         assert_eq!(record["output_digest"], rebuilt.output_digest);
         assert_eq!(
             record["schema_version"],
-            OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION
+            super::OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION
         );
 
         let mut missing_digest = record.clone();
