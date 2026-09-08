@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::wire::RawLibraryManifest;
 use super::{LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyMetadata};
 
 /// Failure while hashing a complete generated provider artifact.
@@ -750,17 +749,6 @@ fn dependency_paths_match(left: &Path, right: &Path) -> bool {
 
 /// Feed one artifact directory into the stable digest in lexical path order while excluding mutable output trees.
 fn hash_directory(root: &Path, directory: &Path, hasher: &mut Sha256) -> Result<(), ProviderArtifactDigestError> {
-    hash_directory_with_normalization(root, directory, hasher, None, false)
-}
-
-/// Feed one artifact directory into either the physical or semantic stable digest projection.
-fn hash_directory_with_normalization(
-    root: &Path,
-    directory: &Path,
-    hasher: &mut Sha256,
-    normalization: Option<&SemanticArtifactNormalization<'_>>,
-    exclude_nested_targets: bool,
-) -> Result<(), ProviderArtifactDigestError> {
     let mut entries = fs::read_dir(directory)
         .map_err(|source| ProviderArtifactDigestError::Io {
             path: directory.to_path_buf(),
@@ -792,8 +780,7 @@ fn hash_directory_with_normalization(
             // `oven/` directory. It is mutable preparation state, not provider content. Exclude the legacy location
             // so an existing generated provider remains loadable while current builders place it under `target/`.
             let is_legacy_rust_inspect_output = relative == Path::new("oven/rust-inspect");
-            let is_nested_target = file_name == Some("target");
-            if is_mutable_output || is_legacy_rust_inspect_output || (exclude_nested_targets && is_nested_target) {
+            if is_mutable_output || is_legacy_rust_inspect_output {
                 continue;
             }
         }
@@ -801,24 +788,13 @@ fn hash_directory_with_normalization(
         hasher.update([0]);
         if file_type.is_dir() {
             hasher.update(b"directory\0");
-            hash_directory_with_normalization(root, &path, hasher, normalization, exclude_nested_targets)?;
+            hash_directory(root, &path, hasher)?;
         } else if file_type.is_file() {
             hasher.update(b"file\0");
-            let bytes = if let Some(normalization) = normalization {
-                if path == normalization.manifest_path {
-                    normalization.normalized_manifest_bytes.to_vec()
-                } else {
-                    fs::read(&path).map_err(|source| ProviderArtifactDigestError::Io {
-                        path: path.clone(),
-                        source,
-                    })?
-                }
-            } else {
-                fs::read(&path).map_err(|source| ProviderArtifactDigestError::Io {
-                    path: path.clone(),
-                    source,
-                })?
-            };
+            let bytes = fs::read(&path).map_err(|source| ProviderArtifactDigestError::Io {
+                path: path.clone(),
+                source,
+            })?;
             hasher.update(bytes);
         } else {
             return Err(ProviderArtifactDigestError::UnsupportedEntry { path });
