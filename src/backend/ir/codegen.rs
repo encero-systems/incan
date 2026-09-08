@@ -2910,6 +2910,54 @@ pub root = math.sqrt
     }
 
     #[test]
+    fn std_prelude_module_import_does_not_reimport_sdk_facade_root() {
+        let code = generate_with_sdk_provider_modules(
+            "import std.prelude\n\ndef main() -> None:\n  pass\n",
+            vec![vec!["prelude".to_string()]],
+        );
+        assert!(!compact_rust(&code).contains("usecrate::__incan_std;"), "{code}");
+    }
+
+    #[test]
+    fn aliased_std_prelude_module_import_retains_requested_binding() {
+        let code = generate_with_sdk_provider_modules(
+            "import std.prelude as foundation\n\ndef main() -> None:\n  pass\n",
+            vec![vec!["prelude".to_string()]],
+        );
+        assert!(
+            compact_rust(&code).contains("pubusecrate::__incan_stdasfoundation;"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn std_root_module_import_uses_sdk_facade() {
+        for (import, binding) in [("math", "math"), ("math as arithmetic", "arithmetic")] {
+            let source = format!(
+                "from std import {import}\n\npub def root(value: float) -> float:\n  return {binding}.sqrt(value)\n"
+            );
+            let code = generate_with_sdk_provider_modules(&source, vec![vec!["math".to_string()]]);
+            let compact = compact_rust(&code);
+            let expected = if binding == "math" {
+                "usecrate::__incan_std::math;".to_string()
+            } else {
+                format!("usecrate::__incan_std::mathas{binding};")
+            };
+            assert!(compact.contains(&expected), "{code}");
+            assert!(!compact.contains("usestd::math"), "{code}");
+        }
+    }
+
+    #[test]
+    fn rust_std_root_module_import_keeps_rust_namespace() {
+        let code =
+            generate("from rust::std import cmp\n\npub def maximum(a: int, b: int) -> int:\n  return cmp.max(a, b)\n");
+        let compact = compact_rust(&code);
+        assert!(compact.contains("use::std::cmp;"), "{code}");
+        assert!(!compact.contains("crate::__incan_std::"), "{code}");
+    }
+
+    #[test]
     fn normal_codegen_keeps_used_private_helpers_without_dead_code_allows() {
         let code = generate(
             r#"
