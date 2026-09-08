@@ -14,8 +14,8 @@ use super::super::super::{FunctionSignature, IrCheckedCFunction, IrStmt, Mutabil
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::api_metadata::{
-    ApiDeclaration, checked_api_public_namespace, function_export_from_api, function_export_from_api_projected,
-    method_export_from_api,
+    ApiDeclaration, checked_api_modules_for_public_namespace, checked_api_public_namespace, function_export_from_api,
+    function_export_from_api_projected, method_export_from_api,
 };
 use crate::frontend::ast::{self, TypeConstraintKey};
 use crate::frontend::library_exports::CheckedPresetValue;
@@ -369,15 +369,126 @@ impl AstLowering {
         })
     }
 
-    /// Resolve a callable signature from a public dependency manifest, including materialized default expressions.
-    fn callable_signature_for_imported_pub_path(&mut self, path: &[String]) -> Option<FunctionSignature> {
+    /// Resolve a public callable through its checked import path and, for overloads, its exact declaring identity.
+    ///
+    /// The physical Rust projection is deliberately excluded: it names the emitted call target, not the public
+    /// binding that owns typed signatures and defaults. An admitted overload set cannot fall back to its first
+    /// member or a structurally reconstructed call-site signature.
+    fn callable_signature_for_imported_pub_path(
+        &mut self,
+        path: &[String],
+        selected: Option<&incan_semantics_core::CanonicalSymbolId>,
+        call_span: ast::Span,
+    ) -> Result<Option<FunctionSignature>, LoweringError> {
         if path.len() < 3 || path.first().map(String::as_str) != Some("pub") {
-            return None;
+            return Ok(None);
         }
-        let library = path.get(1)?;
-        let public_path = path.get(2..)?;
-        let function = self.pub_function_export_for_path(library, public_path)?;
-        Some(self.callable_signature_from_pub_function_export(library, &function))
+        let library = &path[1];
+        let public_path = &path[2..];
+        let function = self.selected_pub_function_export(library, public_path, selected, call_span)?;
+        Ok(function.map(|function| self.callable_signature_from_pub_function_export(library, &function)))
+    }
+
+    /// Join the selected checked declaration to one admitted public overload group without interpreting linker names.
+    fn selected_pub_function_export(
+        &self,
+        library: &str,
+        public_path: &[String],
+        selected: Option<&incan_semantics_core::CanonicalSymbolId>,
+        call_span: ast::Span,
+    ) -> Result<Option<FunctionExport>, LoweringError> {
+        let Some(index) = self.provider_plan.as_deref().map(|plan| plan.library_manifest_index()) else {
+            return Ok(None);
+        };
+        let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(library) else {
+            return Ok(None);
+        };
+        let Some(public_name) = public_path.last() else {
+            return Ok(None);
+        };
+        let graph_path = std::iter::once(manifest.name.clone())
+            .chain(public_path.iter().cloned())
+            .collect::<Vec<_>>();
+        let identities = manifest
+            .contract_metadata
+            .identity_graph
+            .function_identities_for_public_path(&graph_path);
+        let root_functions = manifest
+            .exports
+            .functions
+            .iter()
+            .filter(|function| public_path.len() == 1 && function.name == *public_name)
+            .collect::<Vec<_>>();
+        let namespace_functions = manifest
+            .contract_metadata
+            .api
+            .as_ref()
+            .filter(|_| public_path.len() > 1)
+            .map(|api| checked_api_modules_for_public_namespace(api, &public_path[..public_path.len() - 1]))
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|module| {
+                module
+                    .declarations
+                    .iter()
+                    .filter_map(move |declaration| match declaration {
+                        ApiDeclaration::Function(function) if function.name == *public_name => Some((module, function)),
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>();
+        let declaration_count = if public_path.len() == 1 {
+            root_functions.len()
+        } else {
+            namespace_functions.len()
+        };
+        if identities.len() <= 1 && declaration_count <= 1 {
+            return Ok(self.pub_function_export_for_path(library, public_path));
+        }
+        let refusal = || LoweringError {
+            message: format!(
+                "selected public overload `pub::{library}::{}` lacks an exact admitted declaration projection",
+                public_path.join("::")
+            ),
+            span: call_span.into(),
+        };
+        if declaration_count != identities.len() {
+            return Err(refusal());
+        }
+        let selected = selected.ok_or_else(refusal)?;
+        let mut matching = identities
+            .iter()
+            .enumerate()
+            .filter(|(_, identity)| identity.as_ref() == Some(selected));
+        let position = matching.next().map(|(position, _)| position).ok_or_else(refusal)?;
+        if matching.next().is_some() {
+            return Err(refusal());
+        }
+        if public_path.len() == 1 {
+            return Ok(Some(root_functions[position].clone()));
+        }
+        let SymbolOrigin::Package {
+            library: owner,
+            module_path,
+        } = &selected.origin
+        else {
+            return Err(refusal());
+        };
+        if owner != &manifest.name {
+            return Err(refusal());
+        }
+        let mut declarations = namespace_functions.into_iter().filter_map(|(module, function)| {
+            (&module.module_path == module_path
+                && function.name == selected.declaration_name
+                && function.anchor.span.start == selected.declaration_span.start
+                && function.anchor.span.end == selected.declaration_span.end)
+                .then_some(function)
+        });
+        let function = declarations.next().ok_or_else(refusal)?;
+        if declarations.next().is_some() {
+            return Err(refusal());
+        }
+        Ok(Some(function_export_from_api(function)))
     }
 
     /// Resolve the canonical imported callee path for identifier and module-qualified calls.
@@ -3206,7 +3317,11 @@ impl AstLowering {
         // its own projection -- and never the bare set spelling the checked path ends with. A non-overloaded function
         // is exported under its own name, so its path is left exactly as resolved: substituting there would defeat
         // the emitter's compiled-provider metadata lookup, which is keyed on the source-shaped path.
-        let imported_callee_path = self.imported_callee_path_for_expr(f).map(|path| {
+        let checked_import_path = self.imported_callee_path_for_expr(f);
+        let imported_source_callee_path = checked_import_path
+            .as_deref()
+            .map(|path| self.semantic_imported_callee_path(path));
+        let imported_callee_path = checked_import_path.map(|path| {
             canonical_path_naming_selected_overload(
                 path,
                 selected_reference_name
@@ -3214,9 +3329,14 @@ impl AstLowering {
                     .filter(|_| selected_emitted_name.is_some()),
             )
         });
-        let imported_source_callee_path = imported_callee_path
-            .as_deref()
-            .map(|path| self.semantic_imported_callee_path(path));
+        // Public artifact lookup selects overloads from retained canonical identities. Preserve the existing
+        // source/SDK path contract for other providers, whose signature reader has separate selection rules.
+        let imported_source_callee_path = match imported_source_callee_path {
+            Some(path) if path.first().is_some_and(|root| root == "pub") => Some(path),
+            _ => imported_callee_path
+                .as_deref()
+                .map(|path| self.semantic_imported_callee_path(path)),
+        };
         // Keep this path source-shaped. The emitter resolves its exact physical symbol from compiler-owned package
         // metadata; replacing the declaration segment here with a source-stub projection would make that lookup miss
         // the compiled provider identity.
@@ -3409,12 +3529,20 @@ impl AstLowering {
             call.return_type =
                 Self::retain_native_union_representation(std::mem::take(&mut call.return_type), &declared.return_type);
         }
+        let selected_identity = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_identity(f.span))
+            .cloned();
         let callable_signature = imported_source_callee_path
             .as_deref()
             .map(|path| {
-                Ok(self
-                    .callable_signature_for_imported_stdlib_path(path)?
-                    .or_else(|| self.callable_signature_for_imported_pub_path(path)))
+                let stdlib = self.callable_signature_for_imported_stdlib_path(path)?;
+                if stdlib.is_some() {
+                    Ok(stdlib)
+                } else {
+                    self.callable_signature_for_imported_pub_path(path, selected_identity.as_ref(), call_span)
+                }
             })
             .transpose()?
             .flatten()
@@ -4385,11 +4513,12 @@ mod tests {
         lowering.set_provider_plan(Some(Arc::new(ProviderPlan::for_library_index(index))));
 
         let signature = lowering
-            .callable_signature_for_imported_pub_path(&[
-                "pub".to_string(),
-                "mylib".to_string(),
-                "safe_cast".to_string(),
-            ])
+            .callable_signature_for_imported_pub_path(
+                &["pub".to_string(), "mylib".to_string(), "safe_cast".to_string()],
+                None,
+                crate::frontend::ast::Span::default(),
+            )
+            .map_err(|error| error.to_string())?
             .ok_or_else(|| "expected identity graph to resolve safe_cast through helpers.cast".to_string())?;
 
         assert_eq!(signature.params[0].ty, IrType::String);

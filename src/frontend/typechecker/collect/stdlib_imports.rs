@@ -1563,7 +1563,7 @@ impl TypeChecker {
                 _ => None,
             })
             .unwrap_or_else(|| (source_module_path.clone(), member.to_string()));
-        let public_path = std::iter::once(library.to_string())
+        let public_path = std::iter::once(manifest.name.clone())
             .chain(module_path.iter().cloned())
             .chain(std::iter::once(member.to_string()))
             .collect::<Vec<_>>();

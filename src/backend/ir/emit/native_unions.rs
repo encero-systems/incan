@@ -1102,10 +1102,16 @@ mod tests {
     /// Alias-expanded root overloads take their representation from the exact checked declaration, not type spelling.
     #[test]
     fn function_alias_overloads_keep_exact_native_union_projection() -> TestResult {
+        assert_native_function_alias_overloads("lib")?;
+        assert_native_function_alias_overloads("ops")
+    }
+
+    /// Check the same producer declarations at the root and in an explicitly published source namespace.
+    fn assert_native_function_alias_overloads(module: &str) -> TestResult {
         let source = "pub type Answer = int | str\npub model Surcharge:\n    pub value: int\npub type Charges = Surcharge | int\npub def select(value: int) -> Answer:\n    return value\npub def select(value: str) -> bool:\n    return true\npub pick = alias select\n";
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
-        let module_path = vec!["lib".to_string()];
+        let module_path = vec![module.to_string()];
         let mut checker = TypeChecker::new();
         checker.set_current_package_identity(Some("producer".into()));
         checker.set_current_module_path(Some(module_path.clone()));
@@ -1118,6 +1124,27 @@ mod tests {
             modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
             public_namespaces: Vec::new(),
         });
+        if module != "lib" {
+            let namespace_exports = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .cloned()
+                .map(|mut entry| {
+                    entry.public_path.insert(1, module.to_string());
+                    entry
+                })
+                .collect::<Vec<_>>();
+            manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .extend(namespace_exports);
+            crate::frontend::api_metadata::materialize_checked_api_public_namespaces(
+                manifest.contract_metadata.api.as_mut().ok_or("producer API missing")?,
+            )?;
+        }
         let mut codegen = crate::backend::ir::IrCodegen::new();
         codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
         codegen.set_publication_api(manifest.contract_metadata.api.clone());
@@ -1204,6 +1231,7 @@ mod tests {
         assert_private_signature_bridge_projection(&plan)?;
         assert_local_native_callable_projection(&plan)?;
         assert_decorated_native_callable_projection(&plan)?;
+        assert_imported_native_overload_calls(&plan)?;
         let source = "pub from pub::admitted import select as forwarded\n";
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
@@ -1390,6 +1418,141 @@ mod tests {
         let wrapper = declared[0].union_type_name().ok_or("native wrapper absent")?;
         let compact = rust.split_whitespace().collect::<String>();
         assert!(compact.contains(&format!("{wrapper}::V0(Charge{{value:42}}")), "{rust}");
+        Ok(())
+    }
+
+    /// Imported overload calls use the selected canonical declaration's native result, including renamed bindings.
+    fn assert_imported_native_overload_calls(plan: &std::sync::Arc<crate::provider::ProviderPlan>) -> TestResult {
+        use crate::backend::ir::{expr::IrExprKind, stmt::IrStmtKind};
+        let mut source = r#"from pub::admitted import select as remote, pick as renamed, Answer
+pub def first() -> Answer:
+    return remote(42)
+pub def second() -> bool:
+    return remote("text")
+pub def third() -> Answer:
+    return renamed(42)
+"#
+        .to_string();
+        let entry = plan
+            .library_manifest_index()
+            .get("admitted")
+            .ok_or("admitted artifact missing")?;
+        let crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, metadata } = entry
+        else {
+            return Err("admitted artifact unavailable".into());
+        };
+        let namespace = manifest
+            .contract_metadata
+            .api
+            .as_ref()
+            .is_some_and(|api| api.modules.iter().any(|module| module.module_path == ["ops"]));
+        if namespace {
+            source.push_str("from pub::admitted.ops import select as nested\npub def fourth() -> Answer:\n    return nested(42)\npub def fifth() -> bool:\n    return nested(\"text\")\n");
+        }
+        let ast = parser::parse(&lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("consumer".into()));
+        checker.set_current_module_path(Some(vec!["lib".into()]));
+        checker.set_provider_plan(plan.clone());
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        for declaration in &ast.declarations {
+            let crate::frontend::ast::Declaration::Function(function) = &declaration.node else {
+                continue;
+            };
+            let Some(crate::frontend::ast::Statement::Return(Some(call))) =
+                function.body.first().map(|statement| &statement.node)
+            else {
+                return Err("checked imported return missing".into());
+            };
+            let crate::frontend::ast::Expr::Call(callee, _, _) = &call.node else {
+                return Err("checked imported callee missing".into());
+            };
+            let identity = checker
+                .type_info()
+                .resolved_identity(callee.span)
+                .ok_or_else(|| format!("checked selected identity missing for {}", function.name))?;
+            assert!(matches!(
+                &identity.origin,
+                incan_semantics_core::SymbolOrigin::Package { library, .. } if library == "producer"
+            ));
+        }
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        lowering.set_provider_plan(Some(plan.clone()));
+        let ir = lowering.lower_program(&ast)?;
+        for declaration in &ir.declarations {
+            let IrDeclKind::Function(function) = &declaration.kind else {
+                continue;
+            };
+            let IrStmtKind::Return(Some(value)) = &function.body.first().ok_or("call return absent")?.kind else {
+                return Err("expected actual imported call in return".into());
+            };
+            let IrExprKind::Call {
+                callable_signature: Some(signature),
+                ..
+            } = &value.kind
+            else {
+                return Err("imported call signature absent".into());
+            };
+            assert_eq!(value.ty, signature.return_type, "{function:?}");
+            if matches!(function.name.as_str(), "second" | "fifth") {
+                assert_eq!(value.ty, IrType::Bool);
+            } else {
+                assert!(
+                    matches!(value.ty, IrType::ExternalUnion { native: Some(_), .. }),
+                    "{function:?}"
+                );
+            }
+        }
+        let first = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                crate::frontend::ast::Declaration::Function(function) if function.name == "first" => Some(function),
+                _ => None,
+            })
+            .ok_or("first declaration absent")?;
+        let crate::frontend::ast::Statement::Return(Some(call)) = &first.body[0].node else {
+            return Err("source return absent".into());
+        };
+        let crate::frontend::ast::Expr::Call(callee, _, _) = &call.node else {
+            return Err("source callee absent".into());
+        };
+        for namespace_group in [false, true].into_iter().filter(|nested| !nested || namespace) {
+            let mut incomplete = manifest.clone();
+            incomplete.contract_metadata.identity_graph.exports.retain(|entry| {
+                !(entry.public_name == "select" && entry.public_path.len() == if namespace_group { 3 } else { 2 })
+            });
+            let index = crate::frontend::library_manifest_index::LibraryManifestIndex::from_entries(HashMap::from([(
+                "admitted".to_string(),
+                crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded {
+                    manifest: incomplete,
+                    metadata: metadata.clone(),
+                },
+            )]));
+            let incomplete_plan = std::sync::Arc::new(crate::provider::ProviderPlan::for_library_index(index));
+            let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+            lowering.set_provider_plan(Some(incomplete_plan));
+            let error = lowering
+                .lower_program(&ast)
+                .err()
+                .ok_or("missing overload identities were accepted")?;
+            assert!(error.to_string().contains("selected public overload"), "{error}");
+        }
+        let mut invalid = checker.type_info().clone();
+        let identity = invalid
+            .references
+            .resolved_identities
+            .get_mut(&(callee.span.start, callee.span.end))
+            .ok_or("selected overload identity absent")?;
+        identity.declaration_span.start += 1;
+        let mut lowering = AstLowering::new_with_type_info(invalid);
+        lowering.set_provider_plan(Some(plan.clone()));
+        let error = lowering
+            .lower_program(&ast)
+            .err()
+            .ok_or("unmatched selected overload was accepted")?;
+        assert!(error.to_string().contains("selected public overload"), "{error}");
         Ok(())
     }
 
