@@ -1411,7 +1411,9 @@ fn checked_spanned_trait_bounds(bounds: &[Spanned<TraitBound>], checker: &TypeCh
 /// Resolve one source trait bound into checked export metadata.
 fn checked_trait_bound(bound: &TraitBound, checker: &TypeChecker) -> CheckedTypeBound {
     CheckedTypeBound {
-        name: bound.name.clone(),
+        name: checker
+            .imported_generic_rust_bound_path(&bound.name)
+            .unwrap_or_else(|| bound.name.clone()),
         source_name: checker.trait_bound_source_name(&bound.name),
         type_args: bound
             .type_args
@@ -1840,6 +1842,33 @@ fn sorted_vec(mut values: Vec<String>) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::frontend::ast::{Span, Spanned};
+
+    /// Exported free-function bounds retain their resolved Rust identity after the provider's alias leaves scope.
+    #[test]
+    fn checked_foreign_generic_bound_retains_import_identity() {
+        use crate::frontend::symbols::{RustImportBindingKind, RustItemInfo, Symbol, SymbolKind};
+
+        let mut checker = TypeChecker::new();
+        checker.symbols.define(Symbol {
+            name: "Owned".to_string(),
+            kind: SymbolKind::RustItem(RustItemInfo {
+                crate_name: "serde".to_string(),
+                path: "serde::de::DeserializeOwned".to_string(),
+                binding: RustImportBindingKind::FromImport,
+                metadata: None,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+        let bound = checked_trait_bound(
+            &TraitBound {
+                name: "Owned".to_string(),
+                type_args: vec![],
+            },
+            &checker,
+        );
+        assert_eq!(bound.name, "::serde::de::DeserializeOwned");
+    }
 
     fn spanned(expr: Expr) -> Spanned<Expr> {
         Spanned::new(expr, Span::default())

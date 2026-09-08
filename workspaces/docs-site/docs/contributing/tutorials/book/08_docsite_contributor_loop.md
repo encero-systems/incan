@@ -23,6 +23,8 @@ We organize docs using the Divio model:
 
 When adding or moving content, prefer improving clarity and findability over creating new one-off pages.
 
+For a reference page, start from the public API inventory. Document each relevant item's signature, parameters, return type, defaults, errors, and constraints so readers can look up an item independently. A small example can clarify syntax; a task walkthrough belongs in a how-to guide, and design rationale belongs in an explanation. Link between them when useful rather than mixing their purposes. A feature does not automatically need all four page types.
+
 ## Reuse patterns (snippets)
 
 We reuse common content via snippets in `workspaces/docs-site/docs/_snippets/`:
@@ -42,4 +44,5 @@ Before opening a PR:
 
 - ensure `make docs` works locally
 - run a strict build: `make docs-build`
+- review the page's Divio intent and public API coverage separately; a strict build cannot establish either
 - keep snippets reusable and scoped (don’t copy/paste long command sequences everywhere)

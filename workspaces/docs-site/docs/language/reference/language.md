@@ -109,6 +109,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.interop` | - | - | - |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.json` | `json` | - | - |
+| `std.toml` | - | - | - |
 | `std.reflection` | - | - | - |
 | `std.result` | - | - | - |
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
