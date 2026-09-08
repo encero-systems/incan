@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import io
+import tarfile
 from unittest import mock
 import sys
 import os
@@ -138,7 +139,8 @@ class ToolOutputTests(unittest.TestCase):
         self.assertIn("CARGO_REGISTRIES_PRIVATE_INDEX", str(error.exception))
         self.assertNotIn(sentinel, str(error.exception))
 
-    def test_registry_package_evidence_is_parsed_once_but_each_file_is_checked(self):
+    def registry_fixture(self, extra_members=()):
+        """Create a normal locked .crate archive and its extracted source, without a vendor inventory."""
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         cargo_home = Path(temporary.name).resolve()
@@ -148,23 +150,80 @@ class ToolOutputTests(unittest.TestCase):
         files = [package / "one.rs", package / "two.rs"]
         for file in files:
             file.write_text(file.name)
-        checksum = "a" * 64
-        checksums = {"package": checksum, "files": {file.name: cache.digest(file) for file in files}}
-        (package / ".cargo-checksum.json").write_text(json.dumps(checksums))
+        archive = cargo_home / "registry/cache/index/example-1.0.0.crate"
+        archive.parent.mkdir(parents=True)
+        with tarfile.open(archive, "w:gz") as target:
+            for file in [package / "Cargo.toml", *files]:
+                target.add(file, arcname="example-1.0.0/" + file.name)
+            for name, kind in extra_members:
+                member = tarfile.TarInfo(name)
+                member.type = kind
+                member.size = 0
+                member.linkname = "one.rs" if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ""
+                target.addfile(member, io.BytesIO())
+        checksum = cache.digest(archive)
         (self.root / "Cargo.lock").write_text('[[package]]\nname="example"\nversion="1.0.0"\n'
                                              'source="registry+https://github.com/rust-lang/crates.io-index"\n'
                                              f'checksum="{checksum}"\n')
+        return cargo_home, package, files, archive, checksum
+
+    def test_registry_package_evidence_is_parsed_once_but_each_file_is_checked(self):
+        cargo_home, package, files, archive, checksum = self.registry_fixture()
         with mock.patch.dict(os.environ, {"CARGO_HOME": str(cargo_home)}):
             verifier = cache.ConsumedInputs(self.candidate())
             with mock.patch.object(verifier, "toml", wraps=verifier.toml) as parsed, \
-                    mock.patch.object(cache, "digest", wraps=cache.digest) as hashed:
+                    mock.patch.object(cache, "digest", wraps=cache.digest) as hashed, \
+                    mock.patch.object(cache, "authenticated_archive_files", wraps=cache.authenticated_archive_files) as unpacked:
                 for file in files:
                     self.assertEqual(checksum, verifier.record(file)["package_checksum"])
                 self.assertEqual(2, parsed.call_count)  # one package manifest plus one lock
-                self.assertEqual(2, hashed.call_count)  # each consumed file once
+                self.assertEqual(1, unpacked.call_count)
+                self.assertEqual(3, hashed.call_count)  # authenticated manifest, then each file once
             files[1].write_text("tampered")
             with self.assertRaises(ValueError):
                 verifier.record(files[1])
+
+    def test_registry_missing_or_changed_archive_refuses_despite_forged_vendor_inventory(self):
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                cargo_home, package, files, archive, checksum = self.registry_fixture()
+                (package / ".cargo-checksum.json").write_text(json.dumps(
+                    {"package": checksum, "files": {file.name: cache.digest(file) for file in files}}))
+                if missing:
+                    archive.unlink()
+                else:
+                    archive.write_bytes(b"changed archive")
+                with mock.patch.dict(os.environ, {"CARGO_HOME": str(cargo_home)}), self.assertRaises(ValueError):
+                    cache.ConsumedInputs(self.candidate()).record(files[0])
+
+    def test_locked_malformed_archive_refuses_cleanly(self):
+        cargo_home, package, files, archive, checksum = self.registry_fixture()
+        archive.write_bytes(b"not a tar archive")
+        with self.assertRaises(ValueError):
+            cache.authenticated_archive_files(archive, cache.digest(archive), package.name)
+
+    def test_registry_archive_refuses_duplicate_escaping_and_linked_entries(self):
+        cases = [("example-1.0.0/one.rs", tarfile.REGTYPE), ("example-1.0.0/../escape", tarfile.REGTYPE),
+                 ("/absolute", tarfile.REGTYPE), ("example-1.0.0/link", tarfile.SYMTYPE),
+                 ("example-1.0.0/hardlink", tarfile.LNKTYPE)]
+        for member in cases:
+            with self.subTest(member=member):
+                cargo_home, package, files, archive, checksum = self.registry_fixture([member])
+                with mock.patch.dict(os.environ, {"CARGO_HOME": str(cargo_home)}), self.assertRaises(ValueError):
+                    cache.ConsumedInputs(self.candidate()).record(files[0])
+                self.assertFalse((cargo_home / "escape").exists())
+
+    def test_registry_ambiguous_locked_owner_and_changed_package_manifest_refuse(self):
+        cargo_home, package, files, archive, checksum = self.registry_fixture()
+        with (self.root / "Cargo.lock").open("a") as target:
+            target.write((self.root / "Cargo.lock").read_text())
+        with mock.patch.dict(os.environ, {"CARGO_HOME": str(cargo_home)}), self.assertRaises(ValueError):
+            cache.ConsumedInputs(self.candidate()).record(files[0])
+        cargo_home, package, files, archive, checksum = self.registry_fixture()
+        with (package / "Cargo.toml").open("a") as target:
+            target.write('description="changed"\n')
+        with mock.patch.dict(os.environ, {"CARGO_HOME": str(cargo_home)}), self.assertRaises(ValueError):
+            cache.ConsumedInputs(self.candidate()).record(files[0])
 
     def test_extension_env_and_directive_values_are_not_public_evidence(self):
         sentinel = "EXTENSION_SENTINEL_DO_NOT_PUBLISH"
@@ -234,6 +293,21 @@ class ToolOutputTests(unittest.TestCase):
         self.invoke("restore", state, bundle)
         self.assertEqual("hit", json.loads((state / "restore.json").read_text())["status"])
         cache.verify_outputs(self.root / "target/release", original, candidate["identity"])
+
+    def test_identity_ineligible_cold_run_retains_safe_facts_without_admission(self):
+        state = self.root / "evidence"
+        bundle = self.root / "bundle"
+        logs = self.cargo_logs(dict(reason="build-script-executed", package_id="opaque@1", out_dir="generated",
+                                   env=[["SECRET", "NEVER_PUBLISH_SENTINEL"]]))
+        self.invoke("collect", state, bundle, logs)
+        evidence = json.loads((state / "coverage.json").read_text())
+        self.assertFalse(evidence["admitted"])
+        self.assertEqual(3, len(evidence["artifacts"]))
+        self.assertEqual(set(cache.TOOLS), set(evidence["observed_tool_outputs"]))
+        self.assertTrue(evidence["files"])
+        self.assertNotIn("NEVER_PUBLISH_SENTINEL", json.dumps(evidence))
+        self.assertFalse(bundle.exists())
+        self.assertFalse((state / "inputs.json").exists())
 
     def test_unknown_build_script_refuses_save_after_successful_build(self):
         logs = self.cargo_logs(dict(reason="build-script-executed", package_id="opaque@1", out_dir="generated"))
