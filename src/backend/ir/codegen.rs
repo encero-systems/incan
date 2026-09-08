@@ -27,7 +27,7 @@
 //! The `generate*` methods are convenience wrappers that return error comments
 //! on failure (useful for debugging but not recommended for production).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
@@ -213,6 +213,9 @@ enum CapturedImplementationTargetVisibility {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct IrGenerationMetadata {
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+    emitted_declaration_types: Vec<super::emit::native_unions::EmittedDeclarationTypes>,
+    native_unions: Vec<crate::library_manifest::NativeUnionExport>,
+    provider_plan: Option<Arc<ProviderPlan>>,
 }
 
 impl IrGenerationMetadata {
@@ -321,6 +324,11 @@ impl IrGenerationMetadata {
                 ));
             }
         }
+        for captured in &self.emitted_declaration_types {
+            captured.apply(manifest);
+        }
+        manifest.contract_metadata.native_unions = self.native_unions.clone();
+        super::emit::native_unions::preserve_native_aliases(manifest, self.provider_plan.as_deref())?;
         Ok(())
     }
 }
@@ -403,7 +411,7 @@ fn implementation_type_param_export(type_param: &IrTypeParam) -> Result<Implemen
 }
 
 /// Convert an IR type used by implementation metadata into its checked manifest representation.
-fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
+pub(super) fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
     let named = |name: &str| TypeRef::Named {
         origin: None,
         name: name.to_string(),
@@ -443,6 +451,9 @@ fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
             inner: Box::new(manifest_type_ref_from_ir(inner)?),
         }),
         IrType::RustDisplay(path) => Ok(TypeRef::RustPath { path: path.clone() }),
+        IrType::ExternalUnion {
+            native: Some(native), ..
+        } => Ok(TypeRef::NativeUnion(native.for_publication())),
         IrType::ExternalUnion { union, .. } => manifest_type_ref_from_ir(union),
         IrType::ImplTrait(bound) => applied(&bound.trait_path, &bound.type_args),
         IrType::Function { params, ret } => Ok(TypeRef::Function {
@@ -572,6 +583,14 @@ pub struct IrCodegen<'a> {
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
     /// Authoritative checked-API path for a library root while collecting manifest metadata.
     metadata_root_module_path: Option<Vec<String>>,
+    /// Checked API supplied by the publication caller, joined only to the same emitted source module.
+    publication_api: Option<crate::frontend::api_metadata::CheckedApiMetadataPackage>,
+    /// Final crate-root emitted definitions, shared with source modules whose wrappers live at the root.
+    emitted_union_definitions: HashMap<String, IrType>,
+    /// Exact lowered nominal spellings from each module's accepted checker bindings.
+    native_union_origins: HashMap<Vec<String>, BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>>,
+    emitted_declaration_types: Vec<super::emit::native_unions::EmittedDeclarationTypes>,
+    native_unions: Vec<crate::library_manifest::NativeUnionExport>,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -608,6 +627,11 @@ impl<'a> IrCodegen<'a> {
             prechecked_dependency_type_info: HashMap::new(),
             implementation_bound_requirements: Vec::new(),
             metadata_root_module_path: None,
+            publication_api: None,
+            emitted_union_definitions: HashMap::new(),
+            native_union_origins: HashMap::new(),
+            emitted_declaration_types: Vec::new(),
+            native_unions: Vec::new(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
@@ -637,6 +661,55 @@ impl<'a> IrCodegen<'a> {
                     .register_dependency_module_path_segments(name, canonicalize_source_module_segments(path_segments));
             }
         }
+    }
+
+    /// Supply the checked publication surface before generating the Rust whose representations it will describe.
+    pub(crate) fn set_publication_api(
+        &mut self,
+        api: Option<crate::frontend::api_metadata::CheckedApiMetadataPackage>,
+    ) {
+        self.publication_api = api;
+    }
+
+    /// Capture module-scoped public representations after the emitter has finalized its native wrapper table.
+    fn capture_native_union_metadata(
+        &mut self,
+        emitter: &IrEmitter<'_>,
+        path: &[String],
+        program: &IrProgram,
+    ) -> Result<(), EmitError> {
+        self.emitted_union_definitions
+            .extend(emitter.emitted_native_union_types());
+        let Some(module) = self
+            .publication_api
+            .as_ref()
+            .and_then(|api| api.modules.iter().find(|module| module.module_path == path))
+        else {
+            return Ok(());
+        };
+        let origins = self.native_union_origins.get(path).cloned().unwrap_or_default();
+        let (declarations, definitions) =
+            emitter.capture_native_union_metadata(module, program, &self.emitted_union_definitions, &origins)?;
+        self.emitted_declaration_types.extend(declarations);
+        for definition in definitions {
+            if let Some(existing) = self
+                .native_unions
+                .iter()
+                .find(|existing| existing.rust_name == definition.rust_name)
+            {
+                if existing != &definition {
+                    return Err(EmitError::InternalInvariant(format!(
+                        "emitted union {} has incompatible source-module identities",
+                        definition.rust_name
+                    )));
+                }
+            } else {
+                self.native_unions.push(definition);
+            }
+        }
+        self.native_unions
+            .sort_by(|left, right| left.rust_name.cmp(&right.rust_name));
+        Ok(())
     }
 
     /// Capture bound-bearing implementation headers from one inferred IR module.
@@ -867,7 +940,7 @@ impl<'a> IrCodegen<'a> {
         metadata: &DependencySymbolMetadata,
         provider_plan: Option<&ProviderPlan>,
         foreign_type_routes: &HashMap<String, HashMap<String, String>>,
-    ) {
+    ) -> Result<(), EmitError> {
         let stdlib_module_paths = provider_plan
             .map(ProviderPlan::active_std_module_paths)
             .unwrap_or_default()
@@ -906,13 +979,18 @@ impl<'a> IrCodegen<'a> {
         }
         emitter.set_dependency_enum_types(enum_type_names);
         if let Some(plan) = provider_plan {
-            emitter.seed_public_dependency_nominal_metadata(plan.library_manifest_index(), foreign_type_routes);
+            emitter.seed_public_dependency_nominal_metadata(
+                plan.library_manifest_index(),
+                foreign_type_routes,
+                Some(plan),
+            )?;
             for provider in plan.active_sdk_records() {
                 if let Some(manifest) = provider.manifest.as_deref() {
                     emitter.seed_sdk_provider_manifest_metadata(manifest);
                 }
             }
         }
+        Ok(())
     }
 
     /// Configure source-import emission with the checked module graph for this generated crate.
@@ -1474,6 +1552,9 @@ impl<'a> IrCodegen<'a> {
             code,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
+                native_unions: std::mem::take(&mut self.native_unions),
+                provider_plan: self.provider_plan.clone(),
             },
         ))
     }
@@ -1663,7 +1744,9 @@ impl<'a> IrCodegen<'a> {
                 .map(source_module_path_segments)
                 .unwrap_or_default()
         });
-        self.capture_implementation_bound_requirements(root_module_path, &ir_program);
+        self.native_union_origins
+            .insert(root_module_path.clone(), lowering.native_publication_origins());
+        self.capture_implementation_bound_requirements(root_module_path.clone(), &ir_program);
         for (module_path, dependency_program) in &dependency_ir_programs {
             self.capture_implementation_bound_requirements(module_path.clone(), dependency_program);
         }
@@ -1699,7 +1782,7 @@ impl<'a> IrCodegen<'a> {
                 &dependency_symbol_metadata,
                 self.provider_plan.as_deref(),
                 &self.foreign_pub_type_remappings,
-            );
+            )?;
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
@@ -1718,7 +1801,9 @@ impl<'a> IrCodegen<'a> {
             for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                 inner.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
-            Ok(svc.emit_program(&ir_program)?)
+            let code = svc.emit_program(&ir_program)?;
+            self.capture_native_union_metadata(svc.inner_mut(), &root_module_path, &ir_program)?;
+            Ok(code)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             self.apply_canonical_emission_context(&mut emitter);
@@ -1736,7 +1821,7 @@ impl<'a> IrCodegen<'a> {
                 &dependency_symbol_metadata,
                 self.provider_plan.as_deref(),
                 &self.foreign_pub_type_remappings,
-            );
+            )?;
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
@@ -1755,7 +1840,9 @@ impl<'a> IrCodegen<'a> {
             for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                 emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
-            Ok(emitter.emit_program(&ir_program)?)
+            let code = emitter.emit_program(&ir_program)?;
+            self.capture_native_union_metadata(&emitter, &root_module_path, &ir_program)?;
+            Ok(code)
         }
     }
 
@@ -2085,7 +2172,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
                     &self.foreign_pub_type_remappings,
-                );
+                )?;
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -2117,7 +2204,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
                     &self.foreign_pub_type_remappings,
-                );
+                )?;
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
@@ -2182,6 +2269,9 @@ impl<'a> IrCodegen<'a> {
             generated,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
+                native_unions: std::mem::take(&mut self.native_unions),
+                provider_plan: self.provider_plan.clone(),
             },
         ))
     }
@@ -2283,6 +2373,8 @@ impl<'a> IrCodegen<'a> {
                 lowering.seed_dependency_trait_decls(&dependency_modules)?;
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
+                self.native_union_origins
+                    .insert(path.clone(), lowering.native_publication_origins());
                 // Do not auto-add serde derives to dependency modules.
                 // Global serde usage in the main module must not mutate unrelated dependency
                 // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
@@ -2383,7 +2475,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
                     &self.foreign_pub_type_remappings,
-                );
+                )?;
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -2398,7 +2490,9 @@ impl<'a> IrCodegen<'a> {
                 for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
-                svc.emit_program(ir)?
+                let code = svc.emit_program(ir)?;
+                self.capture_native_union_metadata(svc.inner_mut(), path, ir)?;
+                code
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 self.apply_canonical_emission_context(&mut emitter);
@@ -2415,7 +2509,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
                     &self.foreign_pub_type_remappings,
-                );
+                )?;
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
@@ -2430,7 +2524,9 @@ impl<'a> IrCodegen<'a> {
                 for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
-                emitter.emit_program(ir)?
+                let code = emitter.emit_program(ir)?;
+                self.capture_native_union_metadata(&emitter, path, ir)?;
+                code
             };
             modules.insert(path.clone(), module_code);
         }
@@ -2651,6 +2747,7 @@ model PrivateStream[R] with Walk:
         unknown_requirement.target_visibility = CapturedImplementationTargetVisibility::Unknown;
         let unknown_metadata = IrGenerationMetadata {
             implementation_bound_requirements: vec![unknown_requirement],
+            ..IrGenerationMetadata::default()
         };
         let mut unknown_manifest = LibraryManifest::new("unknown_impl", "0.1.0");
         let Err(error) = unknown_metadata.apply_to_library_manifest(&mut unknown_manifest) else {

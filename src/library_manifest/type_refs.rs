@@ -120,6 +120,14 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
         TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),
         TypeRef::Unknown => ResolvedType::Unknown,
+        TypeRef::NativeUnion(native) => ResolvedType::Generic(
+            incan_core::lang::types::UNION_TYPE_NAME.to_string(),
+            native
+                .members
+                .iter()
+                .map(resolved_type_from_manifest_type_ref)
+                .collect(),
+        ),
     }
 }
 

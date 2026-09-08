@@ -24,7 +24,9 @@ pub(crate) use artifact::{
     digest_toolchain_source_tree_with_cache,
 };
 pub use model::*;
-pub(crate) use type_projection::{VisitTypeRefs, with_checked_type_origins, with_checked_type_routes};
+pub(crate) use type_projection::{
+    VisitTypeRefs, with_checked_native_unions, with_checked_type_origins, with_checked_type_routes,
+};
 pub use type_refs::resolved_type_from_manifest_type_ref;
 pub(crate) use type_refs::type_ref_from_resolved;
 

@@ -21,6 +21,7 @@ mod consts;
 mod decls;
 mod errors;
 mod expressions;
+pub(in crate::backend::ir) mod native_unions;
 mod program;
 mod statements;
 mod types;
@@ -645,6 +646,9 @@ pub struct IrEmitter<'a> {
     qualify_union_types_from_crate: bool,
     /// Extra anonymous union shapes that should be emitted in this module in addition to locally referenced shapes.
     generated_union_types: HashMap<String, IrType>,
+    /// Exact local wrappers passed to definition emission after alias resolution and generated-use filtering.
+    emitted_native_unions: RefCell<HashMap<String, IrType>>,
+
     /// Whether this module should emit generated ordinary union wrapper definitions.
     emit_generated_union_definitions: bool,
     /// Stack of statement-slice analyses describing which local `StaticBinding` names need mutable Rust bindings.
@@ -746,6 +750,7 @@ impl<'a> IrEmitter<'a> {
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
             generated_union_types: HashMap::new(),
+            emitted_native_unions: RefCell::new(HashMap::new()),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
             result_observer_callable_types: RefCell::new(HashSet::new()),
@@ -1220,8 +1225,10 @@ impl<'a> IrEmitter<'a> {
             IrType::TypeToken(inner) => {
                 IrType::TypeToken(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
             }
-            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+            IrType::ExternalUnion { native: Some(_), .. } => ty.clone(),
+            IrType::ExternalUnion { library, union, native } => IrType::ExternalUnion {
                 library: library.clone(),
+                native: native.clone(),
                 union: Box::new(self.resolve_type_aliases_for_emit_inner(union, visiting)),
             },
             IrType::Ref(inner) => IrType::Ref(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
@@ -1879,19 +1886,25 @@ impl<'a> IrEmitter<'a> {
         &mut self,
         index: &LibraryManifestIndex,
         routes: &HashMap<String, HashMap<String, String>>,
-    ) {
-        let manifests = index
-            .known_libraries()
-            .into_iter()
-            .filter_map(|library| {
-                let LibraryManifestIndexEntry::Loaded { manifest, .. } = index.get(&library)? else {
-                    return None;
-                };
-                let projected =
-                    crate::library_manifest::with_checked_type_routes(manifest.as_ref().clone(), routes.get(&library));
-                Some((library, projected))
-            })
-            .collect::<HashMap<_, _>>();
+        plan: Option<&crate::provider::ProviderPlan>,
+    ) -> Result<(), EmitError> {
+        let mut manifests = HashMap::new();
+        for library in index.known_libraries() {
+            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+                continue;
+            };
+            let projected = crate::library_manifest::with_checked_native_unions(
+                manifest.as_ref().clone(),
+                &library,
+                plan,
+                routes.get(&library),
+            )
+            .map_err(EmitError::InternalInvariant)?;
+            manifests.insert(
+                library.clone(),
+                crate::library_manifest::with_checked_type_routes(projected, routes.get(&library)),
+            );
+        }
         let mut counts = HashMap::<String, usize>::new();
         let mut public_type_paths = HashMap::<String, HashSet<Vec<String>>>::new();
         for library in index.known_libraries() {
@@ -2017,6 +2030,7 @@ impl<'a> IrEmitter<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Return the public nominal name represented by one checked API declaration.
@@ -2911,7 +2925,9 @@ impl<'a> IrEmitter<'a> {
 
     /// Convert a public manifest type reference into the IR vocabulary used by emission metadata.
     fn manifest_type_ref_to_ir_type(ty: &TypeRef) -> IrType {
-        Self::resolved_type_to_ir_type(&resolved_type_from_manifest_type_ref(ty))
+        super::types::ir_type_from_projected_manifest(ty, &|ordinary| {
+            Self::resolved_type_to_ir_type(&resolved_type_from_manifest_type_ref(ordinary))
+        })
     }
 
     /// Convert resolved frontend metadata into IR type metadata without requiring an AST lowering context.
@@ -3265,8 +3281,9 @@ impl<'a> IrEmitter<'a> {
                 ret: Box::new(Self::substitute_signature_type(ret, subst)),
             },
             IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::substitute_signature_type(inner, subst))),
-            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+            IrType::ExternalUnion { library, union, native } => IrType::ExternalUnion {
                 library: library.clone(),
+                native: native.clone(),
                 union: Box::new(Self::substitute_signature_type(union, subst)),
             },
             IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_signature_type(inner, subst))),
@@ -3543,7 +3560,7 @@ mod tests {
         )]);
         let registry = FunctionRegistry::new();
         let mut emitter = IrEmitter::new(&registry);
-        emitter.seed_public_dependency_nominal_metadata(&index, &routes);
+        emitter.seed_public_dependency_nominal_metadata(&index, &routes, None)?;
         let metadata = emitter
             .pub_dependency_constructor_metadata
             .get(&("pricing".into(), vec!["Basket".into()]))

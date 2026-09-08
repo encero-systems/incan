@@ -863,6 +863,8 @@ pub struct MutableRustTypeArgumentProjection {
 pub struct DeclarationArtifacts {
     /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// Exact selected foreign origins retained from accepted bindings for native representation projection.
+    pub(crate) named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
     /// Checked local model field types keyed by exact field declaration span.
     pub(crate) model_field_types: HashMap<(usize, usize), ResolvedType>,
     /// Direct dependency roots required by checked public API nominal types, including callable signatures.

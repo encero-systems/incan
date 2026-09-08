@@ -24,8 +24,11 @@ impl<'a> IrEmitter<'a> {
     /// Emit the generated Rust type path for an anonymous ordinary union with an optional explicit module qualifier.
     pub(super) fn emit_union_type_path_with_qualifier(&self, ty: &IrType, qualifier: Option<&[String]>) -> TokenStream {
         let ty = self.resolve_type_aliases_for_emit(ty);
+        if matches!(&ty, IrType::ExternalUnion { native: Some(_), .. }) {
+            return Self::emit_path_ident(&ty.rust_name());
+        }
         let (semantic_ty, external_qualifier) = match &ty {
-            IrType::ExternalUnion { library, union } => (union.as_ref(), Some(vec![library.clone()])),
+            IrType::ExternalUnion { library, union, .. } => (union.as_ref(), Some(vec![library.clone()])),
             _ => (&ty, None),
         };
         let union_name = semantic_ty

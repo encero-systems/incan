@@ -4341,3 +4341,54 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
     );
     Ok(())
 }
+
+/// New native carriers retain the emitted wire evidence and exclude consumer-only paths; legacy unions still decode.
+#[test]
+fn native_union_wire_is_optional_and_excludes_checked_routes() -> Result<(), Box<dyn std::error::Error>> {
+    use super::{NativeUnionExport, NativeUnionOwnerExport, TypeRef};
+    let members = vec![
+        TypeRef::Named {
+            name: "int".into(),
+            origin: None,
+        },
+        TypeRef::Named {
+            name: "str".into(),
+            origin: None,
+        },
+    ];
+    let native = NativeUnionExport {
+        owner: NativeUnionOwnerExport::ContainingArtifact,
+        rust_name: "__IncanUnion0123456789abcdef".into(),
+        members: members.clone(),
+        checked_projection: Some(Box::new(super::model::NativeUnionProjection {
+            rust_owner: "::consumer_only::pricing".into(),
+            members: members.clone(),
+            nominal_origins: Default::default(),
+        })),
+    };
+    let wire = serde_json::to_string(&TypeRef::NativeUnion(native.clone()))?;
+    assert!(!wire.contains("consumer_only"));
+    assert!(!wire.contains("checked_projection"));
+    assert_eq!(
+        serde_json::from_str::<TypeRef>(&wire)?,
+        TypeRef::NativeUnion(native.for_publication())
+    );
+    let legacy = serde_json::json!({"Applied": {"name": "Union", "args": [{"Named": {"name": "int"}}, {"Named": {"name": "str"}}]}});
+    assert_eq!(
+        serde_json::from_value::<TypeRef>(legacy)?,
+        TypeRef::Applied {
+            name: "Union".into(),
+            args: members,
+            origin: None
+        }
+    );
+    #[derive(serde::Deserialize)]
+    enum LegacyTypeRef {
+        Unknown,
+    }
+    let error = serde_json::from_str::<LegacyTypeRef>(&wire)
+        .err()
+        .ok_or("an older reader must reject the new variant")?;
+    assert!(error.to_string().contains("unknown variant `NativeUnion`"));
+    Ok(())
+}

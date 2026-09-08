@@ -116,6 +116,8 @@ pub enum IrType {
     ExternalUnion {
         library: String,
         union: Box<IrType>,
+        /// Exact admitted producer representation, absent only for legacy structural metadata.
+        native: Option<Box<crate::library_manifest::NativeUnionExport>>,
     },
 
     /// Opaque trait return type emitted as Rust `impl Trait`, RFC 042.
@@ -212,9 +214,14 @@ impl IrType {
             Self::Ref(inner) => Self::Ref(Box::new(inner.provider_localized(library))),
             Self::RefMut(inner) => Self::RefMut(Box::new(inner.provider_localized(library))),
             Self::TypeToken(inner) => Self::TypeToken(Box::new(inner.provider_localized(library))),
-            Self::ExternalUnion { library: owner, union } if owner == library => Self::ExternalUnion {
+            Self::ExternalUnion {
+                library: owner,
+                union,
+                native,
+            } if owner == library => Self::ExternalUnion {
                 library: owner.clone(),
                 union: Box::new(union.provider_localized(library)),
+                native: native.clone(),
             },
             Self::ExternalUnion { .. } => self.clone(),
             other => other.clone(),
@@ -396,7 +403,7 @@ impl IrType {
             IrType::Struct(name) | IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => format!("dyn {}", name),
             IrType::RustDisplay(display) => display.clone(),
-            IrType::ExternalUnion { library, union } => union
+            IrType::ExternalUnion { library, union, .. } => self
                 .union_type_name()
                 .map(|name| format!("{library}::{name}"))
                 .unwrap_or_else(|| union.rust_name()),
@@ -447,6 +454,12 @@ impl IrType {
 
     /// Return the deterministic generated Rust type name for an anonymous union shape.
     pub fn union_type_name(&self) -> Option<String> {
+        if let Self::ExternalUnion {
+            native: Some(native), ..
+        } = self
+        {
+            return Some(native.rust_name.clone());
+        }
         let members = self.union_members()?;
         let key = members.iter().map(IrType::rust_name).collect::<Vec<_>>().join("|");
         Some(format!("__IncanUnion{:016x}", stable_union_hash(key.as_bytes())))
@@ -467,6 +480,20 @@ impl IrType {
         format!("V{index}")
     }
 
+    /// Compare nominal payloads through the exact checked consumer bindings retained for this native union.
+    fn native_member_identity_matches(&self, member: &IrType, value: &IrType) -> bool {
+        let Self::ExternalUnion {
+            native: Some(native), ..
+        } = self
+        else {
+            return false;
+        };
+        let Some(projection) = &native.checked_projection else {
+            return false;
+        };
+        checked_native_type_matches(member, value, &projection.nominal_origins)
+    }
+
     /// Find the union variant index that can hold `member_ty`.
     pub fn union_variant_index_for_member(&self, member_ty: &IrType) -> Option<usize> {
         let members = self.union_members()?;
@@ -474,9 +501,9 @@ impl IrType {
             Self::ExternalUnion { library, .. } => member_ty.provider_localized(library),
             _ => member_ty.clone(),
         };
-        members
-            .iter()
-            .position(|member| union_member_type_matches(member, &member_ty))
+        members.iter().position(|member| {
+            union_member_type_matches(member, &member_ty) || self.native_member_identity_matches(member, &member_ty)
+        })
     }
 }
 
@@ -502,7 +529,10 @@ pub(crate) fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &Ir
         .union_members()?
         .iter()
         .enumerate()
-        .filter_map(|(index, member)| isinstance_type_matches(member, target_ty).then_some(index))
+        .filter_map(|(index, member)| {
+            (isinstance_type_matches(member, target_ty) || union_ty.native_member_identity_matches(member, target_ty))
+                .then_some(index)
+        })
         .collect::<Vec<_>>();
     (!matches.is_empty()).then_some(matches)
 }
@@ -510,6 +540,59 @@ pub(crate) fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &Ir
 /// Return whether a concrete value type can inhabit a normalized union member type.
 pub(crate) fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
     member == value_ty || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+}
+
+/// Compare two physical type trees using only nominal identities retained by the successful checker.
+fn checked_native_type_matches(
+    left: &IrType,
+    right: &IrType,
+    origins: &std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    let name_matches = |left: &str, right: &str| match (
+        origins.get(left.trim_start_matches("::")),
+        origins.get(right.trim_start_matches("::")),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    };
+    let children_match = |left: &[IrType], right: &[IrType]| {
+        left.len() == right.len()
+            && left
+                .iter()
+                .zip(right)
+                .all(|(left, right)| checked_native_type_matches(left, right, origins))
+    };
+    match (left, right) {
+        (
+            IrType::Struct(left) | IrType::Enum(left) | IrType::Trait(left),
+            IrType::Struct(right) | IrType::Enum(right) | IrType::Trait(right),
+        ) => name_matches(left, right),
+        (IrType::NamedGeneric(left, args), IrType::NamedGeneric(right, other)) => {
+            (left == right || name_matches(left, right)) && children_match(args, other)
+        }
+        (IrType::List(left), IrType::List(right))
+        | (IrType::Set(left), IrType::Set(right))
+        | (IrType::Option(left), IrType::Option(right))
+        | (IrType::Ref(left), IrType::Ref(right))
+        | (IrType::RefMut(left), IrType::RefMut(right))
+        | (IrType::TypeToken(left), IrType::TypeToken(right)) => checked_native_type_matches(left, right, origins),
+        (IrType::Tuple(left), IrType::Tuple(right)) => children_match(left, right),
+        (IrType::Dict(left, value), IrType::Dict(right, other))
+        | (IrType::Result(left, value), IrType::Result(right, other)) => {
+            checked_native_type_matches(left, right, origins) && checked_native_type_matches(value, other, origins)
+        }
+        (
+            IrType::Function { params, ret },
+            IrType::Function {
+                params: other,
+                ret: other_ret,
+            },
+        ) => children_match(params, other) && checked_native_type_matches(ret, other_ret, origins),
+        _ => false,
+    }
 }
 
 /// Hash a union member-key into a deterministic generated Rust type suffix.
@@ -898,6 +981,7 @@ mod tests {
     fn external_union_member_matching_is_provider_aware_issue892() {
         let union = IrType::ExternalUnion {
             library: "widgets".to_string(),
+            native: None,
             union: Box::new(IrType::NamedGeneric(
                 IR_UNION_TYPE_NAME.to_string(),
                 vec![IrType::Struct("Widget".to_string())],
@@ -919,6 +1003,7 @@ mod tests {
     fn provider_localization_preserves_foreign_external_union_issue892() {
         let foreign_union = IrType::ExternalUnion {
             library: "other".to_string(),
+            native: None,
             union: Box::new(IrType::NamedGeneric(
                 IR_UNION_TYPE_NAME.to_string(),
                 vec![IrType::Struct("widgets::Widget".to_string())],
@@ -926,5 +1011,55 @@ mod tests {
         };
 
         assert_eq!(foreign_union.provider_localized("widgets"), foreign_union);
+    }
+}
+
+/// Convert typed manifest positions without discarding an admitted native union at a semantic-type boundary.
+///
+/// The ordinary converter retains each caller's existing alias and primitive policy. Native carriers use only their
+/// checked physical projection; the producer descriptor and member order remain independent of those Rust paths.
+pub(crate) fn ir_type_from_projected_manifest(
+    ty: &crate::library_manifest::TypeRef,
+    ordinary: &impl Fn(&crate::library_manifest::TypeRef) -> IrType,
+) -> IrType {
+    use crate::library_manifest::TypeRef;
+    let child = |ty: &TypeRef| ir_type_from_projected_manifest(ty, ordinary);
+    match ty {
+        TypeRef::NativeUnion(native) => {
+            let Some(projection) = &native.checked_projection else {
+                return IrType::Unknown;
+            };
+            let descriptor = native.clone();
+            IrType::ExternalUnion {
+                library: projection.rust_owner.clone(),
+                union: Box::new(IrType::NamedGeneric(
+                    IR_UNION_TYPE_NAME.to_string(),
+                    projection.members.iter().map(child).collect(),
+                )),
+                native: Some(Box::new(descriptor)),
+            }
+        }
+        TypeRef::Applied { args, .. } => {
+            let lowered = ordinary(ty);
+            let args = args.iter().map(child).collect::<Vec<_>>();
+            match (lowered, args.as_slice()) {
+                (IrType::List(_), [inner]) => IrType::List(Box::new(inner.clone())),
+                (IrType::Set(_), [inner]) => IrType::Set(Box::new(inner.clone())),
+                (IrType::Option(_), [inner]) => IrType::Option(Box::new(inner.clone())),
+                (IrType::Result(_, _), [ok, err]) => IrType::Result(Box::new(ok.clone()), Box::new(err.clone())),
+                (IrType::Dict(_, _), [key, value]) => IrType::Dict(Box::new(key.clone()), Box::new(value.clone())),
+                (IrType::NamedGeneric(name, _), _) => IrType::NamedGeneric(name, args),
+                (IrType::Tuple(_), _) => IrType::Tuple(args),
+                (other, _) => other,
+            }
+        }
+        TypeRef::Tuple { elements } => IrType::Tuple(elements.iter().map(child).collect()),
+        TypeRef::Function { params, return_type } => IrType::Function {
+            params: params.iter().map(child).collect(),
+            ret: Box::new(child(return_type)),
+        },
+        TypeRef::Ref { inner } => IrType::Ref(Box::new(child(inner))),
+        TypeRef::TypeToken { inner } => IrType::TypeToken(Box::new(child(inner))),
+        _ => ordinary(ty),
     }
 }

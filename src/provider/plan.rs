@@ -397,6 +397,22 @@ impl ProviderPlan {
         String,
     > {
         let (target, export) = self.public_nominal_declaration(origin)?;
+        let route = self.public_artifact_route(importing_library, &target.identity)?;
+        Ok((target, export, route))
+    }
+
+    /// Return the existing admitted public dependency route to one exact selected artifact.
+    ///
+    /// Nominal and native representation projections share this traversal; neither query discovers another graph.
+    pub(crate) fn public_artifact_route(
+        &self,
+        importing_library: &str,
+        identity: &ProviderIdentity,
+    ) -> Result<Vec<String>, String> {
+        let target = self
+            .public_artifacts
+            .get(&identity.stable_key())
+            .ok_or_else(|| format!("unadmitted public artifact {}", identity.stable_key()))?;
         let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
             self.library_manifest_index.get(importing_library)
         else {
@@ -413,7 +429,7 @@ impl ProviderPlan {
                 continue;
             }
             if root == target_root {
-                return Ok((target.clone(), export.clone(), route));
+                return Ok(route);
             }
             for (dependency, key) in self.public_dependencies.get(&root).into_iter().flatten() {
                 let admitted = self
@@ -427,8 +443,98 @@ impl ProviderPlan {
         }
         Err(format!(
             "public signature in `{importing_library}` has no admitted public dependency route to {}",
-            origin.provider.stable_key()
+            identity.stable_key()
         ))
+    }
+
+    /// Bind a producer union representation to its exact admitted owner and existing native dependency route.
+    ///
+    /// The wrapper must be present in the selected owner's final emitted-definition table. A plausible generated name
+    /// is insufficient: its ordered semantic payloads must agree with the representation published by that
+    /// artifact.
+    pub(crate) fn public_native_union_projection(
+        &self,
+        importing_library: &str,
+        native: &crate::library_manifest::NativeUnionExport,
+    ) -> Result<(crate::library_manifest::NativeUnionExport, Vec<String>), String> {
+        use crate::library_manifest::{NativeUnionOwnerExport, TypeRef, VisitTypeRefs};
+        let identity = match &native.owner {
+            NativeUnionOwnerExport::SelectedArtifact(identity) => identity.clone(),
+            NativeUnionOwnerExport::ContainingArtifact => {
+                let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
+                    self.library_manifest_index.get(importing_library)
+                else {
+                    return Err(format!("union import container `{importing_library}` is unavailable"));
+                };
+                let mut owners = self.public_artifacts.values().filter(|artifact| {
+                    normalize_artifact_root(&artifact.artifact.crate_root)
+                        == normalize_artifact_root(&metadata.crate_root)
+                });
+                let owner = owners.next().ok_or("union containing artifact was not admitted")?;
+                if owners.next().is_some() {
+                    return Err("union containing artifact is ambiguous".to_string());
+                }
+                owner.identity.clone()
+            }
+        };
+        let route = self.public_artifact_route(importing_library, &identity)?;
+        let artifact = self
+            .public_artifacts
+            .get(&identity.stable_key())
+            .ok_or("union defining artifact was not admitted")?;
+        let candidates = artifact
+            .manifest
+            .contract_metadata
+            .native_unions
+            .iter()
+            .filter(|candidate| {
+                candidate.owner == NativeUnionOwnerExport::ContainingArtifact && candidate.rust_name == native.rust_name
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let normalize = |native: &crate::library_manifest::NativeUnionExport| {
+            let mut ty = TypeRef::NativeUnion(native.clone());
+            ty.visit_type_refs(&mut |ty| match ty {
+                TypeRef::NativeUnion(native) if native.owner == NativeUnionOwnerExport::ContainingArtifact => {
+                    native.checked_projection = None;
+                    native.owner = NativeUnionOwnerExport::SelectedArtifact(identity.clone());
+                }
+                TypeRef::Named {
+                    name,
+                    origin: Some(origin),
+                }
+                | TypeRef::Applied {
+                    name,
+                    origin: Some(origin),
+                    ..
+                } => *name = origin.binding_key(),
+                _ => {}
+            });
+            ty
+        };
+        let requested = normalize(native);
+        let candidate = candidates
+            .into_iter()
+            .find(|candidate| normalize(candidate) == requested)
+            .ok_or_else(|| {
+                format!(
+                    "native union `{}` has no matching emitted representation in {}",
+                    native.rust_name,
+                    identity.stable_key()
+                )
+            })?;
+        let mut bound = TypeRef::NativeUnion(candidate);
+        bound.visit_type_refs(&mut |ty| {
+            if let TypeRef::NativeUnion(native) = ty {
+                if native.owner == NativeUnionOwnerExport::ContainingArtifact {
+                    native.owner = NativeUnionOwnerExport::SelectedArtifact(identity.clone());
+                }
+            }
+        });
+        let TypeRef::NativeUnion(bound) = bound else {
+            return Err("union binding lost its type carrier".to_string());
+        };
+        Ok((bound, route))
     }
 
     /// Resolve exact foreign nominal membership independently of its consumer's physical exposure route.

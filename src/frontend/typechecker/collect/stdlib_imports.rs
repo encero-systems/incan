@@ -1539,6 +1539,11 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
         let mut type_alias = declarations.iter().find_map(|declaration| {
+            if let ApiDeclaration::Alias(alias) = declaration {
+                if let Some(target) = alias.projected_type.as_ref().filter(|ty| ty.has_native_union()) {
+                    return Some((Vec::new(), resolved_type_from_manifest_type_ref(target)));
+                }
+            }
             let declaration = match declaration {
                 ApiDeclaration::Alias(alias) => Self::api_declaration_for_target_path(manifest, &alias.target_path)?,
                 declaration => declaration,
@@ -2067,6 +2072,20 @@ impl TypeChecker {
         use crate::library_manifest::{TypeRef, VisitTypeRefs};
         if let Some(remapping) = self.foreign_pub_type_remappings.get(library) {
             return remapping.clone();
+        }
+        let mut carriers = Vec::new();
+        manifest.clone().visit_type_refs(&mut |ty| {
+            if let TypeRef::NativeUnion(native) = ty {
+                carriers.push(native.clone());
+            }
+        });
+        for carrier in carriers {
+            if let Err(message) = self.provider_plan.public_native_union_projection(library, &carrier) {
+                self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
+                    format!("compiled library `{library}` has an invalid native union representation: {message}"),
+                    Span::default(),
+                ));
+            }
         }
         let collect_origins = |manifest: &LibraryManifest| {
             let mut origins = BTreeMap::new();
@@ -2782,6 +2801,9 @@ impl TypeChecker {
         &self,
         projected: Option<&crate::library_manifest::TypeRef>,
     ) -> Option<SymbolKind> {
+        if projected.is_some_and(|ty| ty.has_native_union()) {
+            return Some(SymbolKind::Type(TypeInfo::TypeAlias));
+        }
         let crate::library_manifest::TypeRef::Named {
             origin: Some(origin), ..
         } = projected?
@@ -3099,6 +3121,14 @@ impl TypeChecker {
                 is_used: false,
             }),
             ManifestExportRef::Alias(export) => {
+                if let Some(projected) = export.projected_type.as_ref().filter(|ty| ty.has_native_union()) {
+                    let mut target = resolved_type_from_manifest_type_ref(projected);
+                    Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
+                    type_alias_target = Some(crate::frontend::typechecker::TypeAliasTarget {
+                        type_params: Vec::new(),
+                        target,
+                    });
+                }
                 let Some(kind) = self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()) else {
                     return;
                 };
