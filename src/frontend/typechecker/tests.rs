@@ -25035,3 +25035,6 @@ def f() -> None:
     }
     Ok(())
 }
+
+mod rust_supertrait_codegen;
+mod rust_supertraits;
