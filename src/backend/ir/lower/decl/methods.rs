@@ -340,6 +340,12 @@ impl AstLowering {
             .collect::<HashMap<_, _>>();
 
         for (supertrait_name, supertrait_args) in direct_supertraits {
+            // Foreign supertraits are obligations on the adopter, not source-authored implementations to synthesize.
+            // Their implementations may come from a derive or a blanket impl; emitting an empty impl here would
+            // conflict with that authority and can invent marker-trait implementations.
+            if supertrait_name.starts_with("::") {
+                continue;
+            }
             let instantiated_args = supertrait_args
                 .iter()
                 .map(|arg| Self::substitute_ir_type_params(self.lower_resolved_type(arg), &subst))

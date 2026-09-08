@@ -295,8 +295,10 @@ impl<'a> IrEmitter<'a> {
         }
 
         // Parse the trait path into segments.
+        let absolute = bound.trait_path.starts_with("::");
         let segments: Vec<_> = bound
             .trait_path
+            .trim_start_matches("::")
             .split("::")
             .flat_map(|segment| segment.split('.'))
             .collect();
@@ -307,7 +309,12 @@ impl<'a> IrEmitter<'a> {
                 quote! { #ident }
             })
             .collect();
-        let path = super::decls::join_path_tokens(&path_tokens);
+        let relative_path = super::decls::join_path_tokens(&path_tokens);
+        let path = if absolute {
+            quote! { ::#relative_path }
+        } else {
+            relative_path
+        };
 
         if bound.type_args.is_empty() && bound.assoc_types.is_empty() {
             path

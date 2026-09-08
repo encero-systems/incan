@@ -269,6 +269,39 @@ hint: Add a version annotation: `import rust::my_crate @ "1.0"` or add it to loa
 
 **Fix**: add an inline version annotation, or add the crate to your `loaf.toml`.
 
+## Rust bounds on source traits
+
+A source trait can inherit an imported Rust trait. This retains the foreign requirement on every adopter without generating an implementation of the Rust parent:
+
+```incan
+from rust::std::clone import Clone as RustClone
+
+trait Snapshot with RustClone:
+    pass
+```
+
+For serialization, use the Incan derive API to generate the serde implementations:
+
+```incan
+from std.serde import json
+from rust::serde import Serialize as RustSerialize
+from rust::serde::de import DeserializeOwned
+
+trait Readable with DeserializeOwned:
+    pass
+
+trait Writable with RustSerialize:
+    pass
+
+@derive(json)
+model Config with Readable, Writable:
+    name: str
+```
+
+Here `Readable` and `Writable` are source traits whose foreign parents require serde deserialization and serialization. `@derive(json)` supplies those known implementations through `std.serde`; the model does not need a separate `@rust.derive` decorator. Adopting an arbitrary trait imposes its requirements but does not infer a Rust derive macro from its name.
+
+The adopter must already satisfy the Rust bound, for example through a derive or an existing blanket implementation. Import aliases preserve the original Rust trait identity. When inspection metadata identifies an imported item as a non-trait, the frontend rejects it; native Rust compilation checks foreign trait obligations and generic argument counts that are not represented in the inspection metadata.
+
 ## Rust-backed types with `rusttype`
 
 Use `rusttype` when you want an Incan type that is directly backed by a Rust type:

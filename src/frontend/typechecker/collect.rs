@@ -1178,7 +1178,10 @@ impl TypeChecker {
     }
 
     /// Resolve one `with` supertrait bound to `(trait_name, type_arguments)` after validation (RFC 042).
-    fn resolve_trait_supertrait_bound(&mut self, bound: &Spanned<TraitBound>) -> Option<(String, Vec<ResolvedType>)> {
+    pub(super) fn resolve_trait_supertrait_bound(
+        &mut self,
+        bound: &Spanned<TraitBound>,
+    ) -> Option<(String, Vec<ResolvedType>)> {
         let trait_name = self.resolve_trait_bound_name(&bound.node.name, bound.span);
         let args = bound
             .node
@@ -1186,6 +1189,25 @@ impl TypeChecker {
             .iter()
             .map(|arg| self.resolve_type_checked(arg))
             .collect::<Vec<_>>();
+        // A foreign trait does not have an Incan declaration to collect. Keep its imported identity so the
+        // transitive bound graph and Rust lowering both retain the real supertrait. As with direct Rust trait
+        // adoption, absent metadata defers validation to rustc; positive non-trait metadata must never be accepted.
+        if let Some(symbol) = self.lookup_symbol(&trait_name)
+            && let SymbolKind::RustItem(info) = &symbol.kind
+        {
+            if info
+                .metadata
+                .as_ref()
+                .is_some_and(|metadata| !matches!(metadata.kind, incan_core::interop::RustItemKind::Trait(_)))
+            {
+                self.errors
+                    .push(errors::supertrait_bound_not_trait(&trait_name, bound.span));
+                return None;
+            }
+            // Rust trait metadata currently carries associated members, but no generic arity. Rustc therefore
+            // checks foreign argument counts; native Incan trait arity remains checked below.
+            return Some((format!("::{}", info.path.trim_start_matches("::")), args));
+        }
         let trait_info = if let Some(info) = self.lookup_trait_info(&trait_name).cloned() {
             info
         } else if let Some((hidden_name, info)) = self.resolve_imported_trait_bound_symbol(&bound.node.name, bound.span)
