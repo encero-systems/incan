@@ -912,12 +912,22 @@ fn extract_derivable_traits(program: &ast::Program) -> Vec<String> {
 /// Map one `with` supertrait bound to `(trait_name, type_arguments)` for stdlib trait metadata (RFC 042).
 ///
 /// Uses the declaring trait's type parameter names so bounds like `DataSet[T]` become generic supertrait entries with
-/// [`ResolvedType::TypeVar`] arguments. Bounds that do not resolve to a plain trait name or generic trait application
-/// are skipped (malformed stdlib sources are treated as having no edge for that bound).
+/// [`ResolvedType::TypeVar`] arguments. Foreign import aliases retain their absolute Rust identity and resolved type
+/// arguments before the declaring module's local bindings disappear. Bounds that do not resolve to a plain trait name
+/// or generic trait application are skipped (malformed stdlib sources are treated as having no edge for that bound).
 fn supertrait_entry_from_trait_bound(
     bound: &ast::TraitBound,
     declaring_trait_type_params: &[String],
+    rust_imports: &HashMap<String, String>,
 ) -> Option<(String, Vec<ResolvedType>)> {
+    if let Some(path) = rust_imports.get(&bound.name) {
+        let arguments = bound
+            .type_args
+            .iter()
+            .map(|arg| ast_type_to_resolved_with_rust_imports(&arg.node, declaring_trait_type_params, rust_imports))
+            .collect();
+        return Some((format!("::{}", path.trim_start_matches("::")), arguments));
+    }
     let ty = if bound.type_args.is_empty() {
         ast::Type::Simple(bound.name.clone())
     } else {
@@ -935,6 +945,7 @@ fn supertrait_entry_from_trait_bound(
 /// Top-level `trait` declarations are extracted with their method signatures and `with` supertrait bounds. `@requires`
 /// decorators are not resolved (`requires` stays empty) since stdlib traits typically don't use them.
 fn extract_trait_signatures(program: &ast::Program, module_path: &[String]) -> Vec<(String, TraitInfo)> {
+    let rust_imports = rust_import_aliases(program);
     let stdlib_imports = stdlib_import_aliases(program);
     let mut traits = Vec::new();
     for decl in &program.declarations {
@@ -952,7 +963,7 @@ fn extract_trait_signatures(program: &ast::Program, module_path: &[String]) -> V
             let supertraits: Vec<(String, Vec<ResolvedType>)> = tr
                 .traits
                 .iter()
-                .filter_map(|b| supertrait_entry_from_trait_bound(&b.node, &tp_names))
+                .filter_map(|b| supertrait_entry_from_trait_bound(&b.node, &tp_names, &rust_imports))
                 .collect();
             traits.push((
                 tr.name.clone(),
@@ -1932,6 +1943,39 @@ fn extract_stdlib_imported_type_paths(
 
 #[cfg(test)]
 mod tests {
+    /// Imported source trait signatures keep foreign aliases valid outside their declaring module.
+    #[test]
+    fn rust_supertrait_alias_survives_source_signature_extraction() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::serde::de import DeserializeOwned as Owned
+from rust::std::convert import From as Convert
+from rust::std::string import String as Text
+
+pub trait Decode with Owned:
+    pass
+
+pub trait ConvertText with Convert[Text]:
+    pass
+"#;
+        let tokens = crate::frontend::lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
+        let program = crate::frontend::parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+        let traits = super::extract_trait_signatures(&program, &["std".to_string(), "example".to_string()]);
+        assert_eq!(
+            traits[0].1.supertraits,
+            vec![("::serde::de::DeserializeOwned".to_string(), vec![])]
+        );
+        assert_eq!(
+            traits[1].1.supertraits,
+            vec![(
+                "::std::convert::From".to_string(),
+                vec![crate::frontend::symbols::ResolvedType::RustPath(
+                    "std::string::String".to_string()
+                )]
+            )]
+        );
+        Ok(())
+    }
+
     use super::*;
 
     #[test]

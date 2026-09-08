@@ -1,0 +1,61 @@
+"""Foreign supertraits constrain source-authored codecs without synthetic serde blanket implementations."""
+
+from std.serde import json
+from rust::serde import Serialize as RustSerialize
+from rust::serde::de import DeserializeOwned
+from rust::serde_json import from_str, to_string, Error as JsonError
+
+
+trait Readable with DeserializeOwned:
+    """A value whose decoded fields outlive the input document."""
+
+    pass
+
+
+trait Writable with RustSerialize:
+    """A value accepted by existing serde serializers."""
+
+    pass
+
+
+@derive(json)
+model Config with Readable, Writable:
+    """Incan serialization derives satisfy both foreign parent requirements."""
+
+    name: str
+    count: int
+
+
+def decode[T with Readable](source: str) -> Result[T, str]:
+    """Decode through a generic source trait while serde supplies the owned implementation."""
+    result: Result[T, JsonError] = from_str(source)
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) => return Err(str(error))
+
+
+def encode[T with Writable](value: T) -> Result[str, str]:
+    """Encode through the inherited Rust serialization requirement."""
+    match to_string(value):
+        Ok(text) => return Ok(text)
+        Err(error) => return Err(str(error))
+
+
+def run() -> Result[None, str]:
+    """Assert the generic codec retains the model data through a native round trip."""
+    value = decode[Config]("{\"name\":\"sample\",\"count\":7}")?
+    assert value.name == "sample"
+    assert value.count == 7
+    restored = decode[Config](encode(value)?)?
+    assert restored.name == "sample"
+    assert restored.count == 7
+    println("foreign supertrait codec passed")
+    return Ok(None)
+
+
+def main() -> None:
+    """Turn a codec failure into a failing native acceptance program."""
+    match run():
+        Ok(_) => return
+        Err(error) =>
+            assert false, error
