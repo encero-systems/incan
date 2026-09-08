@@ -148,8 +148,7 @@ use super::common::{
 use super::lock::{LockResolutionRequest, PublishedOvenProjectLock, publish_oven_project_lock, resolve_lock_context};
 #[cfg(feature = "rust_inspect")]
 use super::lock::{
-    OvenRustInspectSourceAuthorityRequest, RustInspectWorkspaceRequest, prepare_project_registry_source_authorities,
-    prepare_rust_inspect_workspace,
+    RustInspectWorkspaceRequest, prepare_project_registry_source_authorities, prepare_rust_inspect_workspace,
 };
 use super::oven::open_default_oven_store;
 use super::vocab_extraction::{

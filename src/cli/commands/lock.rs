@@ -7,81 +7,41 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-#[cfg(test)]
-use std::fs::OpenOptions;
-#[cfg(test)]
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::process::{Command, Stdio};
 #[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
-#[cfg(test)]
-use std::thread;
-#[cfg(test)]
-use std::time::{Duration, Instant, SystemTime};
 
-#[cfg(test)]
-use sha2::{Digest, Sha256};
-
-#[cfg(test)]
-use crate::backend::ProjectGenerator;
-#[cfg(feature = "rust_inspect")]
-use crate::backend::project::runner::resolved_cargo_executable;
-#[cfg(test)]
-use crate::backend::project::runner::{cargo_command, configure_cargo_target, sanitize_cargo_environment};
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
 use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
-use crate::generated_cache::{GeneratedCacheLease, resolve_generated_cargo_target};
 use crate::lockfile::{
     CargoFeatureSelection, IncanLock, LOCK_FILENAME, PublicationLock, SemanticLockState,
     compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
-use crate::oven::legacy_cargo::OvenLegacyCargoInspectionPackage;
 #[cfg(feature = "rust_inspect")]
-use crate::oven::legacy_cargo::{OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, explicit_project_bake_inspection_sources};
-#[cfg(feature = "rust_inspect")]
-use crate::oven::loaf::{
-    OvenToolchainLoaf, resolve_compiler_owned_loaf_by_identity, resolve_compiler_owned_loaf_for_registry_dependencies,
-    resolve_toolchain_loaf_for_registry_sources,
-};
+use crate::oven::loaf::{OvenToolchainLoaf, resolve_compiler_owned_loaf_by_identity};
 #[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::{
     OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent,
     OvenProjectInspectionSourceOwner, project_inspection_authority_supports_dependencies,
     project_inspection_test_dependency_envelope_supports_dependencies, validate_project_extension_payload_against_base,
 };
-#[cfg(feature = "rust_inspect")]
-use crate::oven::rustc::{resolve_active_rustc, rustc_host_target, rustc_identity};
-#[cfg(feature = "rust_inspect")]
-use crate::oven::{OvenGeneratedProjectRequest, receipt_generated_project};
-use crate::provider::{FeatureSelection, ProviderPlan, SDK_PROVIDER_BUILD_ENV};
+use crate::provider::{FeatureSelection, ProviderPlan};
 use crate::workspace::WorkspaceGraph;
 use incan_core::lang::stdlib;
 
 use super::common::{
-    CargoPolicy, CompilationSession, ProjectRequirements, build_source_map, cargo_command_flags,
-    collect_modules_detailed_with_session, collect_project_requirements, collect_rust_dependency_uses,
-    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
-    merge_project_requirement_dependencies, provider_used_module_paths, semantic_sdk_path_dependencies,
+    CompilationSession, ProjectRequirements, build_source_map, collect_modules_detailed_with_session,
+    collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
+    extend_requirements_with_provider_plan, format_dependency_error, merge_project_requirement_dependencies,
+    provider_used_module_paths, semantic_sdk_path_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths};
-
-#[cfg(test)]
-#[allow(dead_code)]
-const LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
-#[cfg(test)]
-#[allow(dead_code)]
-const LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_library_dependency_preheat_fingerprint";
-#[cfg(test)]
-#[allow(dead_code)]
-const LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_library_dependency_preheat.lock";
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -161,45 +121,6 @@ fn record_project_lock_provider_plan_projection() {
     update_project_lock_collection_metrics(|metrics| {
         metrics.provider_plan_projections += 1;
     });
-}
-
-/// Inputs needed to preheat generated-library dependencies into the real generated-library Cargo target domain.
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
-    /// Generated project directory used by both dependency preheat and the real Cargo build.
-    pub cargo_working_dir: &'a Path,
-    /// Dependency-only generated lock workspace directory.
-    pub lock_dir: &'a Path,
-    /// Cargo package name to use for the dependency-only generated lock workspace.
-    pub project_name: &'a str,
-    /// Rust edition to write into the dependency-only generated lock workspace.
-    pub rust_edition: Option<String>,
-    /// Resolved Rust dependencies that define the generated lock workspace.
-    pub resolved: &'a ResolvedDependencies,
-    /// Stdlib/provider requirements that define generated helper dependencies.
-    pub project_requirements: &'a ProjectRequirements,
-    /// Cargo feature selection used by the generated library build.
-    pub cargo_features: &'a CargoFeatureSelection,
-    /// Cargo policy flags used by the generated library build.
-    pub cargo_policy: &'a CargoPolicy,
-    /// Cargo target directory shared with the real generated library build.
-    pub target_dir: &'a Path,
-    /// Embedded Cargo.lock payload from `oven.lock`.
-    pub cargo_lock_payload: &'a str,
-    /// Exact canonical root authorizing Cargo-owned projection for the generated dependency workspace.
-    pub cargo_lock_projection_root: Option<&'a str>,
-}
-
-/// Dependency graph and Cargo policy shared by generated lock-workspace preheat consumers.
-#[cfg(test)]
-#[allow(dead_code)]
-struct DependencyPreheatContext<'a> {
-    project_name: &'a str,
-    rust_edition: Option<&'a str>,
-    resolved: &'a ResolvedDependencies,
-    project_requirements: &'a ProjectRequirements,
-    cargo_policy_flags: &'a [String],
 }
 
 /// Generate or update oven.lock for a project.
@@ -390,18 +311,6 @@ pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub rust_inspect_query_paths: &'a [String],
     pub rust_derive_probe_paths: &'a [String],
     pub selected: Option<SelectedRustInspectWorkspace>,
-}
-
-/// Receipt-compatible Loaf inputs required before a normal direct Oven metadata prewarm.
-#[cfg(feature = "rust_inspect")]
-pub(crate) struct OvenRustInspectSourceAuthorityRequest<'a> {
-    pub project_version: &'a str,
-    pub target: &'a str,
-    pub toolchain: &'a str,
-    pub profile: &'a str,
-    pub features: &'a [String],
-    pub build_unit_inputs: &'a BTreeMap<String, String>,
-    pub registry_dependencies: &'a [DependencySpec],
 }
 
 /// A cache-bound selected projection whose source leases remain live through analysis and background queries.
@@ -906,33 +815,6 @@ fn project_inspection_selection_mismatch(requested_surface: &str) -> CliError {
     CliError::failure(format!(
         "Oven Alpha project inspection authority does not cover {requested_surface}. The command selected registry roots outside the completed project Loaf's baked dependency surface. A command-local `--sdk-profile` or package-feature selection cannot reuse a Loaf baked for different roots. Use the baked selection; for a different SDK profile, persist it in `[sdk]` in `loaf.toml` and rebake; for different package features, rerun `incan oven bake --project .` with the same feature flags."
     ))
-}
-
-/// Resolve the exact direct registry roots whose source trees must be available while checking one project.
-/// Translate declared registry dependencies into the exact root selectors shared by source inspection and the
-/// explicit Oven publisher. Keeping this conversion here gives both phases one package/rename/version boundary.
-pub(crate) fn inspection_packages_for_dependencies(
-    dependencies: &[DependencySpec],
-) -> CliResult<Vec<OvenLegacyCargoInspectionPackage>> {
-    let mut packages = dependencies
-        .iter()
-        .filter(|dependency| matches!(dependency.source, crate::manifest::DependencySource::Registry))
-        .map(|dependency| {
-            let package = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
-            let version_requirement = dependency.version.as_deref().ok_or_else(|| {
-                CliError::failure(format!(
-                    "Oven inspection source declaration for `{package}` is missing its locked version requirement"
-                ))
-            })?;
-            Ok(OvenLegacyCargoInspectionPackage {
-                package: package.to_string(),
-                version_requirement: version_requirement.to_string(),
-            })
-        })
-        .collect::<CliResult<Vec<_>>>()?;
-    packages.sort();
-    packages.dedup();
-    Ok(packages)
 }
 
 /// Install a sealed registry lock as writable caller-owned inspection state.
@@ -1635,148 +1517,6 @@ fn collect_project_lock_context(
     }))
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-struct LockDependencyPreheatGuard {
-    path: PathBuf,
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-impl Drop for LockDependencyPreheatGuard {
-    /// Remove the cooperative dependency-preheat lock file when the writer exits.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-/// Return whether lock-generation dependency preheat should run for the supplied environment value.
-#[cfg(test)]
-#[allow(dead_code)]
-fn parse_lock_dependency_preheat_env(raw: Option<&str>) -> bool {
-    !matches!(raw.map(str::trim), Some("0" | "false" | "no" | "off"))
-}
-
-/// Return whether dependency preheat is enabled for this process.
-#[cfg(test)]
-#[allow(dead_code)]
-fn lock_dependency_preheat_enabled() -> bool {
-    parse_lock_dependency_preheat_env(std::env::var("INCAN_LOCK_PREHEAT").ok().as_deref())
-}
-
-/// Return the age after which an abandoned dependency-preheat lock may be reclaimed.
-#[cfg(test)]
-#[allow(dead_code)]
-fn stale_lock_dependency_preheat_after() -> Duration {
-    std::env::var("INCAN_LOCK_PREHEAT_STALE_LOCK_SECS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or_else(|| Duration::from_secs(LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS))
-}
-
-/// Try to become the single dependency-preheat writer for one lock workspace.
-#[cfg(test)]
-#[allow(dead_code)]
-fn try_acquire_lock_dependency_preheat(lock_path: &Path) -> io::Result<Option<LockDependencyPreheatGuard>> {
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match OpenOptions::new().write(true).create_new(true).open(lock_path) {
-        Ok(mut file) => {
-            let _ = writeln!(file, "pid={}", std::process::id());
-            Ok(Some(LockDependencyPreheatGuard {
-                path: lock_path.to_path_buf(),
-            }))
-        }
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
-/// Return whether an existing cooperative dependency-preheat lock is old enough to discard.
-#[cfg(test)]
-#[allow(dead_code)]
-fn lock_dependency_preheat_is_stale(lock_path: &Path, stale_after: Duration) -> bool {
-    let Ok(metadata) = fs::metadata(lock_path) else {
-        return false;
-    };
-    let Ok(modified) = metadata.modified() else {
-        return false;
-    };
-    SystemTime::now()
-        .duration_since(modified)
-        .is_ok_and(|age| age >= stale_after)
-}
-
-/// Return whether the recorded dependency-preheat fingerprint matches the current lock workspace.
-#[cfg(test)]
-#[allow(dead_code)]
-fn lock_dependency_preheat_stamp_matches(stamp_path: &Path, fingerprint: &str) -> bool {
-    fs::read_to_string(stamp_path)
-        .map(|existing| existing.trim() == fingerprint)
-        .unwrap_or(false)
-}
-
-/// Add one lock-workspace input file to the dependency-preheat fingerprint.
-#[cfg(test)]
-#[allow(dead_code)]
-fn hash_lock_dependency_preheat_file(hasher: &mut Sha256, base: &Path, path: &Path) -> io::Result<()> {
-    let relative = path.strip_prefix(base).unwrap_or(path);
-    hasher.update(relative.to_string_lossy().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(fs::read(path)?);
-    hasher.update(b"\0");
-    Ok(())
-}
-
-/// Compute the fingerprint that decides whether a dependency preheat can be reused.
-#[cfg(test)]
-#[allow(dead_code)]
-fn compute_dependency_preheat_fingerprint(
-    lock_dir: &Path,
-    cargo_flags: &[String],
-    target_dir: &Path,
-    namespace: &[u8],
-    command_label: &str,
-    fingerprint_file: &str,
-    crate_root_file: &str,
-) -> io::Result<String> {
-    let mut hasher = Sha256::new();
-    hasher.update(namespace);
-    hasher.update(command_label.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(target_dir.to_string_lossy().as_bytes());
-    hasher.update(b"\0");
-    for flag in cargo_flags {
-        hasher.update(flag.as_bytes());
-        hasher.update(b"\0");
-    }
-    hash_lock_dependency_preheat_file(&mut hasher, lock_dir, &lock_dir.join("Cargo.toml"))?;
-    hash_lock_dependency_preheat_file(&mut hasher, lock_dir, &lock_dir.join("Cargo.lock"))?;
-    hash_lock_dependency_preheat_file(&mut hasher, lock_dir, &lock_dir.join("src").join(crate_root_file))?;
-    Ok(format!("{}{}", fingerprint_file, hex::encode(hasher.finalize())))
-}
-
-/// Compute the fingerprint that decides whether generated-library dependency preheat can be reused.
-#[cfg(test)]
-#[allow(dead_code)]
-fn compute_library_dependency_preheat_fingerprint(
-    lock_dir: &Path,
-    cargo_flags: &[String],
-    target_dir: &Path,
-) -> io::Result<String> {
-    compute_dependency_preheat_fingerprint(
-        lock_dir,
-        cargo_flags,
-        target_dir,
-        b"incan_library_dependency_preheat/1\0",
-        "cargo build --release",
-        LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE,
-        "lib.rs",
-    )
-}
-
 /// Construct expected lock contents from retained checked facts without observing or publishing a file.
 fn checked_oven_lock(
     project_root: &Path,
@@ -2038,29 +1778,6 @@ mod tests {
         .err()
         .ok_or("incompatible workspace dependency should fail")?;
         assert!(error.message.contains("incompatible workspace member identities"));
-        Ok(())
-    }
-
-    #[test]
-    fn parse_lock_dependency_preheat_env_defaults_to_enabled() {
-        assert!(parse_lock_dependency_preheat_env(None));
-        assert!(parse_lock_dependency_preheat_env(Some("1")));
-        assert!(parse_lock_dependency_preheat_env(Some("true")));
-        assert!(!parse_lock_dependency_preheat_env(Some("0")));
-        assert!(!parse_lock_dependency_preheat_env(Some("false")));
-        assert!(!parse_lock_dependency_preheat_env(Some(" off ")));
-    }
-
-    #[test]
-    fn cargo_lock_payload_override_normalizes_the_supplied_workspace_lock() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = tempfile::tempdir()?;
-        let lock_path = temp_dir.path().join("Cargo.lock");
-        fs::write(&lock_path, "version = 4\r\n")?;
-
-        assert_eq!(
-            cargo_lock_payload_override(Some(lock_path))?,
-            Some("version = 4\n".to_string())
-        );
         Ok(())
     }
 
@@ -2581,34 +2298,6 @@ name = "consumer"
 
         assert_eq!(root_files, expected_root_files);
         assert_eq!(consumer_files, [fs::canonicalize(consumer_test)?]);
-        Ok(())
-    }
-
-    #[test]
-    fn library_dependency_preheat_fingerprint_uses_separate_profile_domain() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("incan_library_preheat_fingerprint_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&temp_dir);
-        fs::create_dir_all(temp_dir.join("src"))?;
-        fs::write(
-            temp_dir.join("Cargo.toml"),
-            "[package]\nname = \"library_preheat\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        fs::write(
-            temp_dir.join("Cargo.lock"),
-            "# This file is automatically @generated by Cargo.\nversion = 4\n",
-        )?;
-        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn library() {}\n")?;
-
-        let target_dir = temp_dir.join("target").join(".cargo-target");
-        let library_preheat = compute_library_dependency_preheat_fingerprint(&temp_dir, &[], &target_dir)?;
-        assert!(library_preheat.starts_with(LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE));
-        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn library_changed() {}\n")?;
-        let changed_library_preheat = compute_library_dependency_preheat_fingerprint(&temp_dir, &[], &target_dir)?;
-        assert_ne!(
-            library_preheat, changed_library_preheat,
-            "generated-library preheat fingerprint must track src/lib.rs, not src/main.rs"
-        );
-        let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
     }
 }

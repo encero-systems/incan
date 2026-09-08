@@ -8479,7 +8479,6 @@ mod completion_tests {
                 manifest_name: "stdlib-future".to_string(),
                 manifest_path: manifest_path.clone(),
                 crate_root: artifact.path().to_path_buf(),
-                cargo_toml_path: artifact.path().join("Cargo.toml"),
                 crate_lib_path: artifact.path().join("src/lib.rs"),
                 kind: LibraryArtifactKind::Materialized,
             }),
