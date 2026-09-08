@@ -433,26 +433,15 @@ impl<'a> IrEmitter<'a> {
                 variant,
                 fields,
             } => {
-                // Handle qualified enum variants like "Shape::Circle"
-                let v: TokenStream = if variant.contains("::") {
-                    // Parse as a path
-                    let segments: Vec<_> = variant.split("::").collect();
-                    let idents: Vec<_> = segments.iter().map(|s| format_ident!("{}", s)).collect();
-                    if segments
-                        .first()
-                        .is_some_and(|segment| segment.starts_with("__IncanUnion"))
-                    {
-                        if self.qualify_union_types_from_crate {
-                            quote! { crate :: #(#idents)::* }
-                        } else {
-                            quote! { #(#idents)::* }
-                        }
-                    } else {
-                        quote! { #(#idents)::* }
-                    }
+                let path = Self::emit_path_ident(variant);
+                let v = if self.qualify_union_types_from_crate
+                    && variant
+                        .split_once("::")
+                        .is_some_and(|(root, _)| root.starts_with("__IncanUnion"))
+                {
+                    quote! { crate :: #path }
                 } else {
-                    let v_ident = format_ident!("{}", variant);
-                    quote! { #v_ident }
+                    path
                 };
                 if fields.is_empty() {
                     quote! { #v }
@@ -609,6 +598,11 @@ impl<'a> IrEmitter<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
+    use crate::backend::ir::FunctionRegistry;
+    use crate::backend::ir::expr::Pattern;
+
     use super::IrEmitter;
 
     #[test]
@@ -616,5 +610,45 @@ mod tests {
         let emitted = IrEmitter::<'static>::emit_path_ident("::rust_shadow::Token");
 
         assert_eq!(emitted.to_string(), ":: rust_shadow :: Token");
+    }
+
+    /// Imported variant paths preserve their absolute crate root and nested mutable bindings.
+    #[test]
+    fn absolute_enum_pattern_paths_remain_absolute() {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_qualify_union_types_from_crate(true);
+        let pattern = Pattern::Enum {
+            name: "Reading".to_string(),
+            variant: "::bridge::__incan_provider_rust::pricing::__IncanUnion123::V1".to_string(),
+            fields: vec![Pattern::Var("item".to_string())],
+        };
+
+        let emitted = emitter.emit_pattern_with_mutable_bindings(&pattern, &HashSet::from(["item".to_string()]));
+
+        assert_eq!(
+            emitted.to_string(),
+            ":: bridge :: __incan_provider_rust :: pricing :: __IncanUnion123 :: V1 (mut item)"
+        );
+    }
+
+    /// Local union qualification leaves ordinary relative and unqualified variants intact.
+    #[test]
+    fn relative_enum_patterns_keep_local_union_qualification() {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_qualify_union_types_from_crate(true);
+        for (variant, expected) in [
+            ("__IncanUnion123::V0", "crate :: __IncanUnion123 :: V0"),
+            ("Shape::Circle", "Shape :: Circle"),
+            ("None", "None"),
+        ] {
+            let pattern = Pattern::Enum {
+                name: String::new(),
+                variant: variant.to_string(),
+                fields: vec![],
+            };
+            assert_eq!(emitter.emit_pattern(&pattern).to_string(), expected);
+        }
     }
 }
