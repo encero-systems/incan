@@ -4360,6 +4360,7 @@ fn native_union_wire_is_optional_and_excludes_checked_routes() -> Result<(), Box
         owner: NativeUnionOwnerExport::ContainingArtifact,
         rust_name: "__IncanUnion0123456789abcdef".into(),
         members: members.clone(),
+        local_nominals: Default::default(),
         checked_projection: Some(Box::new(super::model::NativeUnionProjection {
             rust_owner: "::consumer_only::pricing".into(),
             members: members.clone(),
@@ -4369,6 +4370,10 @@ fn native_union_wire_is_optional_and_excludes_checked_routes() -> Result<(), Box
     let wire = serde_json::to_string(&TypeRef::NativeUnion(native.clone()))?;
     assert!(!wire.contains("consumer_only"));
     assert!(!wire.contains("checked_projection"));
+    assert!(
+        !wire.contains("local_nominals"),
+        "empty local binding metadata remains optional"
+    );
     assert_eq!(
         serde_json::from_str::<TypeRef>(&wire)?,
         TypeRef::NativeUnion(native.for_publication())

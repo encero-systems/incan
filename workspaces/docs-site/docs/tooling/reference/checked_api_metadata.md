@@ -168,13 +168,14 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 
 Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`.
 
-An emitted anonymous union may use `{"NativeUnion": {...}}` with these fields:
+Built-library metadata captured during native emission may describe an anonymous union using `{"NativeUnion": {...}}` with these fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `owner` | `"ContainingArtifact"` or `{"SelectedArtifact": ProviderIdentity}` | The artifact defining the native wrapper. A containing owner binds to the exact selected artifact when imported. A forwarded descriptor retains its defining provider's name, version, digest, and feature projection. |
 | `rust_name` | string | The wrapper identifier recorded from the defining artifact's emitted representation. |
 | `members` | `TypeRef[]` | Ordered payload types. Element zero is native variant `V0`, element one is `V1`, and so on. |
+| `local_nominals` | Map of producer type spelling to canonical declaration identity | Optional owner-local payload identities without a self artifact digest. Every entry must identify a public nominal declaration in the selected owner. Missing or empty retains the legacy origin-free member contract. |
 
 The `.incnlib` field `contract_metadata.native_unions` contains the defining artifact's emitted union entries. Each local
 entry uses `"ContainingArtifact"`. An imported descriptor must match an entry in its exact admitted owner's table,

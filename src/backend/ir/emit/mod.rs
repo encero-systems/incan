@@ -648,6 +648,8 @@ pub struct IrEmitter<'a> {
     generated_union_types: HashMap<String, IrType>,
     /// Exact local wrappers passed to definition emission after alias resolution and generated-use filtering.
     emitted_native_unions: RefCell<HashMap<String, IrType>>,
+    /// Exact consumer nominal bindings retained by this source module's lowering pass.
+    native_nominal_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
 
     /// Whether this module should emit generated ordinary union wrapper definitions.
     emit_generated_union_definitions: bool,
@@ -751,6 +753,7 @@ impl<'a> IrEmitter<'a> {
             qualify_union_types_from_crate: false,
             generated_union_types: HashMap::new(),
             emitted_native_unions: RefCell::new(HashMap::new()),
+            native_nominal_origins: Default::default(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
             result_observer_callable_types: RefCell::new(HashSet::new()),
@@ -1877,6 +1880,14 @@ impl<'a> IrEmitter<'a> {
         self.source_dependency_constructor_reexports_dirty = true;
     }
 
+    /// Supply exact lowered nominal bindings for conversion metadata emitted in this source module.
+    pub(crate) fn set_native_nominal_origins(
+        &mut self,
+        origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+    ) {
+        self.native_nominal_origins = origins;
+    }
+
     /// Seed public dependency nominal metadata from `.incnlib` manifests.
     ///
     /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
@@ -1900,6 +1911,8 @@ impl<'a> IrEmitter<'a> {
                 routes.get(&library),
             )
             .map_err(EmitError::InternalInvariant)?;
+            let projected =
+                crate::library_manifest::with_native_nominal_origins(projected, &self.native_nominal_origins);
             manifests.insert(
                 library.clone(),
                 crate::library_manifest::with_checked_type_routes(projected, routes.get(&library)),

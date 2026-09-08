@@ -492,13 +492,9 @@ impl ProviderPlan {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let normalize = |native: &crate::library_manifest::NativeUnionExport| {
-            let mut ty = TypeRef::NativeUnion(native.clone());
+        let normalize = |native: &crate::library_manifest::NativeUnionExport| -> Result<TypeRef, String> {
+            let mut ty = TypeRef::NativeUnion(self.bind_native_union_local_nominals(native, &identity)?);
             ty.visit_type_refs(&mut |ty| match ty {
-                TypeRef::NativeUnion(native) if native.owner == NativeUnionOwnerExport::ContainingArtifact => {
-                    native.checked_projection = None;
-                    native.owner = NativeUnionOwnerExport::SelectedArtifact(identity.clone());
-                }
                 TypeRef::Named {
                     name,
                     origin: Some(origin),
@@ -510,31 +506,91 @@ impl ProviderPlan {
                 } => *name = origin.binding_key(),
                 _ => {}
             });
-            ty
+            Ok(ty)
         };
-        let requested = normalize(native);
-        let candidate = candidates
-            .into_iter()
-            .find(|candidate| normalize(candidate) == requested)
-            .ok_or_else(|| {
-                format!(
-                    "native union `{}` has no matching emitted representation in {}",
-                    native.rust_name,
-                    identity.stable_key()
-                )
-            })?;
-        let mut bound = TypeRef::NativeUnion(candidate);
-        bound.visit_type_refs(&mut |ty| {
-            if let TypeRef::NativeUnion(native) = ty {
-                if native.owner == NativeUnionOwnerExport::ContainingArtifact {
-                    native.owner = NativeUnionOwnerExport::SelectedArtifact(identity.clone());
-                }
+        let requested = normalize(native)?;
+        let mut matched = None;
+        for candidate in candidates {
+            if normalize(&candidate)? == requested {
+                matched = Some(candidate);
+                break;
             }
-        });
-        let TypeRef::NativeUnion(bound) = bound else {
-            return Err("union binding lost its type carrier".to_string());
-        };
+        }
+        let candidate = matched.ok_or_else(|| {
+            format!(
+                "native union `{}` has no matching emitted representation in {}",
+                native.rust_name,
+                identity.stable_key()
+            )
+        })?;
+        let bound = self.bind_native_union_local_nominals(&candidate, &identity)?;
         Ok((bound, route))
+    }
+
+    /// Bind retained producer-local leaves only after validating every declaration against its selected owner.
+    ///
+    /// Even unused entries must belong to the owner's public nominal surface. Nested native wrappers retain their
+    /// own owner and binding map; an enclosing union cannot lend them its declaration authority.
+    fn bind_native_union_local_nominals(
+        &self,
+        native: &crate::library_manifest::NativeUnionExport,
+        containing_owner: &crate::provider::ProviderIdentity,
+    ) -> Result<crate::library_manifest::NativeUnionExport, String> {
+        use crate::library_manifest::{NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef};
+        let mut bound = native.for_publication();
+        let owner = match &bound.owner {
+            NativeUnionOwnerExport::ContainingArtifact => containing_owner.clone(),
+            NativeUnionOwnerExport::SelectedArtifact(identity) => identity.clone(),
+        };
+        let mut origins = BTreeMap::new();
+        for (spelling, canonical) in &bound.local_nominals {
+            let origin = NominalTypeOriginExport {
+                provider: owner.clone(),
+                canonical: canonical.clone(),
+            };
+            self.public_nominal_declaration(&origin)?;
+            origins.insert(spelling.clone(), origin);
+        }
+        /// Bind only this wrapper's semantic leaves, crossing nested carriers through their own checked owner.
+        fn bind_member(
+            plan: &ProviderPlan,
+            ty: &mut TypeRef,
+            owner: &crate::provider::ProviderIdentity,
+            origins: &BTreeMap<String, NominalTypeOriginExport>,
+        ) -> Result<(), String> {
+            match ty {
+                TypeRef::Named { name, origin } | TypeRef::Applied { name, origin, .. } if origin.is_none() => {
+                    *origin = origins.get(name).cloned();
+                }
+                _ => {}
+            }
+            match ty {
+                TypeRef::NativeUnion(nested) => *nested = plan.bind_native_union_local_nominals(nested, owner)?,
+                TypeRef::Applied { args, .. } | TypeRef::Tuple { elements: args } => {
+                    for arg in args {
+                        bind_member(plan, arg, owner, origins)?;
+                    }
+                }
+                TypeRef::Function { params, return_type } => {
+                    for param in params {
+                        bind_member(plan, param, owner, origins)?;
+                    }
+                    bind_member(plan, return_type, owner, origins)?;
+                }
+                TypeRef::Ref { inner } | TypeRef::TypeToken { inner } => bind_member(plan, inner, owner, origins)?,
+                TypeRef::Named { .. }
+                | TypeRef::TypeParam { .. }
+                | TypeRef::SelfType
+                | TypeRef::RustPath { .. }
+                | TypeRef::Unknown => {}
+            }
+            Ok(())
+        }
+        for member in &mut bound.members {
+            bind_member(self, member, &owner, &origins)?;
+        }
+        bound.owner = NativeUnionOwnerExport::SelectedArtifact(owner);
+        Ok(bound)
     }
 
     /// Resolve exact foreign nominal membership independently of its consumer's physical exposure route.
