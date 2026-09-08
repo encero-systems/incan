@@ -209,6 +209,18 @@ pub struct OvenStoreExecutionPayload {
 }
 
 impl OvenStoreExecutionPayload {
+    /// Verify the complete materialized file closure while retaining this payload's active lease.
+    ///
+    /// Call before importing the source files. An already admitted destination can reuse its own leased content
+    /// without rereading the source closure. This verification does not populate physical-accounting caches.
+    pub fn verify_materialized_files(&self) -> Result<(), OvenStoreError> {
+        let entry_root = self.artifact_root.parent().ok_or_else(|| OvenStoreError::Integrity {
+            identity: self.manifest.identity.clone(),
+            message: "selected artifact root has no containing store entry".to_string(),
+        })?;
+        verify_materialized_files(entry_root, &self.manifest).map(|_| ())
+    }
+
     /// Consume this selected payload while retaining the execution lease for the caller's complete use of it.
     #[must_use]
     pub fn into_parts(self) -> (OvenArtifactManifest, PathBuf, Vec<u8>, OvenStoreLease) {
@@ -307,6 +319,55 @@ pub enum OvenStoreError {
 pub struct OvenStore {
     root: PathBuf,
     limits: OvenStoreLimits,
+}
+
+/// Read-only access to an Oven store embedded in a published, content-addressed package.
+///
+/// Published packages are immutable inputs, not LRU caches. This handle requires their existing lock files and
+/// verifies selected content while retaining the same active leases as a writable store. It never creates layout,
+/// reclaims staging, records access times, or populates accounting caches.
+#[derive(Debug, Clone)]
+pub struct PublishedOvenStore {
+    root: PathBuf,
+}
+
+impl PublishedOvenStore {
+    /// Refer to an already published store; selection validates its existing layout and locks.
+    #[must_use]
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+        }
+    }
+
+    /// Read verified manifests and payloads without changing package files.
+    ///
+    /// The shared manager lock prevents a concurrent publisher from pruning candidates before their active leases
+    /// are acquired. Missing locks are errors: a consumer cannot repair a published artifact in place. Before
+    /// importing source files, verify their closure with [`OvenStoreExecutionPayload::verify_materialized_files`].
+    pub fn select_payloads_matching_for_execution<F>(
+        &self,
+        matches: F,
+    ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError>
+    where
+        F: Fn(&OvenArtifactManifest) -> bool,
+    {
+        let manager_path = self.root.join(MANAGER_LOCK_FILE);
+        let manager = File::open(&manager_path).map_err(|source| OvenStoreError::Io {
+            path: manager_path.clone(),
+            source,
+        })?;
+        manager.lock_shared().map_err(|source| OvenStoreError::Io {
+            path: manager_path,
+            source,
+        })?;
+        Ok(
+            select_matching_execution_payloads(&self.root.join(ENTRIES_DIRECTORY), matches)?
+                .into_iter()
+                .map(|(_, payload)| payload)
+                .collect(),
+        )
+    }
 }
 
 /// Validated batch member retained while the store serializes one related publication.
@@ -993,66 +1054,13 @@ impl OvenStore {
             source,
         })?;
         self.reclaim_stale_staging()?;
-        let root = self.entries_root();
-        if !root.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut selected = Vec::new();
-        for candidate in fs::read_dir(&root).map_err(|source| OvenStoreError::Io {
-            path: root.clone(),
-            source,
-        })? {
-            let candidate = candidate.map_err(|source| OvenStoreError::Io {
-                path: root.clone(),
-                source,
-            })?;
-            let path = candidate.path();
-            if !path.is_dir() {
-                return Err(OvenStoreError::Integrity {
-                    identity: path.display().to_string(),
-                    message: "entries root contains a non-directory item".to_string(),
-                });
-            }
-            let manifest = verify_entry_manifest(&path)?;
-            if !matches(&manifest) {
-                continue;
-            }
-            let payload_path = path.join(PAYLOAD_FILE);
-            let payload = fs::read(&payload_path).map_err(|source| OvenStoreError::Io {
-                path: payload_path,
-                source,
-            })?;
-            if u64::try_from(payload.len()).ok() != Some(manifest.payload.logical_bytes)
-                || digest_bytes(&payload) != manifest.payload.digest
-            {
-                return Err(OvenStoreError::Integrity {
-                    identity: manifest.identity,
-                    message: "manifest payload descriptor disagrees with stored bytes".to_string(),
-                });
-            }
-            let lease_path = path.join(ACTIVE_LOCK_FILE);
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&lease_path)
-                .map_err(|source| OvenStoreError::Io {
-                    path: lease_path.clone(),
-                    source,
-                })?;
-            file.lock_shared().map_err(|source| OvenStoreError::Io {
-                path: lease_path,
-                source,
-            })?;
-            touch_entry(&path)?;
-            selected.push(OvenStoreExecutionPayload {
-                manifest,
-                artifact_root: path.join(MATERIALIZED_DIRECTORY),
-                payload,
-                _lease: OvenStoreLease { file },
-            });
-        }
-        Ok(selected)
+        select_matching_execution_payloads(&self.entries_root(), matches)?
+            .into_iter()
+            .map(|(path, payload)| {
+                touch_entry(&path)?;
+                Ok(payload)
+            })
+            .collect()
     }
 
     /// Return immutable manifest headers for candidate selection without turning ordinary cache lookup into a full
@@ -1724,6 +1732,72 @@ impl Drop for OvenStoreLease {
     fn drop(&mut self) {
         let _ = self.file.unlock();
     }
+}
+
+/// Acquire matching payloads while the caller holds this store's manager lock.
+///
+/// Both published readers and mutable caches share manifest, payload, and active-lease validation. The caller owns
+/// any additional materialized-closure verification or writable-cache bookkeeping.
+fn select_matching_execution_payloads<F>(
+    root: &Path,
+    matches: F,
+) -> Result<Vec<(PathBuf, OvenStoreExecutionPayload)>, OvenStoreError>
+where
+    F: Fn(&OvenArtifactManifest) -> bool,
+{
+    let mut selected = Vec::new();
+    for candidate in fs::read_dir(root).map_err(|source| OvenStoreError::Io {
+        path: root.to_path_buf(),
+        source,
+    })? {
+        let candidate = candidate.map_err(|source| OvenStoreError::Io {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = candidate.path();
+        if !path.is_dir() {
+            return Err(OvenStoreError::Integrity {
+                identity: path.display().to_string(),
+                message: "entries root contains a non-directory item".to_string(),
+            });
+        }
+        let manifest = verify_entry_manifest(&path)?;
+        if !matches(&manifest) {
+            continue;
+        }
+        let payload_path = path.join(PAYLOAD_FILE);
+        let payload = fs::read(&payload_path).map_err(|source| OvenStoreError::Io {
+            path: payload_path,
+            source,
+        })?;
+        if u64::try_from(payload.len()).ok() != Some(manifest.payload.logical_bytes)
+            || digest_bytes(&payload) != manifest.payload.digest
+        {
+            return Err(OvenStoreError::Integrity {
+                identity: manifest.identity,
+                message: "manifest payload descriptor disagrees with stored bytes".to_string(),
+            });
+        }
+        let lease_path = path.join(ACTIVE_LOCK_FILE);
+        let file = File::open(&lease_path).map_err(|source| OvenStoreError::Io {
+            path: lease_path.clone(),
+            source,
+        })?;
+        file.lock_shared().map_err(|source| OvenStoreError::Io {
+            path: lease_path,
+            source,
+        })?;
+        selected.push((
+            path.clone(),
+            OvenStoreExecutionPayload {
+                manifest,
+                artifact_root: path.join(MATERIALIZED_DIRECTORY),
+                payload,
+                _lease: OvenStoreLease { file },
+            },
+        ));
+    }
+    Ok(selected)
 }
 
 /// Build one immutable artifact manifest from validated request input.
@@ -3101,8 +3175,148 @@ mod tests {
     use crate::oven::{
         OvenGeneratedProjectRequest, OvenImportRequest, import_frozen_project, receipt_generated_project,
     };
+    use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    /// Relative directory entries and exact file bytes in a published store.
+    type PublishedInventory = BTreeMap<PathBuf, Option<Vec<u8>>>;
+
+    /// Capture every directory and file, including mutable-store bookkeeping, without following links.
+    fn published_inventory(root: &Path) -> Result<PublishedInventory, Box<dyn std::error::Error>> {
+        let mut inventory = PublishedInventory::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(directory)? {
+                let entry = entry?;
+                let path = entry.path();
+                let relative = path.strip_prefix(root)?.to_path_buf();
+                if entry.file_type()?.is_dir() {
+                    inventory.insert(relative, None);
+                    pending.push(path);
+                } else {
+                    assert!(entry.file_type()?.is_file(), "unexpected published entry: {path:?}");
+                    inventory.insert(relative, Some(fs::read(path)?));
+                }
+            }
+        }
+        Ok(inventory)
+    }
+
+    #[test]
+    fn published_reads_preserve_complete_inventory_and_active_leases() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let manifest = store.publish(&request(project.path(), "published", b"native plan")?)?;
+        let entry = store.entry_root(&manifest.identity);
+        fs::write(entry.join(super::ACCESS_FILE), b"1\n")?;
+        let abandoned = temp.path().join(super::STAGING_DIRECTORY).join("retained-staging");
+        fs::create_dir_all(&abandoned)?;
+        fs::write(abandoned.join("evidence"), b"must remain untouched")?;
+        let mut originals = Vec::new();
+        for path in published_inventory(temp.path())?.keys() {
+            let path = temp.path().join(path);
+            if path.is_file() {
+                let original = fs::metadata(&path)?.permissions();
+                let mut readonly = original.clone();
+                readonly.set_readonly(true);
+                fs::set_permissions(&path, readonly)?;
+                originals.push((path, original));
+            }
+        }
+        let checked = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let before = published_inventory(temp.path())?;
+            let published = super::PublishedOvenStore::new(temp.path());
+            for _ in 0..2 {
+                let selected =
+                    published.select_payloads_matching_for_execution(|item| item.identity == manifest.identity)?;
+                assert_eq!(selected.len(), 1);
+                assert_eq!(selected[0].payload, b"native plan");
+                selected[0].verify_materialized_files()?;
+                let contender = fs::File::open(entry.join(super::ACTIVE_LOCK_FILE))?;
+                let locked = contender.try_lock();
+                assert!(
+                    matches!(locked, Err(std::fs::TryLockError::WouldBlock)),
+                    "published read must retain an active lease: {locked:?}"
+                );
+                assert_eq!(published_inventory(temp.path())?, before);
+                drop(selected);
+                contender.try_lock()?;
+                contender.unlock()?;
+            }
+            assert_eq!(published_inventory(temp.path())?, before);
+            Ok(())
+        })();
+        for (path, permissions) in originals {
+            fs::set_permissions(path, permissions)?;
+        }
+        checked?;
+        Ok(())
+    }
+
+    #[test]
+    fn published_reads_refuse_missing_locks_without_creating_them() -> Result<(), Box<dyn std::error::Error>> {
+        for manager_missing in [true, false] {
+            let temp = tempfile::tempdir()?;
+            let project = tempfile::tempdir()?;
+            write_project(project.path())?;
+            let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+            let manifest = store.publish(&request(project.path(), "published", b"native plan")?)?;
+            let lock = if manager_missing {
+                temp.path().join(super::MANAGER_LOCK_FILE)
+            } else {
+                store.entry_root(&manifest.identity).join(super::ACTIVE_LOCK_FILE)
+            };
+            fs::remove_file(&lock)?;
+            let before = published_inventory(temp.path())?;
+            let result = super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true);
+            assert!(matches!(result, Err(OvenStoreError::Io { path, .. }) if path == lock));
+            assert_eq!(published_inventory(temp.path())?, before);
+            assert!(!lock.exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn published_reads_reject_payload_and_materialized_tampering() -> Result<(), Box<dyn std::error::Error>> {
+        for tamper_payload in [true, false] {
+            let temp = tempfile::tempdir()?;
+            let project = tempfile::tempdir()?;
+            write_project(project.path())?;
+            let source = project.path().join("native.rlib");
+            fs::write(&source, b"native artifact")?;
+            let mut publication = request(project.path(), "published", b"native plan")?;
+            publication.materialized_files.push(OvenArtifactMaterializedFile {
+                source_path: source,
+                relative_path: "lib/native.rlib".to_string(),
+            });
+            let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+            let manifest = store.publish(&publication)?;
+            let entry = store.entry_root(&manifest.identity);
+            let changed = if tamper_payload {
+                entry.join(super::PAYLOAD_FILE)
+            } else {
+                entry.join(super::MATERIALIZED_DIRECTORY).join("lib/native.rlib")
+            };
+            // Publication seals files read-only; replacing this test-owned entry models external corruption.
+            fs::remove_file(&changed)?;
+            fs::write(changed, b"changed content")?;
+            let before = published_inventory(temp.path())?;
+            let result = super::PublishedOvenStore::new(temp.path())
+                .select_payloads_matching_for_execution(|_| true)
+                .and_then(|selected| {
+                    for payload in selected {
+                        payload.verify_materialized_files()?;
+                    }
+                    Ok(())
+                });
+            assert!(matches!(result, Err(OvenStoreError::Integrity { .. })));
+            assert_eq!(published_inventory(temp.path())?, before);
+        }
+        Ok(())
+    }
 
     #[test]
     fn store_reports_distinct_logical_and_physical_bytes() -> Result<(), Box<dyn std::error::Error>> {
