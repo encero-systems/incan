@@ -4076,13 +4076,17 @@ mod tests {
             params: vec![ParamExport {
                 name: "value".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: param.to_string(),
                 },
                 kind: ParamKindExport::Normal,
                 has_default: false,
                 default: None,
             }],
-            return_type: TypeRef::Named { name: ret.to_string() },
+            return_type: TypeRef::Named {
+                origin: None,
+                name: ret.to_string(),
+            },
             is_async: false,
         }
     }
@@ -4307,6 +4311,7 @@ mod tests {
             aliases: vec![AliasExport {
                 name: "safe_cast".to_string(),
                 target_path: vec!["helpers".to_string(), "cast".to_string()],
+                projected_type: None,
                 projected_function: None,
             }],
             ..LibraryExports::default()
@@ -4329,6 +4334,7 @@ mod tests {
                     type_params: Vec::new(),
                     params: exported_fn("cast", "str", "str").params,
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                     is_async: false,
@@ -4397,6 +4403,7 @@ mod tests {
                     type_params: Vec::new(),
                     params: Vec::new(),
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: "int".to_string(),
                     },
                     is_async: false,
@@ -4471,12 +4478,15 @@ mod tests {
                     params: vec![ParamExport {
                         name: "value".to_string(),
                         ty: TypeRef::Applied {
+                            origin: None,
                             name: "Union".to_string(),
                             args: vec![
                                 TypeRef::Named {
+                                    origin: None,
                                     name: "int".to_string(),
                                 },
                                 TypeRef::Named {
+                                    origin: None,
                                     name: "str".to_string(),
                                 },
                             ],
@@ -4490,6 +4500,7 @@ mod tests {
                         ])),
                     }],
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: constructors::as_str(ConstructorId::None).to_string(),
                     },
                     is_async: false,

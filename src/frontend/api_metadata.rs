@@ -319,6 +319,9 @@ pub struct ApiAlias {
     pub is_public: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projected_function: Option<ApiProjectedFunction>,
+    /// Checked nominal target retained by a public type re-export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_type: Option<TypeRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -783,11 +786,22 @@ pub fn collect_checked_api_metadata(
         }
     }
 
-    CheckedApiMetadata {
-        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
-        module_path,
-        declarations,
+    for declaration in &mut declarations {
+        if let ApiDeclaration::Alias(alias) = declaration {
+            if let Some(CheckedExportKind::Alias(checked)) = checked_kind(&checked_by_name, &alias.name) {
+                alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
+            }
+        }
     }
+
+    crate::library_manifest::with_checked_type_origins(
+        CheckedApiMetadata {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            module_path,
+            declarations,
+        },
+        &checker.checked_nominal_type_origins(),
+    )
 }
 
 /// Collect only the checked public alias projection for one parsed module.
@@ -1548,6 +1562,7 @@ fn checked_api_aliases_for_declaration(declaration: &Declaration, span: Span, mo
             anchor: anchor(module_path, &alias.name, span),
             target_path: alias.target.segments.clone(),
             is_public: true,
+            projected_type: None,
             projected_function: None,
         }],
         // Module-level `from ... import ...` bindings are part of a module's public surface, including facade modules
@@ -1579,6 +1594,7 @@ fn aliases_from_items(
                 name,
                 target_path,
                 is_public,
+                projected_type: None,
                 projected_function: None,
             }
         })
@@ -2721,8 +2737,8 @@ fn alias_targets_declaration(alias: &ApiAlias, module_path: &[String], name: &st
 /// Render a type reference as a docstring-facing type name.
 fn type_ref_doc_name(ty: &TypeRef) -> String {
     match ty {
-        TypeRef::Named { name } => name.clone(),
-        TypeRef::Applied { name, args } => {
+        TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Applied { name, args, .. } => {
             let args = args.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
             format!("{name}[{args}]")
         }
@@ -2996,6 +3012,7 @@ pub def decorated(value: int) -> int:
         assert_eq!(
             function.params[0].ty,
             TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             }
         );
@@ -3041,12 +3058,14 @@ pub def col(name: str) -> ColumnExpr:
         assert_eq!(
             function.params[0].ty,
             TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             }
         );
         assert_eq!(
             function.return_type,
             TypeRef::Named {
+                origin: None,
                 name: "ColumnExpr".to_string(),
             }
         );
@@ -3114,12 +3133,14 @@ pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
                 (
                     "left",
                     &TypeRef::Named {
+                        origin: None,
                         name: "ColumnExpr".to_string(),
                     },
                 ),
                 (
                     "right",
                     &TypeRef::Named {
+                        origin: None,
                         name: "ColumnExpr".to_string(),
                     },
                 ),
@@ -3128,6 +3149,7 @@ pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
         assert_eq!(
             callable.return_type,
             TypeRef::Named {
+                origin: None,
                 name: "ColumnExpr".to_string(),
             }
         );
@@ -3405,6 +3427,7 @@ pub class Parser:
         assert_eq!(
             api_methods[0].return_type,
             TypeRef::Named {
+                origin: None,
                 name: "str".to_string()
             }
         );
@@ -3415,6 +3438,7 @@ pub class Parser:
         assert_eq!(
             api_methods[1].return_type,
             TypeRef::Named {
+                origin: None,
                 name: "bytes".to_string()
             }
         );
@@ -3549,6 +3573,7 @@ pub model Measurements:
         assert_eq!(
             mean.return_type,
             TypeRef::Named {
+                origin: None,
                 name: "int".to_string()
             }
         );

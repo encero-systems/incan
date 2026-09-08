@@ -1875,11 +1875,27 @@ impl<'a> IrEmitter<'a> {
     /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
     /// need the same field metadata for public models/classes that source-module consumers receive from lowered
     /// dependency modules.
-    pub(crate) fn seed_public_dependency_nominal_metadata(&mut self, index: &LibraryManifestIndex) {
+    pub(crate) fn seed_public_dependency_nominal_metadata(
+        &mut self,
+        index: &LibraryManifestIndex,
+        routes: &HashMap<String, HashMap<String, String>>,
+    ) {
+        let manifests = index
+            .known_libraries()
+            .into_iter()
+            .filter_map(|library| {
+                let LibraryManifestIndexEntry::Loaded { manifest, .. } = index.get(&library)? else {
+                    return None;
+                };
+                let projected =
+                    crate::library_manifest::with_checked_type_routes(manifest.as_ref().clone(), routes.get(&library));
+                Some((library, projected))
+            })
+            .collect::<HashMap<_, _>>();
         let mut counts = HashMap::<String, usize>::new();
         let mut public_type_paths = HashMap::<String, HashSet<Vec<String>>>::new();
         for library in index.known_libraries() {
-            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+            let Some(manifest) = manifests.get(&library) else {
                 continue;
             };
             let mut manifest_nominal_names = manifest
@@ -1980,7 +1996,7 @@ impl<'a> IrEmitter<'a> {
             .collect();
 
         for library in index.known_libraries() {
-            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+            let Some(manifest) = manifests.get(&library) else {
                 continue;
             };
             let mut public_names = manifest
@@ -3452,6 +3468,99 @@ mod tests {
         CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
     };
 
+    /// Field metadata uses the same checked foreign route projection as ordinary callable lowering.
+    #[test]
+    fn public_constructor_metadata_preserves_checked_foreign_routes() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use crate::library_manifest::{
+            FieldExport, FieldVisibilityExport, ModelExport, NominalTypeOriginExport, TypeRef,
+        };
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "catalog".into(),
+                module_path: vec!["lib".into()],
+            },
+            declaration_name: "Product".into(),
+            kind: SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 20),
+        };
+        let origin = NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "catalog".into(),
+                version: "1.2.3".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: CanonicalIdentityExport::from_canonical("catalog", &identity)
+                .ok_or("identity projection failed")?,
+        };
+        let mut manifest = LibraryManifest::new("pricing", "1.2.3");
+        manifest.exports.models.push(ModelExport {
+            name: "Basket".into(),
+            type_params: vec![],
+            traits: vec![],
+            trait_adoptions: vec![],
+            derives: vec![],
+            properties: vec![],
+            methods: vec![],
+            fields: vec![FieldExport {
+                name: "product".into(),
+                canonical: None,
+                ty: TypeRef::Named {
+                    name: "Product".into(),
+                    origin: Some(origin.clone()),
+                },
+                surface_type_name: None,
+                visibility: FieldVisibilityExport::Public,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            }],
+        });
+        let index = LibraryManifestIndex::from_entries(std::collections::HashMap::from([(
+            "pricing".into(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest.clone()),
+                metadata: LibraryArtifactMetadata::from_manifest_path(
+                    "pricing",
+                    "pricing",
+                    "/artifact/pricing.incnlib".into(),
+                    "/artifact".into(),
+                ),
+            },
+        )]));
+        let routes = std::collections::HashMap::from([(
+            "pricing".into(),
+            std::collections::HashMap::from([(
+                origin.binding_key(),
+                "pub::pricing::__incan_provider_rust::catalog::Product".into(),
+            )]),
+        )]);
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.seed_public_dependency_nominal_metadata(&index, &routes);
+        let metadata = emitter
+            .pub_dependency_constructor_metadata
+            .get(&("pricing".into(), vec!["Basket".into()]))
+            .ok_or("constructor metadata absent")?;
+        assert_eq!(
+            metadata.field_types.get("product"),
+            Some(&IrType::Struct(
+                "::pricing::__incan_provider_rust::catalog::Product".into()
+            ))
+        );
+        assert!(matches!(
+            manifest.exports.models[0].fields[0].ty,
+            TypeRef::Named { origin: Some(_), .. }
+        ));
+        Ok(())
+    }
+
     #[test]
     fn compiled_sdk_manifest_seeds_exact_stdlib_function_identity() {
         let registry = FunctionRegistry::new();
@@ -3921,6 +4030,7 @@ mod tests {
                 name: "secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "bool".to_string(),
                 },
                 surface_type_name: None,
@@ -3934,6 +4044,7 @@ mod tests {
                 name: "label".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,

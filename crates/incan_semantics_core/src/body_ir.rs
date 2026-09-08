@@ -187,6 +187,10 @@ pub struct NominalDeclaration {
     /// names, while a source projection must match its checked identity at the same slot before the name is used to
     /// select storage.
     pub field_identities: Vec<CanonicalSymbolId>,
+    /// Checked field types in the same canonical order, including private layout dependencies.
+    pub field_types: Vec<IncanType>,
+    /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Number of declared type parameters; this profile admits only zero.
     pub type_parameter_count: usize,
 }
@@ -318,6 +322,9 @@ pub struct Body {
     pub span: HirSourceSpan,
     /// Fully resolved source return type used to validate direct-execution results.
     pub return_type: IncanType,
+    /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
+    /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Every local (parameter, user binding, or compiler-introduced temporary) declared in this body, in
     /// declaration order. Referenced elsewhere by [`LocalId`] index.
     pub locals: Vec<LocalDecl>,
@@ -3410,6 +3417,7 @@ mod tests {
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
+            named_type_identities: Default::default(),
             locals: vec![
                 LocalDecl {
                     id: local_x,

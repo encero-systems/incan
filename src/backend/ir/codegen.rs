@@ -404,9 +404,13 @@ fn implementation_type_param_export(type_param: &IrTypeParam) -> Result<Implemen
 
 /// Convert an IR type used by implementation metadata into its checked manifest representation.
 fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
-    let named = |name: &str| TypeRef::Named { name: name.to_string() };
+    let named = |name: &str| TypeRef::Named {
+        origin: None,
+        name: name.to_string(),
+    };
     let applied = |name: &str, args: &[IrType]| -> Result<TypeRef, String> {
         Ok(TypeRef::Applied {
+            origin: None,
             name: name.to_string(),
             args: args
                 .iter()
@@ -454,6 +458,7 @@ fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
             inner: Box::new(manifest_type_ref_from_ir(inner)?),
         }),
         IrType::Decimal { precision, scale } => Ok(TypeRef::Applied {
+            origin: None,
             name: "decimal".to_string(),
             args: vec![
                 TypeRef::TypeParam {
@@ -519,6 +524,8 @@ pub struct IrCodegen<'a> {
     rust_crates: HashSet<String>,
     /// Crate roots required to keep public class-field Rust identities nameable through a compiled provider.
     provider_rust_bridge_roots: BTreeSet<String>,
+    /// Checked physical nominal routes shared by lowering and emitter metadata readers.
+    foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Whether to emit the Zen of Incan at the start of main (set by `import this`)
     emit_zen_in_main: bool,
     /// Functions imported from external Rust crates (name -> true for external)
@@ -583,6 +590,7 @@ impl<'a> IrCodegen<'a> {
             fixtures: HashMap::new(),
             rust_crates: HashSet::new(),
             provider_rust_bridge_roots: BTreeSet::new(),
+            foreign_pub_type_remappings: HashMap::new(),
             emit_zen_in_main: false,
             declared_crate_names: None,
             provider_plan: None,
@@ -858,6 +866,7 @@ impl<'a> IrCodegen<'a> {
         emitter: &mut IrEmitter<'_>,
         metadata: &DependencySymbolMetadata,
         provider_plan: Option<&ProviderPlan>,
+        foreign_type_routes: &HashMap<String, HashMap<String, String>>,
     ) {
         let stdlib_module_paths = provider_plan
             .map(ProviderPlan::active_std_module_paths)
@@ -897,7 +906,7 @@ impl<'a> IrCodegen<'a> {
         }
         emitter.set_dependency_enum_types(enum_type_names);
         if let Some(plan) = provider_plan {
-            emitter.seed_public_dependency_nominal_metadata(plan.library_manifest_index());
+            emitter.seed_public_dependency_nominal_metadata(plan.library_manifest_index(), foreign_type_routes);
             for provider in plan.active_sdk_records() {
                 if let Some(manifest) = provider.manifest.as_deref() {
                     emitter.seed_sdk_provider_manifest_metadata(manifest);
@@ -1334,11 +1343,11 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
-    /// Publish the checked crate roots required by public class-field Rust identities.
+    /// Publish the checked crate roots required by public API nominal types and class-field Rust identities.
     ///
     /// Consumer-generated declarations cannot name a transitive Cargo dependency directly. Library-mode crates expose
-    /// only roots selected from checked public class layouts, including compiled providers that own inherited fields.
-    /// Ordinary application builds remain unchanged.
+    /// only roots selected from checked public API types and class layouts, including providers that own inherited
+    /// fields. Ordinary application builds remain unchanged.
     fn attach_provider_rust_dependency_bridge(&self, main_code: String) -> String {
         if !self.preserve_dependency_public_items {
             return main_code;
@@ -1362,11 +1371,19 @@ impl<'a> IrCodegen<'a> {
         format!("{main_code}\n#[doc(hidden)]\npub mod __incan_provider_rust {{\n{reexports}\n}}\n")
     }
 
-    /// Accumulate the exact provider and Rust crate roots required by checked public class layouts.
+    /// Accumulate the exact provider and Rust crate roots required by checked public API types and class layouts.
     fn collect_provider_rust_bridge_roots(&mut self, type_info: &TypeCheckInfo) -> Result<(), GenerationError> {
+        for (library, routes) in &type_info.declarations.foreign_pub_type_remappings {
+            self.foreign_pub_type_remappings
+                .entry(library.clone())
+                .or_default()
+                .extend(routes.clone());
+        }
         if !self.preserve_dependency_public_items {
             return Ok(());
         }
+        self.provider_rust_bridge_roots
+            .extend(type_info.declarations.public_type_bridge_roots.iter().cloned());
         for layout in type_info
             .declarations
             .class_layouts
@@ -1677,7 +1694,12 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata, self.provider_plan.as_deref());
+            Self::apply_dependency_symbol_metadata(
+                inner,
+                &dependency_symbol_metadata,
+                self.provider_plan.as_deref(),
+                &self.foreign_pub_type_remappings,
+            );
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
@@ -1713,6 +1735,7 @@ impl<'a> IrCodegen<'a> {
                 &mut emitter,
                 &dependency_symbol_metadata,
                 self.provider_plan.as_deref(),
+                &self.foreign_pub_type_remappings,
             );
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
@@ -2061,6 +2084,7 @@ impl<'a> IrCodegen<'a> {
                     inner,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
+                    &self.foreign_pub_type_remappings,
                 );
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
@@ -2092,6 +2116,7 @@ impl<'a> IrCodegen<'a> {
                     &mut emitter,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
+                    &self.foreign_pub_type_remappings,
                 );
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
@@ -2357,6 +2382,7 @@ impl<'a> IrCodegen<'a> {
                     inner,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
+                    &self.foreign_pub_type_remappings,
                 );
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
@@ -2388,6 +2414,7 @@ impl<'a> IrCodegen<'a> {
                     &mut emitter,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
+                    &self.foreign_pub_type_remappings,
                 );
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
@@ -2644,6 +2671,7 @@ model PrivateStream[R] with Walk:
                 scale: 4,
             })),
             TypeRef::Applied {
+                origin: None,
                 name: "decimal".to_string(),
                 args: vec![
                     TypeRef::TypeParam { name: "18".to_string() },
@@ -4199,6 +4227,7 @@ def main() -> None:
             params: vec![ParamExport {
                 name: "name".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 kind: ParamKindExport::Normal,
@@ -4206,6 +4235,7 @@ def main() -> None:
                 default: None,
             }],
             return_type: TypeRef::Named {
+                origin: None,
                 name: "Widget".to_string(),
             },
             is_async: false,
@@ -4213,6 +4243,7 @@ def main() -> None:
         manifest.exports.consts.push(ConstExport {
             name: "DEFAULT_NAME".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
         });

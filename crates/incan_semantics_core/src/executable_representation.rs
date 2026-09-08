@@ -27,7 +27,7 @@ use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclar
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 2;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 3;
 
 /// One module's checked representation, framed with the version needed to interpret it.
 ///
@@ -261,20 +261,17 @@ pub fn build_surface(
             if !declarations.contains_key(&nominal.canonical) {
                 continue;
             }
-            if !nominal.field_identities.iter().all(|field| public.contains(field)) {
-                declarations.insert(
-                    nominal.canonical.clone(),
-                    DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency),
-                );
-                continue;
+            match publication::project_nominal(nominal, module, library, public) {
+                Ok((nominal, requirements)) => {
+                    admitted.insert(
+                        nominal.canonical.clone(),
+                        (ExecutableDeclaration::Nominal(nominal), requirements),
+                    );
+                }
+                Err(reason) => {
+                    declarations.insert(nominal.canonical.clone(), DeclarationCoverage::Uncovered(reason));
+                }
             }
-            let mut nominal = nominal.clone();
-            nominal.direct_declaration_id = publication::declaration_id(&nominal.canonical)
-                .map_err(|_| malformed("nominal has no canonical owner"))?;
-            admitted.insert(
-                nominal.canonical.clone(),
-                (ExecutableDeclaration::Nominal(nominal), BTreeSet::new()),
-            );
         }
         for value in &module.fieldless_enum_declarations {
             if !declarations.contains_key(&value.canonical)
@@ -623,6 +620,7 @@ mod tests {
             name: name.into(),
             span: identity.declaration_span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            named_type_identities: Default::default(),
             locals: Vec::new(),
             params: Vec::new(),
             param_locals: Vec::new(),
@@ -849,6 +847,8 @@ mod tests {
             name: "Record".into(),
             fields: vec!["private_field".into()],
             field_identities: vec![field.clone()],
+            field_types: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            named_type_identities: Default::default(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
@@ -869,6 +869,75 @@ mod tests {
         assert!(reader.covers(&type_id));
         assert!(
             matches!(reader.index().coverage(&field)?, DeclarationCoverage::TypeContext { owner } if owner == &type_id)
+        );
+        let nominal = module.nominal_declarations.first_mut().ok_or("public model absent")?;
+        nominal.field_types[0] = IncanType::Named("private_layout_secret".into());
+        let mut private_type = identity("private_layout_secret", 4);
+        private_type.kind = SemanticSourceTargetKind::Model;
+        nominal
+            .named_type_identities
+            .insert("private_layout_secret".into(), private_type);
+        let bytes = publish(&module, &complete_public)?;
+        assert!(!SurfaceReader::open(&bytes)?.covers(&type_id));
+        assert!(
+            !bytes
+                .windows(b"private_layout_secret".len())
+                .any(|part| part == b"private_layout_secret")
+        );
+        Ok(())
+    }
+
+    /// Foreign type bindings retain distinct declared origins, while unused private checker bindings stay absent.
+    #[test]
+    fn checked_nominal_type_bindings_are_pruned_and_contribute_public_requirements()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut first = identity("Product", 2);
+        first.kind = SemanticSourceTargetKind::Model;
+        first.origin = SymbolOrigin::Package {
+            library: "catalog".into(),
+            module_path: vec!["lib".into()],
+        };
+        let mut second = first.clone();
+        second.origin = SymbolOrigin::Package {
+            library: "other".into(),
+            module_path: vec!["lib".into()],
+        };
+        let mut exported = body("exported", 1);
+        exported.return_type = IncanType::Tuple(vec![
+            IncanType::Named("First".into()),
+            IncanType::Named("Second".into()),
+        ]);
+        exported.params.push(CallableParam {
+            local: crate::body_ir::LocalId(0),
+            name: "product".into(),
+            ty: IncanType::Named("First".into()),
+            span: exported.span,
+            default: CallableParamDefault::Required,
+        });
+        exported.named_type_identities = std::collections::BTreeMap::from([
+            ("First".into(), first.clone()),
+            ("Second".into(), second.clone()),
+            ("unused_private_secret".into(), identity("unused_private_secret", 3)),
+        ]);
+        let bytes = publish(&module(vec![exported]), &BTreeSet::from([identity("exported", 1)]))?;
+        let reader = SurfaceReader::open(&bytes)?;
+        let decoded = reader.declaration(&identity("exported", 1))?;
+        assert_eq!(
+            decoded.named_type_identities,
+            std::collections::BTreeMap::from([("First".into(), first.clone()), ("Second".into(), second.clone())])
+        );
+        let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&identity("exported", 1))?
+        else {
+            return Err("foreign typed body uncovered".into());
+        };
+        assert_eq!(
+            requirements.iter().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([first, second])
+        );
+        assert!(
+            !bytes
+                .windows(b"unused_private_secret".len())
+                .any(|part| part == b"unused_private_secret")
         );
         Ok(())
     }
@@ -903,6 +972,8 @@ mod tests {
             name: "Record".into(),
             fields: vec![],
             field_identities: vec![],
+            field_types: vec![],
+            named_type_identities: Default::default(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);

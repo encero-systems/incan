@@ -40,27 +40,7 @@ pub(super) fn project_body(
     public: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<PublicBody, CoverageReason> {
     let mut body = source.clone();
-    let mut audit = PublicationAudit {
-        library,
-        public,
-        nominal_types: BTreeMap::new(),
-        requirements: BTreeSet::new(),
-    };
-    for declaration in &module.nominal_declarations {
-        audit
-            .nominal_types
-            .insert(declaration.name.clone(), declaration.canonical.clone());
-    }
-    for declaration in &module.fieldless_enum_declarations {
-        audit
-            .nominal_types
-            .insert(declaration.name.clone(), declaration.canonical.clone());
-    }
-    for declaration in &module.value_enum_declarations {
-        audit
-            .nominal_types
-            .insert(declaration.name.clone(), declaration.canonical.clone());
-    }
+    let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
     let canonical = body.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
     audit.identity(canonical, false)?;
     body.decl_id = declaration_id(canonical)?;
@@ -72,10 +52,37 @@ pub(super) fn project_body(
     }
     audit.parameters(&mut body.params)?;
     audit.statements(&mut body.block.stmts)?;
+    body.named_type_identities = audit.used_nominal_types;
     Ok(PublicBody {
         body,
         requirements: audit.requirements,
     })
+}
+
+/// Audit a public plain-model layout with the same type/reference rules used for executable bodies.
+///
+/// Field names alone do not prove a public layout: every field's checked type contributes its canonical closure.
+pub(super) fn project_nominal(
+    source: &crate::body_ir::NominalDeclaration,
+    module: &BodyIrModule,
+    library: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(crate::body_ir::NominalDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    if source.fields.len() != source.field_types.len() || source.fields.len() != source.field_identities.len() {
+        return Err(CoverageReason::UnresolvedReference);
+    }
+    if !source.field_identities.iter().all(|field| public.contains(field)) {
+        return Err(CoverageReason::PrivateDependency);
+    }
+    let mut nominal = source.clone();
+    let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
+    audit.identity(&mut nominal.canonical, false)?;
+    nominal.direct_declaration_id = declaration_id(&nominal.canonical)?;
+    for ty in &nominal.field_types {
+        audit.ty(ty)?;
+    }
+    nominal.named_type_identities = audit.used_nominal_types;
+    Ok((nominal, audit.requirements))
 }
 
 /// One exhaustive pass owns publication's type/reference checks and artifact-local address projection.
@@ -83,10 +90,39 @@ struct PublicationAudit<'a> {
     library: &'a str,
     public: &'a BTreeSet<CanonicalSymbolId>,
     nominal_types: BTreeMap<String, CanonicalSymbolId>,
+    checked_nominal_types: &'a BTreeMap<String, CanonicalSymbolId>,
+    used_nominal_types: BTreeMap<String, CanonicalSymbolId>,
     requirements: BTreeSet<CanonicalSymbolId>,
 }
 
-impl PublicationAudit<'_> {
+impl<'a> PublicationAudit<'a> {
+    /// Combine source-local declarations with retained checked references, keeping conflicting evidence separate.
+    fn new(
+        module: &BodyIrModule,
+        library: &'a str,
+        public: &'a BTreeSet<CanonicalSymbolId>,
+        checked_nominal_types: &'a BTreeMap<String, CanonicalSymbolId>,
+    ) -> Self {
+        let mut nominal_types = BTreeMap::new();
+        for declaration in &module.nominal_declarations {
+            nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
+        }
+        for declaration in &module.fieldless_enum_declarations {
+            nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
+        }
+        for declaration in &module.value_enum_declarations {
+            nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
+        }
+        Self {
+            library,
+            public,
+            nominal_types,
+            checked_nominal_types,
+            used_nominal_types: BTreeMap::new(),
+            requirements: BTreeSet::new(),
+        }
+    }
+
     /// Rebase only producer-local origins; a foreign reexport retains its declaring package identity.
     fn identity(&mut self, identity: &mut CanonicalSymbolId, required: bool) -> Result<(), CoverageReason> {
         if let SymbolOrigin::Module(module_path) = &identity.origin {
@@ -118,12 +154,15 @@ impl PublicationAudit<'_> {
         match ty {
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } => Ok(()),
             IncanType::Named(name) => {
-                let mut identity = self
-                    .nominal_types
-                    .get(name)
-                    .cloned()
-                    .ok_or(CoverageReason::UnresolvedReference)?;
-                self.identity(&mut identity, true)
+                let local = self.nominal_types.get(name);
+                let checked = self.checked_nominal_types.get(name);
+                if matches!((local, checked), (Some(local), Some(checked)) if local != checked) {
+                    return Err(CoverageReason::UnresolvedReference);
+                }
+                let mut identity = checked.or(local).cloned().ok_or(CoverageReason::UnresolvedReference)?;
+                self.identity(&mut identity, true)?;
+                self.used_nominal_types.insert(name.clone(), identity);
+                Ok(())
             }
             IncanType::Generic { base, args } => {
                 // These are the semantic model's compiler-owned generic constructors. User generic declarations

@@ -398,3 +398,74 @@ exit "$result"
     assert_eq!(replacement.stdout, native_before.stdout);
     Ok(())
 }
+
+/// A consumer names only pricing; checked catalog identity and native routes survive a public type facade.
+#[test]
+fn source_unavailable_type_facade_signatures_run_natively_and_without_linking() -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let catalog = temporary.path().join("catalog");
+    let facade = temporary.path().join("facade");
+    let pricing = temporary.path().join("pricing");
+    let consumer = temporary.path().join("consumer");
+    project(
+        &catalog,
+        "catalog",
+        "lib.incn",
+        "pub model Product:\n    pub value: int\n\npub def first_product() -> Product:\n    return Product(value=42)\n",
+        "",
+    )?;
+    bake(&catalog)?;
+    project(
+        &facade,
+        "facade",
+        "lib.incn",
+        "pub from pub::catalog import Product, first_product\n",
+        "\n[dependencies]\ncatalog = { path = \"../catalog\" }\n",
+    )?;
+    bake(&facade)?;
+    project(
+        &pricing,
+        "pricing",
+        "lib.incn",
+        "from pub::types import Product, first_product\n\npub def first() -> Product:\n    return first_product()\n\npub def keep(values: list[Product]) -> list[Product]:\n    return values\n\npub def quote(product: Product) -> int:\n    return product.value\n",
+        "\n[dependencies]\ntypes = { path = \"../facade\" }\n",
+    )?;
+    bake(&pricing)?;
+    project(
+        &consumer,
+        "consumer",
+        "main.incn",
+        "from pub::pricing import first, keep, quote\n\ndef main() -> None:\n    product = first()\n    values = keep([product])\n    println(quote(values[0]))\n",
+        "\n[dependencies]\npricing = { path = \"../pricing\" }\n",
+    )?;
+    bake(&consumer)?;
+    let native = success(
+        command(&consumer).args(["run", "--locked", "src/main.incn"]).output()?,
+        "pricing-only native consumer",
+    )?;
+    assert_eq!(String::from_utf8_lossy(&native.stdout).trim(), "42");
+    let artifacts = [&catalog, &facade, &pricing]
+        .into_iter()
+        .map(|producer| artifact_snapshot(&producer.join("target/lib")))
+        .collect::<Result<Vec<_>, _>>()?;
+    for producer in [&catalog, &facade, &pricing] {
+        fs::remove_dir_all(producer.join("src"))?;
+        fs::remove_file(producer.join("loaf.toml"))?;
+    }
+    let retained_native = success(
+        command(&consumer).args(["run", "--locked", "src/main.incn"]).output()?,
+        "source-unavailable pricing-only native consumer",
+    )?;
+    assert_eq!(retained_native.stdout, native.stdout);
+    let replacement = success(
+        command(&consumer)
+            .args(["build", "src/main.incn", "--backend", "replacement"])
+            .output()?,
+        "source-unavailable pricing-only replacement consumer",
+    )?;
+    assert_eq!(replacement.stdout, native.stdout);
+    for (producer, before) in [&catalog, &facade, &pricing].into_iter().zip(artifacts) {
+        assert_eq!(artifact_snapshot(&producer.join("target/lib"))?, before);
+    }
+    Ok(())
+}

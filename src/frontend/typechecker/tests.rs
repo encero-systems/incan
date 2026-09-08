@@ -2776,6 +2776,7 @@ fn library_index_with_root_export_namespace_collision_issue948() -> Result<Libra
         type_params: Vec::new(),
         params: Vec::new(),
         return_type: TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         },
         is_async: false,
@@ -2848,6 +2849,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 presets: vec![PartialPresetExport {
                     name: "name".to_string(),
                     ty: TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                     value: PresetValueExport::String("default".to_string()),
@@ -2856,6 +2858,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 params: vec![ParamExport {
                     name: "name".to_string(),
                     ty: TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                     kind: ParamKindExport::Normal,
@@ -2863,6 +2866,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     default: None,
                 }],
                 return_type: TypeRef::Named {
+                    origin: None,
                     name: "Widget".to_string(),
                 },
                 is_async: false,
@@ -2886,6 +2890,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     params: vec![ParamExport {
                         name: "name".to_string(),
                         ty: TypeRef::Named {
+                            origin: None,
                             name: "str".to_string(),
                         },
                         kind: ParamKindExport::Normal,
@@ -2893,6 +2898,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                         default: None,
                     }],
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: "Widget".to_string(),
                     },
                     is_async: false,
@@ -2903,8 +2909,10 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     type_params: Vec::new(),
                     params: Vec::new(),
                     return_type: TypeRef::Applied {
+                        origin: None,
                         name: "list".to_string(),
                         args: vec![TypeRef::Named {
+                            origin: None,
                             name: "Widget".to_string(),
                         }],
                     },
@@ -2925,6 +2933,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                     is_async: false,
@@ -2961,6 +2970,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     receiver: Some(ReceiverExport::Immutable),
                     params: Vec::new(),
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                     is_async: false,
@@ -2972,6 +2982,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 name: "WidgetAlias".to_string(),
                 type_params: Vec::new(),
                 target: TypeRef::Named {
+                    origin: None,
                     name: "Widget".to_string(),
                 },
             }],
@@ -2979,14 +2990,17 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
             consts: vec![ConstExport {
                 name: "DEFAULT_NAME".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
             }],
             statics: vec![StaticExport {
                 name: "SHARED_ITEMS".to_string(),
                 ty: TypeRef::Applied {
+                    origin: None,
                     name: "list".to_string(),
                     args: vec![TypeRef::Named {
+                        origin: None,
                         name: "int".to_string(),
                     }],
                 },
@@ -3042,6 +3056,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                 name: "widget".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "Widget".to_string(),
                 },
                 surface_type_name: None,
@@ -3060,6 +3075,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: TypeRef::Named {
+                origin: None,
                 name: "Widget".to_string(),
             },
             is_async: false,
@@ -3070,6 +3086,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: TypeRef::Named {
+                origin: None,
                 name: "Factory".to_string(),
             },
             is_async: false,
@@ -3085,6 +3102,7 @@ fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
                 name: "WithWidget".to_string(),
                 canonical: None,
                 fields: vec![TypeRef::Named {
+                    origin: None,
                     name: "Widget".to_string(),
                 }],
                 value: None,
@@ -3165,6 +3183,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                 name: "secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,
@@ -3178,6 +3197,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                 name: "label".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,
@@ -3193,6 +3213,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                         params: vec![ParamExport {
                             name: "value".to_string(),
                             ty: TypeRef::Named {
+                                origin: None,
                                 name: "str".to_string(),
                             },
                             kind: ParamKindExport::Normal,
@@ -3200,6 +3221,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                             default: None,
                         }],
                         return_type: TypeRef::Named {
+                            origin: None,
                             name: "str".to_string(),
                         },
                     }),
@@ -3211,6 +3233,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                 name: "computed_secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 surface_type_name: None,
@@ -3247,6 +3270,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
             aliases: vec![AliasExport {
                 name: "public_target".to_string(),
                 target_path: vec!["target_impl".to_string()],
+                projected_type: None,
                 projected_function: Some(FunctionExport {
                     name: "public_target".to_string(),
                     emitted_name: None,
@@ -3254,6 +3278,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
                     params: vec![ParamExport {
                         name: "value".to_string(),
                         ty: TypeRef::Named {
+                            origin: None,
                             name: "int".to_string(),
                         },
                         kind: ParamKindExport::Normal,
@@ -3261,6 +3286,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
                         default: None,
                     }],
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: "int".to_string(),
                     },
                     is_async: false,
@@ -3300,6 +3326,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
         params: vec![ParamExport {
             name: "value".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             kind: ParamKindExport::Normal,
@@ -3307,6 +3334,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
             default: None,
         }],
         return_type: TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         },
         is_async: false,
@@ -3324,6 +3352,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
         params: vec![ParamExport {
             name: "value".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             kind: ParamKindExport::Normal,
@@ -3331,6 +3360,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
             default: None,
         }],
         return_type: TypeRef::Named {
+            origin: None,
             name: "str".to_string(),
         },
         is_async: false,
@@ -3344,6 +3374,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
             aliases: vec![AliasExport {
                 name: "safe_cast".to_string(),
                 target_path: vec!["helpers".to_string(), "cast".to_string()],
+                projected_type: None,
                 projected_function: None,
             }],
             partials: Vec::new(),
@@ -3454,6 +3485,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         source_name: None,
         module_path: None,
         type_args: vec![TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         }],
         implementation_type_params: Vec::new(),
@@ -3463,6 +3495,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         source_name: None,
         module_path: None,
         type_args: vec![TypeRef::Named {
+            origin: None,
             name: "float".to_string(),
         }],
         implementation_type_params: Vec::new(),
@@ -3492,6 +3525,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
                         return_type: TypeRef::Named {
+                            origin: None,
                             name: "int".to_string(),
                         },
                         is_async: false,
@@ -3505,6 +3539,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
                         return_type: TypeRef::Named {
+                            origin: None,
                             name: "float".to_string(),
                         },
                         is_async: false,
@@ -3558,6 +3593,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
                         return_type: TypeRef::Named {
+                            origin: None,
                             name: "int".to_string(),
                         },
                         is_async: false,
@@ -3571,6 +3607,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
                         return_type: TypeRef::Named {
+                            origin: None,
                             name: "float".to_string(),
                         },
                         is_async: false,
@@ -3645,6 +3682,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                             receiver: None,
                             params: Vec::new(),
                             return_type: TypeRef::Named {
+                                origin: None,
                                 name: "Session".to_string(),
                             },
                             is_async: false,
@@ -3660,6 +3698,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                 ParamExport {
                                     name: "logical_name".to_string(),
                                     ty: TypeRef::Named {
+                                        origin: None,
                                         name: "str".to_string(),
                                     },
                                     kind: ParamKindExport::Normal,
@@ -3669,6 +3708,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                 ParamExport {
                                     name: "uri".to_string(),
                                     ty: TypeRef::Named {
+                                        origin: None,
                                         name: "str".to_string(),
                                     },
                                     kind: ParamKindExport::Normal,
@@ -3677,13 +3717,16 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                 },
                             ],
                             return_type: TypeRef::Applied {
+                                origin: None,
                                 name: "Result".to_string(),
                                 args: vec![
                                     TypeRef::Applied {
+                                        origin: None,
                                         name: "LazyFrame".to_string(),
                                         args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                                     },
                                     TypeRef::Named {
+                                        origin: None,
                                         name: "SessionError".to_string(),
                                     },
                                 ],
@@ -3700,6 +3743,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                             params: vec![ParamExport {
                                 name: "data".to_string(),
                                 ty: TypeRef::Applied {
+                                    origin: None,
                                     name: "LazyFrame".to_string(),
                                     args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                                 },
@@ -3708,13 +3752,16 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                 default: None,
                             }],
                             return_type: TypeRef::Applied {
+                                origin: None,
                                 name: "Result".to_string(),
                                 args: vec![
                                     TypeRef::Applied {
+                                        origin: None,
                                         name: "DataFrame".to_string(),
                                         args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                                     },
                                     TypeRef::Named {
+                                        origin: None,
                                         name: "SessionError".to_string(),
                                     },
                                 ],
@@ -3764,13 +3811,16 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         receiver: Some(ReceiverExport::Immutable),
                         params: Vec::new(),
                         return_type: TypeRef::Applied {
+                            origin: None,
                             name: "Result".to_string(),
                             args: vec![
                                 TypeRef::Applied {
+                                    origin: None,
                                     name: "DataFrame".to_string(),
                                     args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                                 },
                                 TypeRef::Named {
+                                    origin: None,
                                     name: "SessionError".to_string(),
                                 },
                             ],
@@ -3787,6 +3837,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                 params: vec![ParamExport {
                     name: "data".to_string(),
                     ty: TypeRef::Applied {
+                        origin: None,
                         name: "DataSet".to_string(),
                         args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                     },
@@ -3795,6 +3846,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     default: None,
                 }],
                 return_type: TypeRef::Named {
+                    origin: None,
                     name: none_constructor_name(),
                 },
                 is_async: false,
@@ -17046,6 +17098,7 @@ pub class Child extends Vault:
                 params: vec![ParamExport {
                     name: "value".to_string(),
                     ty: TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                     kind: ParamKindExport::Normal,
@@ -17053,6 +17106,7 @@ pub class Child extends Vault:
                     default: None,
                 }],
                 return_type: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
             }),
@@ -19199,13 +19253,13 @@ pub model Reading with Convert[int], Convert[float]:
     assert!(
         convert_returns
             .iter()
-            .any(|ty| matches!(ty, TypeRef::Named { name } if name == "int")),
+            .any(|ty| matches!(ty, TypeRef::Named { name, .. } if name == "int")),
         "missing int convert overload: {convert_returns:?}"
     );
     assert!(
         convert_returns
             .iter()
-            .any(|ty| matches!(ty, TypeRef::Named { name } if name == "float")),
+            .any(|ty| matches!(ty, TypeRef::Named { name, .. } if name == "float")),
         "missing float convert overload: {convert_returns:?}"
     );
     Ok(())
@@ -19269,6 +19323,7 @@ pub def local_default(label: str = LOCAL_SENTINEL) -> str:
                 params: vec![ParamExport {
                     name: "value".to_string(),
                     ty: TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                     kind: ParamKindExport::Normal,
@@ -19276,6 +19331,7 @@ pub def local_default(label: str = LOCAL_SENTINEL) -> str:
                     default: None,
                 }],
                 return_type: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
             }),
@@ -22079,6 +22135,7 @@ fn receiver_factory_manifest(library_name: &str, value_type: &str) -> LibraryMan
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: "PairFactory".to_string(),
             target_path,
+            projected_type: None,
             projected_function: None,
         }),
     };
@@ -25038,3 +25095,34 @@ def f() -> None:
 
 mod rust_supertrait_codegen;
 mod rust_supertraits;
+
+#[test]
+fn admitted_legacy_nominals_keep_distinct_source_paths_and_consistent_hashes() {
+    use std::hash::{Hash, Hasher};
+    let provider = crate::provider::ProviderIdentity {
+        name: "legacy".into(),
+        version: "1.0.0".into(),
+        digest: "selected-digest".into(),
+        feature_projection: Default::default(),
+    };
+    let make = |dependency: &str, name: &str| {
+        let mut identity = super::PublicLibraryTypeIdentity::new(dependency, &["lib".into(), name.into()]);
+        identity.selected_provider = Some(provider.clone());
+        identity
+    };
+    let product = make("direct", "Product");
+    let product_alias = make("facade", "Product");
+    let order = make("direct", "Order");
+    assert_eq!(product, product_alias);
+    assert_ne!(product, order);
+    let hash = |identity: &super::PublicLibraryTypeIdentity| {
+        let mut state = std::collections::hash_map::DefaultHasher::new();
+        identity.hash(&mut state);
+        state.finish()
+    };
+    assert_eq!(hash(&product), hash(&product_alias));
+    assert_eq!(
+        std::collections::HashSet::from([product, product_alias, order]).len(),
+        2
+    );
+}

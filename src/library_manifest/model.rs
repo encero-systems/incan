@@ -314,6 +314,9 @@ pub struct AliasExport {
     pub target_path: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projected_function: Option<FunctionExport>,
+    /// Checked nominal target retained by a public type re-export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_type: Option<TypeRef>,
 }
 
 /// Exported partial callable preset metadata.
@@ -1243,13 +1246,43 @@ pub enum ImplementationTraitBoundOriginExport {
     SourceCallable,
 }
 
+/// Checked identity of a foreign nominal type referenced by a public API type leaf.
+///
+/// The artifact selection and canonical declaration authorize semantics. Consumer dependency aliases and generated
+/// Rust bridge routes are separate projections. Own-package types omit this record to avoid self-digest cycles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NominalTypeOriginExport {
+    /// Exact selected version, digest and active public feature projection of the declaring artifact.
+    pub provider: crate::provider::ProviderIdentity,
+    /// Declaring public type identity retained from that artifact's checked identity graph.
+    pub canonical: CanonicalIdentityExport,
+}
+
+impl NominalTypeOriginExport {
+    /// Return an opaque checker binding key; this is never emitted as a Rust path or resolved by source spelling.
+    pub(crate) fn binding_key(&self) -> String {
+        format!("__incan_nominal::{}::{:?}", self.provider.stable_key(), self.canonical)
+    }
+}
+
 /// Stable manifest-level type reference used by library exports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeRef {
     /// A named non-generic type such as `User` or `int`.
-    Named { name: String },
+    Named {
+        name: String,
+        /// Checked foreign nominal origin. Absence retains the legacy local-name contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<NominalTypeOriginExport>,
+    },
     /// A generic application such as `List[str]`.
-    Applied { name: String, args: Vec<TypeRef> },
+    Applied {
+        name: String,
+        args: Vec<TypeRef>,
+        /// Identity of a foreign generic nominal head, independent of its argument identities.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<NominalTypeOriginExport>,
+    },
     /// A function type with positional parameter and return types.
     Function {
         params: Vec<TypeRef>,
@@ -1782,43 +1815,70 @@ impl LibraryExports {
         for export in exports {
             match &export.kind {
                 CheckedExportKind::Function(function_export) => {
-                    model.functions.push(function_export_from_checked(function_export));
+                    model.functions.push(super::with_checked_type_origins(
+                        function_export_from_checked(function_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Partial(partial_export) => {
-                    model.partials.push(partial_export_from_checked(partial_export));
+                    model.partials.push(super::with_checked_type_origins(
+                        partial_export_from_checked(partial_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Alias(alias_export) => {
-                    model.aliases.push(alias_export_from_checked(alias_export));
+                    model.aliases.push(super::with_checked_type_origins(
+                        alias_export_from_checked(alias_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::TypeAlias(type_alias_export) => {
-                    model
-                        .type_aliases
-                        .push(type_alias_export_from_checked(type_alias_export));
+                    model.type_aliases.push(super::with_checked_type_origins(
+                        type_alias_export_from_checked(type_alias_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Model(model_export) => {
-                    model.models.push(model_export_from_checked(package_name, model_export));
+                    model.models.push(super::with_checked_type_origins(
+                        model_export_from_checked(package_name, model_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Class(class_export) => {
-                    model
-                        .classes
-                        .push(class_export_from_checked(package_name, class_export));
+                    model.classes.push(super::with_checked_type_origins(
+                        class_export_from_checked(package_name, class_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Trait(trait_export) => {
-                    model.traits.push(trait_export_from_checked(package_name, trait_export));
+                    model.traits.push(super::with_checked_type_origins(
+                        trait_export_from_checked(package_name, trait_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Enum(enum_export) => {
-                    model.enums.push(enum_export_from_checked(package_name, enum_export));
+                    model.enums.push(super::with_checked_type_origins(
+                        enum_export_from_checked(package_name, enum_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Newtype(newtype_export) => {
-                    model
-                        .newtypes
-                        .push(newtype_export_from_checked(package_name, newtype_export));
+                    model.newtypes.push(super::with_checked_type_origins(
+                        newtype_export_from_checked(package_name, newtype_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Const(const_export) => {
-                    model.consts.push(const_export_from_checked(const_export));
+                    model.consts.push(super::with_checked_type_origins(
+                        const_export_from_checked(const_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Static(static_export) => {
-                    model.statics.push(static_export_from_checked(static_export));
+                    model.statics.push(super::with_checked_type_origins(
+                        static_export_from_checked(static_export),
+                        &export.identity.type_origins,
+                    ));
                 }
             }
         }
@@ -1932,12 +1992,12 @@ fn rewrite_type_ref_names(
         })
     };
     match ty {
-        TypeRef::Named { name } => {
+        TypeRef::Named { name, .. } => {
             if let Some(public_name) = public_name_for(name) {
                 *name = public_name.clone();
             }
         }
-        TypeRef::Applied { name, args } => {
+        TypeRef::Applied { name, args, .. } => {
             if let Some(public_name) = public_name_for(name) {
                 *name = public_name.clone();
             }
@@ -2021,6 +2081,7 @@ fn alias_export_from_checked(export: &CheckedAliasExport) -> AliasExport {
     AliasExport {
         name: export.name.clone(),
         target_path: export.target_path.clone(),
+        projected_type: export.projected_type.as_ref().map(type_ref_from_resolved),
         projected_function: export.projected_function.as_ref().map(function_export_from_checked),
     }
 }

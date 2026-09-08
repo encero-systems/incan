@@ -564,8 +564,8 @@ fn format_api_param(param: &ParamExport) -> String {
 /// Format a checked API type reference for generated Markdown signatures.
 fn format_api_type_ref(ty: &TypeRef) -> String {
     match ty {
-        TypeRef::Named { name } | TypeRef::TypeParam { name } => name.clone(),
-        TypeRef::Applied { name, args } => format!(
+        TypeRef::Named { name, .. } | TypeRef::TypeParam { name } => name.clone(),
+        TypeRef::Applied { name, args, .. } => format!(
             "{}[{}]",
             name,
             args.iter().map(format_api_type_ref).collect::<Vec<_>>().join(", ")
