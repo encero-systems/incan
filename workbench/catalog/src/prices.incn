@@ -4,7 +4,7 @@ from product import Product
 
 
 pub def line_total(product: Product, quantity: int = 1) -> int:
-    """Return the line price in cents for a nonnegative quantity."""
+    """Return the line price in cents for the requested quantity."""
     return product.price_cents * quantity
 
 
