@@ -304,7 +304,9 @@ pub enum OvenStoreError {
     #[error("Oven store integrity failure for `{identity}`: {message}")]
     Integrity { identity: String, message: String },
     /// Capacity policy cannot admit an artifact without deleting an active entry or exceeding an allowance.
-    #[error("Oven store capacity blocked for domain `{domain}`: {message}")]
+    #[error(
+        "Oven store capacity blocked for domain `{domain}`: {message}. Inspect retained entries with `incan oven store inspect`; use `incan oven store prune --max-physical-bytes <bytes>` to reclaim eligible inactive entries. Active leases remain protected."
+    )]
     CapacityBlocked { domain: String, message: String },
     /// The named legacy publisher holds private staging capacity, so an unrelated publication cannot safely grow
     /// the same bounded store.
@@ -3713,60 +3715,30 @@ mod tests {
     }
 
     #[test]
-    fn legacy_publisher_reservation_preserves_active_leases_and_caps_staging() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let temp = tempfile::tempdir()?;
-        let project = tempfile::tempdir()?;
-        write_project(project.path())?;
-        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
-        let first = store.publish(&request(project.path(), "engine-one", b"first publisher entry")?)?;
-        let (_entry, lease) = store.select(&first.identity)?;
-
-        let active_reservation = store.reserve_legacy_cargo_publisher_capacity("engine")?;
-        assert_eq!(store.inspect()?.entries.len(), 1);
-        assert!(active_reservation.prune_report.removed_entries.is_empty());
-        assert!(
-            active_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
-            "a held lease must remain while reducing the baker's staging allowance"
-        );
-
-        drop(lease);
-        let inactive_reservation = store.reserve_legacy_cargo_publisher_capacity("engine")?;
-        assert!(inactive_reservation.prune_report.removed_entries.is_empty());
-        assert!(
-            inactive_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
-            "an inactive reusable entry must reduce the staging allowance instead of being discarded speculatively"
-        );
-        assert_eq!(store.inspect()?.entries.len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn legacy_publisher_capacity_failure_names_the_safe_prune_recovery_path() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn native_capacity_failure_names_the_safe_prune_recovery_path() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         write_project(project.path())?;
         let unbounded = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
-        let first = unbounded.publish(&request(project.path(), "engine", b"retained publisher entry")?)?;
+        let first = unbounded.publish(&request(project.path(), "engine", b"retained entry")?)?;
         let physical_bytes = unbounded.inspect()?.physical_bytes;
         let bounded = OvenStore::new(
             temp.path(),
             OvenStoreLimits::new(physical_bytes, physical_bytes, 1_000_000),
         );
         let (_entry, lease) = bounded.select(&first.identity)?;
-
         let error = bounded
-            .reserve_legacy_cargo_publisher_capacity("engine")
+            .publish_batch(&[request(project.path(), "engine", b"second entry")?])
             .err()
-            .ok_or("a fully retained active entry must block publisher staging")?;
-
+            .ok_or("active retained entry must block publication")?;
+        assert!(matches!(error, OvenStoreError::CapacityBlocked { .. }));
         assert!(error.to_string().contains("incan oven store inspect"));
         assert!(
             error
                 .to_string()
                 .contains("incan oven store prune --max-physical-bytes")
         );
+        assert_eq!(bounded.inspect()?.entries.len(), 1);
         drop(lease);
         Ok(())
     }
@@ -3803,49 +3775,75 @@ mod tests {
     }
 
     #[test]
-    fn legacy_publisher_batch_preflight_counts_private_staging_and_copied_sources()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn native_batch_admission_counts_private_staging_and_copied_sources() -> Result<(), Box<dyn std::error::Error>> {
+        let destination = tempfile::tempdir()?;
+        let preparation = tempfile::tempdir()?;
+        let external = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         write_project(project.path())?;
-        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(60 * 1024, 60 * 1024, 1_000_000));
-        let staging = temp
-            .path()
-            .join(LEGACY_CARGO_STAGING_DIRECTORY)
-            .join(".legacy-cargo-fixture");
-        let staged_source = staging.join("native/staged.rlib");
-        let copied_source = temp.path().join("outside/copied.rlib");
-        fs::create_dir_all(staged_source.parent().ok_or("staged parent missing")?)?;
-        fs::create_dir_all(copied_source.parent().ok_or("copied parent missing")?)?;
-        fs::write(&staged_source, vec![b's'; 32 * 1024])?;
-        fs::write(&copied_source, vec![b'c'; 32 * 1024])?;
+        let staged_source = preparation.path().join("staged.rlib");
+        let copied_source = external.path().join("copied.rlib");
+        let staged_bytes = vec![b's'; 32 * 1024];
+        let copied_bytes = vec![b'c'; 32 * 1024];
+        fs::write(&staged_source, &staged_bytes)?;
+        fs::write(&copied_source, &copied_bytes)?;
         let mut publication = request(project.path(), "engine-one", b"plan")?;
         publication.materialized_files = vec![
             OvenArtifactMaterializedFile {
-                source_path: staged_source,
+                source_path: staged_source.clone(),
                 relative_path: "native/staged.rlib".to_string(),
             },
             OvenArtifactMaterializedFile {
-                source_path: copied_source,
+                source_path: copied_source.clone(),
                 relative_path: "native/copied.rlib".to_string(),
             },
         ];
-
-        let result = store.ensure_legacy_cargo_batch_physical_capacity(&staging, &[publication]);
+        // Measure both one-file publications independently. Neither input resides under a store root.
+        let mut single_physical = 0;
+        for file in &publication.materialized_files {
+            let control_root = tempfile::tempdir()?;
+            let control = OvenStore::new(
+                control_root.path(),
+                OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+            );
+            let mut single = publication.clone();
+            single.materialized_files = vec![file.clone()];
+            control.publish_batch(&[single])?;
+            single_physical = single_physical.max(control.inspect()?.physical_bytes);
+        }
+        let capacity = single_physical + 4096;
+        assert!(capacity < u64::try_from(staged_bytes.len() + copied_bytes.len())?);
+        for file in &publication.materialized_files {
+            let control_root = tempfile::tempdir()?;
+            let control = OvenStore::new(control_root.path(), OvenStoreLimits::new(capacity, capacity, 1_000_000));
+            let mut single = publication.clone();
+            single.materialized_files = vec![file.clone()];
+            assert_eq!(
+                control.publish_batch(&[single])?.len(),
+                1,
+                "either contribution alone must fit"
+            );
+        }
+        let store = OvenStore::new(destination.path(), OvenStoreLimits::new(capacity, capacity, 1_000_000));
+        let before = store.inspect()?.entries;
+        assert!(before.is_empty());
+        let expected = store.manifest_for_publication(&publication)?;
+        let result = store.publish_batch(&[publication]);
         assert!(matches!(result, Err(OvenStoreError::CapacityBlocked { .. })));
+        assert!(store.inspect()?.entries.is_empty());
+        assert!(!store.entry_root(&expected.identity).exists());
+        assert_eq!(fs::read(&staged_source)?, staged_bytes);
+        assert_eq!(fs::read(&copied_source)?, copied_bytes);
         Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn legacy_publisher_preflight_counts_a_transient_symlink_without_following_its_target()
+    fn physical_staging_measurement_counts_a_symlink_without_following_its_target()
     -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
         let temp = tempfile::tempdir()?;
-        let project = tempfile::tempdir()?;
-        write_project(project.path())?;
-        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
         let staging = temp
             .path()
             .join(LEGACY_CARGO_STAGING_DIRECTORY)
@@ -3859,13 +3857,11 @@ mod tests {
         fs::write(&staged_source, b"retained Rust artifact")?;
         fs::write(&retained_target, vec![b'x'; 2 * 1024 * 1024])?;
         symlink(&retained_target, &transient_link)?;
-        let mut publication = request(project.path(), "engine-one", b"plan")?;
-        publication.materialized_files = vec![OvenArtifactMaterializedFile {
-            source_path: staged_source,
-            relative_path: "native/staged.rlib".to_string(),
-        }];
-
-        store.ensure_legacy_cargo_batch_physical_capacity(&staging, &[publication])?;
+        let with_link = super::unique_publisher_staging_physical_bytes(&staging)?;
+        fs::remove_file(&transient_link)?;
+        let without_link = super::unique_publisher_staging_physical_bytes(&staging)?;
+        assert!(with_link >= without_link);
+        assert!(with_link - without_link < fs::metadata(&retained_target)?.len());
         Ok(())
     }
 

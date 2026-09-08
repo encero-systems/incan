@@ -714,52 +714,6 @@ fn package_string_field(
     })
 }
 
-/// Validate optional Incan identity evidence and return its normalized content digest.
-fn validate_optional_incan_identity(
-    project_root: &Path,
-    cargo_project: &OvenProjectIdentity,
-) -> Result<Option<String>, OvenError> {
-    let path = project_root.join("loaf.toml");
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path).map_err(|source| OvenError::InvalidIncanManifest {
-        path: path.clone(),
-        message: source.to_string(),
-    })?;
-    let manifest = ProjectManifest::load(&path).map_err(|error| OvenError::InvalidIncanManifest {
-        path: path.clone(),
-        message: error.to_string(),
-    })?;
-    if let Some(project) = manifest.project {
-        if let Some(name) = project.name {
-            compare_identity_field(&path, "name", &cargo_project.name, &name)?;
-        }
-        if let Some(version) = project.version {
-            compare_identity_field(&path, "version", &cargo_project.version, &version)?;
-        }
-    }
-    Ok(Some(digest_content(&normalize_content(&content))))
-}
-
-/// Reject conflicting project identity declarations.
-fn compare_identity_field(path: &Path, field: &'static str, cargo: &str, incan: &str) -> Result<(), OvenError> {
-    if cargo == incan {
-        return Ok(());
-    }
-    Err(OvenError::ProjectIdentityMismatch {
-        path: path.to_path_buf(),
-        field,
-        cargo: cargo.to_string(),
-        incan: incan.to_string(),
-    })
-}
-
-/// Normalize explicit target, toolchain, profile, and feature inputs before identity calculation.
-fn normalized_intent(request: &OvenImportRequest) -> Result<OvenBuildIntent, OvenError> {
-    normalized_build_intent(&request.target, &request.toolchain, &request.profile, &request.features)
-}
-
 /// Normalize explicit target, toolchain, profile, and feature inputs shared by imported and generated receipts.
 fn normalized_build_intent(
     target: &str,
@@ -777,23 +731,6 @@ fn normalized_build_intent(
         profile: normalized_value(profile, "profile")?,
         features: features.into_iter().collect(),
     })
-}
-
-/// Normalize caller-provided content digests before they join a receipt identity.
-fn normalized_supplemental_source_digests(request: &OvenImportRequest) -> Result<BTreeMap<String, String>, OvenError> {
-    let mut normalized = BTreeMap::new();
-    for (name, digest) in &request.supplemental_source_digests {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(OvenError::EmptySupplementalSource { field: "name" });
-        }
-        let digest = digest.trim();
-        if digest.is_empty() {
-            return Err(OvenError::EmptySupplementalSource { field: "digest" });
-        }
-        normalized.insert(name.to_string(), digest.to_string());
-    }
-    Ok(normalized)
 }
 
 /// Normalize explicit reusable build-unit inputs without permitting blank identity records.
@@ -1390,32 +1327,35 @@ mod tests {
     use crate::manifest::{DependencySource, DependencySpec};
 
     use super::{
-        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenImportRequest, OvenReceipt, default_receipt_path,
-        digest_bytes, generated_project_source_evidence, import_frozen_project, receipt_generated_project,
-        receipt_generated_project_with_source_evidence, receipt_native_compiler_suite, receipt_with_build_unit_input,
-        receipt_without_build_unit_input, write_receipt,
+        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenReceipt, default_receipt_path, digest_bytes,
+        generated_project_source_evidence, receipt_generated_project, receipt_generated_project_with_source_evidence,
+        receipt_native_compiler_suite, receipt_with_build_unit_input, receipt_without_build_unit_input, write_receipt,
     };
 
     #[test]
     fn receipt_identity_is_portable_and_observes_explicit_build_inputs() -> Result<(), Box<dyn std::error::Error>> {
         let first = tempfile::tempdir()?;
         let second = tempfile::tempdir()?;
-        write_frozen_project(first.path())?;
-        write_frozen_project(second.path())?;
-
-        let first_receipt = import_frozen_project(&request(first.path()))?;
-        let second_receipt = import_frozen_project(&request(second.path()))?;
-        let changed = import_frozen_project(&OvenImportRequest::new(
-            second.path(),
-            "x86_64-unknown-linux-gnu",
-            "rustc 1.96.0",
-            "release",
-            vec!["serde".to_string()],
-        ))?;
-
+        write_generated_source_closure(first.path(), "fn main() {}\n")?;
+        write_generated_source_closure(second.path(), "fn main() {}\n")?;
+        let first_receipt = receipt_generated_project(&generated_request(first.path()))?;
+        let second_receipt = receipt_generated_project(&generated_request(second.path()))?;
         assert_eq!(first_receipt.identity, second_receipt.identity);
-        assert_ne!(first_receipt.identity, changed.identity);
-        assert!(first_receipt.compatibility.cargo_input_only);
+        for dimension in ["target", "toolchain", "profile", "features"] {
+            let mut request = generated_request(second.path());
+            match dimension {
+                "target" => request.target = "x86_64-unknown-linux-gnu".to_string(),
+                "toolchain" => request.toolchain = "rustc 1.98.0".to_string(),
+                "profile" => request.profile = "debug".to_string(),
+                _ => request.features.push("serde".to_string()),
+            }
+            assert_ne!(
+                first_receipt.identity,
+                receipt_generated_project(&request)?.identity,
+                "{dimension}"
+            );
+        }
+        assert!(!first_receipt.compatibility.cargo_input_only);
         Ok(())
     }
 
@@ -1423,16 +1363,16 @@ mod tests {
     fn supplemental_source_evidence_changes_identity_without_recording_paths() -> Result<(), Box<dyn std::error::Error>>
     {
         let project = tempfile::tempdir()?;
-        write_frozen_project(project.path())?;
-        let first = import_frozen_project(
-            &request(project.path()).with_supplemental_source_digest("generated-test-harness", "sha256:first"),
+        write_generated_source_closure(project.path(), "fn main() {}\n")?;
+        let first = receipt_generated_project(&generated_request(project.path()))?;
+        fs::write(
+            project.path().join("src/main.rs"),
+            "fn main() { println!(\"changed\"); }\n",
         )?;
-        let second = import_frozen_project(
-            &request(project.path()).with_supplemental_source_digest("generated-test-harness", "sha256:second"),
-        )?;
-
+        let second = receipt_generated_project(&generated_request(project.path()))?;
         assert_ne!(first.identity, second.identity);
-        assert_eq!(first.sources.supplemental_digests.len(), 1);
+        assert_ne!(first.sources.supplemental_digests, second.sources.supplemental_digests);
+        assert!(!serde_json::to_string(&second)?.contains(&project.path().display().to_string()));
         Ok(())
     }
 
@@ -1721,32 +1661,10 @@ mod tests {
     }
 
     #[test]
-    fn import_rejects_virtual_or_unlocked_cargo_inputs() -> Result<(), Box<dyn std::error::Error>> {
-        let project = tempfile::tempdir()?;
-        fs::write(project.path().join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-        fs::write(project.path().join("Cargo.lock"), "version = 4\n")?;
-        let virtual_error = import_frozen_project(&request(project.path()))
-            .err()
-            .ok_or("virtual workspace must be a compatibility miss")?;
-        assert!(virtual_error.to_string().contains("virtual workspaces"));
-
-        fs::write(
-            project.path().join("Cargo.toml"),
-            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
-        )?;
-        fs::remove_file(project.path().join("Cargo.lock"))?;
-        let lock_error = import_frozen_project(&request(project.path()))
-            .err()
-            .ok_or("missing lock must be a compatibility miss")?;
-        assert!(lock_error.to_string().contains("Cargo.lock"));
-        Ok(())
-    }
-
-    #[test]
     fn receipt_publication_is_complete_json_at_the_default_project_path() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        write_frozen_project(project.path())?;
-        let receipt = import_frozen_project(&request(project.path()))?;
+        write_generated_source_closure(project.path(), "fn main() {}\n")?;
+        let receipt = receipt_generated_project(&generated_request(project.path()))?;
         let path = default_receipt_path(project.path());
         write_receipt(&receipt, &path)?;
 
@@ -1754,16 +1672,6 @@ mod tests {
         let decoded: OvenReceipt = serde_json::from_str(&payload)?;
         assert_eq!(decoded, receipt);
         Ok(())
-    }
-
-    fn request(project_root: &Path) -> OvenImportRequest {
-        OvenImportRequest::new(
-            project_root,
-            "aarch64-apple-darwin",
-            "rustc 1.96.0",
-            "release",
-            vec!["serde".to_string()],
-        )
     }
 
     fn write_frozen_project(root: &Path) -> Result<(), std::io::Error> {
