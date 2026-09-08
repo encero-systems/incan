@@ -149,6 +149,7 @@ nav:
           - Binary-text encoding: language/how-to/binary_text_encoding.md
           - Compression: language/how-to/compression.md
           - Dynamic JSON: language/how-to/dynamic_json.md
+          - TOML data: language/how-to/toml.md
           - Hashing data: language/how-to/hashing_data.md
           - Logging: language/how-to/logging.md
           - Generators: language/how-to/generators.md
