@@ -69,7 +69,7 @@ impl TypeChecker {
 
         members
             .iter()
-            .find(|member| self.types_compatible(member, &target_ty) && self.types_compatible(&target_ty, member))
+            .find(|member| self.match_union_member_matches(member, &target_ty))
             .cloned()
     }
 
@@ -164,9 +164,53 @@ impl TypeChecker {
         }
     }
 
-    /// Whether two union member candidates are equivalent for match-arm narrowing.
+    /// Compare exact checked union alternatives for both narrowing and exhaustiveness.
+    ///
+    /// Public nominal aliases share their selected artifact and canonical declaration. Assignment conversions do
+    /// not prove coverage: even mutually compatible numeric types remain separate union alternatives.
     fn match_union_member_matches(&self, member: &ResolvedType, target: &ResolvedType) -> bool {
-        self.types_compatible(member, target) && self.types_compatible(target, member)
+        match (
+            self.public_library_type_identity_for_type(member),
+            self.public_library_type_identity_for_type(target),
+        ) {
+            (Some((left, left_args)), Some((right, right_args))) => {
+                return left == right
+                    && left_args.len() == right_args.len()
+                    && left_args
+                        .iter()
+                        .zip(right_args)
+                        .all(|(left, right)| self.match_union_member_matches(left, right));
+            }
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
+        match (member, target) {
+            (ResolvedType::Generic(left, left_args), ResolvedType::Generic(right, right_args)) => {
+                left == right
+                    && left_args.len() == right_args.len()
+                    && left_args
+                        .iter()
+                        .zip(right_args)
+                        .all(|(left, right)| self.match_union_member_matches(left, right))
+            }
+            (ResolvedType::Tuple(left), ResolvedType::Tuple(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right)
+                        .all(|(left, right)| self.match_union_member_matches(left, right))
+            }
+            (ResolvedType::FrozenList(left), ResolvedType::FrozenList(right))
+            | (ResolvedType::FrozenSet(left), ResolvedType::FrozenSet(right))
+            | (ResolvedType::TypeToken(left), ResolvedType::TypeToken(right))
+            | (ResolvedType::Ref(left), ResolvedType::Ref(right))
+            | (ResolvedType::RefMut(left), ResolvedType::RefMut(right)) => self.match_union_member_matches(left, right),
+            (ResolvedType::FrozenDict(left_key, left_value), ResolvedType::FrozenDict(right_key, right_value)) => {
+                self.match_union_member_matches(left_key, right_key)
+                    && self.match_union_member_matches(left_value, right_value)
+            }
+            _ => member == target,
+        }
     }
 
     /// Remove the union members covered by a pattern from the remaining-arm accumulator.
@@ -771,15 +815,32 @@ impl TypeChecker {
     /// (`_`) satisfy all remaining cases. Emits a [`non_exhaustive_match`](errors::non_exhaustive_match)
     /// error if patterns are missing.
     fn check_match_exhaustiveness(&mut self, subject_ty: &ResolvedType, arms: &[Spanned<MatchArm>], span: Span) {
-        let variants = if let Some(members) = subject_ty.union_members() {
-            Some(members.iter().map(ToString::to_string).collect())
-        } else if let Some(inner) = subject_ty.option_inner_type()
-            && let Some(members) = inner.union_members()
-        {
-            let mut variants: Vec<String> = members.iter().map(ToString::to_string).collect();
-            variants.push(constructors::as_str(ConstructorId::None).to_string());
-            Some(variants)
-        } else if let ResolvedType::Named(name) = subject_ty {
+        if let Some(members) = Self::expected_union_members(subject_ty) {
+            let mut remaining = members.to_vec();
+            let mut option_variants = HashSet::new();
+            let mut has_wildcard = false;
+            for arm in arms.iter().filter(|arm| arm.node.guard.is_none()) {
+                self.remove_covered_union_members(&mut remaining, &arm.node.pattern, subject_ty);
+                if subject_ty.is_option() {
+                    self.collect_pattern_coverage(
+                        &arm.node.pattern.node,
+                        subject_ty,
+                        &mut option_variants,
+                        &mut has_wildcard,
+                    );
+                }
+            }
+            let mut missing = remaining.iter().map(ToString::to_string).collect::<Vec<_>>();
+            let none = constructors::as_str(ConstructorId::None);
+            if subject_ty.is_option() && !has_wildcard && !option_variants.contains(none) {
+                missing.push(none.to_string());
+            }
+            if !missing.is_empty() {
+                self.errors.push(errors::non_exhaustive_match(&missing, span));
+            }
+            return;
+        }
+        let variants = if let ResolvedType::Named(name) = subject_ty {
             match self.lookup_type_info(name) {
                 Some(TypeInfo::Enum(enum_info)) => Some(enum_info.variants.clone()),
                 _ => None,
@@ -837,21 +898,7 @@ impl TypeChecker {
                 covered.insert(constructors::as_str(ConstructorId::None).to_string());
             }
             Pattern::Constructor(name, _) => {
-                let variant_name = if subject_ty.union_members().is_some()
-                    || subject_ty
-                        .option_inner_type()
-                        .is_some_and(|inner| inner.union_members().is_some())
-                {
-                    let target_ty =
-                        self.expand_type_aliases(resolve_type(&Type::Simple(name.node.clone()), &self.symbols));
-                    if let Some(target_members) = target_ty.union_members() {
-                        for member in target_members {
-                            covered.insert(member.to_string());
-                        }
-                        return;
-                    }
-                    target_ty.to_string()
-                } else if name.node.contains("::") {
+                let variant_name = if name.node.contains("::") {
                     name.node.split("::").last().unwrap_or(&name.node).to_string()
                 } else {
                     name.node.clone()
