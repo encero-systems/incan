@@ -338,13 +338,10 @@ test-oven-replay:
 		suite_tmp="$$(mktemp -d "/tmp/incan-oven-suite.XXXXXX")"; \
 		suite_succeeded=false; \
 		cleanup_suite_output() { \
-			rm -rf -- "$$suite_tmp"; \
-			if [ -n "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)" ] \
-				&& [ -s "$$suite_output/compiler-suite-report.json" ]; then \
-				cp "$$suite_output/compiler-suite-report.json" "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)"; \
-			fi; \
-			if [ "$$suite_succeeded" = true ]; then rm -rf -- "$$suite_output"; \
-			else echo "Oven suite failed; retaining caller output at $$suite_output" >&2; fi; \
+			suite_status=$$?; \
+			bash "$(CURDIR)/scripts/retain_oven_suite_output.sh" "$$suite_output" "$$suite_tmp" \
+				"$$suite_succeeded" "$(abspath $(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT))" "$$suite_status"; \
+			exit $$?; \
 		}; \
 		trap cleanup_suite_output EXIT; \
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
@@ -488,8 +485,12 @@ test-oven-focused:
 	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test toolchain_installer_tests \
 		compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence -- --exact
 
+.PHONY: test-oven-report-retention
+test-oven-report-retention:
+	@python3 scripts/test_oven_transcript_retention.py
+
 .PHONY: test-oven-pr-regressions
-test-oven-pr-regressions:
+test-oven-pr-regressions: test-oven-report-retention
 	@echo "\033[1mRunning bounded Oven process-containment regressions...\033[0m"
 	@CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked --features lsp --test oven_pr_regressions
 

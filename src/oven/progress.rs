@@ -2,8 +2,9 @@
 //!
 //! Two mechanisms, and the distinction between them is the point. [`announce`] reports a state change the moment it
 //! happens, which needs something to have happened. [`Heartbeat`] reports what is *still* happening on a fixed
-//! interval, which is the only way a run can distinguish slow work from stalled work: a stalled root, a stalled bake
-//! phase, and a stalled process all look identical to an output-driven reporter, because none of them produce output.
+//! interval. A heartbeat proves supervisor liveness and names outstanding work; it cannot prove that a test or bake
+//! phase is making useful progress. An increasing elapsed time without case completions identifies what needs
+//! inspection.
 //!
 //! Both write to stderr. Stdout carries the caller's machine-readable report, and a `--format json` run must still be
 //! able to say what it is doing without interleaving prose into the document a caller is parsing.
@@ -128,32 +129,28 @@ pub struct Heartbeat {
 impl Heartbeat {
     /// Start reporting on `interval` until the returned handle is dropped.
     ///
-    /// The interval is checked in short slices rather than slept through, so dropping the handle stops the thread
-    /// promptly instead of waiting out a full period.
+    /// Dropping the handle unparks the worker immediately; short roots never pay a polling interval to stop reporting.
     pub fn start(
         sink: ProgressSink,
         interval: Duration,
         describe: impl Fn() -> Option<String> + Send + 'static,
     ) -> Self {
-        const POLL: Duration = Duration::from_millis(100);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let worker = thread::spawn(move || {
-            let mut since_report = Duration::ZERO;
+            let mut next_report = Instant::now() + interval;
             while !worker_stop.load(Ordering::Relaxed) {
-                thread::sleep(POLL);
-                since_report = since_report.saturating_add(POLL);
-                if since_report < interval {
-                    continue;
-                }
-                since_report = Duration::ZERO;
-                // Re-checked after the sleep: a run that finished mid-interval must not emit one last stale line.
+                thread::park_timeout(next_report.saturating_duration_since(Instant::now()));
                 if worker_stop.load(Ordering::Relaxed) {
                     break;
+                }
+                if Instant::now() < next_report {
+                    continue;
                 }
                 if let Some(line) = describe() {
                     sink.line(&line);
                 }
+                next_report = Instant::now() + interval;
             }
         });
         Self {
@@ -168,6 +165,7 @@ impl Drop for Heartbeat {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
+            worker.thread().unpark();
             // A reporting thread that panicked has already lost its own output; it must not also fail the command
             // whose progress it was describing.
             let _ = worker.join();

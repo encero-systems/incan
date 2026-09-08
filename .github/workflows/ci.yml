@@ -582,10 +582,8 @@ jobs:
           make -s test-oven-partition
           INCAN_TEST_OVEN_PARTITION_INDEX=${{ matrix.partition }}
           INCAN_TEST_OVEN_PARTITION_COUNT=4
-      # Every partition uploads its report, green or red, because each root's measured durations are evidence either
-      # way and a red one names what failed. It is kept long enough to be an input rather than a glance: a later run
-      # seeds its partition weights from the measured durations in a previous run's four reports, and a one-day
-      # window would mean any gap in merges to `main` silently costs that seed.
+      # Every partition retains measured root/case durations for future replay weighting (#1065). Consumption is
+      # separate work; publishing these records does not mean this run's partitioner already uses them.
       - name: Upload Oven partition report
         if: always()
         uses: actions/upload-artifact@v6
@@ -594,14 +592,20 @@ jobs:
           path: target/oven-pr-linux-partition-${{ matrix.partition }}.json
           if-no-files-found: warn
           retention-days: 30
-      # The failing transcripts are for reading now, not later, and they are large. The terminal summary is
-      # deliberately bounded, so a few big panics can crowd the rest out of it; this is where every failing case is
-      # named in full.
-      - name: Upload Oven partition failure transcripts
-        if: failure()
+      # Successful diagnostic output stays out of live progress but remains available with failed-case diagnostics.
+      - name: Upload Oven partition transcripts
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: oven-pr-linux-partition-${{ matrix.partition }}-transcripts
+          path: target/oven-pr-linux-partition-${{ matrix.partition }}.json.transcripts.tar.gz
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload retained caller transcripts after a failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-partition-${{ matrix.partition }}-raw-transcripts
           path: target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
           if-no-files-found: warn
           retention-days: 7

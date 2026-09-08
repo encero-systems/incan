@@ -2226,7 +2226,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             _ => "partial exact diagnostic (not complete-root or complete-suite evidence)",
         };
         return Err(CliError::failure(format!(
-            "Oven {selection_context} failed: {} passed, {} failed, {} ignored across {} reported libtest root(s): {} green, {} failing, with {} root(s) lacking a terminal libtest summary. The explicit compatibility fixture launched Cargo {} time(s).\n{}",
+            "Oven {selection_context} failed: {} passed, {} failed, {} ignored across {} reported libtest root(s): {} green, {} failing, with {} root(s) lacking complete selected-case evidence. The explicit compatibility fixture launched Cargo {} time(s).\n{}",
             native_test_case_totals.passed,
             native_test_case_totals.failed,
             native_test_case_totals.ignored,
@@ -3171,8 +3171,8 @@ fn announce_oven_progress(state: &str, subject: &str, detail: Option<&str>) {
 
 /// Summarize one native root's terminal result for its announcement line.
 ///
-/// A root that produced no libtest summary is reported as such rather than as zero cases: the two are different
-/// facts, and only the first means the process died before it could account for its work.
+/// Missing or invalid case evidence is reported separately from process success. A green exit cannot repair
+/// incomplete selected-case accounting.
 fn compiler_suite_root_outcome_detail(report: &OvenNativeTestBatchReport) -> String {
     let elapsed = format!("{:.1}s", report.timing.execution_elapsed_ms as f64 / 1_000.0);
     match &report.case_counts {
@@ -3180,7 +3180,10 @@ fn compiler_suite_root_outcome_detail(report: &OvenNativeTestBatchReport) -> Str
             "{} passed, {} failed, {} ignored in {elapsed}",
             counts.passed, counts.failed, counts.ignored
         ),
-        None => format!("no libtest summary in {elapsed}"),
+        None => format!(
+            "incomplete case evidence in {elapsed} (process success: {})",
+            report.process_success
+        ),
     }
 }
 
@@ -3257,10 +3260,10 @@ fn run_prepared_compiler_suite_child(
                 &child.target.source_relative_path,
                 Some(&compiler_suite_root_outcome_detail(&report)),
             );
+            let transcript = write_native_test_transcript(&child.output, &report.output)?;
             let failures = if report.success {
                 Vec::new()
             } else {
-                let transcript = write_native_test_failure_transcript(&child.output, &report.output)?;
                 vec![format!(
                     "{} target `{}` failed; full libtest transcript: {}\n{}",
                     child.target.target_kind,
@@ -3288,6 +3291,7 @@ fn run_prepared_compiler_suite_child(
                     source_relative_path: child.target.source_relative_path.clone(),
                     inventory_count: report.inventory.names.len(),
                     success: report.success,
+                    process_success: report.process_success,
                     case_counts: report.case_counts,
                     case_timings: report.case_timings,
                     command_timings: report.command_timings,
@@ -3487,6 +3491,7 @@ fn run_planned_compiler_suite_children(
                     source_relative_path: target.source_relative_path.clone(),
                     inventory_count: report.inventory.names.len(),
                     success: report.success,
+                    process_success: report.process_success,
                     case_counts: report.case_counts.clone(),
                     case_timings: report.case_timings.clone(),
                     command_timings: report.command_timings.clone(),
@@ -3494,8 +3499,8 @@ fn run_planned_compiler_suite_children(
                     libtest_inventory_elapsed_ms: report.timing.inventory_elapsed_ms,
                     libtest_execution_elapsed_ms: report.timing.execution_elapsed_ms,
                 });
+                let transcript = write_native_test_transcript(&output, &report.output)?;
                 if !report.success {
-                    let transcript = write_native_test_failure_transcript(&output, &report.output)?;
                     suite_report.failed.push(format!(
                         "{} target `{}` failed; full libtest transcript: {}\n{}",
                         target.target_kind,
@@ -3762,10 +3767,12 @@ struct CompilerSuiteNativeTestRootReport {
     target_name: String,
     source_relative_path: String,
     inventory_count: usize,
-    /// Whether this root reached a successful terminal libtest result.
+    /// Whether the process succeeded with complete, green case evidence.
     success: bool,
+    /// Raw process success, independent of whether its selected case evidence is complete.
+    process_success: bool,
     case_counts: Option<OvenNativeTestCaseCounts>,
-    /// Opt-in case timings emitted by this root's already-executed libtest process.
+    /// Per-case timings emitted by this root's already-executed libtest process.
     case_timings: Vec<OvenNativeTestCaseTiming>,
     /// Opt-in nested Incan command timings parsed from this root's captured libtest transcript.
     command_timings: Vec<OvenNativeTestCommandTiming>,
@@ -3919,7 +3926,7 @@ struct CompilerSuiteChildrenReport {
     rustdoc_test_roots: Vec<CompilerSuiteRustdocTestRootReport>,
 }
 
-/// Aggregate case counts from libtest summaries already captured by the worker processes.
+/// Aggregate validated root-owned case counts returned by the worker processes.
 #[derive(Debug, Clone, Default, Serialize)]
 struct CompilerSuiteNativeTestCaseTotals {
     passed: usize,
@@ -4001,7 +4008,7 @@ fn compiler_suite_completion_failures(
     let mut failures = Vec::new();
     if totals.unreported_roots > 0 {
         failures.push(format!(
-            "{count} native compiler-suite root(s) did not report a terminal libtest summary",
+            "{count} native compiler-suite root(s) did not report complete selected-case evidence",
             count = totals.unreported_roots
         ));
     }
@@ -5098,8 +5105,8 @@ fn compiler_suite_directory(artifact_root: &Path, relative_path: &str, role: &st
     Ok(path)
 }
 
-/// Persist the full caller-owned libtest transcript before returning its bounded terminal summary.
-fn write_native_test_failure_transcript(output: &Path, transcript: &str) -> CliResult<PathBuf> {
+/// Persist full native diagnostics on success or failure, beside the caller-owned executable.
+fn write_native_test_transcript(output: &Path, transcript: &str) -> CliResult<PathBuf> {
     let path = output.with_extension("libtest-output.txt");
     fs::write(&path, transcript).map_err(|error| {
         CliError::failure(format!(
@@ -5579,7 +5586,7 @@ mod tests {
         oven_test, parse_named_path, prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
         reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
         run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
-        write_native_test_failure_transcript,
+        write_native_test_transcript,
     };
     use crate::cli::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use crate::oven::legacy_cargo::{
@@ -6288,10 +6295,10 @@ mod tests {
     }
 
     #[test]
-    fn native_test_failure_transcript_is_retained_beside_caller_output() -> Result<(), Box<dyn std::error::Error>> {
+    fn native_test_transcript_is_retained_beside_caller_output() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let output = directory.path().join("direct-rustc-test");
-        let transcript = write_native_test_failure_transcript(&output, "one failing libtest\n")?;
+        let transcript = write_native_test_transcript(&output, "one failing libtest\n")?;
 
         assert_eq!(transcript, output.with_extension("libtest-output.txt"));
         assert_eq!(fs::read_to_string(transcript)?, "one failing libtest\n");
@@ -6403,6 +6410,7 @@ mod tests {
                 source_relative_path: "tests/fixture.rs".to_string(),
                 inventory_count: 1,
                 success: true,
+                process_success: true,
                 case_counts: Some(OvenNativeTestCaseCounts {
                     passed: 1,
                     failed: 0,
@@ -6427,6 +6435,7 @@ mod tests {
         assert_eq!(report["native_test_roots"][0]["direct_rustc_bake_elapsed_ms"], 50);
         assert_eq!(report["native_test_roots"][0]["libtest_inventory_elapsed_ms"], 6);
         assert_eq!(report["native_test_roots"][0]["libtest_execution_elapsed_ms"], 7);
+        assert_eq!(report["native_test_roots"][0]["process_success"], true);
         assert_eq!(report["rustdoc_test_roots"][0]["execution_elapsed_ms"], 8);
         Ok(())
     }
@@ -6445,6 +6454,7 @@ mod tests {
                     source_relative_path: "tests/green.rs".to_string(),
                     inventory_count: 2,
                     success: true,
+                    process_success: true,
                     case_counts: Some(OvenNativeTestCaseCounts {
                         passed: 2,
                         failed: 0,
@@ -6472,6 +6482,7 @@ mod tests {
                     source_relative_path: "tests/failed.rs".to_string(),
                     inventory_count: 2,
                     success: false,
+                    process_success: false,
                     case_counts: Some(OvenNativeTestCaseCounts {
                         passed: 1,
                         failed: 1,
@@ -6491,8 +6502,9 @@ mod tests {
                     target_kind: "test".to_string(),
                     target_name: "unreported_root".to_string(),
                     source_relative_path: "tests/unreported.rs".to_string(),
-                    inventory_count: 0,
+                    inventory_count: 1,
                     success: false,
+                    process_success: true,
                     case_counts: None,
                     case_timings: Vec::new(),
                     command_timings: Vec::new(),
@@ -6518,7 +6530,7 @@ mod tests {
         assert!(
             failures
                 .iter()
-                .any(|failure| failure.contains("terminal libtest summary"))
+                .any(|failure| failure.contains("complete selected-case evidence"))
         );
         assert!(failures.iter().any(|failure| failure.contains("planned 4 root")));
 
