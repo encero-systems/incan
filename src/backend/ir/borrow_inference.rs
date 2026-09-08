@@ -6,6 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use incan_core::lang::keywords::{self, KeywordId};
+
 use super::decl::Visibility;
 use super::expr::{MatchArm, Pattern};
 use super::scanners::expr_uses_binding_name;
@@ -346,7 +348,7 @@ fn infer_method_helpers(
             };
             let receiver = IrExpr::new(
                 IrExprKind::Var {
-                    name: "self".to_string(),
+                    name: keywords::as_str(KeywordId::SelfKw).to_string(),
                     access: super::expr::VarAccess::Read,
                     ref_kind: super::expr::VarRefKind::Value,
                 },
@@ -425,7 +427,8 @@ impl Visitor for MethodCalls<'_> {
                 visit::walk_expr(expr, self);
                 return;
             }
-            let owner = if matches!(&receiver.kind, IrExprKind::Var { name, .. } if name == "self") {
+            let owner = if matches!(&receiver.kind, IrExprKind::Var { name, .. } if name == keywords::as_str(KeywordId::SelfKw))
+            {
                 self.owner
             } else {
                 receiver.ty.nominal_type_name()

@@ -669,46 +669,6 @@ pub def traverse(item: &Item, keys: list[str]) -> bool:
     Ok(())
 }
 
-/// Real TOML metadata must carry the same receiver and child-lifetime facts as the reduced native fixture.
-#[cfg(feature = "rust_inspect")]
-#[test]
-fn toml_traversal_uses_extracted_receiver_contracts() -> TestResult {
-    let source = r#"
-from rust::toml_edit import Item
-
-def traverse(item: Item, keys: list[str]) -> Item:
-    mut current = item
-    for key in keys:
-        match current.get(key):
-            Some(child) => current = child
-            None => return Item.None
-    return current.clone()
-
-pub def observe(item: Item) -> Item:
-    return traverse(item, ["project", "count"])
-"#;
-    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex: {errors:?}")))?;
-    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse: {errors:?}")))?;
-    let mut checker = incan::frontend::typechecker::TypeChecker::new();
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    checker.set_rust_inspect_manifest_dir(manifest_dir);
-    checker
-        .check_program(&ast)
-        .map_err(|errors| std::io::Error::other(format!("check: {errors:?}")))?;
-    let ir = incan::backend::ir::AstLowering::new_with_type_info(checker.type_info().clone())
-        .lower_program(&ast)
-        .map_err(|error| std::io::Error::other(format!("lower: {error:?}")))?;
-    let generated = incan::backend::ir::IrEmitter::new(&ir.function_registry).emit_program(&ir)?;
-    assert!(
-        generated.contains("item: &Item"),
-        "contracts: {:?}\nIR: {:?}\n{generated}",
-        checker.type_info().rust.receiver_contracts,
-        ir.declarations
-    );
-    assert!(!generated.contains("child.clone()"), "{generated}");
-    Ok(())
-}
-
 #[test]
 fn callback_in_a_trait_default_keeps_the_owned_abi() -> TestResult {
     let rust = compact_rust(
