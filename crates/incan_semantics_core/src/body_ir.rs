@@ -720,13 +720,16 @@ impl Place {
 pub enum PlaceElem {
     /// `.field` access, with the selected source member identity when the projection came from checked source.
     ///
-    /// Compiler-synthesized tuple/range/protocol projections carry `None`. A consumer may interpret those only in
-    /// its explicitly admitted structural profile; `None` is never permission to resolve a nominal member by name.
+    /// Compiler-synthesized tuple/range/protocol projections have an explicit structural marker. A missing source
+    /// identity alone is never permission to resolve a nominal member by name or publish a covered body.
     Field {
         /// Written or compiler-synthesized field spelling retained for diagnostics and physical layout selection.
         name: String,
         /// Canonical member selected by typechecking, independent of the source spelling.
         canonical: Option<CanonicalSymbolId>,
+        /// Whether the compiler introduced this projection for a checked structural operation.
+        #[serde(default)]
+        synthesized: bool,
     },
     /// `[index]` access. Boxed because the index itself is an arbitrary operand.
     Index(Box<Operand>),
@@ -746,6 +749,7 @@ impl PlaceElem {
         Self::Field {
             name: name.into(),
             canonical,
+            synthesized: false,
         }
     }
 
@@ -754,6 +758,7 @@ impl PlaceElem {
         Self::Field {
             name: name.into(),
             canonical: None,
+            synthesized: true,
         }
     }
 }

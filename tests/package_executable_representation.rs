@@ -143,14 +143,15 @@ def private_secret() -> int:
     )?;
     assert_eq!(String::from_utf8_lossy(&native.stdout).trim(), "42");
 
-    // A native derive deliberately fails at rustc after preparation has generated a different public function.
+    // A retained public native derive deliberately fails at rustc after preparation has generated a different
+    // public function. An unused private model would be removed by normal native emission and could not fail.
     // Both the prior linked artifact and its executable publication must survive that ordinary rebuild failure.
     let artifact_before = artifact_snapshot(&producer.join("target/lib"))?;
     let authored = fs::read_to_string(producer.join("src/lib.incn"))?;
     fs::write(
         producer.join("src/lib.incn"),
         format!(
-            "{}\n@rust.derive(Eq, Hash)\nmodel InvalidNativeDerive:\n    value: float\n",
+            "{}\n@rust.derive(Eq, Hash)\npub model InvalidNativeDerive:\n    pub value: float\n",
             authored.replace("return 20", "return 99")
         ),
     )?;
@@ -435,7 +436,7 @@ fn source_unavailable_type_facade_signatures_run_natively_and_without_linking() 
         &consumer,
         "consumer",
         "main.incn",
-        "from pub::pricing import first, keep, quote\n\ndef main() -> None:\n    product = first()\n    values = keep([product])\n    println(quote(values[0]))\n",
+        "from pub::pricing import first, quote\n\ndef main() -> None:\n    println(quote(first()))\n",
         "\n[dependencies]\npricing = { path = \"../pricing\" }\n",
     )?;
     bake(&consumer)?;
@@ -457,6 +458,26 @@ fn source_unavailable_type_facade_signatures_run_natively_and_without_linking() 
         "source-unavailable pricing-only native consumer",
     )?;
     assert_eq!(retained_native.stdout, native.stdout);
+    // This project has never been compiled. Its first publication must link only the admitted package artifacts;
+    // re-running the existing executable above would not prove the source-unavailable linking boundary. This native
+    // probe also exercises nested foreign signatures; nominal list construction remains outside the direct profile.
+    let fresh_consumer = temporary.path().join("fresh_consumer");
+    project(
+        &fresh_consumer,
+        "fresh_consumer",
+        "main.incn",
+        "from pub::pricing import first, keep, quote\n\ndef main() -> None:\n    product = first()\n    values = keep([product])\n    println(quote(values[0]))\n",
+        "\n[dependencies]\npricing = { path = \"../pricing\" }\n",
+    )?;
+    assert!(!fresh_consumer.join("target").exists());
+    bake(&fresh_consumer)?;
+    let freshly_linked = success(
+        command(&fresh_consumer)
+            .args(["run", "--locked", "src/main.incn"])
+            .output()?,
+        "fresh pricing-only native consumer after all producer sources were removed",
+    )?;
+    assert_eq!(freshly_linked.stdout, native.stdout);
     let replacement = success(
         command(&consumer)
             .args(["build", "src/main.incn", "--backend", "replacement"])

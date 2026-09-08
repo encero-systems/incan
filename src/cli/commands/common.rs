@@ -318,24 +318,15 @@ fn sdk_provider_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
         .map(|path| fs::canonicalize(&path).unwrap_or(path))
 }
 
-/// Seed a development SDK provider build from the verified enclosing workspace lockfile.
-fn seed_sdk_provider_workspace_lock(workspace_lock: Option<&Path>, artifact_root: &Path) -> CliResult<()> {
+/// Pass the verified SDK lock to the child that owns generated output publication.
+///
+/// The child's lock resolver and project generator materialize this payload inside its library transaction. Writing
+/// Cargo.lock into the output beforehand would create a nonempty directory without generated-library ownership.
+fn configure_sdk_provider_workspace_lock(command: &mut Command, workspace_lock: Option<&Path>) {
     let Some(workspace_lock) = workspace_lock else {
-        return Ok(());
+        return;
     };
-    fs::create_dir_all(artifact_root).map_err(|error| {
-        CliError::failure(format!(
-            "failed to create SDK provider artifact directory {}: {error}",
-            artifact_root.display()
-        ))
-    })?;
-    fs::copy(workspace_lock, artifact_root.join("Cargo.lock")).map_err(|error| {
-        CliError::failure(format!(
-            "failed to seed SDK provider artifact lock from {}: {error}",
-            workspace_lock.display()
-        ))
-    })?;
-    Ok(())
+    command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
 }
 
 /// Keep the bootstrap artifact lock alive for the whole preparation/publish transaction.
@@ -899,7 +890,6 @@ fn build_sdk_components_into_staging(
 
     for component in catalog.publication_order() {
         let output_root = staging_root.join("components").join(&component.id);
-        seed_sdk_provider_workspace_lock(workspace_lock, &output_root)?;
         let manifest = ProjectManifest::discover(&component.project_root)
             .map_err(|error| CliError::failure(error.to_string()))?
             .ok_or_else(|| {
@@ -940,9 +930,7 @@ fn build_sdk_components_into_staging(
         } else {
             command.env_remove(SDK_INVENTORY_OVERRIDE_ENV);
         }
-        if let Some(workspace_lock) = workspace_lock {
-            command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
-        }
+        configure_sdk_provider_workspace_lock(&mut command, workspace_lock);
         let output = command.output().map_err(|error| {
             CliError::failure(format!(
                 "failed to run SDK component build for `{}` at {}: {error}",
@@ -5587,11 +5575,17 @@ mod tests {
         fs::write(workspace.join("Cargo.lock"), "workspace lock payload")?;
 
         let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
-        seed_sdk_provider_workspace_lock(workspace_lock.as_deref(), &artifact_root)?;
-
-        assert_eq!(
-            fs::read_to_string(artifact_root.join("Cargo.lock"))?,
-            "workspace lock payload"
+        let mut command = Command::new("incan");
+        configure_sdk_provider_workspace_lock(&mut command, workspace_lock.as_deref());
+        let selected = command
+            .get_envs()
+            .find(|(name, _)| *name == INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
+            .and_then(|(_, path)| path)
+            .ok_or("SDK lock authority absent from child command")?;
+        assert_eq!(fs::read_to_string(selected)?, "workspace lock payload");
+        assert!(
+            !artifact_root.exists(),
+            "the child's output transaction owns lock materialization"
         );
         Ok(())
     }

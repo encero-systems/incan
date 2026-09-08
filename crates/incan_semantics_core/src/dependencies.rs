@@ -9,6 +9,8 @@ use crate::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticFactKind, 
 pub struct CheckedReference<'a> {
     /// Identity selected by the checker, independent of source aliases and inspection record labels.
     pub target: &'a CanonicalSymbolId,
+    /// Declaration whose retained context implements this reference; generated members require their nominal owner.
+    pub requirement: &'a CanonicalSymbolId,
     /// Closest enclosing checked declaration, excluding broader ancestors and ambiguous ownership.
     pub owner: Option<&'a CanonicalSymbolId>,
 }
@@ -44,7 +46,7 @@ impl CheckedDependencyGraph {
                         .dependencies
                         .entry(owner.clone())
                         .or_default()
-                        .insert(reference.target.clone());
+                        .insert(reference.requirement.clone());
                 }
             }
         }
@@ -86,8 +88,18 @@ impl SemanticFactStore {
     /// Return a checked target and its projected ownership through one shared query for graph consumers.
     pub fn checked_reference(&self, subject: &CompilerNodeId) -> Option<CheckedReference<'_>> {
         let target = unique_identity(self, subject, SemanticFactKind::SymbolIdentity)?;
+        let requirement = if self
+            .facts_for_kind(subject, SemanticFactKind::RequiredReferenceTarget)
+            .next()
+            .is_some()
+        {
+            unique_identity(self, subject, SemanticFactKind::RequiredReferenceTarget)?
+        } else {
+            target
+        };
         Some(CheckedReference {
             target,
+            requirement,
             owner: unique_identity(self, subject, SemanticFactKind::ReferenceOwner),
         })
     }
@@ -149,8 +161,13 @@ pub fn closest_declaring_owner<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{SemanticFact, SemanticSourceTargetKind};
+    use std::collections::BTreeSet;
+
+    use super::{CheckedDependencyGraph, closest_declaring_owner};
+    use crate::{
+        CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticFact, SemanticFactKind, SemanticFactStore,
+        SemanticFactValue, SemanticSourceTargetKind,
+    };
 
     /// Give each fixture a real declaring span; reference spellings do not participate in identity.
     fn declaration(name: &str, kind: SemanticSourceTargetKind, start: usize, end: usize) -> CanonicalSymbolId {
@@ -258,5 +275,42 @@ mod tests {
                 .next()
                 .is_none()
         );
+    }
+
+    /// Navigation retains a generated member while executable requirements select its checked nominal context.
+    #[test]
+    fn generated_member_requirements_preserve_navigation_and_reject_conflicting_owners()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let main = declaration("main", SemanticSourceTargetKind::Function, 0, 90);
+        let owner = declaration("Count", SemanticSourceTargetKind::Enum, 100, 120);
+        let helper = declaration("value", SemanticSourceTargetKind::Method, 100, 120);
+        let subject = CompilerNodeId::expression_span("main", 10, 11);
+        let mut facts = SemanticFactStore::new();
+        reference(&mut facts, 10, &main, &helper);
+        facts.insert(SemanticFact::new(
+            subject.clone(),
+            SemanticFactKind::RequiredReferenceTarget,
+            SemanticFactValue::canonical_identity(owner.clone()),
+        ));
+        let checked = facts.checked_reference(&subject).ok_or("generated reference absent")?;
+        assert_eq!(checked.target, &helper);
+        assert_eq!(checked.requirement, &owner);
+        assert_eq!(
+            CheckedDependencyGraph::from_fact_stores([&facts]).reachable_from([main.clone()]),
+            BTreeSet::from([main.clone(), owner])
+        );
+        facts.insert(SemanticFact::new(
+            subject.clone(),
+            SemanticFactKind::RequiredReferenceTarget,
+            SemanticFactValue::canonical_identity(declaration("Other", SemanticSourceTargetKind::Enum, 130, 150)),
+        ));
+        assert!(facts.checked_reference(&subject).is_none());
+        assert!(
+            CheckedDependencyGraph::from_fact_stores([&facts])
+                .dependencies(&main)
+                .next()
+                .is_none()
+        );
+        Ok(())
     }
 }

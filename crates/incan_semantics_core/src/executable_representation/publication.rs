@@ -229,9 +229,15 @@ impl<'a> PublicationAudit<'a> {
             match projection {
                 PlaceElem::Field {
                     canonical: Some(identity),
+                    synthesized: false,
                     ..
                 } => self.identity(identity, false)?,
-                PlaceElem::Field { canonical: None, .. } => {}
+                PlaceElem::Field {
+                    canonical: None,
+                    synthesized: true,
+                    ..
+                } => {}
+                PlaceElem::Field { .. } => return Err(CoverageReason::UnresolvedReference),
                 PlaceElem::Index(value) => self.operand(value)?,
                 PlaceElem::Slice { start, end, step } => {
                     for value in [start, end, step].into_iter().flatten() {
