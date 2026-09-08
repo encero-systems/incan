@@ -11770,8 +11770,8 @@ fn digest_baked_project_lock_authority(lock_path: &Path) -> CliResult<String> {
     let mut semantic = lock.semantic;
     // A bake refreshes compiler-owned SDK identity records to the active release cohort. Those records are already
     // bound by the compiler/runtime receipt inputs, so treating them as authored project authority would make the
-    // publisher reject its own lock refresh. Package, feature, custom-provider, Oven, workspace, and Cargo-lock
-    // selections remain part of this lock authority.
+    // publisher reject its own lock refresh. Package, feature, custom-provider, Oven and workspace selections
+    // remain part of this lock authority.
     semantic.sdk = None;
     semantic
         .providers
@@ -11785,7 +11785,6 @@ fn digest_baked_project_lock_authority(lock_path: &Path) -> CliResult<String> {
     let projection = serde_json::json!({
         "cargo_features": lock.cargo_features,
         "semantic": semantic,
-        "cargo_lock_payload": lock.cargo_lock_payload,
     });
     serde_json::to_vec(&projection)
         .map(|bytes| digest_bytes(&bytes))
@@ -15146,12 +15145,8 @@ headers = ["interop/include/bridge.h"]
             "[package]\nname = \"rust_helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         )?;
         fs::write(rust_helper.join("src/lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
-        IncanLock::new(
-            "sha256:canonical-one".to_string(),
-            CargoFeatureSelection::default(),
-            "version = 4\n".to_string(),
-        )
-        .write(&workspace.path().join("oven.lock"))?;
+        IncanLock::new("sha256:canonical-one".to_string(), CargoFeatureSelection::default())
+            .write(&workspace.path().join("oven.lock"))?;
         fs::write(member.join("oven.lock"), "obsolete-member-lock-one\n")?;
 
         let initial = digest_baked_project_source_authority(&member)?;
@@ -15162,28 +15157,28 @@ headers = ["interop/include/bridge.h"]
             "a workspace member must ignore a non-authoritative member-local lock"
         );
 
-        IncanLock::new(
-            "sha256:canonical-two".to_string(),
-            CargoFeatureSelection::default(),
-            "version = 4\n".to_string(),
-        )
-        .write(&workspace.path().join("oven.lock"))?;
+        IncanLock::new("sha256:canonical-two".to_string(), CargoFeatureSelection::default())
+            .write(&workspace.path().join("oven.lock"))?;
         assert_eq!(
             initial,
             digest_baked_project_source_authority(&member)?,
             "a derived dependency fingerprint must not replace the canonical semantic lock authority"
         );
 
-        IncanLock::new(
-            "sha256:canonical-two".to_string(),
-            CargoFeatureSelection::default(),
-            "version = 4\n\n[[package]]\nname = \"changed\"\nversion = \"1.0.0\"\n".to_string(),
-        )
-        .write(&workspace.path().join("oven.lock"))?;
+        let mut selected_lock = IncanLock::new("sha256:canonical-two".to_string(), CargoFeatureSelection::default());
+        selected_lock.semantic.providers.push(LockedProvider {
+            identity: "custom_provider@1.0.0#sha256:changed[]".to_string(),
+            participation: "used".to_string(),
+            namespace_claims: BTreeSet::new(),
+            used_modules: BTreeSet::new(),
+            implementation_facets: Vec::new(),
+            backend_requirements: BTreeSet::new(),
+        });
+        selected_lock.write(&workspace.path().join("oven.lock"))?;
         assert_ne!(
             initial,
             digest_baked_project_source_authority(&member)?,
-            "a canonical lock payload change must invalidate completed project authority"
+            "a changed canonical provider selection must invalidate completed project authority"
         );
 
         let changed_lock = digest_baked_project_source_authority(&member)?;
@@ -15214,11 +15209,7 @@ headers = ["interop/include/bridge.h"]
         )?;
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let lock_path = project.path().join("oven.lock");
-        let mut lock = IncanLock::new(
-            "sha256:lock-migration".to_string(),
-            CargoFeatureSelection::default(),
-            "version = 4\n".to_string(),
-        );
+        let mut lock = IncanLock::new("sha256:lock-migration".to_string(), CargoFeatureSelection::default());
         lock.format = 1;
         lock.write(&lock_path)?;
         let format_one = digest_baked_project_source_authority(project.path())?;
@@ -15278,7 +15269,6 @@ headers = ["interop/include/bridge.h"]
                 ],
                 ..SemanticLockState::default()
             },
-            "version = 4\n".to_string(),
         );
         lock.write(&lock_path)?;
         let initial = digest_baked_project_source_authority(project.path())?;
@@ -15422,12 +15412,7 @@ headers = ["interop/include/bridge.h"]
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let lock_path = project.path().join("oven.lock");
         let write_lock = |fingerprint: &str| {
-            IncanLock::new(
-                fingerprint.to_string(),
-                CargoFeatureSelection::default(),
-                "version = 4\n".to_string(),
-            )
-            .write(&lock_path)
+            IncanLock::new(fingerprint.to_string(), CargoFeatureSelection::default()).write(&lock_path)
         };
         write_lock("sha256:old")?;
         let (old_receipt, old_payload, old_files) =
@@ -16683,7 +16668,6 @@ headers = ["interop/include/bridge.h"]
                 }),
                 ..SemanticLockState::default()
             },
-            String::new(),
         )
         .write(&project.path().join("oven.lock"))?;
         let receipt = receipt_interop_execution(
@@ -16841,7 +16825,6 @@ headers = ["interop/include/bridge.h"]
             manifest_name: "provider".to_string(),
             manifest_path,
             crate_root: artifact_root.clone(),
-            cargo_toml_path: artifact_root.join("Cargo.toml"),
             crate_lib_path,
             kind: LibraryArtifactKind::Materialized,
         };
@@ -16880,7 +16863,6 @@ headers = ["interop/include/bridge.h"]
             manifest_name: "provider".to_string(),
             manifest_path: manifest_path.clone(),
             crate_root: artifact_root.clone(),
-            cargo_toml_path: artifact_root.join("Cargo.toml"),
             crate_lib_path: crate_lib_path.clone(),
             kind: LibraryArtifactKind::Materialized,
         };
@@ -17107,7 +17089,6 @@ headers = ["interop/include/bridge.h"]
             manifest_name: "provider".to_string(),
             manifest_path: workspace.path().join("provider.incnlib"),
             crate_root: artifact_root.clone(),
-            cargo_toml_path: artifact_root.join("Cargo.toml"),
             crate_lib_path: artifact_root.join("src/lib.rs"),
             kind: LibraryArtifactKind::Materialized,
         };
@@ -17380,7 +17361,6 @@ headers = ["interop/include/bridge.h"]
             manifest_name: "query_provider".to_string(),
             manifest_path: workspace.path().join("query_provider.incnlib"),
             crate_root: artifact_root.clone(),
-            cargo_toml_path: artifact_root.join("Cargo.toml"),
             crate_lib_path: artifact_root.join("src/lib.rs"),
             kind: LibraryArtifactKind::Materialized,
         };
@@ -17420,7 +17400,6 @@ headers = ["interop/include/bridge.h"]
             manifest_name: "provider_macros".to_string(),
             manifest_path: workspace.path().join("provider_macros.incnlib"),
             crate_root: artifact_root.clone(),
-            cargo_toml_path: artifact_root.join("Cargo.toml"),
             crate_lib_path: artifact_root.join("src/lib.rs"),
             kind: LibraryArtifactKind::Materialized,
         };
@@ -17637,9 +17616,8 @@ headers = ["interop/include/bridge.h"]
             "def main() -> None:\n    println(\"ok\")\n",
         )?;
 
-        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default());
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let entry_path = scripts_dir.join("check.incn");
@@ -18468,9 +18446,8 @@ impl ChildId {
             "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
         )?;
 
-        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default());
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
@@ -18536,10 +18513,8 @@ impl ChildId {
             "pub def doubled(value: int) -> int:\n    return value * 2\n",
         )?;
 
-        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload)
-            .write(&project_root.join("oven.lock"))?;
+        IncanLock::new(fingerprint, CargoFeatureSelection::default()).write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
         let lib_path_str = lib_path.to_str().ok_or("lib path should be valid utf-8")?;
@@ -18627,9 +18602,8 @@ pub def answer() -> int:
 "#,
         )?;
 
-        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default());
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
@@ -18747,9 +18721,8 @@ pub def normalize(value: str) -> str:
 "#,
         )?;
 
-        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default());
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
