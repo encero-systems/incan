@@ -5145,6 +5145,10 @@ impl TypeChecker {
         binding_name: &str,
         span: Span,
     ) -> ResolvedType {
+        self.type_info
+            .declarations
+            .generic_identity_decorator_applications
+            .remove(&(span.start, span.end));
         let ResolvedType::Function(params, ret) = callable_ty else {
             if !matches!(callable_ty, ResolvedType::Unknown) {
                 self.errors.push(if display.contains('(') {
@@ -5164,6 +5168,15 @@ impl TypeChecker {
         self.validate_callable_arg_bindings(display, &params, &args, &arg_types, &mut type_bindings, span);
         if self.errors.len() != error_count {
             return ResolvedType::Unknown;
+        }
+        if let [param] = params.as_slice()
+            && matches!(param.ty, ResolvedType::TypeVar(_))
+            && param.ty == *ret
+        {
+            self.type_info
+                .declarations
+                .generic_identity_decorator_applications
+                .insert((span.start, span.end));
         }
         let result_ty = substitute_resolved_type(&ret, &type_bindings);
         if !matches!(result_ty, ResolvedType::Function(_, _) | ResolvedType::Unknown) {
