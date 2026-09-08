@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn publication_captures_nominal_method_return_unions() -> TestResult {
         let source =
-            "pub model Box:\n    value: int\n\n    pub def answer(self) -> int | str:\n        return self.value\n";
+            "pub model Box:\n    value: int\n\n    def answer(self) -> int | str:\n        return self.value\n";
         let (_, captured, definitions, _) = emitted_module(source, "lib")?;
         assert!(
             !definitions.is_empty(),
