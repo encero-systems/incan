@@ -1,0 +1,13 @@
+"""Price calculations whose edits should invalidate the selected consumer closure."""
+
+from product import Product
+
+
+pub def line_total(product: Product, quantity: int = 1) -> int:
+    """Return the line price in cents for a nonnegative quantity."""
+    return product.price_cents * quantity
+
+
+def unpublished_note() -> str:
+    """Keep an unused private declaration outside the published execution closure."""
+    return "internal catalog note"

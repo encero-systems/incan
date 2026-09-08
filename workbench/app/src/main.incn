@@ -1,0 +1,12 @@
+"""Print a deterministic quotation through Incan packages and a Rust dependency."""
+
+from rust::regex import Regex
+from orders import quotation_lines
+from presentation import print_quotation
+
+
+def main() -> None:
+    """Validate SKU syntax before printing each quoted line and its total."""
+    match Regex.new("^SKU-[0-9]+$"):
+        Ok(pattern) => print_quotation(quotation_lines(), pattern)
+        Err(error) => println(f"Could not compile the SKU pattern: {error}")

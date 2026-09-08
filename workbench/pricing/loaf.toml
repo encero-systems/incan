@@ -1,0 +1,6 @@
+[project]
+name = "workbench_pricing"
+version = "0.1.0"
+
+[dependencies]
+catalog = { path = "../catalog" }

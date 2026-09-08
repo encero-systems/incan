@@ -1,0 +1,16 @@
+"""Terminal rendering and Rust-backed validation of the quoted order."""
+
+from rust::regex import Regex
+from pub::pricing import Quotation
+
+
+def print_quotation(lines: List[Quotation], pattern: Regex) -> None:
+    """Print valid lines and their combined price, refusing an invalid SKU."""
+    mut total = 0
+    for line in lines:
+        if not pattern.is_match(line.product.sku):
+            println(f"Invalid SKU: {line.product.sku}")
+            return
+        println(f"{line.product.sku}: {line.quantity} units, {line.total_cents} cents")
+        total += line.total_cents
+    println(f"total: {total} cents")
