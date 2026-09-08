@@ -140,6 +140,32 @@ fn a_renamed_dependency_executes_its_canonical_public_body() -> Result<(), Box<d
     Ok(())
 }
 
+/// A source-written numeric tuple field is covered through checked structural type evidence.
+#[test]
+fn checked_tuple_field_publication_executes_without_a_nominal_member_identity() -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let manifest = artifact(
+        temporary.path(),
+        "tuples",
+        "pub def answer() -> int:\n    pair = (42, 0)\n    return pair.0\n",
+    )?;
+    let identity = manifest
+        .contract_metadata
+        .identity_graph
+        .canonical_for_public_name("answer")
+        .ok_or("tuple export identity missing")?;
+    let resolved = resolve_executable_requirements(
+        &index(temporary.path(), "renamed", &manifest),
+        &BTreeSet::from([identity]),
+    )?;
+    let module = resolved.modules.first().ok_or("tuple body not published")?;
+    assert_eq!(
+        execute_free_function(module, "answer", &[])?.value.observable_text(),
+        "42"
+    );
+    Ok(())
+}
+
 /// Same module names and spans in different packages cannot collide in a consumer's execution graph.
 #[test]
 fn two_packages_with_identical_module_paths_keep_distinct_physical_owners() -> Result<(), Box<dyn Error>> {

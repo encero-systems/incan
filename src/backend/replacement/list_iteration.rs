@@ -210,7 +210,7 @@ fn list_operand_element<'a>(
             PlaceElem::Field {
                 name,
                 canonical: None,
-                synthesized: true,
+                structural: true,
             },
         ] => match local_type {
             IncanType::Tuple(elements) => name.parse::<usize>().ok().and_then(|index| elements.get(index)),
