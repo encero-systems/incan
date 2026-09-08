@@ -1,0 +1,6 @@
+[project]
+name = "oven_local_intake"
+version = "0.1.0"
+
+[project.scripts]
+acceptance = "src/acceptance.incn"

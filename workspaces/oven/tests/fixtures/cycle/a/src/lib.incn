@@ -1,0 +1,5 @@
+"""Minimal conventional library source for local manifest refusal tests."""
+
+pub def value() -> int:
+    """Keep the fixture a valid library without introducing another dependency."""
+    return 1
