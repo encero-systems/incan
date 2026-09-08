@@ -10006,6 +10006,44 @@ fn materialize_project_output(project_root: &Path, output: &OvenStoredProjectOut
     Ok(())
 }
 
+/// Publish a selected library cohort as one ordinary-error transaction, retaining a verified warm no-op.
+fn materialize_completed_library_outputs<T>(
+    project_root: &Path,
+    outputs: &[OvenStoredProjectOutput],
+    backend_receipt: &crate::backend::selection::BackendExecutionReceipt,
+    complete: impl FnOnce() -> CliResult<T>,
+) -> CliResult<T> {
+    let receipt_path = default_backend_receipt_path(project_root);
+    let expected_receipt = serde_json::to_vec_pretty(backend_receipt)
+        .map_err(|error| CliError::failure(format!("failed to encode completed library receipt: {error}")))?;
+    let current = outputs.iter().try_fold(true, |current, output| {
+        Ok::<_, CliError>(project_output_projection_is_current(project_root, output)? && current)
+    })?;
+    if current && fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected_receipt) {
+        return complete();
+    }
+    let publication = if current {
+        library_publication::LibraryPublication::begin_receipt_update(project_root, vec![receipt_path.clone()])?
+    } else {
+        library_publication::LibraryPublication::begin(
+            project_root,
+            &project_root.join("target/lib"),
+            library_publication_receipts(project_root)?,
+        )?
+        .retaining_package_cache()
+    };
+    let result = (|| {
+        if !current {
+            for output in outputs {
+                materialize_project_output(project_root, output)?;
+            }
+        }
+        write_backend_receipt(backend_receipt, &receipt_path)?;
+        complete()
+    })();
+    publication.finish(result)
+}
+
 /// Compile a receipt-authorized generated executable through the selected direct-rustc Oven plan.
 fn bake_oven_project(
     prepared: &OvenPreparedProject,
@@ -13438,22 +13476,10 @@ fn try_reuse_baked_project(
     )
     .map_err(|error| CliError::failure(error.to_string()))?;
     let _validated_authority = super::lock::prepare_project_registry_source_authorities(authority)?;
-    for (_, output, _, _) in &selected_outputs {
-        materialize_project_output(project_root, output)?;
-    }
-    let library_outputs = selected_outputs
-        .iter()
-        .filter_map(|(project_target, output, _, _)| {
-            (*project_target == OvenBakeProjectTarget::Library).then_some(output)
-        })
-        .collect::<Vec<_>>();
-    if !restore_reused_library_package(project_root, store, &source_authority_digest, &library_outputs)? {
-        return Ok(None);
-    }
 
     let mut generated_sources = BTreeMap::new();
     let mut profiles = Vec::new();
-    for (project_target, output, receipt_path, _) in selected_outputs {
+    for (project_target, output, receipt_path, _) in &selected_outputs {
         let generated_relative_path = match project_target {
             OvenBakeProjectTarget::Library => "generated/src/lib.rs",
             OvenBakeProjectTarget::Executable => "generated/src/main.rs",
@@ -13479,19 +13505,59 @@ fn try_reuse_baked_project(
             profile: output.profile.clone(),
             target: output.intent.target.clone(),
             toolchain: output.intent.toolchain.clone(),
-            receipt: receipt_path,
+            receipt: receipt_path.clone(),
             receipt_identity: output.payload.receipt_identity.clone(),
             build_unit_identity: output.payload.build_unit_identity.clone(),
             plan_identity: output.payload.plan_identity.clone(),
             action: "reused",
         });
     }
-    Ok(Some(OvenProjectBakeReport {
+    let report = OvenProjectBakeReport {
         project: project_root.to_path_buf(),
         generated_sources,
         store: store.root().to_path_buf(),
         profiles,
-    }))
+    };
+    let library_outputs = selected_outputs
+        .iter()
+        .filter_map(|(project_target, output, _, _)| {
+            (*project_target == OvenBakeProjectTarget::Library).then_some(output)
+        })
+        .collect::<Vec<_>>();
+    let library_current = library_outputs.iter().try_fold(true, |current, output| {
+        Ok::<_, CliError>(project_output_projection_is_current(project_root, output)? && current)
+    })?;
+    // A verified warm hit leaves the artifact in place. Repairing a stale projection captures the whole prior
+    // library before any profile is copied; a later handoff cache miss must roll back before starting a fresh bake.
+    let publication = if library_current {
+        None
+    } else {
+        Some(library_publication::LibraryPublication::begin(
+            project_root,
+            &project_root.join("target/lib"),
+            library_publication_receipts(project_root)?,
+        )?)
+    };
+    let result = (|| {
+        if !library_current {
+            for output in &library_outputs {
+                materialize_project_output(project_root, output)?;
+            }
+        }
+        if !restore_reused_library_package(project_root, store, &source_authority_digest, &library_outputs)? {
+            return Ok(None);
+        }
+        for (project_target, output, _, _) in &selected_outputs {
+            if *project_target == OvenBakeProjectTarget::Executable {
+                materialize_project_output(project_root, output)?;
+            }
+        }
+        Ok(Some(report))
+    })();
+    match publication {
+        Some(publication) => publication.finish_reuse(result),
+        None => result,
+    }
 }
 
 /// Copy one already selected project Loaf into the public provider artifact through normal immutable-store admission.
@@ -14847,11 +14913,9 @@ pub(crate) fn build_library_report(
                 .or_else(|| outputs.first())
                 .and_then(completed_output_default_backend_receipt)
                 .ok_or_else(|| CliError::failure("completed Oven library output has no verified backend receipt"))?;
-            for output in &outputs {
-                materialize_project_output(&project_root, output)?;
-            }
-            write_backend_receipt(&backend_receipt, &default_backend_receipt_path(&project_root))?;
-            return completed_library_output_report(&project_root, &outputs, total_start);
+            return materialize_completed_library_outputs(&project_root, &outputs, &backend_receipt, || {
+                completed_library_output_report(&project_root, &outputs, total_start)
+            });
         }
     }
     let project_root = resolve_library_project_root(file_path)?;
@@ -17386,7 +17450,7 @@ headers = ["interop/include/bridge.h"]
         publish_project_output_loaf(&store, &receipt, &payload, &files)?;
 
         fs::remove_dir_all(project.path().join("target/lib"))?;
-        let selected = select_baked_project_output(
+        let mut selected = select_baked_project_output(
             &store,
             project.path(),
             &entrypoint,
@@ -17418,6 +17482,70 @@ headers = ["interop/include/bridge.h"]
         materialize_project_output(project.path(), &selected)?;
         assert_eq!(fs::read(&native_output)?, b"fixture native output");
         assert!(project_output_projection_is_current(project.path(), &selected)?);
+
+        // Exercise the same cohort publisher as normal build --lib. A late report/receipt failure and a
+        // mid-copy payload failure must both restore the entire old generation, including its projection marker.
+        let artifact_root = project.path().join("target/lib");
+        let cache_object = artifact_root.join("oven/loafs/retained/object");
+        fs::create_dir_all(cache_object.parent().ok_or("cache object has no parent")?)?;
+        fs::write(&cache_object, "immutable package cache")?;
+        let receipt_path = default_backend_receipt_path(project.path());
+        fs::create_dir_all(receipt_path.parent().ok_or("receipt has no parent")?)?;
+        fs::write(&receipt_path, "previous backend receipt")?;
+        fs::write(&generated_source, "previous generated Rust")?;
+        fs::write(&native_output, "previous native artifact")?;
+        let marker = project_output_projection_marker_path(project.path(), &selected)?;
+        let previous_marker = fs::read(&marker)?;
+        let backend_receipt = selected.payload.backend_receipt.clone();
+        let failed = materialize_completed_library_outputs(
+            project.path(),
+            std::slice::from_ref(&selected),
+            &backend_receipt,
+            || -> CliResult<()> { Err(CliError::failure("late completed report failure")) },
+        );
+        assert!(failed.is_err());
+        assert_eq!(fs::read_to_string(&generated_source)?, "previous generated Rust");
+        assert_eq!(fs::read_to_string(&native_output)?, "previous native artifact");
+        assert_eq!(fs::read(&marker)?, previous_marker);
+        assert_eq!(fs::read_to_string(&receipt_path)?, "previous backend receipt");
+        assert_eq!(fs::read_to_string(&cache_object)?, "immutable package cache");
+
+        let original_digest = selected.payload.files[1].digest.clone();
+        selected.payload.files[1].digest = format!("sha256:{}", "0".repeat(64));
+        let failed = materialize_completed_library_outputs(
+            project.path(),
+            std::slice::from_ref(&selected),
+            &backend_receipt,
+            || Ok(()),
+        );
+        selected.payload.files[1].digest = original_digest;
+        let Err(error) = failed else {
+            return Err("mismatched second stored file unexpectedly materialized".into());
+        };
+        assert!(error.message.contains("digest differs"));
+        assert_eq!(fs::read_to_string(&generated_source)?, "previous generated Rust");
+        assert_eq!(fs::read_to_string(&native_output)?, "previous native artifact");
+        assert_eq!(fs::read(&marker)?, previous_marker);
+        assert_eq!(fs::read_to_string(&receipt_path)?, "previous backend receipt");
+
+        materialize_completed_library_outputs(
+            project.path(),
+            std::slice::from_ref(&selected),
+            &backend_receipt,
+            || Ok(()),
+        )?;
+        assert_eq!(fs::read_to_string(&cache_object)?, "immutable package cache");
+        assert!(project_output_projection_is_current(project.path(), &selected)?);
+        let root_modified = fs::metadata(&artifact_root)?.modified()?;
+        let receipt_modified = fs::metadata(&receipt_path)?.modified()?;
+        materialize_completed_library_outputs(
+            project.path(),
+            std::slice::from_ref(&selected),
+            &backend_receipt,
+            || Ok(()),
+        )?;
+        assert_eq!(fs::metadata(&artifact_root)?.modified()?, root_modified);
+        assert_eq!(fs::metadata(&receipt_path)?.modified()?, receipt_modified);
         Ok(())
     }
 

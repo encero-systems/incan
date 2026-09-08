@@ -15,11 +15,23 @@ pub(super) struct LibraryPublication {
     backup: PathBuf,
     previous: bool,
     receipts: Vec<(PathBuf, Option<Vec<u8>>)>,
+    retain_package_cache: bool,
+    replace_artifact: bool,
 }
 
 impl LibraryPublication {
     /// Preserve an existing generated artifact before any generator, compiler or receipt writer can change it.
     pub(super) fn begin(project: &Path, output: &Path, receipts: Vec<PathBuf>) -> CliResult<Self> {
+        Self::begin_mode(project, output, receipts, true)
+    }
+
+    /// A current artifact needs only its external receipt captured, with no directory move or payload copy.
+    pub(super) fn begin_receipt_update(project: &Path, receipts: Vec<PathBuf>) -> CliResult<Self> {
+        Self::begin_mode(project, &project.join("target/lib"), receipts, false)
+    }
+
+    /// Capture recovery material for the precise caller projection that the operation can change.
+    fn begin_mode(project: &Path, output: &Path, receipts: Vec<PathBuf>, replace_artifact: bool) -> CliResult<Self> {
         let project = fs::canonicalize(project).map_err(io_error)?;
         let parent = output
             .parent()
@@ -41,7 +53,7 @@ impl LibraryPublication {
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(io_error(error)),
         };
-        let previous = metadata.is_some();
+        let previous = metadata.is_some() && replace_artifact;
         if let Some(metadata) = metadata {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(CliError::failure(
@@ -110,11 +122,19 @@ impl LibraryPublication {
             backup,
             previous,
             receipts,
+            retain_package_cache: false,
+            replace_artifact,
         };
-        if let Err(error) = fs::create_dir(&publication.output) {
+        if replace_artifact && let Err(error) = fs::create_dir(&publication.output) {
             return publication.finish::<Self>(Err(io_error(error)));
         }
         Ok(publication)
+    }
+
+    /// Normal replay keeps the prior immutable package cache when its selected output omits that portable store.
+    pub(super) fn retaining_package_cache(mut self) -> Self {
+        self.retain_package_cache = true;
+        self
     }
 
     /// Complete the build or restore its entire prior generation, surfacing any failed restoration and backup path.
@@ -124,6 +144,14 @@ impl LibraryPublication {
                 // Retain unrelated custom-output files, while never resurrecting an obsolete generated module,
                 // semantic surface, or native profile from a different successful generation.
                 copy_unrelated(&self.backup.join("artifact"), &self.output).map_err(io_error)?;
+                let previous_cache = self.backup.join("artifact/oven/loafs");
+                let current_cache = self.output.join("oven/loafs");
+                if self.retain_package_cache && previous_cache.exists() && !current_cache.exists() {
+                    fs::create_dir_all(self.output.join("oven")).map_err(io_error)?;
+                    // This is the last fallible commit step. A failed rename leaves the backup intact; success
+                    // moves immutable cache bytes without duplicating them or reviving old native profiles.
+                    fs::rename(previous_cache, current_cache).map_err(io_error)?;
+                }
             }
             Ok(value)
         });
@@ -150,10 +178,29 @@ impl LibraryPublication {
         }
     }
 
+    /// A cache miss after provisional materialization must restore the prior generation before a fresh bake starts.
+    pub(super) fn finish_reuse<T>(self, result: CliResult<Option<T>>) -> CliResult<Option<T>> {
+        if matches!(result, Ok(None)) {
+            self.restore().map_err(|error| {
+                CliError::failure(format!(
+                    "library cache reuse was declined; library rollback failed: {error}. Inspect output {} and retained recovery directory {}",
+                    self.output.display(),
+                    self.backup.display()
+                ))
+            })?;
+            Ok(None)
+        } else {
+            self.finish(result)
+        }
+    }
+
     /// Attempt artifact and receipt restoration independently, retaining all recovery material when any step fails.
     fn restore(&self) -> io::Result<()> {
         let mut errors = Vec::new();
         let artifact = (|| -> io::Result<()> {
+            if !self.replace_artifact {
+                return Ok(());
+            }
             match fs::remove_dir_all(&self.output) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -377,6 +424,86 @@ mod tests {
         assert_eq!(fs::read_to_string(output.join("src/lib.rs"))?, "new Rust");
         assert!(!output.join("src/obsolete.rs").exists());
         assert!(!output.join("oven/release/old.rlib").exists());
+        Ok(())
+    }
+
+    /// A declined replay restores the old artifact; an accepted normal replay retains only its immutable cache.
+    #[test]
+    fn completed_replay_restores_cache_misses_and_preserves_only_the_package_cache() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        let output = temporary.path().join("target/lib");
+        fs::create_dir_all(output.join("oven/loafs/entry"))?;
+        fs::create_dir_all(output.join("oven/release"))?;
+        fs::write(output.join("oven/loafs/entry/object"), "immutable cached bytes")?;
+        fs::write(output.join("oven/release/old.rlib"), "old native bytes")?;
+        let publication = LibraryPublication::begin(temporary.path(), &output, vec![])?;
+        fs::write(output.join("new-manifest"), "provisional manifest")?;
+        assert!(publication.finish_reuse::<()>(Ok(None))?.is_none());
+        assert_eq!(
+            fs::read_to_string(output.join("oven/release/old.rlib"))?,
+            "old native bytes"
+        );
+        assert!(!output.join("new-manifest").exists());
+
+        let publication = LibraryPublication::begin(temporary.path(), &output, vec![])?.retaining_package_cache();
+        fs::write(output.join("new-manifest"), "selected manifest")?;
+        assert!(
+            publication
+                .finish::<()>(Err(CliError::failure("report publication failed")))
+                .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("oven/loafs/entry/object"))?,
+            "immutable cached bytes"
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("oven/release/old.rlib"))?,
+            "old native bytes"
+        );
+
+        let publication = LibraryPublication::begin(temporary.path(), &output, vec![])?.retaining_package_cache();
+        fs::write(output.join("oven"), "blocks cache destination directory")?;
+        assert!(publication.finish(Ok(())).is_err());
+        assert_eq!(
+            fs::read_to_string(output.join("oven/loafs/entry/object"))?,
+            "immutable cached bytes"
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("oven/release/old.rlib"))?,
+            "old native bytes"
+        );
+
+        let publication = LibraryPublication::begin(temporary.path(), &output, vec![])?.retaining_package_cache();
+        fs::write(output.join("new-manifest"), "selected manifest")?;
+        publication.finish(Ok(()))?;
+        assert_eq!(
+            fs::read_to_string(output.join("oven/loafs/entry/object"))?,
+            "immutable cached bytes"
+        );
+        assert!(!output.join("oven/release/old.rlib").exists());
+        Ok(())
+    }
+
+    /// Repairing only a receipt keeps the verified artifact available and restores the receipt on a later error.
+    #[test]
+    fn receipt_only_replay_never_moves_the_current_artifact() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        let output = temporary.path().join("target/lib");
+        let receipt = temporary.path().join("receipt.json");
+        fs::create_dir_all(&output)?;
+        fs::write(output.join("native.rlib"), "current native bytes")?;
+        fs::write(&receipt, "previous receipt")?;
+        let publication = LibraryPublication::begin_receipt_update(temporary.path(), vec![receipt.clone()])?;
+        assert_eq!(fs::read_to_string(output.join("native.rlib"))?, "current native bytes");
+        assert!(!publication.backup.join("artifact").exists());
+        fs::write(&receipt, "new receipt")?;
+        assert!(
+            publication
+                .finish::<()>(Err(CliError::failure("report failed")))
+                .is_err()
+        );
+        assert_eq!(fs::read_to_string(receipt)?, "previous receipt");
+        assert_eq!(fs::read_to_string(output.join("native.rlib"))?, "current native bytes");
         Ok(())
     }
 
