@@ -18,11 +18,10 @@ use incan_semantics_core::executable_representation::{
 };
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SymbolOrigin, canonical_module_identity};
 
-use crate::frontend::library_manifest_index::{
-    LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry, load_provider_dependency_artifact,
-};
+use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
+use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
-use crate::library_manifest::{LibraryManifest, ProviderDependencyKind};
+use crate::provider::ProviderPlan;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -115,10 +114,10 @@ impl PackageArtifact {
 
 /// Resolve one callable through the same complete admission path used by the CLI graph.
 pub fn resolve_executable_declaration(
-    index: &LibraryManifestIndex,
+    plan: &ProviderPlan,
     identity: &CanonicalSymbolId,
 ) -> Result<Body, ExecutableResolutionError> {
-    let resolved = resolve_executable_requirements(index, &BTreeSet::from([identity.clone()]))?;
+    let resolved = resolve_executable_requirements(plan, &BTreeSet::from([identity.clone()]))?;
     resolved
         .modules
         .into_iter()
@@ -134,13 +133,13 @@ pub fn resolve_executable_declaration(
 /// All versions, coverage records and manifest memberships are validated before returning. No body is executed, no
 /// source is consulted, and each selected fragment is decoded once even when recursion or facades reach it again.
 pub fn resolve_executable_requirements(
-    index: &LibraryManifestIndex,
+    plan: &ProviderPlan,
     required: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     if required.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    let catalog = package_catalog(index)?;
+    let catalog = package_catalog(plan)?;
     let mut opened = BTreeMap::new();
     let mut pending = required.clone();
     let mut visited = BTreeSet::new();
@@ -216,67 +215,26 @@ pub fn resolve_executable_requirements(
     Ok(resolved)
 }
 
-/// Preserve the package graph's existing validation boundary while following public transitive edges.
-fn package_catalog(
-    index: &LibraryManifestIndex,
-) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut pending = index
-        .loaded_entries()
-        .map(|(_, manifest, metadata)| PackageArtifact {
-            manifest: manifest.clone(),
-            metadata: metadata.clone(),
-        })
-        .collect::<Vec<_>>();
-    let mut seen = BTreeSet::new();
-    let mut catalog: BTreeMap<String, PackageArtifact> = BTreeMap::new();
-    while let Some(package) = pending.pop() {
-        let canonical_path = std::fs::canonicalize(&package.metadata.manifest_path)
-            .unwrap_or_else(|_| package.metadata.manifest_path.clone());
-        if !seen.insert(canonical_path.clone()) {
-            continue;
+/// Select from the shared provider plan's admitted artifacts; dependency edges are not traversed a second time.
+fn package_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
+    let mut identities = BTreeMap::new();
+    let mut catalog = BTreeMap::new();
+    for package in plan.public_artifacts() {
+        if let Some(previous) = identities.insert(package.identity.name.clone(), package.identity.stable_key())
+            && previous != package.identity.stable_key()
+        {
+            return Err(ExecutableResolutionError::AmbiguousPackage {
+                library: package.identity.name.clone(),
+                versions: format!("{previous}, {}", package.identity.stable_key()),
+            });
         }
-        if let Some(existing) = catalog.get(&package.manifest.name) {
-            let existing_path = std::fs::canonicalize(&existing.metadata.manifest_path)
-                .unwrap_or_else(|_| existing.metadata.manifest_path.clone());
-            if existing_path != canonical_path {
-                return Err(ExecutableResolutionError::AmbiguousPackage {
-                    library: package.manifest.name.clone(),
-                    versions: format!(
-                        "{} at {}, {} at {}",
-                        existing.manifest.version,
-                        existing_path.display(),
-                        package.manifest.version,
-                        canonical_path.display()
-                    ),
-                });
-            }
-        }
-        for dependency in &package.manifest.contract_metadata.provider.provider_dependencies {
-            if dependency.kind == ProviderDependencyKind::PrivateImplementation {
-                continue;
-            }
-            let root = package.metadata.crate_root.join(&dependency.relative_artifact_path);
-            let child = load_provider_dependency_artifact(&dependency.dependency_key, &root);
-            let (manifest, metadata) = match child {
-                LibraryManifestIndexEntry::Loaded { manifest, metadata } => (*manifest, metadata),
-                LibraryManifestIndexEntry::Failed(failure) => {
-                    return Err(ExecutableResolutionError::DependencyArtifact {
-                        library: package.manifest.name.clone(),
-                        version: package.manifest.version.clone(),
-                        reason: failure.to_string(),
-                    });
-                }
-            };
-            crate::provider::validate_transitive_provider_dependency(dependency, &manifest, &metadata).map_err(
-                |error| ExecutableResolutionError::DependencyArtifact {
-                    library: package.manifest.name.clone(),
-                    version: package.manifest.version.clone(),
-                    reason: error.to_string(),
-                },
-            )?;
-            pending.push(PackageArtifact { manifest, metadata });
-        }
-        catalog.insert(package.manifest.name.clone(), package);
+        catalog.insert(
+            package.identity.name.clone(),
+            PackageArtifact {
+                manifest: (*package.manifest).clone(),
+                metadata: package.artifact.clone(),
+            },
+        );
     }
     Ok(catalog)
 }

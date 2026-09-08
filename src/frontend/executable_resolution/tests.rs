@@ -7,7 +7,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use super::{ExecutableResolutionError, resolve_executable_requirements};
+use super::ExecutableResolutionError;
 use crate::backend::replacement::{ReplacementExecutionGraph, execute_free_function};
 use crate::frontend::body_ir::build_body_ir_module_v0;
 use crate::frontend::library_exports::collect_checked_public_exports;
@@ -19,6 +19,22 @@ use crate::frontend::{lexer, parser};
 use crate::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
 use crate::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
 use incan_semantics_core::executable_representation::{EXECUTABLE_REPRESENTATION_VERSION, build_surface};
+
+/// Admit fixtures through the production provider plan before requesting executable fragments.
+fn resolve_executable_requirements(
+    index: &LibraryManifestIndex,
+    required: &BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+) -> Result<super::ResolvedExecutableModules, ExecutableResolutionError> {
+    let plan =
+        crate::provider::ProviderPlan::from_resolved_inputs(index.clone(), None, None, None, []).map_err(|error| {
+            ExecutableResolutionError::DependencyArtifact {
+                library: "fixture".into(),
+                version: "1.2.3".into(),
+                reason: error.to_string(),
+            }
+        })?;
+    Ok(super::resolve_executable_requirements(&plan, required)?)
+}
 
 /// Produce a manifest and semantic surface from one checked source input, using the real identity exporter.
 fn artifact(root: &Path, library: &str, source: &str) -> Result<LibraryManifest, Box<dyn Error>> {

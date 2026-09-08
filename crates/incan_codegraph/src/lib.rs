@@ -494,6 +494,9 @@ pub struct CodegraphReferenceRecord {
     /// Compiler-owned identity of the resolved target, independent of source spelling and graph record availability.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// Closest checked declaring owner, independent of optional export-local navigation linkage.
+    #[serde(default)]
+    pub canonical_owner: Option<CodegraphCanonicalSymbolId>,
     /// Source span for the reference.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -526,6 +529,9 @@ pub struct CodegraphCallRecord {
     /// Compiler-owned identity of the selected callable, independent of source spelling and graph record availability.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// Closest checked declaring owner, independent of optional export-local navigation linkage.
+    #[serde(default)]
+    pub canonical_owner: Option<CodegraphCanonicalSymbolId>,
     /// Source span for the call expression.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -1080,6 +1086,7 @@ mod tests {
             kind: "identifier".to_string(),
             target_id: None,
             canonical_identity: Some(identity.clone()),
+            canonical_owner: None,
             span: None,
             provenance: CodegraphProvenance::Checked,
             degraded: false,
@@ -1090,6 +1097,21 @@ mod tests {
         assert_eq!(encoded["canonical_identity"]["declaration_name"], "helper");
         assert_eq!(encoded["canonical_identity"]["origin"]["kind"], "module");
         assert_eq!(serde_json::from_value::<CodegraphRecord>(encoded)?, record);
+        Ok(())
+    }
+
+    #[test]
+    fn reference_records_without_checked_owner_remain_readable() -> Result<(), Box<dyn std::error::Error>> {
+        let value = serde_json::json!({
+            "record": "reference", "id": "reference:main:1", "language": "incan", "module_id": "module:main",
+            "owner_id": null, "name": "alias", "kind": "identifier", "target_id": null,
+            "canonical_identity": null, "span": null, "provenance": "source", "degraded": false
+        });
+        let record: CodegraphRecord = serde_json::from_value(value)?;
+        let CodegraphRecord::Reference(reference) = record else {
+            return Err("expected reference".into());
+        };
+        assert_eq!(reference.canonical_owner, None);
         Ok(())
     }
 

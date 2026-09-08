@@ -832,4 +832,69 @@ mod tests {
         );
         Ok(())
     }
+    /// Typed locals count toward the public closure, and a public type cannot publish private layout members.
+    #[test]
+    fn public_type_context_requires_public_fields_and_no_private_type_leak() -> Result<(), Box<dyn std::error::Error>> {
+        let mut type_id = identity("Record", 2);
+        type_id.kind = SemanticSourceTargetKind::Model;
+        let mut field = identity("private_field", 3);
+        field.kind = SemanticSourceTargetKind::Field;
+        field.namespace = SymbolNamespace::Member;
+        let mut exported = body("exported", 1);
+        exported.return_type = IncanType::Named("Record".into());
+        let mut module = module(vec![exported]);
+        module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
+            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
+            canonical: type_id.clone(),
+            name: "Record".into(),
+            fields: vec!["private_field".into()],
+            field_identities: vec![field.clone()],
+            type_parameter_count: 0,
+        });
+        let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
+        let bytes = publish(&module, &public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(!reader.covers(&identity("exported", 1)));
+        assert!(!reader.covers(&type_id));
+        assert!(
+            !bytes
+                .windows(b"private_field".len())
+                .any(|part| part == b"private_field")
+        );
+        let mut complete_public = public;
+        complete_public.insert(field.clone());
+        let bytes = publish(&module, &complete_public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(reader.covers(&identity("exported", 1)));
+        assert!(reader.covers(&type_id));
+        assert!(
+            matches!(reader.index().coverage(&field)?, DeclarationCoverage::TypeContext { owner } if owner == &type_id)
+        );
+        Ok(())
+    }
+
+    /// Local binding identity is checker-session metadata; fragment-local slots retain execution identity instead.
+    #[test]
+    fn publication_removes_session_local_binding_discriminants() -> Result<(), Box<dyn std::error::Error>> {
+        let mut exported = body("exported", 1);
+        let mut local_identity = identity("local", 2);
+        local_identity.scope_discriminant = Some(crate::ScopeDiscriminant(917));
+        exported.locals.push(crate::body_ir::LocalDecl {
+            id: crate::body_ir::LocalId(0),
+            name: Some("local".into()),
+            identity: Some(local_identity),
+            ty: IncanType::Primitive(IncanPrimitiveType::Int),
+            origin: crate::body_ir::LocalOrigin::UserBinding,
+            scope: ScopeId(0),
+            span: exported.span,
+        });
+        let bytes = publish(&module(vec![exported]), &BTreeSet::from([identity("exported", 1)]))?;
+        let decoded = SurfaceReader::open(&bytes)?.declaration(&identity("exported", 1))?;
+        assert_eq!(decoded.locals.first().ok_or("local slot disappeared")?.identity, None);
+        assert_eq!(
+            decoded.locals.first().ok_or("local slot disappeared")?.id,
+            crate::body_ir::LocalId(0)
+        );
+        Ok(())
+    }
 }

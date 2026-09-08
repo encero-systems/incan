@@ -276,6 +276,25 @@ pub(crate) struct SdkArtifactProjection {
     pub artifact: LibraryArtifactMetadata,
 }
 
+/// One public artifact admitted by the provider graph's checked identity and dependency-edge validation.
+#[derive(Debug, Clone)]
+pub(crate) struct PublicProviderArtifact {
+    /// Selected package version, artifact digest and public feature projection.
+    pub identity: ProviderIdentity,
+    /// Checked manifest from that artifact generation.
+    pub manifest: Arc<LibraryManifest>,
+    /// Materialized artifact location; consumers must not rediscover dependency source.
+    pub artifact: LibraryArtifactMetadata,
+}
+
+/// Products retained from the single compiled-provider graph traversal.
+#[derive(Default)]
+struct ResolvedArtifactGraph {
+    rebindings: Vec<SdkDependencyRebinding>,
+    projections: Vec<SdkArtifactProjection>,
+    public_artifacts: BTreeMap<String, PublicProviderArtifact>,
+}
+
 /// Immutable provider catalog and active module projection shared by every compiler stage.
 #[derive(Debug, Clone, Default)]
 pub struct ProviderPlan {
@@ -285,6 +304,7 @@ pub struct ProviderPlan {
     used_module_paths: BTreeSet<Vec<String>>,
     sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
     sdk_artifact_projections: Vec<SdkArtifactProjection>,
+    public_artifacts: BTreeMap<String, PublicProviderArtifact>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
@@ -331,16 +351,16 @@ impl ProviderPlan {
             }
             indexed_records.insert(key, record);
         }
-        let (sdk_dependency_rebindings, sdk_artifact_projections) =
-            resolve_sdk_dependency_rebindings(&indexed_records)?;
+        let artifact_graph = resolve_artifact_graph(&indexed_records)?;
 
         Ok(Self {
             library_manifest_index,
             records: indexed_records,
             module_catalog,
             used_module_paths: used_module_paths.into_iter().collect(),
-            sdk_dependency_rebindings,
-            sdk_artifact_projections,
+            sdk_dependency_rebindings: artifact_graph.rebindings,
+            sdk_artifact_projections: artifact_graph.projections,
+            public_artifacts: artifact_graph.public_artifacts,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         })
     }
@@ -348,6 +368,11 @@ impl ProviderPlan {
     /// Return the consumer-side dependency manifest index normalized into this plan.
     pub fn library_manifest_index(&self) -> &LibraryManifestIndex {
         &self.library_manifest_index
+    }
+
+    /// Return public materialized artifacts already admitted by this plan, including validated transitive facades.
+    pub(crate) fn public_artifacts(&self) -> impl Iterator<Item = &PublicProviderArtifact> {
+        self.public_artifacts.values()
     }
 
     /// Return artifact projections needed to replace stale physical SDK cache paths without mutating either artifact.
@@ -414,6 +439,7 @@ impl ProviderPlan {
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
             sdk_artifact_projections: Vec::new(),
+            public_artifacts: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -480,6 +506,7 @@ impl ProviderPlan {
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
             sdk_artifact_projections: Vec::new(),
+            public_artifacts: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -680,35 +707,40 @@ impl ProviderPlan {
     }
 }
 
-/// Resolve historical private SDK edges in ordinary compiled libraries against the active inventory by logical
-/// identity.
+/// Admit public compiled artifacts and resolve historical private SDK edges through one graph traversal.
 ///
 /// The checked `.incnlib` descriptor is authoritative for the frozen name, version, digest, and feature projection;
 /// the old physical cache root is deliberately not read because content-addressed provider generations may already
 /// have been collected. Only an enabled, available active SDK record with the exact identity can replace that path.
-fn resolve_sdk_dependency_rebindings(
+fn resolve_artifact_graph(
     records: &BTreeMap<String, ProviderRecord>,
-) -> Result<(Vec<SdkDependencyRebinding>, Vec<SdkArtifactProjection>), ProviderPlanError> {
+) -> Result<ResolvedArtifactGraph, ProviderPlanError> {
     let sdk_records = records
         .values()
         .filter(|record| matches!(record.authority, NamespaceAuthority::SdkReserved))
         .collect::<Vec<_>>();
-    if sdk_records.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
-
+    let mut public_artifacts = BTreeMap::new();
     let mut rebindings = Vec::new();
     let mut projected = BTreeMap::<PathBuf, LibraryArtifactMetadata>::new();
     let mut visited = BTreeSet::new();
     let mut visiting = BTreeSet::new();
     for library in records
         .values()
+        .filter(|record| record.enabled && record.available)
         .filter(|record| matches!(record.authority, NamespaceAuthority::ProjectDependency { .. }))
     {
         let (Some(manifest), Some(containing_artifact)) = (library.manifest.as_deref(), library.artifact.as_ref())
         else {
             continue;
         };
+        public_artifacts.insert(
+            library.identity.stable_key(),
+            PublicProviderArtifact {
+                identity: library.identity.clone(),
+                manifest: Arc::new(manifest.clone()),
+                artifact: containing_artifact.clone(),
+            },
+        );
         resolve_sdk_artifact_projection(
             &library.identity.name,
             manifest,
@@ -718,6 +750,7 @@ fn resolve_sdk_dependency_rebindings(
             &mut visited,
             &mut rebindings,
             &mut projected,
+            &mut public_artifacts,
         )?;
     }
     rebindings.sort_by(|left, right| {
@@ -741,7 +774,11 @@ fn resolve_sdk_dependency_rebindings(
         .into_values()
         .map(|artifact| SdkArtifactProjection { artifact })
         .collect();
-    Ok((rebindings, projections))
+    Ok(ResolvedArtifactGraph {
+        rebindings,
+        projections,
+        public_artifacts,
+    })
 }
 
 /// Traverse one compiled provider graph and mark every ancestor that must point at a projected child artifact.
@@ -755,6 +792,7 @@ fn resolve_sdk_artifact_projection(
     visited: &mut BTreeSet<PathBuf>,
     rebindings: &mut Vec<SdkDependencyRebinding>,
     projected: &mut BTreeMap<PathBuf, LibraryArtifactMetadata>,
+    public_artifacts: &mut BTreeMap<String, PublicProviderArtifact>,
 ) -> Result<bool, ProviderPlanError> {
     let artifact_root = normalize_artifact_root(&artifact.crate_root);
     if visited.contains(&artifact_root) {
@@ -771,6 +809,11 @@ fn resolve_sdk_artifact_projection(
     let mut requires_projection = false;
     for dependency in &manifest.contract_metadata.provider.provider_dependencies {
         if dependency.kind == ProviderDependencyKind::PrivateImplementation {
+            // SDK-free adapters have no replacement inventory. Private implementation edges never grant a public
+            // semantic artifact, regardless of whether a native SDK rebinding is available.
+            if sdk_records.is_empty() {
+                continue;
+            }
             let candidates = sdk_records
                 .iter()
                 .copied()
@@ -833,6 +876,20 @@ fn resolve_sdk_artifact_projection(
             }
         };
         validate_transitive_provider_dependency(dependency, &dependency_manifest, &dependency_artifact)?;
+        let identity = ProviderIdentity {
+            name: dependency.provider_name.clone(),
+            version: dependency.provider_version.clone(),
+            digest: dependency.artifact_digest.clone(),
+            feature_projection: dependency_manifest.contract_metadata.provider.active_features.clone(),
+        };
+        public_artifacts.insert(
+            identity.stable_key(),
+            PublicProviderArtifact {
+                identity,
+                manifest: Arc::new((*dependency_manifest).clone()),
+                artifact: dependency_artifact.clone(),
+            },
+        );
         if resolve_sdk_artifact_projection(
             &dependency.provider_name,
             &dependency_manifest,
@@ -842,6 +899,7 @@ fn resolve_sdk_artifact_projection(
             visited,
             rebindings,
             projected,
+            public_artifacts,
         )? {
             requires_projection = true;
         }
@@ -856,7 +914,7 @@ fn resolve_sdk_artifact_projection(
 }
 
 /// Validate the stable identity on one public compiled-provider edge before traversing it.
-pub(crate) fn validate_transitive_provider_dependency(
+fn validate_transitive_provider_dependency(
     descriptor: &ProviderDependencyMetadata,
     manifest: &LibraryManifest,
     artifact: &LibraryArtifactMetadata,
