@@ -111,7 +111,7 @@ use crate::oven::rustc::{
 };
 use crate::oven::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError,
-    OvenStoreLease,
+    OvenStoreLease, PublishedOvenStore,
 };
 use crate::oven::{
     OvenGeneratedProjectRequest, digest_bytes, digest_dependency_specs, digest_project_source_tree,
@@ -13634,25 +13634,8 @@ fn copy_receipted_oven_store_entry(
     entry_kind: OvenArtifactKind,
     operation: &str,
 ) -> CliResult<crate::oven::store::OvenArtifactManifest> {
-    let existing = destination_store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == entry_identity
-                && manifest.kind == entry_kind
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
-        .map_err(|error| CliError::failure(format!("failed to inspect provider Loaf before {operation}: {error}")))?;
-    if existing.len() > 1 {
-        return Err(CliError::failure(format!(
-            "expected at most one existing provider Loaf `{entry_identity}` before {operation}, found {}",
-            existing.len()
-        )));
-    }
-    if let Some(existing) = existing.into_iter().next() {
-        // Immutable store selection validates the manifest and payload while holding an active lease. Repeating the
-        // full closure hash on a warm explicit bake would turn a valid package reuse into a multi-gigabyte scan.
-        return Ok(existing.manifest);
+    if let Some(existing) = existing_provider_loaf(destination_store, receipt, entry_identity, entry_kind, operation)? {
+        return Ok(existing);
     }
     let mut selected = source_store
         .select_payloads_matching_for_execution(|manifest| {
@@ -13679,7 +13662,60 @@ fn copy_receipted_oven_store_entry(
             selected.len()
         )));
     }
-    let (manifest, artifact_root, payload, _lease) = selected.remove(0).into_parts();
+    publish_selected_provider_loaf(
+        selected.remove(0),
+        destination_store,
+        receipt,
+        entry_identity,
+        entry_kind,
+        operation,
+    )
+}
+
+/// Select an already admitted destination entry without rereading another store's materialized closure.
+fn existing_provider_loaf(
+    destination_store: &OvenStore,
+    receipt: &crate::oven::OvenReceipt,
+    entry_identity: &str,
+    entry_kind: OvenArtifactKind,
+    operation: &str,
+) -> CliResult<Option<crate::oven::store::OvenArtifactManifest>> {
+    let existing = destination_store
+        .select_payloads_matching_for_execution(|manifest| {
+            manifest.identity == entry_identity
+                && manifest.kind == entry_kind
+                && manifest.receipt_identity == receipt.identity
+                && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        })
+        .map_err(|error| CliError::failure(format!("failed to inspect provider Loaf before {operation}: {error}")))?;
+    if existing.len() > 1 {
+        return Err(CliError::failure(format!(
+            "expected at most one existing provider Loaf `{entry_identity}` before {operation}, found {}",
+            existing.len()
+        )));
+    }
+    Ok(existing.into_iter().next().map(|payload| payload.manifest))
+}
+
+/// Import a leased, verified source entry through the destination store's ordinary bounded publication.
+fn publish_selected_provider_loaf(
+    selected: crate::oven::store::OvenStoreExecutionPayload,
+    destination_store: &OvenStore,
+    receipt: &crate::oven::OvenReceipt,
+    entry_identity: &str,
+    entry_kind: OvenArtifactKind,
+    operation: &str,
+) -> CliResult<crate::oven::store::OvenArtifactManifest> {
+    if let Some(existing) = existing_provider_loaf(destination_store, receipt, entry_identity, entry_kind, operation)? {
+        return Ok(existing);
+    }
+    selected.verify_materialized_files().map_err(|error| {
+        CliError::failure(format!(
+            "failed to verify source provider Loaf during {operation}: {error}"
+        ))
+    })?;
+    let (manifest, artifact_root, payload, _lease) = selected.into_parts();
     if manifest.kind != entry_kind
         || manifest.build_unit_identity != receipt.build_unit_identity
         || manifest.intent != receipt.intent
@@ -14220,24 +14256,66 @@ fn import_checked_packaged_library_loaf(
     checked: &CheckedPackagedProviderProfile,
 ) -> CliResult<()> {
     let package_profile = &checked.package;
-    let package_store = OvenStore::new(
-        packaged_library_loaf_store_root(&checked.artifact_root),
-        *consumer_store.limits(),
-    );
-    let source_store = if has_complete_packaged_library_loaf(&package_store, &package_profile.entries)? {
-        &package_store
-    } else if has_complete_packaged_library_loaf(consumer_store, &package_profile.entries)? {
-        consumer_store
-    } else {
+    let package_store_root = packaged_library_loaf_store_root(&checked.artifact_root);
+    let package_store_exists = package_store_root.try_exists().map_err(|error| {
+        CliError::failure(format!(
+            "failed to inspect published provider store {}: {error}",
+            package_store_root.display()
+        ))
+    })?;
+    if package_store_exists {
+        let selected = PublishedOvenStore::new(&package_store_root)
+            .select_payloads_matching_for_execution(|stored| {
+                package_profile.entries.iter().any(|entry| {
+                    stored.identity == entry.identity
+                        && stored.kind == entry.kind
+                        && stored.receipt_identity == entry.receipt.identity
+                        && stored.build_unit_identity == entry.receipt.build_unit_identity
+                        && stored.intent == entry.receipt.intent
+                })
+            })
+            .map_err(|error| {
+                CliError::failure(format!(
+                    "failed to read published package Loaf for pub::{}: {error}",
+                    checked.dependency_key
+                ))
+            })?;
+        if selected.len() == package_profile.entries.len() {
+            for payload in selected {
+                let identity = payload.manifest.identity.clone();
+                let kind = payload.manifest.kind;
+                let entry = package_profile
+                    .entries
+                    .iter()
+                    .find(|entry| entry.identity == identity)
+                    .ok_or_else(|| CliError::failure("selected package Loaf is absent from its checked profile"))?;
+                let imported = publish_selected_provider_loaf(
+                    payload,
+                    consumer_store,
+                    &entry.receipt,
+                    &identity,
+                    kind,
+                    "consumer package-Loaf import",
+                )?;
+                if imported.identity != identity {
+                    return Err(CliError::failure(format!(
+                        "consumer package-Loaf import changed the sealed entry identity `{identity}`"
+                    )));
+                }
+            }
+            return Ok(());
+        }
+    }
+    if !has_complete_packaged_library_loaf(consumer_store, &package_profile.entries)? {
         return Err(CliError::failure(format!(
             "Oven Alpha cannot import pub::{}: its portable package Loaf is absent and the current Oven store has no matching receipt-bound closure; run `incan oven bake --project {}`",
             checked.dependency_key,
             checked.artifact_root.display()
         )));
-    };
+    }
     for entry in &package_profile.entries {
         let imported = copy_receipted_oven_store_entry(
-            source_store,
+            consumer_store,
             consumer_store,
             &entry.receipt,
             &entry.identity,
@@ -20682,7 +20760,38 @@ pub model Nested:
         };
         let consumer_store_root = tempfile::tempdir()?;
         let consumer_store = OvenStore::new(consumer_store_root.path(), limits);
+        let (entry, lease) = package_store.select(&stored.identity)?;
+        #[cfg(unix)]
+        let entry_artifacts = entry.materialized_root();
+        let entry_root = entry.path;
+        drop(lease);
+        fs::write(entry_root.join("last-used"), b"1\n")?;
+        let published_digest = digest_provider_artifact(&checked.artifact_root)?;
         import_checked_packaged_library_loaf(&consumer_store, &checked)?;
+        assert_eq!(digest_provider_artifact(&checked.artifact_root)?, published_digest);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let leaf = stored
+                .materialized_files
+                .first()
+                .ok_or("fixture has no materialized leaf")?;
+            let source = entry_artifacts.join(&leaf.relative_path);
+            let original = fs::metadata(&source)?.permissions();
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o0))?;
+            let unreadable = fs::File::open(&source).is_err();
+            let warm = import_checked_packaged_library_loaf(&consumer_store, &checked);
+            fs::set_permissions(&source, original)?;
+            assert!(
+                unreadable,
+                "the test host must enforce the source leaf's read permissions"
+            );
+            warm?;
+        }
+        import_checked_packaged_library_loaf(&consumer_store, &checked)?;
+        assert_eq!(digest_provider_artifact(&checked.artifact_root)?, published_digest);
+        assert_eq!(fs::read(entry_root.join("last-used"))?, b"1\n");
         let selected = select_packaged_provider_plan(&consumer_store, &[checked], "debug", &consumer_receipt)?
             .ok_or("consumer should select the imported direct-plan package Loaf")?;
         let OvenDirectRustcPlanSelection::PackagedProvider(packages) = selected else {
