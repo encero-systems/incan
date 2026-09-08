@@ -1599,7 +1599,8 @@ impl<'a> IrCodegen<'a> {
         }
 
         // Use the IR pipeline: AST → IR → Rust
-        self.try_generate_via_ir(program, &HashSet::new())
+        let code = self.try_generate_via_ir(program, &HashSet::new())?;
+        Ok(self.attach_provider_rust_dependency_bridge(code))
     }
 
     /// Generate code via the IR pipeline (fallible version)

@@ -52,7 +52,6 @@ impl EmittedDeclarationTypes {
             )* };
         }
         rewrite_exports!(
-            functions,
             models,
             classes,
             traits,
@@ -574,6 +573,19 @@ pub(in crate::backend::ir) fn preserve_native_aliases(
             if root != "pub" {
                 continue;
             }
+            if manifest
+                .exports
+                .functions
+                .iter()
+                .filter(|function| function.name == alias.name)
+                .nth(1)
+                .is_some()
+            {
+                // One API alias projection cannot encode an overload set. Its root function records retain each
+                // canonical overload separately and are refreshed below through the admitted declaring artifact.
+                alias.projected_function = None;
+                continue;
+            }
             let Some(plan) = plan else {
                 continue;
             };
@@ -651,7 +663,175 @@ pub(in crate::backend::ir) fn preserve_native_aliases(
             }
         }
     }
+    refresh_native_function_exports(manifest, plan)?;
     Ok(())
+}
+
+/// Copy emitted callable types to root exports through the checked canonical overload ordering.
+///
+/// Root function exports can contain alias-expanded types while their checked declaration still names a source type
+/// alias. Replacing equal type values cannot join those positions. The identity graph already pairs every root
+/// overload with its declaring module and span; only that exact declaration can supply its emitted representation.
+fn refresh_native_function_exports(
+    manifest: &mut LibraryManifest,
+    plan: Option<&crate::provider::ProviderPlan>,
+) -> Result<(), String> {
+    let Some(api) = &manifest.contract_metadata.api else {
+        return Ok(());
+    };
+    let graph = &manifest.contract_metadata.identity_graph;
+    let mut overload_positions = HashMap::<String, usize>::new();
+    for export in &mut manifest.exports.functions {
+        let position = overload_positions.entry(export.name.clone()).or_default();
+        let identities = graph.function_identities_for_public_name(&export.name);
+        let canonical = identities.get(*position).and_then(Option::as_ref);
+        *position += 1;
+        let Some(canonical) = canonical else {
+            continue;
+        };
+        let incan_semantics_core::SymbolOrigin::Package { library, .. } = &canonical.origin else {
+            continue;
+        };
+        let projection = if library == &manifest.name {
+            native_function_at_canonical(api, canonical)?
+        } else {
+            foreign_native_function_projection(graph, &export.name, canonical, plan)?
+        };
+        if let Some(projection) = projection {
+            export.type_params = projection.type_params;
+            export.params = projection.params;
+            export.return_type = projection.return_type;
+        }
+    }
+    Ok(())
+}
+
+/// Select one declaring callable through its checked canonical module, name and overload span.
+fn native_function_at_canonical(
+    api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+    canonical: &incan_semantics_core::CanonicalSymbolId,
+) -> Result<Option<crate::library_manifest::FunctionExport>, String> {
+    let incan_semantics_core::SymbolOrigin::Package { module_path, .. } = &canonical.origin else {
+        return Ok(None);
+    };
+    let mut declarations = api
+        .modules
+        .iter()
+        .filter(|module| &module.module_path == module_path)
+        .flat_map(|module| &module.declarations)
+        .filter_map(|declaration| match declaration {
+            ApiDeclaration::Function(function)
+                if function.name == canonical.declaration_name
+                    && function.anchor.span.start == canonical.declaration_span.start
+                    && function.anchor.span.end == canonical.declaration_span.end =>
+            {
+                Some(function)
+            }
+            _ => None,
+        });
+    let Some(declaration) = declarations.next() else {
+        return Ok(None);
+    };
+    if declarations.next().is_some() {
+        return Err(format!(
+            "native function `{canonical:?}` has ambiguous checked declaration membership"
+        ));
+    }
+    Ok(
+        contains_native_union(declaration)
+            .then(|| crate::frontend::api_metadata::function_export_from_api(declaration)),
+    )
+}
+
+/// Retain a foreign overload's emitted types through the existing admitted public artifact route.
+fn foreign_native_function_projection(
+    graph: &LibraryIdentityGraph,
+    public_name: &str,
+    canonical: &incan_semantics_core::CanonicalSymbolId,
+    plan: Option<&crate::provider::ProviderPlan>,
+) -> Result<Option<crate::library_manifest::FunctionExport>, String> {
+    use crate::library_manifest::ExportIdentityProjection;
+    let entry = graph
+        .exports
+        .iter()
+        .find(|entry| {
+            entry.public_name == public_name
+                && entry.public_path.len() == 2
+                && entry
+                    .canonical
+                    .as_ref()
+                    .and_then(CanonicalIdentityExport::hydrate)
+                    .as_ref()
+                    == Some(canonical)
+        })
+        .ok_or_else(|| format!("foreign function `{public_name}` has no checked public binding"))?;
+    let (ExportIdentityProjection::Alias { target_path } | ExportIdentityProjection::Reexport { target_path }) =
+        &entry.projection
+    else {
+        return Err(format!(
+            "foreign function `{public_name}` has no checked dependency projection"
+        ));
+    };
+    let [root, library, ..] = target_path.as_slice() else {
+        return Err(format!(
+            "foreign function `{public_name}` has no checked dependency route"
+        ));
+    };
+    if root != "pub" {
+        return Err(format!(
+            "foreign function `{public_name}` has no checked public dependency route"
+        ));
+    }
+    let plan = plan.ok_or_else(|| format!("foreign function `{public_name}` has no admitted provider plan"))?;
+    let mut candidates = plan.public_artifacts().filter(|artifact| {
+        matches!(&canonical.origin, incan_semantics_core::SymbolOrigin::Package { library: owner, .. }
+            if owner == &artifact.identity.name)
+            && artifact
+                .manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .any(|entry| {
+                    entry
+                        .canonical
+                        .as_ref()
+                        .and_then(CanonicalIdentityExport::hydrate)
+                        .as_ref()
+                        == Some(canonical)
+                })
+            && plan.public_artifact_route(library, &artifact.identity).is_ok()
+    });
+    let owner = candidates
+        .next()
+        .ok_or_else(|| format!("foreign function `{public_name}` has no admitted declaring artifact"))?;
+    if candidates.next().is_some() {
+        return Err(format!(
+            "foreign function `{public_name}` has multiple admitted declaring artifacts"
+        ));
+    }
+    let Some(api) = &owner.manifest.contract_metadata.api else {
+        return Ok(None);
+    };
+    let Some(mut function) = native_function_at_canonical(api, canonical)? else {
+        return Ok(None);
+    };
+    let mut failure = None;
+    function.visit_type_refs(&mut |ty| {
+        if let TypeRef::NativeUnion(native) = ty {
+            if native.owner == NativeUnionOwnerExport::ContainingArtifact {
+                native.owner = NativeUnionOwnerExport::SelectedArtifact(owner.identity.clone());
+            }
+            match plan.public_native_union_projection(library, native) {
+                Ok((bound, _)) => *native = bound.for_publication(),
+                Err(error) => failure = Some(error),
+            }
+        }
+    });
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    Ok(Some(function))
 }
 
 /// Return whether a declared surface includes an explicit producer-native union carrier.
@@ -904,6 +1084,168 @@ mod tests {
             "local alias lost the target native representation"
         );
         assert_eq!(manifest.contract_metadata.native_unions.len(), 1);
+        Ok(())
+    }
+
+    /// Alias-expanded root overloads take their representation from the exact checked declaration, not type spelling.
+    #[test]
+    fn function_alias_overloads_keep_exact_native_union_projection() -> TestResult {
+        let source = "pub type Answer = int | str\npub def select(value: int) -> Answer:\n    return value\npub def select(value: str) -> bool:\n    return true\npub pick = alias select\n";
+        let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("producer".into()));
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let exports = crate::frontend::library_exports::collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("producer", "1.0.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+        let mut codegen = crate::backend::ir::IrCodegen::new();
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        codegen.set_publication_api(manifest.contract_metadata.api.clone());
+        codegen.set_publication_identities(manifest.name.clone(), manifest.contract_metadata.identity_graph.clone());
+        let (rust, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        let original = manifest.exports.functions.clone();
+        assert_eq!(original.iter().filter(|function| function.name == "pick").count(), 2);
+        metadata.apply_to_library_manifest(&mut manifest)?;
+        for name in ["select", "pick"] {
+            let functions = manifest
+                .exports
+                .functions
+                .iter()
+                .filter(|function| function.name == name)
+                .collect::<Vec<_>>();
+            assert_eq!(functions.len(), 2);
+            let native = functions
+                .iter()
+                .find(|function| {
+                    function.params[0].ty
+                        == TypeRef::Named {
+                            name: "int".into(),
+                            origin: None,
+                        }
+                })
+                .ok_or("int overload absent")?;
+            assert!(matches!(native.return_type, TypeRef::NativeUnion(_)), "{native:?}");
+            let ordinary = functions
+                .iter()
+                .find(|function| {
+                    function.params[0].ty
+                        == TypeRef::Named {
+                            name: "str".into(),
+                            origin: None,
+                        }
+                })
+                .ok_or("str overload absent")?;
+            assert_eq!(
+                ordinary.return_type,
+                TypeRef::Named {
+                    name: "bool".into(),
+                    origin: None
+                }
+            );
+        }
+        for (before, after) in original.iter().zip(&manifest.exports.functions) {
+            assert_eq!((&before.name, &before.emitted_name), (&after.name, &after.emitted_name));
+        }
+        assert_foreign_overload_projection(manifest, &rust)
+    }
+
+    /// Forward a checked overload set through an admitted package and verify its exact native owner survives.
+    fn assert_foreign_overload_projection(manifest: LibraryManifest, rust: &str) -> TestResult {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path();
+        std::fs::create_dir(root.join("src"))?;
+        std::fs::write(root.join("src/lib.rs"), rust)?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"producer\"\nversion = \"1.0.0\"\n",
+        )?;
+        let path = root.join("producer.incnlib");
+        manifest.write_to_path(&path)?;
+        let metadata = crate::frontend::library_manifest_index::LibraryArtifactMetadata::from_manifest_path(
+            "admitted",
+            "producer",
+            path,
+            root.to_path_buf(),
+        );
+        let index = crate::frontend::library_manifest_index::LibraryManifestIndex::from_entries(HashMap::from([(
+            "admitted".to_string(),
+            crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata,
+            },
+        )]));
+        let plan = std::sync::Arc::new(crate::provider::ProviderPlan::from_resolved_inputs(
+            index,
+            None,
+            None,
+            None,
+            [],
+        )?);
+        let source = "pub from pub::admitted import select as forwarded\n";
+        let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("facade".into()));
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.set_provider_plan(plan.clone());
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let exports = crate::frontend::library_exports::collect_checked_public_exports(&ast, &checker);
+        let mut facade = LibraryManifest::from_checked_exports("facade", "1.0.0", &exports);
+        facade.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path)],
+            public_namespaces: Vec::new(),
+        });
+        preserve_native_aliases(&mut facade, Some(&plan))?;
+        assert_eq!(facade.exports.functions.len(), 2);
+        assert!(
+            facade
+                .exports
+                .functions
+                .iter()
+                .all(|function| function.name == "forwarded")
+        );
+        let native = facade
+            .exports
+            .functions
+            .iter()
+            .find_map(|function| {
+                if let TypeRef::NativeUnion(native) = &function.return_type {
+                    Some(native)
+                } else {
+                    None
+                }
+            })
+            .ok_or("foreign overload lost its native descriptor")?;
+        let selected = plan.public_artifacts().next().ok_or("selected provider absent")?;
+        assert_eq!(
+            native.owner,
+            NativeUnionOwnerExport::SelectedArtifact(selected.identity.clone())
+        );
+        assert!(facade.exports.functions.iter().any(|function| function.return_type
+            == TypeRef::Named {
+                name: "bool".into(),
+                origin: None
+            }));
+        for entry in &mut facade.contract_metadata.identity_graph.exports {
+            if let Some(canonical) = &mut entry.canonical {
+                canonical.declaration_span.start += 1;
+            }
+        }
+        let error = preserve_native_aliases(&mut facade, Some(&plan))
+            .err()
+            .ok_or("unproven foreign callable was accepted")?;
+        assert!(error.contains("no admitted declaring artifact"), "{error}");
         Ok(())
     }
 

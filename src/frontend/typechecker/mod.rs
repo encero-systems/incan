@@ -6306,6 +6306,7 @@ impl TypeChecker {
 
     /// Project native bridge roots from the same checked public API type leaves used by artifact publication.
     fn record_public_type_bridge_roots(&mut self, program: &Program) {
+        use crate::frontend::library_exports::{CheckedExportProjection, collect_checked_public_exports};
         use crate::library_manifest::{TypeRef, VisitTypeRefs};
         let mut api = crate::frontend::api_metadata::collect_checked_api_metadata(
             program,
@@ -6325,6 +6326,27 @@ impl TypeChecker {
                 roots.insert(identity.dependency_key.clone());
             }
         });
+        // A forwarded callable or union alias can need its provider's native wrapper without naming a nominal leaf.
+        // The checked public binding already records the admitted direct dependency used by that facade edge.
+        for export in collect_checked_public_exports(program, self) {
+            let (CheckedExportProjection::Alias { target_path } | CheckedExportProjection::Reexport { target_path }) =
+                &export.identity.projection
+            else {
+                continue;
+            };
+            let [root, library, ..] = target_path.as_slice() else {
+                continue;
+            };
+            if root == "pub"
+                && export.identity.canonical.is_some()
+                && matches!(
+                    self.provider_plan.library_manifest_index().get(library),
+                    Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { .. })
+                )
+            {
+                roots.insert(library.clone());
+            }
+        }
         self.type_info.declarations.public_type_bridge_roots = roots;
         self.type_info.declarations.foreign_pub_type_remappings = self.foreign_pub_type_remappings.clone();
         self.type_info.declarations.named_type_origins = self.checked_nominal_type_origins();
