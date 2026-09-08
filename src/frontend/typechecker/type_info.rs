@@ -687,6 +687,11 @@ pub struct DerivationArtifacts {
 pub struct ExpressionArtifacts {
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// Canonical named-type leaves of each checked expression type, addressed by generic/tuple child indices.
+    ///
+    /// The checker selects these identities while its accepted type bindings are available. Consumers retain the
+    /// structural path and identity; an import alias is never a runtime type or layout key.
+    pub expression_type_identities: HashMap<(usize, usize), BTreeMap<Vec<usize>, CanonicalSymbolId>>,
     /// Final checked type of an assignment binding, keyed by the assignment statement span.
     ///
     /// This differs from the initializer expression type when contextual numeric typing or a validated coercion
@@ -1777,6 +1782,33 @@ impl TypeCheckInfo {
                     SemanticFactKind::ReferenceOwner,
                     SemanticFactValue::canonical_identity(owner.clone()),
                 ));
+            }
+        }
+
+        for (&span, identities) in &self.expressions.expression_type_identities {
+            let source_span = incan_semantics_core::HirSourceSpan::new(span.0, span.1);
+            for (indices, identity) in identities {
+                let subject = CompilerNodeId::expression_type_component(&module_identity, span.0, span.1, indices);
+                facts.push(SemanticFact::new(
+                    subject.clone(),
+                    SemanticFactKind::ReferenceSpan,
+                    SemanticFactValue::SourceSpan(source_span),
+                ));
+                facts.push(SemanticFact::new(
+                    subject.clone(),
+                    SemanticFactKind::SymbolIdentity,
+                    SemanticFactValue::canonical_identity(identity.clone()),
+                ));
+                if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
+                    declarations.iter().copied(),
+                    source_span,
+                ) {
+                    facts.push(SemanticFact::new(
+                        subject,
+                        SemanticFactKind::ReferenceOwner,
+                        SemanticFactValue::canonical_identity(owner.clone()),
+                    ));
+                }
             }
         }
 

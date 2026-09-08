@@ -1925,6 +1925,30 @@ mod tests {
         Ok(())
     }
 
+    /// Inactive roots do not admit public executable artifacts or touch unavailable transitive files.
+    #[test]
+    fn inactive_providers_do_not_expand_the_public_artifact_catalog() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut record = compiled_library_record(root.path(), "unused-sdk-digest", BTreeSet::new());
+        let manifest = Arc::make_mut(record.manifest.as_mut().ok_or("test manifest absent")?);
+        let dependency = manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .first_mut()
+            .ok_or("test edge absent")?;
+        dependency.kind = ProviderDependencyKind::PublicPackage;
+        dependency.relative_artifact_path = "missing-public-artifact".into();
+        record.enabled = false;
+        let disabled = ProviderPlan::new(LibraryManifestIndex::default(), vec![record.clone()], [])?;
+        assert_eq!(disabled.public_artifacts().count(), 0);
+        record.enabled = true;
+        record.available = false;
+        let unavailable = ProviderPlan::new(LibraryManifestIndex::default(), vec![record], [])?;
+        assert_eq!(unavailable.public_artifacts().count(), 0);
+        Ok(())
+    }
+
     #[test]
     fn incompatible_private_sdk_dependency_fails_before_cargo_issue911() -> TestResult {
         let workspace = tempfile::tempdir()?;

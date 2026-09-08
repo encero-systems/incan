@@ -487,11 +487,11 @@ struct BodyBuilder<'type_info, 'source> {
     function_default_sources: &'source FunctionDefaultSources,
     /// Exact declarations physically present in this module, used only to retain same-module call identities.
     local_function_declarations: &'source LocalFunctionDeclarations,
-    /// Source-local plain-model declarations, used only to retain an exact constructor target identity.
+    /// Checked local and selected package models, used to retain exact constructor identity and layout.
     local_nominal_declarations: &'source LocalNominalDeclarations,
-    /// Source-local fieldless normal-enum declarations, used only to retain exact unit-member target identities.
+    /// Checked local and selected package fieldless enums, used to retain exact unit-member target identities.
     local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
-    /// Source-local RFC 032 value-enum declarations, used only to retain an exact member target identity.
+    /// Checked local and selected package value enums, used to retain exact member target identity.
     local_value_enum_declarations: &'source LocalValueEnumDeclarations,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
     module_identity: &'source str,

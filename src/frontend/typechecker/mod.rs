@@ -2314,7 +2314,62 @@ impl TypeChecker {
 
     /// Record the resolved type for one expression span in the lowering-facing expression artifact map.
     pub(crate) fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
+        let mut identities = std::collections::BTreeMap::new();
+        self.collect_expression_type_identities(&ty, &mut Vec::new(), &mut identities);
+        if identities.is_empty() {
+            self.type_info
+                .expressions
+                .expression_type_identities
+                .remove(&(span.start, span.end));
+        } else {
+            self.type_info
+                .expressions
+                .expression_type_identities
+                .insert((span.start, span.end), identities);
+        }
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
+    }
+
+    /// Project named leaves of an already checked type through the same identity query as source annotations.
+    fn collect_expression_type_identities(
+        &self,
+        ty: &ResolvedType,
+        path: &mut Vec<usize>,
+        identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) {
+        match ty {
+            ResolvedType::Named(name) => {
+                if let Some(identity) = self.named_type_reference_identity(name) {
+                    identities.insert(path.clone(), identity);
+                }
+            }
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                for (index, ty) in args.iter().enumerate() {
+                    path.push(index);
+                    self.collect_expression_type_identities(ty, path, identities);
+                    path.pop();
+                }
+            }
+            ResolvedType::Ref(ty)
+            | ResolvedType::RefMut(ty)
+            | ResolvedType::TypeToken(ty)
+            | ResolvedType::FrozenList(ty)
+            | ResolvedType::FrozenSet(ty) => {
+                path.push(0);
+                self.collect_expression_type_identities(ty, path, identities);
+                path.pop();
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                for (index, ty) in [key, value].into_iter().enumerate() {
+                    path.push(index);
+                    self.collect_expression_type_identities(ty, path, identities);
+                    path.pop();
+                }
+            }
+            // Function signatures and type variables require their own binder environment; this expression-value
+            // projection does not invent one after checking. Concrete source annotations retain their own facts.
+            _ => {}
+        }
     }
 
     /// Record the final checked type selected for one assignment binding.
@@ -4526,7 +4581,14 @@ impl TypeChecker {
 
     /// Record one type-like lexical binding without guessing an identity from its source spelling.
     fn record_named_type_reference_identity(&mut self, name: &str, span: Span) {
-        let identity = self.symbols.lookup(name).and_then(|symbol_id| {
+        if let Some(identity) = self.named_type_reference_identity(name) {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+    }
+
+    /// Return the identity already assigned to a checked type binding; lexical names select bindings only here.
+    fn named_type_reference_identity(&self, name: &str) -> Option<CanonicalSymbolId> {
+        self.symbols.lookup(name).and_then(|symbol_id| {
             let symbol = self.symbols.get(symbol_id)?;
             let type_like = matches!(symbol.kind, SymbolKind::Type(_) | SymbolKind::Trait(_))
                 || matches!(
@@ -4537,10 +4599,7 @@ impl TypeChecker {
                 return None;
             }
             self.symbols.identity_of(symbol_id).cloned()
-        });
-        if let Some(identity) = identity {
-            self.type_info.record_resolved_identity(span, identity);
-        }
+        })
     }
 
     /// Register the resolved target for a source-level type alias.

@@ -120,7 +120,10 @@ fn a_renamed_dependency_executes_its_canonical_public_body() -> Result<(), Box<d
     assert_eq!(resolved.decoded_declarations, 1);
     let module = resolved.modules.first().ok_or("execution module missing")?;
     assert_eq!(
-        execute_free_function(module, "answer", &[])?.value.observable_text(),
+        execute_free_function(module, "answer", &[])
+            .map_err(|error| format!("{error}; {}", module.render_snapshot()))?
+            .value
+            .observable_text(),
         "42"
     );
     Ok(())
@@ -132,8 +135,16 @@ fn two_packages_with_identical_module_paths_keep_distinct_physical_owners() -> R
     let temporary = tempfile::tempdir()?;
     let alpha = temporary.path().join("alpha");
     let beta = temporary.path().join("beta");
-    let first = artifact(&alpha, "first", "pub def answer() -> int:\n    return 41\n")?;
-    let second = artifact(&beta, "second", "pub def answer() -> int:\n    return 42\n")?;
+    let first = artifact(
+        &alpha,
+        "first",
+        "pub def answer() -> int:\n    return 41\n\npub model Pair:\n    pub value: int\n",
+    )?;
+    let second = artifact(
+        &beta,
+        "second",
+        "pub def answer() -> int:\n    return 42\n\npub model Pair:\n    pub value: int\n",
+    )?;
     let one = first
         .contract_metadata
         .identity_graph
@@ -160,10 +171,32 @@ fn two_packages_with_identical_module_paths_keep_distinct_physical_owners() -> R
             },
         );
     }
-    let resolved = resolve_executable_requirements(
-        &LibraryManifestIndex::from_entries(entries),
-        &BTreeSet::from([one.clone(), two.clone()]),
-    )?;
+    let index = LibraryManifestIndex::from_entries(entries);
+    let source = "from pub::a import answer as first, Pair as Left\nfrom pub::b import answer as second, Pair as Right\n\ndef carry(value: Left) -> Result[Left, str]:\n    return Ok(value)\n\ndef main() -> int:\n    left = Left(value=1)\n    right = Right(value=2)\n    carry(left)\n    return first() + second() + left.value + right.value\n";
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let path = vec!["main".into()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker.set_library_manifest_index(index.clone());
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let facts = checker.type_info().semantic_fact_store(&path);
+    let main = checker
+        .type_info()
+        .declarations
+        .declaration_identities
+        .values()
+        .find(|identity| identity.declaration_name == "main")
+        .ok_or("main identity absent")?
+        .clone();
+    let required = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores([&facts])
+        .reachable_from([main])
+        .into_iter()
+        .filter(|identity| matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. }))
+        .collect();
+    let resolved = resolve_executable_requirements(&index, &required)?;
     let primary = resolved.modules.first().ok_or("first module absent")?;
     let graph = ReplacementExecutionGraph::new(primary, resolved.modules.iter().skip(1))?;
     let (first_owner, _) = graph
@@ -185,6 +218,58 @@ fn two_packages_with_identical_module_paths_keep_distinct_physical_owners() -> R
             .observable_text(),
         "42"
     );
+    let consumer = crate::frontend::body_ir::build_body_ir_module_v0_with_executable_context(
+        &program,
+        &path,
+        checker.type_info(),
+        &resolved.modules,
+    );
+    let graph = ReplacementExecutionGraph::new(&consumer, resolved.modules.iter())?;
+    let execution = crate::backend::replacement::prepare_free_function_execution_in_graph(graph, "main", &[], None)?;
+    assert_eq!(
+        crate::backend::replacement::execute_prevalidated_free_function(execution)?
+            .value
+            .observable_text(),
+        "86"
+    );
+    // Corrupt only the retained expected type identity: both packages still provide a same-named Pair layout.
+    // The resulting payload must refuse, even though its diagnostic spelling and field layout still match.
+    let wrong_type = resolved
+        .modules
+        .iter()
+        .flat_map(|module| &module.nominal_declarations)
+        .find(|declaration| {
+            matches!(&declaration.canonical.origin,
+            incan_semantics_core::SymbolOrigin::Package { library, .. } if library == "second")
+        })
+        .ok_or("second Pair context absent")?
+        .canonical
+        .clone();
+    let mut malformed = consumer.clone();
+    let carry = malformed
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "carry")
+        .ok_or("carry body absent")?;
+    let variant = carry
+        .block
+        .stmts
+        .iter_mut()
+        .find_map(|statement| match &mut statement.kind {
+            incan_semantics_core::body_ir::StatementKind::Assign {
+                rvalue: incan_semantics_core::body_ir::Rvalue::ResultVariant(variant),
+                ..
+            } => Some(variant),
+            _ => None,
+        })
+        .ok_or("Result construction absent")?;
+    variant.canonical_types.insert(vec![0], wrong_type);
+    let graph = ReplacementExecutionGraph::new(&malformed, resolved.modules.iter())?;
+    let execution = crate::backend::replacement::prepare_free_function_execution_in_graph(graph, "main", &[], None)?;
+    let Err(error) = crate::backend::replacement::execute_prevalidated_free_function(execution) else {
+        return Err("same-named type from another package satisfied the malformed Result type".into());
+    };
+    assert!(error.to_string().contains("payload incompatible with retained type"));
     Ok(())
 }
 
@@ -212,7 +297,10 @@ fn public_default_calls_and_plain_model_context_execute_from_fragments() -> Resu
     );
     let module = resolved.modules.first().ok_or("module missing")?;
     assert_eq!(
-        execute_free_function(module, "answer", &[])?.value.observable_text(),
+        execute_free_function(module, "answer", &[])
+            .map_err(|error| format!("{error}; {}", module.render_snapshot()))?
+            .value
+            .observable_text(),
         "42"
     );
     Ok(())
@@ -334,7 +422,7 @@ fn aliased_public_model_and_enum_execute_without_a_package_function_call() -> Re
         "pub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n",
     )?;
     let index = index(temporary.path(), "renamed", &manifest);
-    let source = "from pub::renamed import Pair as Item, Mode as State\n\ndef main() -> int:\n    item = Item(value=42)\n    if State.Ready == State.Ready:\n        return item.value\n    return 0\n";
+    let source = "from pub::renamed import Pair as Item, Mode as State\n\ndef main() -> int:\n    item = Item(value=42)\n    mode = State.Ready\n    match mode:\n        case State.Ready:\n            match item:\n                case Item(value=number):\n                    return number\n        case State.Idle:\n            return 0\n    return 0\n";
     let tokens = lexer::lex(source).map_err(|error| format!("{error:?}"))?;
     let program = parser::parse(&tokens).map_err(|error| format!("{error:?}"))?;
     let module_path = vec!["main".to_string()];
@@ -406,13 +494,103 @@ fn a_transitive_facade_resolves_the_declaring_artifact() -> Result<(), Box<dyn E
         .ok_or("facade identity absent")?;
     let resolved = resolve_executable_requirements(
         &index(&facade_root, "renamed_facade", &facade),
-        &BTreeSet::from([required]),
+        &BTreeSet::from([required.clone()]),
     )?;
     assert_eq!(resolved.decoded_declarations, 1);
     let module = resolved.modules.first().ok_or("provider module absent")?;
     assert_eq!(
-        execute_free_function(module, "answer", &[])?.value.observable_text(),
+        execute_free_function(module, "answer", &[])
+            .map_err(|error| format!("{error}; {}", module.render_snapshot()))?
+            .value
+            .observable_text(),
         "42"
     );
+    let edge = facade
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .first_mut()
+        .ok_or("facade edge absent")?;
+    edge.kind = crate::library_manifest::ProviderDependencyKind::PrivateImplementation;
+    let private = resolve_executable_requirements(
+        &index(&facade_root, "renamed_facade", &facade),
+        &BTreeSet::from([required.clone()]),
+    );
+    assert!(matches!(private, Err(ExecutableResolutionError::UnknownPackage { .. })));
+    let edge = facade
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .first_mut()
+        .ok_or("facade edge absent")?;
+    edge.kind = crate::library_manifest::ProviderDependencyKind::PublicPackage;
+    edge.artifact_digest = format!("sha256:{}", "0".repeat(64));
+    let altered = resolve_executable_requirements(
+        &index(&facade_root, "renamed_facade", &facade),
+        &BTreeSet::from([required]),
+    );
+    assert!(matches!(
+        altered,
+        Err(ExecutableResolutionError::DependencyArtifact { .. })
+    ));
+    Ok(())
+}
+
+/// Imported nominal context must remain usable inside the existing structural Result payload profile.
+#[test]
+fn imported_nominal_result_payload_uses_declaring_type_context() -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let manifest = artifact(
+        temporary.path(),
+        "types",
+        "pub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n",
+    )?;
+    let index = index(temporary.path(), "renamed", &manifest);
+    let sources = [
+        "from pub::renamed import Pair as Item\n\ndef carry(item: Item) -> Result[Item, str]:\n    return Ok(item)\n\ndef main() -> int:\n    carry(Item(value=42))\n    return 42\n",
+        "from pub::renamed import Mode as State\n\ndef carry(state: State) -> Result[int, State]:\n    return Err(state)\n\ndef main() -> int:\n    match carry(State.Ready):\n        case Ok(value):\n            return value\n        case Err(_):\n            return 42\n    return 0\n",
+        "from pub::renamed import Mode as State\n\ndef carry() -> Result[list[tuple[int, int]], State]:\n    return Ok([(20, 22)])\n\ndef main() -> int:\n    carry()\n    return 42\n",
+    ];
+    for source in sources {
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let path = vec!["main".into()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker.set_library_manifest_index(index.clone());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.type_info().semantic_fact_store(&path);
+        let main = checker
+            .type_info()
+            .declarations
+            .declaration_identities
+            .values()
+            .find(|identity| identity.declaration_name == "main")
+            .ok_or("main absent")?
+            .clone();
+        let required = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores([&facts])
+            .reachable_from([main])
+            .into_iter()
+            .filter(|identity| matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. }))
+            .collect();
+        let resolved = resolve_executable_requirements(&index, &required)?;
+        let consumer = crate::frontend::body_ir::build_body_ir_module_v0_with_executable_context(
+            &program,
+            &path,
+            checker.type_info(),
+            &resolved.modules,
+        );
+        let graph = ReplacementExecutionGraph::new(&consumer, resolved.modules.iter())?;
+        let execution =
+            crate::backend::replacement::prepare_free_function_execution_in_graph(graph, "main", &[], None)?;
+        assert_eq!(
+            crate::backend::replacement::execute_prevalidated_free_function(execution)?
+                .value
+                .observable_text(),
+            "42"
+        );
+    }
     Ok(())
 }

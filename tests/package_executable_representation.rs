@@ -277,3 +277,124 @@ fn missing_package_representation_refuses_before_output_and_receipt() -> Result<
     assert!(!consumer.join(".incan/backend/receipt.json").exists());
     Ok(())
 }
+
+/// A real debug bake followed by a release-only tool failure must restore both native and semantic generations.
+#[cfg(unix)]
+#[test]
+fn release_failure_after_new_debug_output_restores_both_consumer_routes() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temporary = tempfile::tempdir()?;
+    let producer = temporary.path().join("producer");
+    let consumer = temporary.path().join("consumer");
+    project(
+        &producer,
+        "arithmetic",
+        "lib.incn",
+        "pub def answer() -> int:\n    return 41\n",
+        "",
+    )?;
+    let mut initial = command(&producer);
+    initial
+        .args(["oven", "bake", "--project", "."])
+        .env("INCAN_OVEN_BAKE_PROFILES", "all");
+    support::configure_explicit_oven_bake_command(&mut initial)?;
+    success(initial.output()?, "initial debug and release library publication")?;
+    project(
+        &consumer,
+        "consumer",
+        "main.incn",
+        "from pub::renamed import answer\n\ndef main() -> None:\n    println(answer())\n",
+        "\n[dependencies]\nrenamed = { path = \"../producer\" }\n",
+    )?;
+    bake(&consumer)?;
+    let native_before = success(
+        command(&consumer).args(["run", "--locked", "src/main.incn"]).output()?,
+        "native consumer before partial rebuild",
+    )?;
+    assert_eq!(String::from_utf8_lossy(&native_before.stdout).trim(), "41");
+    let artifact_before = artifact_snapshot(&producer.join("target/lib"))?;
+    let receipt_root = incan::oven::default_receipt_path(&producer)
+        .parent()
+        .ok_or("receipt directory absent")?
+        .to_path_buf();
+    let receipts_before = artifact_snapshot(&receipt_root)?;
+    let debug = producer.join("target/lib/oven/debug/libarithmetic.rlib");
+    let release = producer.join("target/lib/oven/release/libarithmetic.rlib");
+    let old_debug = fs::read(&debug)?;
+    assert!(release.is_file());
+    fs::write(
+        producer.join("src/lib.incn"),
+        "pub def answer() -> int:\n    return 42\n",
+    )?;
+    let shim = temporary.path().join("release-failing-rustc");
+    let proof = temporary.path().join("new-debug.rlib");
+    fs::write(
+        &shim,
+        r#"#!/bin/sh
+is_debug=0
+for arg in "$@"; do
+    if [ "$arg" = "$RFC123_RELEASE_OUTPUT" ]; then
+        echo "RFC123 injected release failure after successful debug output" >&2
+        exit 87
+    fi
+    if [ "$arg" = "$RFC123_DEBUG_OUTPUT" ]; then is_debug=1; fi
+done
+"$RFC123_REAL_RUSTC" "$@"
+result=$?
+if [ "$result" -eq 0 ] && [ "$is_debug" -eq 1 ]; then
+    cp "$RFC123_DEBUG_OUTPUT" "$RFC123_DEBUG_PROOF" || exit 88
+fi
+exit "$result"
+"#,
+    )?;
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))?;
+    let mut rebuild = command(&producer);
+    rebuild
+        .args(["oven", "bake", "--project", "."])
+        .env("INCAN_OVEN_BAKE_PROFILES", "all")
+        .env("RUSTC", &shim)
+        .env("RFC123_REAL_RUSTC", incan::oven::rustc::resolve_active_rustc()?)
+        .env("RFC123_DEBUG_OUTPUT", &debug)
+        .env("RFC123_RELEASE_OUTPUT", &release)
+        .env("RFC123_DEBUG_PROOF", &proof);
+    support::configure_explicit_oven_bake_command(&mut rebuild)?;
+    let failed = rebuild.output()?;
+    assert!(!failed.status.success());
+    assert!(
+        String::from_utf8_lossy(&failed.stderr).contains("RFC123 injected release failure"),
+        "{}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    assert_ne!(
+        fs::read(proof)?,
+        old_debug,
+        "the debug native artifact must actually have changed before release failed"
+    );
+    assert_eq!(artifact_snapshot(&producer.join("target/lib"))?, artifact_before);
+    // Immutable intermediate cache entries may remain, but all pre-existing successful receipt bytes must survive.
+    let receipts_after = artifact_snapshot(&receipt_root)?;
+    for (path, bytes) in receipts_before {
+        assert_eq!(
+            receipts_after.get(&path),
+            Some(&bytes),
+            "receipt changed: {}",
+            path.display()
+        );
+    }
+    fs::remove_dir_all(producer.join("src"))?;
+    fs::remove_file(producer.join("loaf.toml"))?;
+    let native = success(
+        command(&consumer).args(["run", "--locked", "src/main.incn"]).output()?,
+        "native consumer after partial rebuild failure",
+    )?;
+    let replacement = success(
+        command(&consumer)
+            .args(["build", "src/main.incn", "--backend", "replacement"])
+            .output()?,
+        "replacement consumer after partial rebuild failure",
+    )?;
+    assert_eq!(native.stdout, native_before.stdout);
+    assert_eq!(replacement.stdout, native_before.stdout);
+    Ok(())
+}

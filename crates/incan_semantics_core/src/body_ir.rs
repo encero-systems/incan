@@ -72,15 +72,15 @@ pub struct BodyIrModule {
     ///
     /// This is not a general algebraic-data-type registry. The direct profile may materialize only an exact retained
     /// unit variant, compare two carriers of the same retained enum identity, and dispatch a pattern carrying the
-    /// same exact enum/member identities; payload variants, aliases, imports, traits, and methods remain absent and
-    /// must refuse.
+    /// same exact enum/member identities. Consumers may resolve aliases to this context through a published package;
+    /// payload variants, traits, and methods remain outside the profile.
     pub fieldless_enum_declarations: Vec<FieldlessEnumDeclaration>,
     /// Source-local RFC 032 value-enum declarations whose canonical scalar members are available to direct execution.
     ///
     /// This is deliberately separate from [`Self::nominal_declarations`]: a value enum has no model field layout,
     /// and the direct runtime may extract only a retained member's scalar backing through the compiler-provided
-    /// zero-argument `.value()` surface. Ordinary enums, payload variants, aliases, imports, behavior-bearing
-    /// enums, and generic enums are absent and must refuse rather than being rediscovered by spelling.
+    /// zero-argument `.value()` surface. Package aliases retain these canonical contexts. Ordinary enums, payload
+    /// variants, behavior-bearing enums, and generic enums remain absent and must refuse.
     pub value_enum_declarations: Vec<ValueEnumDeclaration>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
@@ -166,8 +166,9 @@ impl BodyIrModule {
 
 /// The exact local declaration and canonical field layout for one direct-executable plain model.
 ///
-/// The record is module-scoped and deliberately excludes classes, enums, imported nominals, generic models, and
-/// behavior-bearing models. Its field order is the checked constructor-slot order; a direct runtime must compare it
+/// The record belongs to its declaring module and deliberately excludes classes, enums, generic models, and
+/// behavior-bearing models. A consumer may load this same canonical context from a package artifact. Its field order is
+/// the checked constructor-slot order; a direct runtime must compare it
 /// with [`ConstructorTarget::canonical_field_layout`] before applying [`ConstructorTarget::binding`], rather than
 /// treating constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1261,17 +1262,64 @@ pub struct ResultVariant {
     pub ok_type: IncanType,
     /// Checked `Result` error type.
     pub error_type: IncanType,
+    /// Checked canonical identities of named leaves, with paths rooted at Result argument 0 (Ok) or 1 (Err).
+    ///
+    /// Nested tuple/list arguments append their zero-based child index. Names in `ok_type` and `error_type` remain
+    /// diagnostic spelling; these identities authorize nominal payloads across aliases and package boundaries.
+    pub canonical_types: std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
 }
 
 impl ResultVariant {
+    /// Require exactly one declaration identity for every named payload-type leaf before execution.
+    pub fn has_complete_canonical_types(&self) -> bool {
+        /// Collect named leaves using the same structural child positions retained in the type facts.
+        fn paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut std::collections::BTreeSet<Vec<usize>>) {
+            match ty {
+                IncanType::Named(_) => {
+                    out.insert(path.clone());
+                }
+                IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
+                    for (index, item) in items.iter().enumerate() {
+                        path.push(index);
+                        paths(item, path, out);
+                        path.pop();
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut required = std::collections::BTreeSet::new();
+        paths(&self.ok_type, &mut vec![0], &mut required);
+        paths(&self.error_type, &mut vec![1], &mut required);
+        required.len() == self.canonical_types.len()
+            && required.iter().all(|path| {
+                self.canonical_types.get(path).is_some_and(|identity| {
+                    identity.scope_discriminant.is_none()
+                        && matches!(
+                            identity.kind,
+                            crate::SemanticSourceTargetKind::Model | crate::SemanticSourceTargetKind::Enum
+                        )
+                        && matches!(
+                            identity.origin,
+                            crate::SymbolOrigin::Module(_) | crate::SymbolOrigin::Package { .. }
+                        )
+                })
+            })
+    }
+
     /// Render the construction and checked type facts without consulting any target-language Result spelling.
     fn render_snapshot(&self) -> String {
         format!(
-            "result_{}({}, ok_type={}, error_type={})",
+            "result_{}({}, ok_type={}, error_type={}, canonical_types=[{}])",
             self.kind.as_str(),
             self.payload.render_snapshot(),
             self.ok_type,
-            self.error_type
+            self.error_type,
+            self.canonical_types
+                .iter()
+                .map(|(path, identity)| format!("{path:?}:{}", identity.render_compact()))
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     }
 }
@@ -3320,6 +3368,32 @@ impl PanicReason {
 
 #[cfg(test)]
 mod tests {
+    /// Named leaves keep structural identity paths while aliases remain diagnostic spelling.
+    #[test]
+    fn result_type_identity_paths_are_complete_and_reject_extra_or_missing_leaves() {
+        let canonical = crate::CanonicalSymbolId::module_declaration(
+            vec!["types".into()],
+            "Pair",
+            crate::SemanticSourceTargetKind::Model,
+            crate::HirSourceSpan::new(0, 20),
+        );
+        let mut variant = super::ResultVariant {
+            kind: super::ResultVariantKind::Ok,
+            payload: super::Operand::Constant(super::Constant::Unit),
+            ok_type: crate::IncanType::Generic {
+                base: "list".into(),
+                args: vec![crate::IncanType::Tuple(vec![crate::IncanType::Named("Alias".into())])],
+            },
+            error_type: crate::IncanType::Primitive(crate::IncanPrimitiveType::Str),
+            canonical_types: std::collections::BTreeMap::from([(vec![0, 0, 0], canonical.clone())]),
+        };
+        assert!(variant.has_complete_canonical_types());
+        variant.canonical_types.insert(vec![1], canonical);
+        assert!(!variant.has_complete_canonical_types());
+        variant.canonical_types.clear();
+        assert!(!variant.has_complete_canonical_types());
+    }
+
     use super::*;
     use crate::{CompilerNodeKind, IncanPrimitiveType, SemanticSourceTargetKind};
 

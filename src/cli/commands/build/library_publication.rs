@@ -82,8 +82,27 @@ impl LibraryPublication {
                 Err(error) => return Err(io_error(error)),
             }
         };
+        // Keep recovery bytes on disk until every restoration succeeds, including receipts outside the output tree.
+        let recovery = (|| -> io::Result<()> {
+            let mut entries = Vec::new();
+            for (index, (path, bytes)) in receipts.iter().enumerate() {
+                let file = bytes.as_ref().map(|_| format!("receipt-{index}"));
+                if let (Some(bytes), Some(file)) = (bytes, &file) {
+                    fs::write(backup.join(file), bytes)?;
+                }
+                entries.push((path, file));
+            }
+            fs::write(
+                backup.join("receipts.json"),
+                serde_json::to_vec_pretty(&entries).map_err(io::Error::other)?,
+            )
+        })();
+        if let Err(error) = recovery {
+            let _ = fs::remove_dir_all(&backup);
+            return Err(io_error(error));
+        }
         if previous && let Err(error) = fs::rename(&output, backup.join("artifact")) {
-            let _ = fs::remove_dir(&backup);
+            let _ = fs::remove_dir_all(&backup);
             return Err(io_error(error));
         }
         let publication = Self {
@@ -131,32 +150,48 @@ impl LibraryPublication {
         }
     }
 
-    /// Restore only this transaction's output tree and the receipt paths captured before preparation.
+    /// Attempt artifact and receipt restoration independently, retaining all recovery material when any step fails.
     fn restore(&self) -> io::Result<()> {
+        let mut errors = Vec::new();
+        let artifact = (|| -> io::Result<()> {
+            match fs::remove_dir_all(&self.output) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            if self.previous {
+                fs::rename(self.backup.join("artifact"), &self.output)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = artifact {
+            errors.push(format!("artifact {}: {error}", self.output.display()));
+        }
         for (path, bytes) in &self.receipts {
-            match bytes {
-                Some(bytes) => {
-                    if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent)?;
+            let result = (|| -> io::Result<()> {
+                match bytes {
+                    Some(bytes) => {
+                        if let Some(parent) = path.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(path, bytes)
                     }
-                    fs::write(path, bytes)?;
+                    None => match fs::remove_file(path) {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(error),
+                    },
                 }
-                None => match fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                },
+            })();
+            if let Err(error) = result {
+                errors.push(format!("receipt {}: {error}", path.display()));
             }
         }
-        match fs::remove_dir_all(&self.output) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        if errors.is_empty() {
+            fs::remove_dir_all(&self.backup)
+        } else {
+            Err(io::Error::other(errors.join("; ")))
         }
-        if self.previous {
-            fs::rename(self.backup.join("artifact"), &self.output)?;
-        }
-        fs::remove_dir_all(&self.backup)
     }
 }
 
@@ -342,6 +377,35 @@ mod tests {
         assert_eq!(fs::read_to_string(output.join("src/lib.rs"))?, "new Rust");
         assert!(!output.join("src/obsolete.rs").exists());
         assert!(!output.join("oven/release/old.rlib").exists());
+        Ok(())
+    }
+
+    /// A failed receipt restoration cannot prevent restoring the artifact or another independent receipt.
+    #[test]
+    fn receipt_failure_still_restores_artifact_and_retains_failed_recovery_bytes() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        let output = temporary.path().join("target/lib");
+        let failed = temporary.path().join("failed-receipt.json");
+        let other = temporary.path().join("other-receipt.json");
+        fs::create_dir_all(&output)?;
+        fs::write(output.join("old"), "old artifact")?;
+        fs::write(&failed, "old failed receipt")?;
+        fs::write(&other, "old other receipt")?;
+        let publication = LibraryPublication::begin(temporary.path(), &output, vec![failed.clone(), other.clone()])?;
+        let backup = publication.backup.clone();
+        fs::write(output.join("new"), "new artifact")?;
+        fs::remove_file(&failed)?;
+        fs::create_dir(&failed)?;
+        fs::write(&other, "new receipt")?;
+        let Err(error) = publication.finish::<()>(Err(CliError::failure("native failure"))) else {
+            return Err("receipt restoration unexpectedly succeeded".into());
+        };
+        assert!(error.to_string().contains(&failed.display().to_string()));
+        assert_eq!(fs::read_to_string(output.join("old"))?, "old artifact");
+        assert!(!output.join("new").exists());
+        assert_eq!(fs::read_to_string(&other)?, "old other receipt");
+        assert_eq!(fs::read_to_string(backup.join("receipt-0"))?, "old failed receipt");
+        assert!(backup.join("receipts.json").is_file());
         Ok(())
     }
 
