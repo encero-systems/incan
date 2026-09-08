@@ -191,6 +191,25 @@ def artifact_depfiles(message, workspace):
     result = set()
     for name in message.get("filenames", []):
         output = Path(name)
+        if message.get("target", {}).get("kind") == ["custom-build"]:
+            import re
+            import shlex
+            package = message.get("package_id", "").rsplit("#", 1)[-1].split("@", 1)[0]
+            match = re.fullmatch(re.escape(package) + r"-([0-9a-f]{16})", output.parent.name)
+            if output.name != "build-script-build" or not match:
+                raise ValueError("custom-build output has no exact package/fingerprint owner")
+            candidate = output.with_name("build_script_build-" + match[1] + ".d")
+            candidate = normalize_owned_path(candidate, output.parent)
+            sources, _ = depfile_facts(candidate)
+            expected_source = str(Path(message["target"]["src_path"]))
+            targets = set()
+            for line in candidate.read_text().replace("\\\n", "").splitlines():
+                if line and not line.startswith("#") and ": " in line:
+                    targets.update(shlex.split(line.split(": ", 1)[0]))
+            if expected_source not in sources or str(candidate.with_suffix("")) not in targets:
+                raise ValueError("custom-build depfile does not bind its reported source and output")
+            result.add(candidate)
+            continue
         stem = output.stem
         if stem.startswith("lib") and output.suffix in (".rlib", ".rmeta", ".so", ".dylib", ".a"):
             stem = stem[3:]
@@ -224,6 +243,32 @@ def verify_cargo_environment(message, name, value, verifier):
         raise ValueError(f"Cargo constant differs from reported package: {name}")
 
 
+def normalize_owned_path(path, owner):
+    """Normalize compiler include paths without traversing links or leaving their original owner."""
+    path, owner = Path(path), Path(owner)
+    if ".." in owner.parts or not path.is_absolute() or not path.is_relative_to(owner):
+        raise ValueError("consumed path has no original source owner")
+    current = Path(path.anchor)
+    for part in owner.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("consumed source owner contains a symlink")
+    for part in path.relative_to(owner).parts:
+        if part == "..":
+            if not current.is_dir():
+                raise ValueError("consumed path traverses a non-directory")
+            if current == owner:
+                raise ValueError("consumed path escapes its source owner")
+            current = current.parent
+        elif part != ".":
+            current /= part
+            if current.is_symlink():
+                raise ValueError("consumed input contains a symlink")
+    if not current.is_file():
+        raise ValueError("consumed input is not a regular file")
+    return current
+
+
 class ConsumedInputs:
     """Reuse parsed immutable package evidence within one admission or verification operation."""
 
@@ -245,8 +290,7 @@ class ConsumedInputs:
 
     def local_record(self, path):
         """Check each local file's bytes and mode once and return that verified digest."""
-        if path.is_symlink() or path.resolve() != path.absolute():
-            raise ValueError(f"consumed input contains a symlink: {path}")
+        path = normalize_owned_path(path, self.workspace)
         try:
             name = path.relative_to(self.workspace).as_posix()
         except ValueError as error:
@@ -263,12 +307,13 @@ class ConsumedInputs:
         """Verify local source or a registry file against its cached exact locked checksum owner."""
         if path.is_relative_to(self.workspace):
             return self.local_record(path)
-        if not path.is_relative_to(self.registry) or path.resolve() != path.absolute():
+        if not path.is_relative_to(self.registry):
             raise ValueError("input is neither covered workspace source nor a regular locked registry file")
         relative = path.relative_to(self.registry)
         if len(relative.parts) < 3:
             raise ValueError("registry source path has no package owner")
         root = self.registry / relative.parts[0] / relative.parts[1]
+        path = normalize_owned_path(path, root)
         if root not in self.registry_packages:
             package = self.toml(root / "Cargo.toml")["package"]
             if root.name != package["name"] + "-" + package["version"]:

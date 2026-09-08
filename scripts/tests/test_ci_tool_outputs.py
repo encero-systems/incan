@@ -330,6 +330,52 @@ class ToolOutputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cache.collect_evidence(self.root, self.candidate(), logs, {})
 
+    def test_same_owner_includes_normalize_but_escape_and_links_refuse(self):
+        candidate = self.candidate()
+        verifier = cache.ConsumedInputs(candidate)
+        actual = verifier.record(self.root / "src/../assets/logo.txt")
+        self.assertEqual(actual["path"], str(self.root / "assets/logo.txt"))
+        for path in (self.root / "../" / self.root.name / "assets/logo.txt",):
+            with self.assertRaises(ValueError):
+                verifier.record(path)
+        (self.root / "src/link").symlink_to(self.root / "assets", target_is_directory=True)
+        with self.assertRaises(ValueError):
+            verifier.record(self.root / "src/link/../main.rs")
+        cargo_home, package, files, _, _ = self.registry_fixture()
+        (package / "src").mkdir()
+        with mock.patch.dict(os.environ, {"CARGO_HOME": str(cargo_home)}):
+            verifier = cache.ConsumedInputs(self.candidate())
+            self.assertEqual(verifier.record(package / "src/../one.rs")["sha256"], cache.digest(files[0]))
+            with self.assertRaises(ValueError):
+                verifier.record(package / "../example-1.0.0/one.rs")
+
+    def test_custom_build_depfile_is_bound_to_exact_owner_source_and_output(self):
+        directory = self.root / "target/release/build/example-0123456789abcdef"
+        directory.mkdir(parents=True)
+        output = directory / "build-script-build"
+        source = self.root / "src/main.rs"
+        depfile = directory / "build_script_build-0123456789abcdef.d"
+        native = depfile.with_suffix("")
+        message = {"package_id": "registry+https://example.invalid#index#example@1.0.0",
+                   "target": {"kind": ["custom-build"], "src_path": str(source)},
+                   "filenames": [str(output)]}
+        depfile.write_text(f"{native}: {source}\n")
+        self.assertEqual(cache.artifact_depfiles(message, self.root), [depfile])
+        for contents in (f"{native}: other.rs\n", f"{output}: {source}\n"):
+            depfile.write_text(contents)
+            with self.assertRaises(ValueError):
+                cache.artifact_depfiles(message, self.root)
+        depfile.unlink()
+        (directory / "unrelated.d").write_text(f"{native}: {source}\n")
+        with self.assertRaises((ValueError, OSError)):
+            cache.artifact_depfiles(message, self.root)
+        depfile.symlink_to(directory / "unrelated.d")
+        with self.assertRaises(ValueError):
+            cache.artifact_depfiles(message, self.root)
+        message["package_id"] = "registry+https://example.invalid#other@1.0.0"
+        with self.assertRaises(ValueError):
+            cache.artifact_depfiles(message, self.root)
+
     def test_depfile_spaces_and_env_are_observed_without_guessing(self):
         depfile = self.root / "sample.d"
         depfile.write_text("out: src/a\\ b.rs src/main.rs\n# env-dep:FLAG=value\n# env-dep:ABSENT\n")
