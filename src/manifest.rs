@@ -554,7 +554,7 @@ impl ProjectManifest {
 
     /// Parse a `loaf.toml` from raw string content.
     ///
-    /// Useful for testing without touching the filesystem.
+    /// Source files need not exist, but existing script paths are resolved to detect library aliases.
     pub fn from_str(content: &str, path: &Path) -> Result<Self, ManifestError> {
         parse_manifest_content(content, path)
     }
@@ -1113,6 +1113,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
 
     validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
     validate_requires_incan_constraints(&raw, &spans, path)?;
+    validate_script_library_collisions(&raw, &spans, path)?;
     if raw.oven.is_some() {
         return Err(manifest_invalid(
             path,
@@ -1161,6 +1162,44 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         workspace_rust_dependencies: rust_dependencies.workspace_inherited,
         workspace_rust_dev_dependencies: rust_dev_dependencies.workspace_inherited,
     })
+}
+
+/// Reject executable declarations that alias the conventional library before any target consumer runs.
+///
+/// Existing paths use filesystem resolution so symlinked parents and `..` spellings cannot hide a collision.
+/// Direct path equality also rejects the conventional spelling before sources exist; unavailable paths otherwise
+/// retain each command's existing missing-source and target-path diagnostics.
+fn validate_script_library_collisions(
+    raw: &RawManifest,
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+) -> Result<(), ManifestError> {
+    let Some(project) = &raw.project else {
+        return Ok(());
+    };
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let library = root.join("src/lib.incn");
+    let resolved_library = std::fs::canonicalize(&library).ok();
+    let mut scripts = project.scripts.iter().collect::<Vec<_>>();
+    scripts.sort_by(|left, right| left.0.cmp(right.0));
+    for (name, configured) in scripts {
+        let script = root.join(configured);
+        let aliases_library = resolved_library
+            .as_ref()
+            .is_some_and(|library| std::fs::canonicalize(&script).is_ok_and(|resolved| &resolved == library));
+        if script == library || aliases_library {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["project", "scripts"], name),
+                format!(
+                    "[project.scripts].{name} = {configured:?} resolves to the conventional library entrypoint \
+                     `src/lib.incn`; scripts must be executable entrypoints. Remove this script entry: Oven \
+                     detects the library automatically."
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Validate every `requires-incan` string in the manifest before command-specific policy checks run.
@@ -2382,6 +2421,74 @@ version = "1"
 
         assert!(unit.dependencies.contains_key("serde"));
         assert!(unit.dev_dependencies.contains_key("proptest"));
+        Ok(())
+    }
+
+    /// Script targets must not alias the conventional library, even through filesystem spelling.
+    #[test]
+    fn script_library_collision_rejects_resolved_aliases() -> TestResult {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src/nested"))?;
+        std::fs::write(
+            root.path().join("src/lib.incn"),
+            "pub def hello() -> str:\n    return \"hi\"\n",
+        )?;
+        let absolute = root.path().join("src/lib.incn").to_string_lossy().into_owned();
+        for configured in ["src/lib.incn", "./src/lib.incn", "src/nested/../lib.incn", &absolute] {
+            let content = format!("[project.scripts]\nlibrary = {configured:?}\n");
+            let error = ProjectManifest::from_str(&content, &root.path().join("loaf.toml"))
+                .err()
+                .ok_or("colliding script was accepted")?;
+            let message = error.to_string();
+            assert!(message.contains("library"), "{message}");
+            assert!(message.contains("src/lib.incn"), "{message}");
+            assert!(message.contains("loaf.toml:2:"), "{message}");
+        }
+        Ok(())
+    }
+
+    /// A direct collision is invalid even before the source file is created.
+    #[test]
+    fn script_library_collision_rejects_missing_source() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let error = ProjectManifest::from_str(
+            "[project.scripts]\nlibrary = \"./src/lib.incn\"\n",
+            &root.path().join("loaf.toml"),
+        )
+        .err()
+        .ok_or("direct library script was accepted")?;
+        assert!(error.to_string().contains("src/lib.incn"));
+        Ok(())
+    }
+
+    /// Existing script aliases and ordinary library-only manifests remain valid.
+    #[test]
+    fn script_library_collision_preserves_noncolliding_targets() -> TestResult {
+        for content in [
+            "[project]\nname = \"library\"\n",
+            "[project.scripts]\nmain = \"src/main.incn\"\nother = \"src/main.incn\"\n",
+            "[project.scripts]\nnested = \"other/src/lib.incn\"\n",
+        ] {
+            ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
+        }
+        Ok(())
+    }
+
+    /// Canonical comparison catches aliases introduced by symlinked parent directories.
+    #[cfg(unix)]
+    #[test]
+    fn script_library_collision_rejects_symlink_alias() -> TestResult {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("src"))?;
+        std::fs::write(root.path().join("src/lib.incn"), "")?;
+        std::os::unix::fs::symlink(root.path().join("src"), root.path().join("alias"))?;
+        let error = ProjectManifest::from_str(
+            "[project.scripts]\nlibrary = \"alias/lib.incn\"\n",
+            &root.path().join("loaf.toml"),
+        )
+        .err()
+        .ok_or("symlinked library script was accepted")?;
+        assert!(error.to_string().contains("library"));
         Ok(())
     }
 

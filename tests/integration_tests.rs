@@ -8680,7 +8680,7 @@ async def main() -> None:
         fs::create_dir_all(project.join("src"))?;
         fs::write(
             project.join("loaf.toml"),
-            "[project]\nname = \"provider_backed_library\"\nversion = \"0.1.0\"\n\n[project.scripts]\nlibrary = \"src/lib.incn\"\n",
+            "[project]\nname = \"provider_backed_library\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(project.join("src/lib.incn"), "pub def answer() -> int:\n  return 42\n")?;
         let stale_inventory = tmp.path().join("stale-sdk-inventory.json");
