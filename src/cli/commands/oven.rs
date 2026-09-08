@@ -84,8 +84,8 @@ use crate::oven::{
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
     DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES, OVEN_COMPILER_TEST_PROFILE,
-    OvenBuildIntent, OvenCompilerSuiteRequest, OvenImportRequest, OvenReceipt, default_receipt_path, digest_bytes,
-    import_frozen_project, receipt_native_compiler_suite, write_receipt,
+    OvenBuildIntent, OvenCompilerSuiteRequest, OvenReceipt, default_receipt_path, digest_bytes,
+    receipt_native_compiler_suite, write_receipt,
 };
 use crate::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use crate::provider::FeatureSelection;
@@ -4888,8 +4888,8 @@ mod tests {
         DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
         DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
         DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES, OvenCompilerSuiteTargetCapabilities,
-        OvenImportCommandOptions, OvenLoafBakeCommandOptions, OvenPlanPublishCommandOptions, OvenRunCommandOptions,
-        OvenStoreCommandOptions, OvenTestCommandOptions, apply_compiler_suite_target_capabilities,
+        OvenLoafBakeCommandOptions, OvenPlanPublishCommandOptions, OvenRunCommandOptions, OvenStoreCommandOptions,
+        OvenTestCommandOptions, apply_compiler_suite_target_capabilities,
         attach_compiler_suite_target_workspace_libraries, bake_planned_compiler_suite_binaries,
         bake_planned_compiler_suite_workspace_libraries, compiler_suite_auto_parallel_jobs,
         compiler_suite_child_state_root, compiler_suite_cli_output, compiler_suite_completion_failures,
@@ -4899,8 +4899,8 @@ mod tests {
         compiler_suite_selection_context, compiler_suite_selection_report, compiler_suite_temporary_directory,
         compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
         default_rustup_home, default_store_root, interop_bake_terminal_message, loaf_envelope_default_limits,
-        loaf_envelope_evidence, native_test_failure_summary, oven_import, oven_publish_direct_rustc_plan, oven_run,
-        oven_test, parse_named_path, prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
+        loaf_envelope_evidence, native_test_failure_summary, oven_publish_direct_rustc_plan, oven_run, oven_test,
+        parse_named_path, prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
         reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
         run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
         write_native_test_transcript,
@@ -7377,7 +7377,6 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
         let artifacts = tempfile::tempdir()?;
         let output = tempfile::tempdir()?;
         let store_root = tempfile::tempdir()?;
-        write_project(project.path())?;
         let source = output.path().join("command-surface.rs");
         fs::write(
             &source,
@@ -7385,16 +7384,19 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
         )?;
         let receipt = output.path().join("receipt.json");
         let rustc = rustc_path()?;
-        oven_import(OvenImportCommandOptions {
-            project: project.path().to_path_buf(),
-            target: rustc_host_target(&rustc)?,
-            toolchain: rustc_identity(&rustc)?,
-            profile: "release".to_string(),
-            features: Vec::new(),
-            source_inputs: vec![format!("direct-rustc-source={}", source.display())],
-            output: Some(receipt.clone()),
-            format: OvenOutputFormat::Json,
-        })?;
+        let prepared_receipt = crate::oven::receipt_generated_project(
+            &crate::oven::OvenGeneratedProjectRequest::new(
+                project.path(),
+                "oven-command-surface",
+                "0.1.0",
+                rustc_host_target(&rustc)?,
+                rustc_identity(&rustc)?,
+                "release",
+                Vec::new(),
+            )
+            .with_generated_source("direct-rustc-source", &source),
+        )?;
+        crate::oven::write_receipt(&prepared_receipt, &receipt)?;
         let receipt_data = fs::read(&receipt)?;
         let receipt_model: crate::oven::OvenReceipt = serde_json::from_slice(&receipt_data)?;
         let plan_path = output.path().join("plan.json");
@@ -7483,17 +7485,6 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             format: OvenOutputFormat::Json,
         })?;
         Ok(())
-    }
-
-    fn write_project(path: &std::path::Path) -> Result<(), std::io::Error> {
-        fs::write(
-            path.join("Cargo.toml"),
-            "[package]\nname = \"oven-command-surface\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-        )?;
-        fs::write(
-            path.join("Cargo.lock"),
-            "# This file is automatically @generated by Cargo.\nversion = 4\n",
-        )
     }
 
     fn rustc_path() -> Result<PathBuf, Box<dyn std::error::Error>> {

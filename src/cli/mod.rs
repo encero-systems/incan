@@ -3012,30 +3012,8 @@ mod tests {
         assert_eq!(partition_count, Some(4));
         assert!(parse_cli(["incan", "oven", "compiler-libtests", "--partition-index", "0",]).is_err());
 
-        let import = parse_cli([
-            "incan",
-            "oven",
-            "import",
-            "--target",
-            "aarch64-apple-darwin",
-            "--toolchain",
-            "rustc 1.96.0",
-            "--source",
-            "generated=target/oven/test.rs",
-        ])?;
-        assert!(matches!(
-            import.command,
-            Some(Command::Oven {
-                command: OvenCommand::Import {
-                    target,
-                    toolchain,
-                    source_inputs,
-                    ..
-                }
-            }) if target == "aarch64-apple-darwin"
-                && toolchain == "rustc 1.96.0"
-                && source_inputs == ["generated=target/oven/test.rs"]
-        ));
+        assert!(parse_cli(["incan", "oven", "import"]).is_err());
+        assert!(parse_cli(["incan", "oven", "legacy-cargo", "prepare"]).is_err());
 
         let test = parse_cli([
             "incan",

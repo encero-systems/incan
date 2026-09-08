@@ -11,27 +11,6 @@ use serde::Serialize;
 use crate::cli::{OvenInteropAdapterArgument, OvenLoafEnvelopeArgument, OvenOutputFormat};
 use crate::oven::OvenBuildIntent;
 
-/// Inputs for `incan oven import`.
-#[derive(Debug, Clone)]
-pub struct OvenImportCommandOptions {
-    /// Root containing the frozen Cargo package to import as evidence.
-    pub project: PathBuf,
-    /// Explicit target triple for the recorded build intent.
-    pub target: String,
-    /// Exact selected Rust toolchain identity.
-    pub toolchain: String,
-    /// Explicit profile name for the recorded build intent.
-    pub profile: String,
-    /// Explicitly selected feature names.
-    pub features: Vec<String>,
-    /// Named generated source inputs expressed as `NAME=PATH`.
-    pub source_inputs: Vec<String>,
-    /// Optional receipt output; the project-local Oven receipt path is used otherwise.
-    pub output: Option<PathBuf>,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
 /// Shared bounded-store location and policy inputs for Oven Alpha commands.
 #[derive(Debug, Clone)]
 pub struct OvenStoreCommandOptions {
@@ -112,25 +91,6 @@ pub struct OvenPlanPublishCommandOptions {
     /// Immutable artifact root used for full manifest validation before publication.
     pub artifact_root: PathBuf,
     /// Compatibility domain which owns this retained plan.
-    pub domain: String,
-    /// Bounded store selection and policy.
-    pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for the explicitly named `legacy_cargo` publisher boundary.
-#[derive(Debug, Clone)]
-pub struct OvenLegacyCargoPrepareCommandOptions {
-    /// Generated-project receipt that authorizes the direct-rustc build unit.
-    pub receipt: PathBuf,
-    /// Caller-owned generated Rust project containing `Cargo.toml` and `src/main.rs`.
-    pub generated_project: PathBuf,
-    /// Explicit Cargo executable used only for this named publisher transition.
-    pub cargo: PathBuf,
-    /// Explicit Rust compiler used by Cargo and recorded in the receipt.
-    pub rustc: PathBuf,
-    /// Stable compatibility domain for bounded store admission.
     pub domain: String,
     /// Bounded store selection and policy.
     pub store: OvenStoreCommandOptions,
