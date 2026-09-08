@@ -656,10 +656,41 @@ mod tests {
     fn publication_captures_nominal_method_return_unions() -> TestResult {
         let source =
             "pub model Box:\n    value: int\n\n    def answer(self) -> int | str:\n        return self.value\n";
-        let (_, captured, definitions, _, _) = emitted_module(source, "lib")?;
+        let (api, captured, definitions, rust, _) = emitted_module(source, "lib")?;
+        let ApiDeclaration::Model(model) = api.declarations.first().ok_or("checked model absent")? else {
+            return Err("expected checked model metadata".into());
+        };
+        let method = model
+            .methods
+            .iter()
+            .find(|method| method.name == "answer")
+            .ok_or("checked method absent")?;
+        let identity = method
+            .canonical
+            .as_ref()
+            .ok_or("publication fixture lacks a package-owned method identity")?;
         assert!(
-            !definitions.is_empty(),
-            "public method return must retain its emitted wrapper"
+            matches!(&identity.origin, CanonicalIdentityOriginExport::Package { library, module_path }
+            if library == "producer" && module_path == &["lib"])
+        );
+        // This fixture declares no enum. Its sole native enum must therefore be the method's actual emitted union;
+        // missing producer emission is a different failure from dropping that representation during publication.
+        let emitted = syn::parse_file(&rust)?
+            .items
+            .into_iter()
+            .filter_map(|item| match item {
+                syn::Item::Enum(item) => Some(item.ident.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 1, "method return has no unique emitted native wrapper");
+        assert_eq!(
+            definitions
+                .iter()
+                .map(|native| native.rust_name.clone())
+                .collect::<Vec<_>>(),
+            emitted,
+            "public method return must retain its actual emitted wrapper"
         );
         assert!(captured.iter().any(|entry| {
             entry
