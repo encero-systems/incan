@@ -687,3 +687,79 @@ def main() -> None:
     }
     Ok(())
 }
+
+/// Checked overloads and an identity decorator retain a privately imported native union through publication.
+#[test]
+fn source_unavailable_decorated_union_and_overloads_run_through_facade() -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let provider = temporary.path().join("provider");
+    let facade = temporary.path().join("facade");
+    project(
+        &provider,
+        "overloaded_union_provider",
+        "lib.incn",
+        r#"pub type Answer = int | str
+
+pub def select(value: int) -> Answer:
+    return value
+
+pub def select(value: str) -> Answer:
+    return value
+"#,
+        "",
+    )?;
+    bake(&provider)?;
+    project(
+        &facade,
+        "decorated_union_facade",
+        "lib.incn",
+        r#"from pub::provider import Answer
+pub from pub::provider import select as pick
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+pub def echo(value: Answer) -> Answer:
+    return value
+"#,
+        "\n[dependencies]\nprovider = { path = \"../provider\" }\n",
+    )?;
+    bake(&facade)?;
+    let artifacts = [&provider, &facade]
+        .into_iter()
+        .map(|root| Ok((root, artifact_snapshot(&root.join("target/lib"))?)))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    for root in [&provider, &facade] {
+        fs::remove_dir_all(root.join("src"))?;
+        fs::remove_file(root.join("loaf.toml"))?;
+    }
+
+    let consumer = temporary.path().join("fresh_consumer");
+    project(
+        &consumer,
+        "decorated_union_consumer",
+        "main.incn",
+        r#"from pub::bridge import echo, pick
+
+def main() -> None:
+    match echo(pick(42)):
+        int(number) => println(number)
+        str(text) => println("wrong overload")
+    match echo(pick("selected")):
+        int(number) => println("wrong overload")
+        str(text) => println(text)
+"#,
+        "\n[dependencies]\nbridge = { path = \"../facade\" }\n",
+    )?;
+    bake(&consumer)?;
+    let run = success(
+        command(&consumer).args(["run", "src/main.incn", "--locked"]).output()?,
+        "fresh decorated union consumer after producer source removal",
+    )?;
+    assert_eq!(run.stdout, b"42\nselected\n");
+    for (root, before) in artifacts {
+        assert_eq!(artifact_snapshot(&root.join("target/lib"))?, before);
+    }
+    Ok(())
+}
