@@ -62,11 +62,11 @@ use crate::oven::loaf::{
     retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
 };
 use crate::oven::native_test::{
-    OvenNativeTestCaseCounts, OvenNativeTestCaseTiming, OvenNativeTestCommandTiming, OvenNativeTestRequest,
-    run_native_test_batch_all_in_directory_with_timeout,
-    run_native_test_batch_all_in_directory_with_timeout_and_threads, run_native_tests,
+    OvenNativeTestBatchReport, OvenNativeTestBatchRequest, OvenNativeTestCaseCounts, OvenNativeTestCaseTiming,
+    OvenNativeTestCommandTiming, OvenNativeTestRequest, run_native_test_batch_all_for_request, run_native_tests,
     run_native_tests_exact_in_directory_with_timeout,
 };
+use crate::oven::progress::{PhaseProgress, announce as announce_oven_progress, elapsed_detail};
 use crate::oven::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenStoredDirectRustcRunRequest,
     OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot,
@@ -1061,6 +1061,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // A cold first bake cannot consume a Loaf that does not exist yet. Resolve its Rust inspection sources once at
     // this already explicit Cargo boundary, then hand the typed locked authority to every no-Cargo fixture child.
     let inspection_authority_started = Instant::now();
+    announce_oven_progress("RESOLVE", "Rust inspection authority", None);
     let authority_dir = scratch.path().join("rust-inspect-authority");
     fs::create_dir_all(&authority_dir).map_err(|error| {
         CliError::failure(format!(
@@ -1105,6 +1106,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         })?
     };
     phase_timing.inspection_authority_elapsed_ms = inspection_authority_started.elapsed().as_millis();
+    announce_oven_progress(
+        "RESOLVED",
+        "Rust inspection authority",
+        Some(&elapsed_detail(inspection_authority_started)),
+    );
     let cargo_process_started = true;
     let mut transient_peak_physical_bytes = 0_u64;
     let compiler_support_target = scratch.path().join("compiler-support-target");
@@ -1116,7 +1122,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     })?;
     let compiler_lock = loaf_compiler_lock_path(&options.compiler_root)?;
     let fixture_preparation_started = Instant::now();
-    for specification in loaf_envelope_specifications(envelope) {
+    let specifications = loaf_envelope_specifications(envelope);
+    let specification_count = specifications.len();
+    for (position, specification) in specifications.iter().enumerate() {
+        let fixture_started = Instant::now();
+        let fixture_subject = format!("{}/{}", specification.label, specification.profile);
+        announce_oven_progress(
+            "BAKE",
+            &fixture_subject,
+            Some(&format!("{}/{specification_count}", position + 1)),
+        );
         let inspection_packages = if specification.role.provides_source_authority() {
             specification.inspection_packages().map_err(CliError::failure)?
         } else {
@@ -1255,6 +1270,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 specification.label, result.physical_bytes, max_domain_physical_bytes
             )));
         }
+        announce_oven_progress(
+            "BAKED",
+            &fixture_subject,
+            Some(&format!(
+                "{}/{specification_count}, {}, {}",
+                position + 1,
+                human_bytes(result.physical_bytes),
+                elapsed_detail(fixture_started)
+            )),
+        );
         pending.push(OvenLoafBakeEntryReport {
             label: specification.label.to_string(),
             profile: specification.profile.to_string(),
@@ -1279,6 +1304,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
 
     let prepared_count = pending.len();
     let envelope_publication_started = Instant::now();
+    announce_oven_progress("PUBLISH", "Loaf envelope", Some(&format!("{prepared_count} Loaf(s)")));
     let manifest = OvenLoafEnvelopeManifest {
         schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
         envelope: loaf_envelope_name(envelope).to_string(),
@@ -1345,6 +1371,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         )));
     }
     phase_timing.envelope_publication_elapsed_ms = envelope_publication_started.elapsed().as_millis();
+    announce_oven_progress(
+        "PUBLISHED",
+        "Loaf envelope",
+        Some(&elapsed_detail(envelope_publication_started)),
+    );
     let reused_count = 0;
     let report = OvenLoafBakeReport {
         action: "prepared".to_string(),
@@ -1402,6 +1433,9 @@ fn finish_loaf_bake(
         return Ok(report);
     }
     let compiler_suite_preparation_started = Instant::now();
+    // The longest single phase of a cold prewarm: it stages the third-party foundation, which is where the
+    // transitional Cargo path still compiles the heavy dependency graph.
+    announce_oven_progress("PREPARE", "compiler-suite standard-library family", None);
     let suite_store = compiler_suite_store_path(options)?;
     let default_limits = loaf_envelope_default_limits(envelope);
     let max_physical_bytes = options.max_physical_bytes.unwrap_or(default_limits.max_physical_bytes);
@@ -1493,6 +1527,11 @@ fn finish_loaf_bake(
     report.elapsed_ms = started.elapsed().as_millis();
     report.phase_timing.compiler_suite_preparation_elapsed_ms =
         compiler_suite_preparation_started.elapsed().as_millis();
+    announce_oven_progress(
+        "PREPARED",
+        "compiler-suite standard-library family",
+        Some(&elapsed_detail(compiler_suite_preparation_started)),
+    );
     report.compiler_suite = Some(OvenCompilerSuiteBakeReport {
         receipt: receipt_path,
         prepare,
@@ -1581,6 +1620,7 @@ fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOutputFormat)
 /// roots and is not available to normal Incan commands.
 pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions) -> CliResult<ExitCode> {
     let suite_started = Instant::now();
+    let receipt_phase = PhaseProgress::start("compiler-suite receipt and selection");
     let rustc = options.rustc.unwrap_or(resolve_active_rustc().map_err(oven_error)?);
     let compiler_data_root = crate::toolchain_layout::compiler_owned_oven_data_root().ok_or_else(|| {
         CliError::failure(
@@ -1799,8 +1839,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             output_directory.display()
         ))
     })?;
-    let receipt_and_selection_elapsed_ms = suite_started.elapsed().as_millis();
-    let shared_setup_started = Instant::now();
+    let receipt_and_selection_elapsed_ms = receipt_phase.finish();
+    let shared_setup_phase = PhaseProgress::start("compiler-suite shared setup");
     let fixture_cargo = options
         .fixture_cargo
         .as_deref()
@@ -1938,18 +1978,19 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
     // the suite from a deeply nested worktree, where forwarding that path makes otherwise-valid Cargo metadata
     // inspection fail before Oven has a chance to execute the stored root. Keep this mutable scratch directory
     // invocation-owned but deliberately short; all durable suite output remains under the caller-selected output.
+    environment.insert(
+        "CARGO_BIN_EXE_incan".to_string(),
+        compiler_suite_environment_path(&cli_bake.output)?.display().to_string(),
+    );
     let suite_temporary_directory = compiler_suite_temporary_directory()?;
     environment.insert(
         "TMPDIR".to_string(),
         suite_temporary_directory.path().display().to_string(),
     );
-    environment.insert(
-        "CARGO_BIN_EXE_incan".to_string(),
-        compiler_suite_environment_path(&cli_bake.output)?.display().to_string(),
-    );
-    let shared_setup_elapsed_ms = shared_setup_started.elapsed().as_millis();
+    let shared_setup_elapsed_ms = shared_setup_phase.finish();
     let run_children = || -> CliResult<(CompilerSuiteChildrenReport, usize, usize, CompilerSuiteChildPhaseTimings)> {
         if suite.schema_version == 8 {
+            let target_preparation_phase = PhaseProgress::start("compiler-suite target preparation");
             let test_artifact_closure = suite.test_artifact_closure.as_ref().ok_or_else(|| {
                 CliError::failure("stored compiler-suite payload has no direct-rustc test closure".to_string())
             })?;
@@ -1969,7 +2010,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 None,
                 &mut binary_cache,
             )?;
-            let root_execution_started = Instant::now();
+            let target_preparation_elapsed_ms = target_preparation_phase.finish();
+            let root_execution_phase = PhaseProgress::start("compiler-suite root execution");
             let suite_report = run_planned_compiler_suite_children(
                 &suite.test_targets,
                 test_artifact_closure,
@@ -1992,12 +2034,12 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 suite.test_targets.len(),
                 suite.binary_targets.len(),
                 CompilerSuiteChildPhaseTimings {
-                    target_preparation_elapsed_ms: 0,
-                    root_execution_elapsed_ms: root_execution_started.elapsed().as_millis(),
+                    target_preparation_elapsed_ms,
+                    root_execution_elapsed_ms: root_execution_phase.finish(),
                 },
             ))
         } else {
-            let target_preparation_started = Instant::now();
+            let target_preparation_phase = PhaseProgress::start("compiler-suite target preparation");
             let mut prepared_children = Vec::with_capacity(shard_executions.len());
             let mut planned_binary_count = 0;
             for (index, shard) in shard_executions.iter().enumerate() {
@@ -2073,8 +2115,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 )?);
                 planned_binary_count += shard.payload.binary_targets.len();
             }
-            let target_preparation_elapsed_ms = target_preparation_started.elapsed().as_millis();
-            let root_execution_started = Instant::now();
+            let target_preparation_elapsed_ms = target_preparation_phase.finish();
+            let root_execution_phase = PhaseProgress::start("compiler-suite root execution");
             let suite_report = run_prepared_compiler_suite_children(
                 prepared_children,
                 &receipt,
@@ -2087,19 +2129,24 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 planned_binary_count,
                 CompilerSuiteChildPhaseTimings {
                     target_preparation_elapsed_ms,
-                    root_execution_elapsed_ms: root_execution_started.elapsed().as_millis(),
+                    root_execution_elapsed_ms: root_execution_phase.finish(),
                 },
             ))
         }
     };
-    let (mut suite_report, planned_target_count, planned_binary_count, child_phase_timings) =
+    let (
+        (mut suite_report, planned_target_count, planned_binary_count, child_phase_timings),
+        scratch_cleanup_elapsed_ms,
+    ) = run_compiler_suite_with_scratch(suite_temporary_directory, || {
         run_compiler_suite_children_with_leases_retained(
             &suite_lease,
             &shard_executions,
             &foundation_executions,
             &toolchain_data_executions,
             run_children,
-        )?;
+        )
+    })?;
+    let aggregation_phase = PhaseProgress::start("compiler-suite result aggregation");
     let completion_failures = compiler_suite_completion_failures(&suite_report, planned_target_count);
     suite_report.failed.extend(completion_failures);
     let native_test_case_totals = suite_report.native_test_case_totals();
@@ -2139,14 +2186,21 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
     );
     let complete_root_success = success && selection.complete_root_evidence;
     let complete_suite_success = success && selection.complete_suite_evidence;
+    let result_aggregation_elapsed_ms = aggregation_phase.finish();
+    let inspection_phase = PhaseProgress::start("compiler-suite store inspection");
+    let store_inspection = store.inspect().map_err(oven_error)?;
+    let store_inspection_elapsed_ms = inspection_phase.finish();
     let timing = CompilerSuiteTimingReport {
         receipt_and_selection_elapsed_ms,
         shared_setup_elapsed_ms,
         target_preparation_elapsed_ms: child_phase_timings.target_preparation_elapsed_ms,
         root_execution_elapsed_ms: child_phase_timings.root_execution_elapsed_ms,
+        scratch_cleanup_elapsed_ms,
+        result_aggregation_elapsed_ms,
+        store_inspection_elapsed_ms,
         total_elapsed_ms: suite_started.elapsed().as_millis(),
     };
-    let store_inspection = store.inspect().map_err(oven_error)?;
+    let publication_phase = PhaseProgress::start("compiler-suite report publication");
     let report_path = output_directory.join("compiler-suite-report.json");
     let report = serde_json::json!({
         "success": success,
@@ -2173,10 +2227,12 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             "roots": fixture_cargo_roots,
         },
         "timing": timing,
+        "timing_scope": "command entry through store inspection; excludes report publication, process teardown and wrapper retention",
         "store": store_inspection,
         "failures": suite_report.failed.clone(),
     });
     write_compiler_suite_report(&report_path, &report)?;
+    publication_phase.finish();
     if !success {
         if matches!(options.format, OvenOutputFormat::Json) {
             print_json(&report)?;
@@ -2188,7 +2244,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             _ => "partial exact diagnostic (not complete-root or complete-suite evidence)",
         };
         return Err(CliError::failure(format!(
-            "Oven {selection_context} failed: {} passed, {} failed, {} ignored across {} reported libtest root(s): {} green, {} failing, with {} root(s) lacking a terminal libtest summary. The explicit compatibility fixture launched Cargo {} time(s).\n{}",
+            "Oven {selection_context} failed: {} passed, {} failed, {} ignored across {} reported libtest root(s): {} green, {} failing, with {} root(s) lacking complete selected-case evidence. The explicit compatibility fixture launched Cargo {} time(s).\n{}",
             native_test_case_totals.passed,
             native_test_case_totals.failed,
             native_test_case_totals.ignored,
@@ -2450,6 +2506,31 @@ fn compiler_suite_temporary_directory() -> CliResult<LoafTemporaryDirectory> {
 fn compiler_suite_temporary_directory() -> CliResult<LoafTemporaryDirectory> {
     LoafTemporaryDirectory::create(&env::temp_dir(), ".incan-oven-suite-")
         .map_err(|error| CliError::failure(format!("cannot create compiler-suite temporary directory: {error}")))
+}
+
+/// Execute prepared children and reclaim their scratch before returning either success or failure.
+///
+/// Deletion is measured and observable instead of happening silently after the report. If execution and cleanup
+/// both fail, preserve both explanations; a cleanup error alone cannot erase a child's primary failure.
+fn run_compiler_suite_with_scratch<T>(
+    directory: LoafTemporaryDirectory,
+    run: impl FnOnce() -> CliResult<T>,
+) -> CliResult<(T, u128)> {
+    let result = run();
+    let subject = format!("compiler-suite scratch cleanup {}", directory.path().display());
+    let phase = PhaseProgress::start(&subject);
+    let cleanup = directory.close();
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok((value, phase.finish())),
+        (Err(error), Ok(())) => {
+            phase.finish();
+            Err(error)
+        }
+        (Ok(_), Err(error)) => Err(CliError::failure(format!("{subject} failed: {error}"))),
+        (Err(error), Err(cleanup_error)) => Err(CliError::failure(format!(
+            "{error}\n{subject} also failed: {cleanup_error}"
+        ))),
+    }
 }
 
 /// Convert a scheduler-selected path into an absolute environment value before a test changes directory.
@@ -3108,6 +3189,24 @@ fn run_prepared_compiler_suite_children(
     Ok(report)
 }
 
+/// Summarize one native root's terminal result for its announcement line.
+///
+/// Missing or invalid case evidence is reported separately from process success. A green exit cannot repair
+/// incomplete selected-case accounting.
+fn compiler_suite_root_outcome_detail(report: &OvenNativeTestBatchReport) -> String {
+    let elapsed = format!("{:.1}s", report.timing.execution_elapsed_ms as f64 / 1_000.0);
+    match &report.case_counts {
+        Some(counts) => format!(
+            "{} passed, {} failed, {} ignored in {elapsed}",
+            counts.passed, counts.failed, counts.ignored
+        ),
+        None => format!(
+            "incomplete case evidence in {elapsed} (process success: {})",
+            report.process_success
+        ),
+    }
+}
+
 /// Execute one prepared direct-Rustc compiler-suite child with no Cargo process or store mutation.
 fn run_prepared_compiler_suite_child(
     child: PreparedCompilerSuiteChild<'_>,
@@ -3136,6 +3235,7 @@ fn run_prepared_compiler_suite_child(
     )?;
     match child.target.runner.as_str() {
         "rustc-test" => {
+            announce_oven_progress("COMPILE", &child.target.source_relative_path, None);
             let bake_started = Instant::now();
             let bake = bake_trusted_direct_rustc_test(&OvenTrustedDirectRustcTargetRequest {
                 receipt,
@@ -3162,20 +3262,28 @@ fn run_prepared_compiler_suite_child(
                     &child.environment,
                     Some(&working_directory),
                     Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                    Some(&child.target.source_relative_path),
                 ),
-                None => run_native_test_batch_all_in_directory_with_timeout_and_threads(
-                    &bake.output,
-                    &child.environment,
-                    Some(&working_directory),
-                    Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
-                    libtest_threads,
-                ),
+                None => run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+                    executable: &bake.output,
+                    environment: &child.environment,
+                    working_directory: Some(&working_directory),
+                    timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                    test_threads: Some(libtest_threads),
+                    root_label: Some(&child.target.source_relative_path),
+                    progress: None,
+                }),
             }
             .map_err(oven_error)?;
+            announce_oven_progress(
+                if report.success { "ROOT OK" } else { "ROOT FAIL" },
+                &child.target.source_relative_path,
+                Some(&compiler_suite_root_outcome_detail(&report)),
+            );
+            let transcript = write_native_test_transcript(&child.output, &report.output)?;
             let failures = if report.success {
                 Vec::new()
             } else {
-                let transcript = write_native_test_failure_transcript(&child.output, &report.output)?;
                 vec![format!(
                     "{} target `{}` failed; full libtest transcript: {}\n{}",
                     child.target.target_kind,
@@ -3203,6 +3311,7 @@ fn run_prepared_compiler_suite_child(
                     source_relative_path: child.target.source_relative_path.clone(),
                     inventory_count: report.inventory.names.len(),
                     success: report.success,
+                    process_success: report.process_success,
                     case_counts: report.case_counts,
                     case_timings: report.case_timings,
                     command_timings: report.command_timings,
@@ -3214,6 +3323,7 @@ fn run_prepared_compiler_suite_child(
             })
         }
         "rustdoc-test" => {
+            announce_oven_progress("DOCTEST", &child.target.source_relative_path, None);
             let temporary_directory = child.output.with_extension("rustdoc-tmp");
             let rustdoc_started = Instant::now();
             run_trusted_rustdoc_test(&OvenTrustedRustdocTestRequest {
@@ -3233,6 +3343,11 @@ fn run_prepared_compiler_suite_child(
                 timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
             })
             .map_err(oven_error)?;
+            announce_oven_progress(
+                "DOCTEST OK",
+                &child.target.source_relative_path,
+                Some(&format!("{:.1}s", rustdoc_started.elapsed().as_secs_f64())),
+            );
             Ok(CompilerSuiteChildrenReport {
                 native_test_count: 0,
                 doctest_targets: 1,
@@ -3378,12 +3493,15 @@ fn run_planned_compiler_suite_children(
                 .map_err(oven_error)?;
                 let direct_rustc_bake_elapsed_ms = bake_started.elapsed().as_millis();
                 let working_directory = compiler_suite_target_working_directory(compiler_root, &source, target)?;
-                let report = run_native_test_batch_all_in_directory_with_timeout(
-                    &bake.output,
-                    &target_environment,
-                    Some(&working_directory),
-                    Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
-                )
+                let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+                    executable: &bake.output,
+                    environment: &target_environment,
+                    working_directory: Some(&working_directory),
+                    timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                    test_threads: None,
+                    root_label: Some(&target.source_relative_path),
+                    progress: None,
+                })
                 .map_err(oven_error)?;
                 suite_report.native_test_count += report.inventory.names.len();
                 suite_report.native_test_roots.push(CompilerSuiteNativeTestRootReport {
@@ -3393,6 +3511,7 @@ fn run_planned_compiler_suite_children(
                     source_relative_path: target.source_relative_path.clone(),
                     inventory_count: report.inventory.names.len(),
                     success: report.success,
+                    process_success: report.process_success,
                     case_counts: report.case_counts.clone(),
                     case_timings: report.case_timings.clone(),
                     command_timings: report.command_timings.clone(),
@@ -3400,8 +3519,8 @@ fn run_planned_compiler_suite_children(
                     libtest_inventory_elapsed_ms: report.timing.inventory_elapsed_ms,
                     libtest_execution_elapsed_ms: report.timing.execution_elapsed_ms,
                 });
+                let transcript = write_native_test_transcript(&output, &report.output)?;
                 if !report.success {
-                    let transcript = write_native_test_failure_transcript(&output, &report.output)?;
                     suite_report.failed.push(format!(
                         "{} target `{}` failed; full libtest transcript: {}\n{}",
                         target.target_kind,
@@ -3668,10 +3787,12 @@ struct CompilerSuiteNativeTestRootReport {
     target_name: String,
     source_relative_path: String,
     inventory_count: usize,
-    /// Whether this root reached a successful terminal libtest result.
+    /// Whether the process succeeded with complete, green case evidence.
     success: bool,
+    /// Raw process success, independent of whether its selected case evidence is complete.
+    process_success: bool,
     case_counts: Option<OvenNativeTestCaseCounts>,
-    /// Opt-in case timings emitted by this root's already-executed libtest process.
+    /// Per-case timings emitted by this root's already-executed libtest process.
     case_timings: Vec<OvenNativeTestCaseTiming>,
     /// Opt-in nested Incan command timings parsed from this root's captured libtest transcript.
     command_timings: Vec<OvenNativeTestCommandTiming>,
@@ -3718,6 +3839,10 @@ struct CompilerSuiteTimingReport {
     shared_setup_elapsed_ms: u128,
     target_preparation_elapsed_ms: u128,
     root_execution_elapsed_ms: u128,
+    scratch_cleanup_elapsed_ms: u128,
+    result_aggregation_elapsed_ms: u128,
+    store_inspection_elapsed_ms: u128,
+    /// Command entry through store inspection; outer wrapper evidence additionally includes publication and exit.
     total_elapsed_ms: u128,
 }
 
@@ -3825,7 +3950,7 @@ struct CompilerSuiteChildrenReport {
     rustdoc_test_roots: Vec<CompilerSuiteRustdocTestRootReport>,
 }
 
-/// Aggregate case counts from libtest summaries already captured by the worker processes.
+/// Aggregate validated root-owned case counts returned by the worker processes.
 #[derive(Debug, Clone, Default, Serialize)]
 struct CompilerSuiteNativeTestCaseTotals {
     passed: usize,
@@ -3907,7 +4032,7 @@ fn compiler_suite_completion_failures(
     let mut failures = Vec::new();
     if totals.unreported_roots > 0 {
         failures.push(format!(
-            "{count} native compiler-suite root(s) did not report a terminal libtest summary",
+            "{count} native compiler-suite root(s) did not report complete selected-case evidence",
             count = totals.unreported_roots
         ));
     }
@@ -5004,8 +5129,8 @@ fn compiler_suite_directory(artifact_root: &Path, relative_path: &str, role: &st
     Ok(path)
 }
 
-/// Persist the full caller-owned libtest transcript before returning its bounded terminal summary.
-fn write_native_test_failure_transcript(output: &Path, transcript: &str) -> CliResult<PathBuf> {
+/// Persist full native diagnostics on success or failure, beside the caller-owned executable.
+fn write_native_test_transcript(output: &Path, transcript: &str) -> CliResult<PathBuf> {
     let path = output.with_extension("libtest-output.txt");
     fs::write(&path, transcript).map_err(|error| {
         CliError::failure(format!(
@@ -5018,26 +5143,34 @@ fn write_native_test_failure_transcript(output: &Path, transcript: &str) -> CliR
 
 /// Collect every test libtest reported as failing, in the order it first named them.
 ///
-/// Two spellings have to be read because the suite runs libtest in both modes. With output captured, each failure
-/// body is introduced by `---- <name> stdout ----`. With output passed through, no such header is printed and the
-/// only place the test is named is the panic line, where libtest has set the thread name to the test name. Reading
-/// both keeps the roster complete in either mode, and de-duplicating keeps one entry per test when both appear.
-fn failing_test_names(output: &str) -> Vec<&str> {
-    let mut names = Vec::new();
+/// Three spellings have to be read. Oven's own roots stream structured events, where a `failed` event names the test
+/// exactly and covers every way a case can fail. The two text spellings remain for transcripts that did not come
+/// from that stream — a retained transcript from an older run, or one a nested program produced: with output
+/// captured each failure body is introduced by `---- <name> stdout ----`, and with output passed through the only
+/// place the test is named is the panic line, where libtest set the thread name to the test name.
+///
+/// The text spellings alone are not sufficient for this repository. A test that fails by returning `Err` never
+/// panics, so it has no thread-name line, which is why the structured event is read first and why it is the one
+/// spelling that cannot miss a failure.
+fn failing_test_names(output: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
+        let reported = failing_test_name_from_event(trimmed).map(str::to_string);
         let captured = trimmed
             .strip_prefix("---- ")
-            .and_then(|rest| rest.strip_suffix(" stdout ----"));
+            .and_then(|rest| rest.strip_suffix(" stdout ----"))
+            .map(str::to_string);
         let passed_through = trimmed
             .contains("panicked at")
             .then(|| trimmed.split_once("thread '"))
             .flatten()
             .and_then(|(_, rest)| rest.split_once('\''))
-            .map(|(name, _)| name);
-        let Some(name) = captured.or(passed_through).map(str::trim) else {
+            .map(|(name, _)| name.to_string());
+        let Some(name) = reported.or(captured).or(passed_through) else {
             continue;
         };
+        let name = name.trim().to_string();
         // A panic on the harness thread names the runner, not a test; it would add noise to every roster.
         if name.is_empty() || name == "main" || names.contains(&name) {
             continue;
@@ -5045,6 +5178,46 @@ fn failing_test_names(output: &str) -> Vec<&str> {
         names.push(name);
     }
     names
+}
+
+/// Recognize the structured event lines that belong in a bounded failure detail.
+///
+/// Without this the detail selector matches nothing in a structured transcript and falls back to printing all of it,
+/// which is the opposite of bounded. A failing case's event and the suite's terminal event are what carry the
+/// result; every passing case's event is noise here.
+fn is_structured_failure_line(line: &str) -> bool {
+    if failing_test_name_from_event(line).is_some() {
+        return true;
+    }
+    if !line.starts_with('{') {
+        return false;
+    }
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    event.get("type").and_then(serde_json::Value::as_str) == Some("suite")
+        && event.get("event").and_then(serde_json::Value::as_str) != Some("started")
+}
+
+/// Read one libtest structured event, returning the test name only when the event reports a failure.
+///
+/// A line that is not an event, or an event that reports any other outcome, yields nothing: the roster must name
+/// what failed and only what failed.
+fn failing_test_name_from_event(line: &str) -> Option<&str> {
+    if !line.starts_with('{') {
+        return None;
+    }
+    let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    if event.get("type").and_then(serde_json::Value::as_str) != Some("test")
+        || event.get("event").and_then(serde_json::Value::as_str) != Some("failed")
+    {
+        return None;
+    }
+    // Borrowed from the caller's line rather than the parsed value, which does not outlive this function.
+    let name = event.get("name").and_then(serde_json::Value::as_str)?;
+    line.match_indices(name)
+        .next()
+        .map(|(start, _)| &line[start..start + name.len()])
 }
 
 /// Keep terminal failure reporting actionable without dumping an unbounded libtest transcript into the CLI error path.
@@ -5077,7 +5250,8 @@ fn native_test_failure_summary(output: &str) -> String {
             || line.contains("panicked")
             || line.contains("Error:")
             || line.starts_with("error:")
-            || line.contains("test result:");
+            || line.contains("test result:")
+            || is_structured_failure_line(line);
         if is_relevant || panic_context_remaining > 0 {
             relevant.push(line);
         }
@@ -5436,7 +5610,7 @@ mod tests {
         oven_test, parse_named_path, prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
         reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
         run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
-        write_native_test_failure_transcript,
+        write_native_test_transcript,
     };
     use crate::cli::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use crate::oven::legacy_cargo::{
@@ -6145,14 +6319,36 @@ mod tests {
     }
 
     #[test]
-    fn native_test_failure_transcript_is_retained_beside_caller_output() -> Result<(), Box<dyn std::error::Error>> {
+    fn native_test_transcript_is_retained_beside_caller_output() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let output = directory.path().join("direct-rustc-test");
-        let transcript = write_native_test_failure_transcript(&output, "one failing libtest\n")?;
+        let transcript = write_native_test_transcript(&output, "one failing libtest\n")?;
 
         assert_eq!(transcript, output.with_extension("libtest-output.txt"));
         assert_eq!(fs::read_to_string(transcript)?, "one failing libtest\n");
         Ok(())
+    }
+
+    #[test]
+    fn a_structured_failure_is_named_even_though_nothing_panicked() {
+        // Shapes captured from a real libtest binary run with `-Z unstable-options --format json --report-time`
+        // under `--nocapture`, where a case that returns `Err` produces no panic line at all.
+        let summary = native_test_failure_summary(
+            "{ \"type\": \"suite\", \"event\": \"started\", \"test_count\": 2 }\n\
+             { \"type\": \"test\", \"event\": \"started\", \"name\": \"manifest::rejects_legacy\" }\n\
+             { \"type\": \"test\", \"name\": \"manifest::rejects_legacy\", \"event\": \"failed\", \"exec_time\": 0.004 }\n\
+             { \"type\": \"test\", \"name\": \"manifest::finds_loaf\", \"event\": \"ok\", \"exec_time\": 0.001 }\n\
+             { \"type\": \"suite\", \"event\": \"failed\", \"passed\": 1, \"failed\": 1, \"ignored\": 0, \"measured\": 0, \"filtered_out\": 0, \"exec_time\": 0.006 }\n",
+        );
+
+        assert!(
+            summary.contains("failing tests (1):") && summary.contains("manifest::rejects_legacy"),
+            "the roster must name a case that failed without panicking: {summary}"
+        );
+        assert!(
+            !summary.contains("manifest::finds_loaf"),
+            "only failures belong in the roster: {summary}"
+        );
     }
 
     #[test]
@@ -6221,6 +6417,58 @@ mod tests {
     }
 
     #[test]
+    fn compiler_suite_scratch_is_removed_before_success_and_preparation_error_return()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent = tempfile::tempdir()?;
+        for succeed in [true, false] {
+            let scratch = crate::oven::loaf::LoafTemporaryDirectory::create(parent.path(), "scratch-")?;
+            let path = scratch.path().to_path_buf();
+            let result = super::run_compiler_suite_with_scratch(scratch, || {
+                fs::write(path.join("fixture"), b"owned child scratch")
+                    .map_err(|error| crate::cli::CliError::failure(error.to_string()))?;
+                if succeed {
+                    Ok(7)
+                } else {
+                    Err(crate::cli::CliError::failure("preparation failed"))
+                }
+            });
+            assert!(!path.exists(), "scratch outlived the returned result");
+            if succeed {
+                assert_eq!(result?.0, 7);
+            } else {
+                assert!(
+                    result
+                        .err()
+                        .ok_or("missing preparation error")?
+                        .to_string()
+                        .contains("preparation failed")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compiler_suite_cleanup_error_preserves_the_primary_failure_and_remaining_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent = tempfile::tempdir()?;
+        let scratch = crate::oven::loaf::LoafTemporaryDirectory::create(parent.path(), "scratch-")?;
+        let path = scratch.path().to_path_buf();
+        fs::remove_dir(&path)?;
+        fs::write(&path, b"unexpected replacement")?;
+        let error = super::run_compiler_suite_with_scratch(scratch, || -> crate::cli::CliResult<()> {
+            Err(crate::cli::CliError::failure("child preparation failed"))
+        })
+        .err()
+        .ok_or("cleanup unexpectedly succeeded")?;
+        assert!(error.to_string().contains("child preparation failed"));
+        assert!(error.to_string().contains("scratch cleanup"));
+        assert_eq!(fs::read(path)?, b"unexpected replacement");
+        Ok(())
+    }
+
+    #[test]
     fn compiler_suite_timing_report_keeps_shared_and_root_measurements_distinct()
     -> Result<(), Box<dyn std::error::Error>> {
         let report = serde_json::json!({
@@ -6229,7 +6477,10 @@ mod tests {
                 shared_setup_elapsed_ms: 20,
                 target_preparation_elapsed_ms: 30,
                 root_execution_elapsed_ms: 40,
-                total_elapsed_ms: 100,
+                scratch_cleanup_elapsed_ms: 50,
+                result_aggregation_elapsed_ms: 60,
+                store_inspection_elapsed_ms: 70,
+                total_elapsed_ms: 280,
             },
             "native_test_roots": [CompilerSuiteNativeTestRootReport {
                 package_name: "fixture".to_string(),
@@ -6238,6 +6489,7 @@ mod tests {
                 source_relative_path: "tests/fixture.rs".to_string(),
                 inventory_count: 1,
                 success: true,
+                process_success: true,
                 case_counts: Some(OvenNativeTestCaseCounts {
                     passed: 1,
                     failed: 0,
@@ -6259,9 +6511,13 @@ mod tests {
         });
 
         assert_eq!(report["timing"]["shared_setup_elapsed_ms"], 20);
+        assert_eq!(report["timing"]["scratch_cleanup_elapsed_ms"], 50);
+        assert_eq!(report["timing"]["store_inspection_elapsed_ms"], 70);
+        assert_eq!(report["timing"]["total_elapsed_ms"], 280);
         assert_eq!(report["native_test_roots"][0]["direct_rustc_bake_elapsed_ms"], 50);
         assert_eq!(report["native_test_roots"][0]["libtest_inventory_elapsed_ms"], 6);
         assert_eq!(report["native_test_roots"][0]["libtest_execution_elapsed_ms"], 7);
+        assert_eq!(report["native_test_roots"][0]["process_success"], true);
         assert_eq!(report["rustdoc_test_roots"][0]["execution_elapsed_ms"], 8);
         Ok(())
     }
@@ -6280,6 +6536,7 @@ mod tests {
                     source_relative_path: "tests/green.rs".to_string(),
                     inventory_count: 2,
                     success: true,
+                    process_success: true,
                     case_counts: Some(OvenNativeTestCaseCounts {
                         passed: 2,
                         failed: 0,
@@ -6307,6 +6564,7 @@ mod tests {
                     source_relative_path: "tests/failed.rs".to_string(),
                     inventory_count: 2,
                     success: false,
+                    process_success: false,
                     case_counts: Some(OvenNativeTestCaseCounts {
                         passed: 1,
                         failed: 1,
@@ -6326,8 +6584,9 @@ mod tests {
                     target_kind: "test".to_string(),
                     target_name: "unreported_root".to_string(),
                     source_relative_path: "tests/unreported.rs".to_string(),
-                    inventory_count: 0,
+                    inventory_count: 1,
                     success: false,
+                    process_success: true,
                     case_counts: None,
                     case_timings: Vec::new(),
                     command_timings: Vec::new(),
@@ -6353,7 +6612,7 @@ mod tests {
         assert!(
             failures
                 .iter()
-                .any(|failure| failure.contains("terminal libtest summary"))
+                .any(|failure| failure.contains("complete selected-case evidence"))
         );
         assert!(failures.iter().any(|failure| failure.contains("planned 4 root")));
 
