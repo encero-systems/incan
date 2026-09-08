@@ -787,10 +787,10 @@ pub fn collect_checked_api_metadata(
     }
 
     for declaration in &mut declarations {
-        if let ApiDeclaration::Alias(alias) = declaration {
-            if let Some(CheckedExportKind::Alias(checked)) = checked_kind(&checked_by_name, &alias.name) {
-                alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
-            }
+        if let ApiDeclaration::Alias(alias) = declaration
+            && let Some(CheckedExportKind::Alias(checked)) = checked_kind(&checked_by_name, &alias.name)
+        {
+            alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
         }
     }
 
@@ -863,10 +863,10 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                         if let Some(function) = &alias.projected_function {
                             projections.insert(path.clone(), function.clone());
                         }
-                        if let Some(ty) = &alias.projected_type {
-                            if ty.has_native_union() {
-                                type_projections.insert(path.clone(), ty.clone());
-                            }
+                        if let Some(ty) = &alias.projected_type
+                            && ty.has_native_union()
+                        {
+                            type_projections.insert(path.clone(), ty.clone());
                         }
                     }
                     aliases.push(ApiAliasProjectionRequest {
@@ -904,12 +904,12 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                 .as_ref()
                 .and_then(|path| projections.get(path))
                 .or_else(|| projections.get(&alias.target_path));
-            if !projections.contains_key(&alias.path) {
-                if let Some(target) = resolved {
-                    let projection = projected_function_for_alias(alias, target);
-                    projections.insert(alias.path.clone(), projection);
-                    changed = true;
-                }
+            if !projections.contains_key(&alias.path)
+                && let Some(target) = resolved
+            {
+                let projection = projected_function_for_alias(alias, target);
+                projections.insert(alias.path.clone(), projection);
+                changed = true;
             }
             if !type_projections.contains_key(&alias.path) {
                 let target = qualified

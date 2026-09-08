@@ -185,29 +185,28 @@ pub(crate) fn with_checked_type_routes<T: VisitTypeRefs>(
         }
     });
     value.visit_type_refs(&mut |leaf| {
-        if let TypeRef::Named { name, origin } | TypeRef::Applied { name, origin, .. } = leaf {
-            if let Some(identity) = origin.take() {
-                if let Some(route) = routes
-                    .and_then(|routes| routes.get(&identity.binding_key()))
-                    .and_then(|route| route.strip_prefix("pub::"))
-                {
-                    *name = format!("::{route}");
-                } else {
-                    *leaf = TypeRef::Unknown;
-                }
+        if let TypeRef::Named { name, origin } | TypeRef::Applied { name, origin, .. } = leaf
+            && let Some(identity) = origin.take()
+        {
+            if let Some(route) = routes
+                .and_then(|routes| routes.get(&identity.binding_key()))
+                .and_then(|route| route.strip_prefix("pub::"))
+            {
+                *name = format!("::{route}");
+            } else {
+                *leaf = TypeRef::Unknown;
             }
         }
     });
     // Native wire members remain semantic evidence. The admitted projection already carries its separately routed
     // member copy, so this general nominal rewrite must not replace the producer's immutable member identities.
     value.visit_type_refs(&mut |ty| {
-        if let TypeRef::NativeUnion(native) = ty {
-            if let Some((_, _, members)) = native_members
+        if let TypeRef::NativeUnion(native) = ty
+            && let Some((_, _, members)) = native_members
                 .iter()
                 .find(|(owner, name, _)| owner == &native.owner && name == &native.rust_name)
-            {
-                native.members = members.clone();
-            }
+        {
+            native.members = members.clone();
         }
     });
     value
@@ -222,10 +221,10 @@ pub(crate) fn with_checked_type_origins<T: VisitTypeRefs>(
     origins: &BTreeMap<String, NominalTypeOriginExport>,
 ) -> T {
     value.visit_type_refs(&mut |ty| {
-        if let TypeRef::Named { name, origin } | TypeRef::Applied { name, origin, .. } = ty {
-            if origin.is_none() {
-                *origin = origins.get(name).cloned();
-            }
+        if let TypeRef::Named { name, origin } | TypeRef::Applied { name, origin, .. } = ty
+            && origin.is_none()
+        {
+            *origin = origins.get(name).cloned();
         }
     });
     value
@@ -264,6 +263,107 @@ impl VisitTypeRefs for DecoratorValue {
             Self::Literal { .. } | Self::ConstRef { .. } | Self::SymbolRef { .. } | Self::Unsupported { .. } => {}
         }
     }
+}
+
+/// Bind native carriers through the existing admitted provider graph before projecting a compiler-owned API copy.
+///
+/// The original producer members stay immutable. Only the non-serialized physical projection is routed for emission;
+/// its owner is selected by the admitted artifact, never inferred from a generated wrapper spelling.
+pub(crate) fn with_checked_native_unions<T: VisitTypeRefs>(
+    mut value: T,
+    library: &str,
+    plan: Option<&crate::provider::ProviderPlan>,
+    routes: Option<&std::collections::HashMap<String, String>>,
+) -> Result<T, String> {
+    let mut failure = None;
+    value.visit_type_refs(&mut |ty| {
+        if failure.is_some() {
+            return;
+        }
+        let TypeRef::NativeUnion(native) = ty else {
+            return;
+        };
+        if native.checked_projection.is_some() {
+            return;
+        }
+        let Some(plan) = plan else {
+            failure = Some(format!(
+                "native union `{}` has no admitted provider plan",
+                native.rust_name
+            ));
+            return;
+        };
+        let (mut bound, route) = match plan.public_native_union_projection(library, native) {
+            Ok(projection) => projection,
+            Err(error) => {
+                failure = Some(error);
+                return;
+            }
+        };
+        let mut owner_path = vec![library.to_string()];
+        for dependency in route {
+            owner_path.push(crate::frontend::rust_type_display::PROVIDER_RUST_BRIDGE_MODULE.to_string());
+            owner_path.push(dependency);
+        }
+        let rust_owner = format!("::{}", owner_path.join("::"));
+        let mut members = match with_checked_native_unions(bound.members.clone(), library, Some(plan), routes) {
+            Ok(members) => with_checked_type_routes(members, routes),
+            Err(error) => {
+                failure = Some(error);
+                return;
+            }
+        };
+        members.visit_type_refs(&mut |member| match member {
+            TypeRef::Named { name, origin: None } if !name.starts_with("::") => {
+                if matches!(
+                    super::resolved_type_from_manifest_type_ref(&TypeRef::Named {
+                        name: name.clone(),
+                        origin: None
+                    }),
+                    crate::frontend::symbols::ResolvedType::Named(_)
+                ) {
+                    *name = format!("{rust_owner}::{name}");
+                }
+            }
+            TypeRef::Applied { name, origin: None, .. }
+                if !name.starts_with("::")
+                    && incan_core::lang::types::collections::from_str(name).is_none()
+                    && name != incan_core::lang::types::UNION_TYPE_NAME
+                    && name != "decimal" =>
+            {
+                *name = format!("{rust_owner}::{name}");
+            }
+            _ => {}
+        });
+        bound.checked_projection = Some(Box::new(super::model::NativeUnionProjection {
+            rust_owner,
+            members,
+            nominal_origins: BTreeMap::new(),
+        }));
+        *native = bound;
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(value),
+    }
+}
+
+/// Attach one source module's checked nominal bindings to its consumer-only native conversion projections.
+pub(crate) fn with_native_nominal_origins<T: VisitTypeRefs>(
+    mut value: T,
+    origins: &BTreeMap<String, NominalTypeOriginExport>,
+) -> T {
+    /// Include nested physical carriers while preserving the ordinary semantic visitor's immutable wire walk.
+    fn attach(ty: &mut TypeRef, origins: &BTreeMap<String, NominalTypeOriginExport>) {
+        if let TypeRef::NativeUnion(native) = ty
+            && let Some(projection) = &mut native.checked_projection
+        {
+            projection.nominal_origins = origins.clone();
+            projection.members.visit_type_refs(&mut |ty| attach(ty, origins));
+        }
+    }
+    value.visit_type_refs(&mut |ty| attach(ty, origins));
+    value
 }
 
 #[cfg(test)]
@@ -334,105 +434,4 @@ mod tests {
         });
         assert_eq!(seen, 3);
     }
-}
-
-/// Bind native carriers through the existing admitted provider graph before projecting a compiler-owned API copy.
-///
-/// The original producer members stay immutable. Only the non-serialized physical projection is routed for emission;
-/// its owner is selected by the admitted artifact, never inferred from a generated wrapper spelling.
-pub(crate) fn with_checked_native_unions<T: VisitTypeRefs>(
-    mut value: T,
-    library: &str,
-    plan: Option<&crate::provider::ProviderPlan>,
-    routes: Option<&std::collections::HashMap<String, String>>,
-) -> Result<T, String> {
-    let mut failure = None;
-    value.visit_type_refs(&mut |ty| {
-        if failure.is_some() {
-            return;
-        }
-        let TypeRef::NativeUnion(native) = ty else {
-            return;
-        };
-        if native.checked_projection.is_some() {
-            return;
-        }
-        let Some(plan) = plan else {
-            failure = Some(format!(
-                "native union `{}` has no admitted provider plan",
-                native.rust_name
-            ));
-            return;
-        };
-        let (mut bound, route) = match plan.public_native_union_projection(library, native) {
-            Ok(projection) => projection,
-            Err(error) => {
-                failure = Some(error);
-                return;
-            }
-        };
-        let mut owner_path = vec![library.to_string()];
-        for dependency in route {
-            owner_path.push(crate::frontend::rust_type_display::PROVIDER_RUST_BRIDGE_MODULE.to_string());
-            owner_path.push(dependency);
-        }
-        let rust_owner = format!("::{}", owner_path.join("::"));
-        let mut members = match with_checked_native_unions(bound.members.clone(), library, Some(plan), routes) {
-            Ok(members) => with_checked_type_routes(members, routes),
-            Err(error) => {
-                failure = Some(error);
-                return;
-            }
-        };
-        members.visit_type_refs(&mut |member| match member {
-            TypeRef::Named { name, origin: None } if !name.starts_with("::") => {
-                if matches!(
-                    super::resolved_type_from_manifest_type_ref(&TypeRef::Named {
-                        name: name.clone(),
-                        origin: None
-                    }),
-                    crate::frontend::symbols::ResolvedType::Named(_)
-                ) {
-                    *name = format!("{rust_owner}::{name}");
-                }
-            }
-            TypeRef::Applied { name, origin: None, .. } if !name.starts_with("::") => {
-                if incan_core::lang::types::collections::from_str(name).is_none()
-                    && name != incan_core::lang::types::UNION_TYPE_NAME
-                    && name != "decimal"
-                {
-                    *name = format!("{rust_owner}::{name}");
-                }
-            }
-            _ => {}
-        });
-        bound.checked_projection = Some(Box::new(super::model::NativeUnionProjection {
-            rust_owner,
-            members,
-            nominal_origins: BTreeMap::new(),
-        }));
-        *native = bound;
-    });
-    match failure {
-        Some(error) => Err(error),
-        None => Ok(value),
-    }
-}
-
-/// Attach one source module's checked nominal bindings to its consumer-only native conversion projections.
-pub(crate) fn with_native_nominal_origins<T: VisitTypeRefs>(
-    mut value: T,
-    origins: &BTreeMap<String, NominalTypeOriginExport>,
-) -> T {
-    /// Include nested physical carriers while preserving the ordinary semantic visitor's immutable wire walk.
-    fn attach(ty: &mut TypeRef, origins: &BTreeMap<String, NominalTypeOriginExport>) {
-        if let TypeRef::NativeUnion(native) = ty {
-            if let Some(projection) = &mut native.checked_projection {
-                projection.nominal_origins = origins.clone();
-                projection.members.visit_type_refs(&mut |ty| attach(ty, origins));
-            }
-        }
-    }
-    value.visit_type_refs(&mut |ty| attach(ty, origins));
-    value
 }

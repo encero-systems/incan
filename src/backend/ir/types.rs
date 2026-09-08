@@ -611,6 +611,56 @@ impl fmt::Display for IrType {
     }
 }
 
+/// Convert typed manifest positions without discarding an admitted native union at a semantic-type boundary.
+///
+/// The ordinary converter retains each caller's existing alias and primitive policy. Native carriers use only their
+/// checked physical projection; the producer descriptor and member order remain independent of those Rust paths.
+pub(crate) fn ir_type_from_projected_manifest(
+    ty: &crate::library_manifest::TypeRef,
+    ordinary: &impl Fn(&crate::library_manifest::TypeRef) -> IrType,
+) -> IrType {
+    use crate::library_manifest::TypeRef;
+    let child = |ty: &TypeRef| ir_type_from_projected_manifest(ty, ordinary);
+    match ty {
+        TypeRef::NativeUnion(native) => {
+            let Some(projection) = &native.checked_projection else {
+                return IrType::Unknown;
+            };
+            let descriptor = native.clone();
+            IrType::ExternalUnion {
+                library: projection.rust_owner.clone(),
+                union: Box::new(IrType::NamedGeneric(
+                    IR_UNION_TYPE_NAME.to_string(),
+                    projection.members.iter().map(child).collect(),
+                )),
+                native: Some(Box::new(descriptor)),
+            }
+        }
+        TypeRef::Applied { args, .. } => {
+            let lowered = ordinary(ty);
+            let args = args.iter().map(child).collect::<Vec<_>>();
+            match (lowered, args.as_slice()) {
+                (IrType::List(_), [inner]) => IrType::List(Box::new(inner.clone())),
+                (IrType::Set(_), [inner]) => IrType::Set(Box::new(inner.clone())),
+                (IrType::Option(_), [inner]) => IrType::Option(Box::new(inner.clone())),
+                (IrType::Result(_, _), [ok, err]) => IrType::Result(Box::new(ok.clone()), Box::new(err.clone())),
+                (IrType::Dict(_, _), [key, value]) => IrType::Dict(Box::new(key.clone()), Box::new(value.clone())),
+                (IrType::NamedGeneric(name, _), _) => IrType::NamedGeneric(name, args),
+                (IrType::Tuple(_), _) => IrType::Tuple(args),
+                (other, _) => other,
+            }
+        }
+        TypeRef::Tuple { elements } => IrType::Tuple(elements.iter().map(child).collect()),
+        TypeRef::Function { params, return_type } => IrType::Function {
+            params: params.iter().map(child).collect(),
+            ret: Box::new(child(return_type)),
+        },
+        TypeRef::Ref { inner } => IrType::Ref(Box::new(child(inner))),
+        TypeRef::TypeToken { inner } => IrType::TypeToken(Box::new(child(inner))),
+        _ => ordinary(ty),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,55 +1061,5 @@ mod tests {
         };
 
         assert_eq!(foreign_union.provider_localized("widgets"), foreign_union);
-    }
-}
-
-/// Convert typed manifest positions without discarding an admitted native union at a semantic-type boundary.
-///
-/// The ordinary converter retains each caller's existing alias and primitive policy. Native carriers use only their
-/// checked physical projection; the producer descriptor and member order remain independent of those Rust paths.
-pub(crate) fn ir_type_from_projected_manifest(
-    ty: &crate::library_manifest::TypeRef,
-    ordinary: &impl Fn(&crate::library_manifest::TypeRef) -> IrType,
-) -> IrType {
-    use crate::library_manifest::TypeRef;
-    let child = |ty: &TypeRef| ir_type_from_projected_manifest(ty, ordinary);
-    match ty {
-        TypeRef::NativeUnion(native) => {
-            let Some(projection) = &native.checked_projection else {
-                return IrType::Unknown;
-            };
-            let descriptor = native.clone();
-            IrType::ExternalUnion {
-                library: projection.rust_owner.clone(),
-                union: Box::new(IrType::NamedGeneric(
-                    IR_UNION_TYPE_NAME.to_string(),
-                    projection.members.iter().map(child).collect(),
-                )),
-                native: Some(Box::new(descriptor)),
-            }
-        }
-        TypeRef::Applied { args, .. } => {
-            let lowered = ordinary(ty);
-            let args = args.iter().map(child).collect::<Vec<_>>();
-            match (lowered, args.as_slice()) {
-                (IrType::List(_), [inner]) => IrType::List(Box::new(inner.clone())),
-                (IrType::Set(_), [inner]) => IrType::Set(Box::new(inner.clone())),
-                (IrType::Option(_), [inner]) => IrType::Option(Box::new(inner.clone())),
-                (IrType::Result(_, _), [ok, err]) => IrType::Result(Box::new(ok.clone()), Box::new(err.clone())),
-                (IrType::Dict(_, _), [key, value]) => IrType::Dict(Box::new(key.clone()), Box::new(value.clone())),
-                (IrType::NamedGeneric(name, _), _) => IrType::NamedGeneric(name, args),
-                (IrType::Tuple(_), _) => IrType::Tuple(args),
-                (other, _) => other,
-            }
-        }
-        TypeRef::Tuple { elements } => IrType::Tuple(elements.iter().map(child).collect()),
-        TypeRef::Function { params, return_type } => IrType::Function {
-            params: params.iter().map(child).collect(),
-            ret: Box::new(child(return_type)),
-        },
-        TypeRef::Ref { inner } => IrType::Ref(Box::new(child(inner))),
-        TypeRef::TypeToken { inner } => IrType::TypeToken(Box::new(child(inner))),
-        _ => ordinary(ty),
     }
 }

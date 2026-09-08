@@ -251,23 +251,23 @@ impl AstLowering {
             } => Some((name.clone(), args.clone())),
             _ => None,
         };
-        if let Some((name, args)) = named {
-            if let Some(alias) = self.pub_type_alias_export(library, &name) {
-                if alias.type_params.len() == args.len() && expanding.insert(name.clone()) {
-                    let mut target = alias.target;
-                    target.visit_type_refs(&mut |ty| {
-                        if let TypeRef::TypeParam { name } = ty {
-                            if let Some(index) = alias.type_params.iter().position(|param| &param.name == name) {
-                                *ty = args[index].clone();
-                            }
-                        }
-                    });
-                    self.expand_pub_manifest_type_refs(library, &mut target, expanding);
-                    expanding.remove(&name);
-                    *ty = target;
-                    return;
+        if let Some((name, args)) = named
+            && let Some(alias) = self.pub_type_alias_export(library, &name)
+            && alias.type_params.len() == args.len()
+            && expanding.insert(name.clone())
+        {
+            let mut target = alias.target;
+            target.visit_type_refs(&mut |ty| {
+                if let TypeRef::TypeParam { name } = ty
+                    && let Some(index) = alias.type_params.iter().position(|param| &param.name == name)
+                {
+                    *ty = args[index].clone();
                 }
-            }
+            });
+            self.expand_pub_manifest_type_refs(library, &mut target, expanding);
+            expanding.remove(&name);
+            *ty = target;
+            return;
         }
         match ty {
             TypeRef::Applied { args, .. } | TypeRef::Tuple { elements: args } => {
@@ -542,14 +542,14 @@ impl AstLowering {
         if let Some(alias) = manifest.exports.type_aliases.iter().find(|alias| alias.name == name) {
             return Some(alias.clone());
         }
-        if let Some(alias) = manifest.exports.aliases.iter().find(|alias| alias.name == name) {
-            if let Some(target) = alias.projected_type.as_ref().filter(|target| target.has_native_union()) {
-                return Some(TypeAliasExport {
-                    name: alias.name.clone(),
-                    type_params: Vec::new(),
-                    target: target.clone(),
-                });
-            }
+        if let Some(alias) = manifest.exports.aliases.iter().find(|alias| alias.name == name)
+            && let Some(target) = alias.projected_type.as_ref().filter(|target| target.has_native_union())
+        {
+            return Some(TypeAliasExport {
+                name: alias.name.clone(),
+                type_params: Vec::new(),
+                target: target.clone(),
+            });
         }
         if let Some(target_path) = manifest
             .contract_metadata

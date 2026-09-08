@@ -240,6 +240,9 @@ impl IrEmitter<'_> {
                 (ApiDeclaration::Function(api), IrDeclKind::Function(function)) => {
                     pair_function(&api.params, &api.return_type, function, &mut pairs)?;
                 }
+                (ApiDeclaration::Partial(api), IrDeclKind::Function(function)) => {
+                    pair_function(&api.params, &api.return_type, function, &mut pairs)?;
+                }
                 (ApiDeclaration::TypeAlias(api), IrDeclKind::TypeAlias { ty, .. }) => {
                     pairs.push((&api.type_alias.target, ty))
                 }
@@ -293,17 +296,17 @@ impl IrEmitter<'_> {
                 _ => ("", &[][..], &[][..]),
             };
             for method in methods {
-                if let Some(identity) = method.canonical.as_ref().and_then(|identity| identity.hydrate()) {
-                    if let Some(function) = projected_method(program, owner, &identity) {
-                        pair_function(&method.params, &method.return_type, function, &mut pairs)?;
-                    }
+                if let Some(identity) = method.canonical.as_ref().and_then(|identity| identity.hydrate())
+                    && let Some(function) = projected_method(program, owner, &identity)
+                {
+                    pair_function(&method.params, &method.return_type, function, &mut pairs)?;
                 }
             }
             for property in properties {
-                if let Some(identity) = property.canonical.as_ref().and_then(|identity| identity.hydrate()) {
-                    if let Some(function) = projected_method(program, owner, &identity) {
-                        pairs.push((&property.return_type, &function.return_type));
-                    }
+                if let Some(identity) = property.canonical.as_ref().and_then(|identity| identity.hydrate())
+                    && let Some(function) = projected_method(program, owner, &identity)
+                {
+                    pairs.push((&property.return_type, &function.return_type));
                 }
             }
             let mut replacements = Vec::new();
@@ -312,12 +315,11 @@ impl IrEmitter<'_> {
                     self.project_emitted_union_type(original, lowered, definitions, origins, &local_nominals)?;
                 if projected != *original {
                     projected.clone().visit_type_refs(&mut |ty| {
-                        if let TypeRef::NativeUnion(native) = ty {
-                            if native.owner == NativeUnionOwnerExport::ContainingArtifact
-                                && !native_definitions.contains(native)
-                            {
-                                native_definitions.push(native.clone());
-                            }
+                        if let TypeRef::NativeUnion(native) = ty
+                            && native.owner == NativeUnionOwnerExport::ContainingArtifact
+                            && !native_definitions.contains(native)
+                        {
+                            native_definitions.push(native.clone());
                         }
                     });
                     replacements.push((original.clone(), projected));
@@ -360,10 +362,10 @@ impl IrEmitter<'_> {
             .collect::<Result<Vec<_>, _>>()?;
         let mut used_nominals = BTreeMap::new();
         members.clone().visit_type_refs(&mut |ty| {
-            if let TypeRef::Named { name, origin: None } | TypeRef::Applied { name, origin: None, .. } = ty {
-                if let Some(canonical) = local_nominals.get(name) {
-                    used_nominals.insert(name.clone(), canonical.clone());
-                }
+            if let TypeRef::Named { name, origin: None } | TypeRef::Applied { name, origin: None, .. } = ty
+                && let Some(canonical) = local_nominals.get(name)
+            {
+                used_nominals.insert(name.clone(), canonical.clone());
             }
         });
         Ok(NativeUnionExport {
@@ -550,6 +552,196 @@ fn projected_method<'a>(
     })
 }
 
+/// Retain admitted external alias carriers before the existing checked-API alias materializer follows local facades.
+///
+/// This pass reads the selected artifact's declared public surface. It does not join dependency source anchors to local
+/// IR, infer a wrapper from a semantic union, or rediscover another dependency graph.
+pub(in crate::backend::ir) fn preserve_native_aliases(
+    manifest: &mut LibraryManifest,
+    plan: Option<&crate::provider::ProviderPlan>,
+) -> Result<(), String> {
+    let Some(api) = &mut manifest.contract_metadata.api else {
+        return Ok(());
+    };
+    for module in &mut api.modules {
+        for declaration in &mut module.declarations {
+            let ApiDeclaration::Alias(alias) = declaration else {
+                continue;
+            };
+            let [root, library, public_path @ ..] = alias.target_path.as_slice() else {
+                continue;
+            };
+            if root != "pub" {
+                continue;
+            }
+            let Some(plan) = plan else {
+                continue;
+            };
+            let Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded {
+                manifest: provider,
+                ..
+            }) = plan.library_manifest_index().get(library)
+            else {
+                continue;
+            };
+            let Some((mut ty, mut function)) = declared_alias_surface(provider, public_path)? else {
+                continue;
+            };
+            let mut failure = None;
+            let mut bind = |ty: &mut TypeRef| {
+                if let TypeRef::NativeUnion(native) = ty {
+                    match plan.public_native_union_projection(library, native) {
+                        Ok((bound, _)) => *native = bound.for_publication(),
+                        Err(error) => failure = Some(error),
+                    }
+                }
+            };
+            ty.visit_type_refs(&mut bind);
+            function.visit_type_refs(&mut bind);
+            if let Some(error) = failure {
+                return Err(error);
+            }
+            if contains_native_union(&ty) {
+                alias.projected_type = ty;
+            }
+            if contains_native_union(&function)
+                && let Some(function) = function
+            {
+                alias.projected_function = Some(crate::frontend::api_metadata::ApiProjectedFunction {
+                    source_path: alias.target_path.clone(),
+                    callable: crate::frontend::api_metadata::ApiCallableMetadata {
+                        name: alias.name.clone(),
+                        anchor: alias.anchor.clone(),
+                        type_params: function.type_params,
+                        receiver: None,
+                        params: function.params,
+                        return_type: function.return_type,
+                        is_async: function.is_async,
+                    },
+                    decorators: alias
+                        .projected_function
+                        .as_ref()
+                        .map(|projection| projection.decorators.clone())
+                        .unwrap_or_default(),
+                });
+            }
+        }
+    }
+    crate::frontend::api_metadata::materialize_api_alias_projections(&mut api.modules);
+    // Root aliases retain their own exported name and target provenance, with the typed surface copied from their
+    // matching checked declaration rather than decoded through ResolvedType again.
+    for export in &mut manifest.exports.aliases {
+        for module in &api.modules {
+            for declaration in &module.declarations {
+                let ApiDeclaration::Alias(alias) = declaration else {
+                    continue;
+                };
+                if alias.name != export.name || alias.target_path != export.target_path {
+                    continue;
+                }
+                if contains_native_union(&alias.projected_type) {
+                    export.projected_type = alias.projected_type.clone();
+                }
+                if contains_native_union(&alias.projected_function) {
+                    export.projected_function = alias
+                        .projected_function
+                        .as_ref()
+                        .map(crate::frontend::api_metadata::function_export_from_api_projected);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Return whether a declared surface includes an explicit producer-native union carrier.
+fn contains_native_union(value: &(impl VisitTypeRefs + Clone)) -> bool {
+    let mut found = false;
+    value
+        .clone()
+        .visit_type_refs(&mut |ty| found |= matches!(ty, TypeRef::NativeUnion(_)));
+    found
+}
+
+/// Declared type and callable projections supplied by an already-selected public target.
+type DeclaredAliasSurface = (Option<TypeRef>, Option<crate::library_manifest::FunctionExport>);
+
+/// Read one exact declared public member using the existing materialized namespace projection.
+fn declared_alias_surface(manifest: &LibraryManifest, path: &[String]) -> Result<Option<DeclaredAliasSurface>, String> {
+    let Some((name, module_path)) = path.split_last() else {
+        return Ok(None);
+    };
+    if module_path.is_empty() {
+        if let Some(alias) = manifest.exports.type_aliases.iter().find(|alias| &alias.name == name) {
+            return Ok(Some((Some(alias.target.clone()), None)));
+        }
+        if let Some(alias) = manifest.exports.aliases.iter().find(|alias| &alias.name == name) {
+            return Ok(Some((alias.projected_type.clone(), alias.projected_function.clone())));
+        }
+        let functions = manifest
+            .exports
+            .functions
+            .iter()
+            .filter(|function| &function.name == name)
+            .collect::<Vec<_>>();
+        if let [function] = functions.as_slice() {
+            return Ok(Some((None, Some((*function).clone()))));
+        }
+        if functions.len() > 1 && functions.iter().any(|function| contains_native_union(*function)) {
+            return Err(format!(
+                "native union alias `{name}` requires an exact callable overload projection"
+            ));
+        }
+    }
+    let Some(api) = &manifest.contract_metadata.api else {
+        return Ok(None);
+    };
+    let Some(namespace) = crate::frontend::api_metadata::checked_api_public_namespace(api, module_path) else {
+        return Ok(None);
+    };
+    let source_paths = namespace
+        .members
+        .iter()
+        .filter(|member| &member.name == name)
+        .map(|member| &member.source_path)
+        .collect::<Vec<_>>();
+    if source_paths.len() > 1 {
+        return Err(format!(
+            "native alias target `{}` has ambiguous checked namespace membership",
+            path.join("::")
+        ));
+    }
+    let Some(source_path) = source_paths.first() else {
+        return Ok(None);
+    };
+    let Some((source_name, source_module)) = source_path.split_last() else {
+        return Ok(None);
+    };
+    let Some(module) = api.modules.iter().find(|module| module.module_path == source_module) else {
+        return Ok(None);
+    };
+    let Some(declaration) = module.declarations.iter().find(|declaration| {
+        crate::frontend::api_metadata::api_declaration_public_name(declaration) == Some(source_name.as_str())
+    }) else {
+        return Ok(None);
+    };
+    Ok(match declaration {
+        ApiDeclaration::TypeAlias(alias) => Some((Some(alias.type_alias.target.clone()), None)),
+        ApiDeclaration::Alias(alias) => Some((
+            alias.projected_type.clone(),
+            alias
+                .projected_function
+                .as_ref()
+                .map(crate::frontend::api_metadata::function_export_from_api_projected),
+        )),
+        ApiDeclaration::Function(function) => Some((
+            None,
+            Some(crate::frontend::api_metadata::function_export_from_api(function)),
+        )),
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,20 +754,16 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+    type EmittedModule = (
+        CheckedApiMetadata,
+        Vec<EmittedDeclarationTypes>,
+        Vec<NativeUnionExport>,
+        String,
+        LibraryIdentityGraph,
+    );
+
     /// Build checked source and capture the same real emitter table that production publication consumes.
-    fn emitted_module(
-        source: &str,
-        module: &str,
-    ) -> Result<
-        (
-            CheckedApiMetadata,
-            Vec<EmittedDeclarationTypes>,
-            Vec<NativeUnionExport>,
-            String,
-            LibraryIdentityGraph,
-        ),
-        Box<dyn std::error::Error>,
-    > {
+    fn emitted_module(source: &str, module: &str) -> Result<EmittedModule, Box<dyn std::error::Error>> {
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
@@ -649,6 +837,97 @@ mod tests {
             second.type_alias.target,
             TypeRef::NativeUnion(second_definitions[0].clone())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn source_publication_anchors_survive_every_direct_lowering_path() -> TestResult {
+        let sources = [
+            r#"
+pub model Record:
+    value: int
+pub class Container:
+    value: int
+pub enum Mode:
+    Fast
+    Slow
+pub type Token = newtype int
+pub trait Named:
+    def label(self) -> str
+pub type Answer = int | str
+pub const ZERO: int = 0
+pub static count: int = 0
+pub def first(value: int) -> int:
+    return value
+pub fixed = partial first(value=1)
+pub second = alias first
+"#,
+            r#"
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+@preserve()
+pub def decorated() -> int:
+    return 1
+@preserve()
+pub def generic[T](value: T) -> T:
+    return value
+pub def convert(value: int) -> int:
+    return value
+pub def convert(value: str) -> str:
+    return value
+"#,
+        ];
+        for source in sources {
+            let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let mut checker = TypeChecker::new();
+            checker.set_current_package_identity(Some("producer".into()));
+            checker.set_current_module_path(Some(vec!["lib".into()]));
+            checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+            let api = collect_checked_api_metadata(&ast, &checker, vec!["lib".into()]);
+            let program = AstLowering::new_with_type_info(checker.type_info().clone()).lower_program(&ast)?;
+            for declaration in &api.declarations {
+                let anchor = declaration_anchor(declaration);
+                let matches = program
+                    .declarations
+                    .iter()
+                    .filter(|lowered| lowered.span.start == anchor.span.start && lowered.span.end == anchor.span.end)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    matches.len(),
+                    1,
+                    "source {} at {:?} must retain one native declaration; IR spans: {:?}",
+                    anchor.id,
+                    anchor.span,
+                    program
+                        .declarations
+                        .iter()
+                        .map(|decl| (decl.span.start, decl.span.end))
+                        .collect::<Vec<_>>()
+                );
+                assert!(
+                    !matches!(matches[0].kind, IrDeclKind::Impl(_)),
+                    "generated impl borrowed a source declaration anchor"
+                );
+            }
+            for lowered in &program.declarations {
+                if matches!(lowered.kind, IrDeclKind::Impl(_))
+                    || matches!(
+                        &lowered.kind,
+                        IrDeclKind::Static {
+                            provenance: super::super::super::decl::IrStaticProvenance::CompilerGenerated,
+                            ..
+                        }
+                    )
+                {
+                    assert_eq!(
+                        (lowered.span.start, lowered.span.end),
+                        (0, 0),
+                        "generated helper acquired a source declaration anchor"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
@@ -859,194 +1138,4 @@ mod tests {
     fn positional_attachment_rejects_incomplete_evidence() {
         assert!(require_arity(2, 1).is_err());
     }
-}
-
-/// Retain admitted external alias carriers before the existing checked-API alias materializer follows local facades.
-///
-/// This pass reads the selected artifact's declared public surface. It does not join dependency source anchors to local
-/// IR, infer a wrapper from a semantic union, or rediscover another dependency graph.
-pub(in crate::backend::ir) fn preserve_native_aliases(
-    manifest: &mut LibraryManifest,
-    plan: Option<&crate::provider::ProviderPlan>,
-) -> Result<(), String> {
-    let Some(api) = &mut manifest.contract_metadata.api else {
-        return Ok(());
-    };
-    for module in &mut api.modules {
-        for declaration in &mut module.declarations {
-            let ApiDeclaration::Alias(alias) = declaration else {
-                continue;
-            };
-            let [root, library, public_path @ ..] = alias.target_path.as_slice() else {
-                continue;
-            };
-            if root != "pub" {
-                continue;
-            }
-            let Some(plan) = plan else {
-                continue;
-            };
-            let Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded {
-                manifest: provider,
-                ..
-            }) = plan.library_manifest_index().get(library)
-            else {
-                continue;
-            };
-            let Some((mut ty, mut function)) = declared_alias_surface(provider, public_path)? else {
-                continue;
-            };
-            let mut failure = None;
-            let mut bind = |ty: &mut TypeRef| {
-                if let TypeRef::NativeUnion(native) = ty {
-                    match plan.public_native_union_projection(library, native) {
-                        Ok((bound, _)) => *native = bound.for_publication(),
-                        Err(error) => failure = Some(error),
-                    }
-                }
-            };
-            ty.visit_type_refs(&mut bind);
-            function.visit_type_refs(&mut bind);
-            if let Some(error) = failure {
-                return Err(error);
-            }
-            if contains_native_union(&ty) {
-                alias.projected_type = ty;
-            }
-            if contains_native_union(&function) {
-                if let Some(function) = function {
-                    alias.projected_function = Some(crate::frontend::api_metadata::ApiProjectedFunction {
-                        source_path: alias.target_path.clone(),
-                        callable: crate::frontend::api_metadata::ApiCallableMetadata {
-                            name: alias.name.clone(),
-                            anchor: alias.anchor.clone(),
-                            type_params: function.type_params,
-                            receiver: None,
-                            params: function.params,
-                            return_type: function.return_type,
-                            is_async: function.is_async,
-                        },
-                        decorators: alias
-                            .projected_function
-                            .as_ref()
-                            .map(|projection| projection.decorators.clone())
-                            .unwrap_or_default(),
-                    });
-                }
-            }
-        }
-    }
-    crate::frontend::api_metadata::materialize_api_alias_projections(&mut api.modules);
-    // Root aliases retain their own exported name and target provenance, with the typed surface copied from their
-    // matching checked declaration rather than decoded through ResolvedType again.
-    for export in &mut manifest.exports.aliases {
-        for module in &api.modules {
-            for declaration in &module.declarations {
-                let ApiDeclaration::Alias(alias) = declaration else {
-                    continue;
-                };
-                if alias.name != export.name || alias.target_path != export.target_path {
-                    continue;
-                }
-                if contains_native_union(&alias.projected_type) {
-                    export.projected_type = alias.projected_type.clone();
-                }
-                if contains_native_union(&alias.projected_function) {
-                    export.projected_function = alias
-                        .projected_function
-                        .as_ref()
-                        .map(crate::frontend::api_metadata::function_export_from_api_projected);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Return whether a declared surface includes an explicit producer-native union carrier.
-fn contains_native_union(value: &(impl VisitTypeRefs + Clone)) -> bool {
-    let mut found = false;
-    value
-        .clone()
-        .visit_type_refs(&mut |ty| found |= matches!(ty, TypeRef::NativeUnion(_)));
-    found
-}
-
-/// Read one exact declared public member using the existing materialized namespace projection.
-fn declared_alias_surface(
-    manifest: &LibraryManifest,
-    path: &[String],
-) -> Result<Option<(Option<TypeRef>, Option<crate::library_manifest::FunctionExport>)>, String> {
-    let Some((name, module_path)) = path.split_last() else {
-        return Ok(None);
-    };
-    if module_path.is_empty() {
-        if let Some(alias) = manifest.exports.type_aliases.iter().find(|alias| &alias.name == name) {
-            return Ok(Some((Some(alias.target.clone()), None)));
-        }
-        if let Some(alias) = manifest.exports.aliases.iter().find(|alias| &alias.name == name) {
-            return Ok(Some((alias.projected_type.clone(), alias.projected_function.clone())));
-        }
-        let functions = manifest
-            .exports
-            .functions
-            .iter()
-            .filter(|function| &function.name == name)
-            .collect::<Vec<_>>();
-        if let [function] = functions.as_slice() {
-            return Ok(Some((None, Some((*function).clone()))));
-        }
-        if functions.len() > 1 && functions.iter().any(|function| contains_native_union(*function)) {
-            return Err(format!(
-                "native union alias `{name}` requires an exact callable overload projection"
-            ));
-        }
-    }
-    let Some(api) = &manifest.contract_metadata.api else {
-        return Ok(None);
-    };
-    let Some(namespace) = crate::frontend::api_metadata::checked_api_public_namespace(api, module_path) else {
-        return Ok(None);
-    };
-    let source_paths = namespace
-        .members
-        .iter()
-        .filter(|member| &member.name == name)
-        .map(|member| &member.source_path)
-        .collect::<Vec<_>>();
-    if source_paths.len() > 1 {
-        return Err(format!(
-            "native alias target `{}` has ambiguous checked namespace membership",
-            path.join("::")
-        ));
-    }
-    let Some(source_path) = source_paths.first() else {
-        return Ok(None);
-    };
-    let Some((source_name, source_module)) = source_path.split_last() else {
-        return Ok(None);
-    };
-    let Some(module) = api.modules.iter().find(|module| module.module_path == source_module) else {
-        return Ok(None);
-    };
-    let Some(declaration) = module.declarations.iter().find(|declaration| {
-        crate::frontend::api_metadata::api_declaration_public_name(declaration) == Some(source_name.as_str())
-    }) else {
-        return Ok(None);
-    };
-    Ok(match declaration {
-        ApiDeclaration::TypeAlias(alias) => Some((Some(alias.type_alias.target.clone()), None)),
-        ApiDeclaration::Alias(alias) => Some((
-            alias.projected_type.clone(),
-            alias
-                .projected_function
-                .as_ref()
-                .map(crate::frontend::api_metadata::function_export_from_api_projected),
-        )),
-        ApiDeclaration::Function(function) => Some((
-            None,
-            Some(crate::frontend::api_metadata::function_export_from_api(function)),
-        )),
-        _ => None,
-    })
 }
