@@ -841,6 +841,73 @@ mod tests {
     }
 
     #[test]
+    fn local_callable_alias_retains_native_union_after_manifest_application() -> TestResult {
+        let source = "pub def first(value: int) -> int | str:\n    return value\n\npub second = alias first\n";
+        let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("producer".into()));
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let exports = crate::frontend::library_exports::collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("producer", "1.0.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+        let first = manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name("first")
+            .ok_or("first identity absent")?;
+        let second = manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name("second")
+            .ok_or("second identity absent")?;
+        assert_ne!(
+            first.source_path, second.source_path,
+            "an alias owns its source declaration path"
+        );
+        assert_eq!(
+            first.canonical, second.canonical,
+            "the alias retains its target's checked canonical identity"
+        );
+        let mut codegen = crate::backend::ir::IrCodegen::new();
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        codegen.set_publication_api(manifest.contract_metadata.api.clone());
+        codegen.set_publication_identities(manifest.name.clone(), manifest.contract_metadata.identity_graph.clone());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest)?;
+        let first = manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == "first")
+            .ok_or("first function absent")?;
+        let second = manifest
+            .exports
+            .aliases
+            .iter()
+            .find(|alias| alias.name == "second")
+            .and_then(|alias| alias.projected_function.as_ref())
+            .ok_or("second callable projection absent")?;
+        assert!(
+            matches!(first.return_type, TypeRef::NativeUnion(_)),
+            "source callable lost native union"
+        );
+        assert_eq!(
+            second.return_type, first.return_type,
+            "local alias lost the target native representation"
+        );
+        assert_eq!(manifest.contract_metadata.native_unions.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn source_publication_anchors_survive_every_direct_lowering_path() -> TestResult {
         let sources = [
             r#"
