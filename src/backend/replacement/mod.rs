@@ -3934,7 +3934,19 @@ fn validate_read_place(
     validate_local_place_root(place, span)?;
     match place.projection.as_slice() {
         [] => Ok(()),
-        [PlaceElem::Field { .. }] => Ok(()),
+        [
+            PlaceElem::Field {
+                canonical: Some(_),
+                synthesized: false,
+                ..
+            }
+            | PlaceElem::Field {
+                canonical: None,
+                synthesized: true,
+                ..
+            },
+        ] => Ok(()),
+        [PlaceElem::Field { .. }] => Err(unsupported("unresolved source field projection", span)),
         [PlaceElem::Index(index)] => validate_operand_profile(index, span, tuple_iteration_locals),
         [PlaceElem::Slice { .. }] => Err(unsupported("slice projection", span)),
         _ => Err(unsupported("nested place projection", span)),
@@ -7112,13 +7124,18 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         match place.projection.as_slice() {
             [] => Ok(value),
-            [PlaceElem::Field { name, canonical: None }] if name.parse::<usize>().is_ok() => {
-                project_tuple_field(value, place, span)
-            }
+            [
+                PlaceElem::Field {
+                    name,
+                    canonical: None,
+                    synthesized: true,
+                },
+            ] if name.parse::<usize>().is_ok() => project_tuple_field(value, place, span),
             [
                 PlaceElem::Field {
                     name,
                     canonical: Some(canonical),
+                    synthesized: false,
                 },
             ] => self.project_nominal_field(value, name, canonical, span),
             [PlaceElem::Index(index)] => {
@@ -7372,6 +7389,7 @@ fn project_tuple_field(
         PlaceElem::Field {
             name: field,
             canonical: None,
+            synthesized: true,
         },
     ] = place.projection.as_slice()
     else {

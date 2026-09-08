@@ -159,6 +159,8 @@ pub enum SemanticFactKind {
     ReferenceSpan,
     /// Declaring type that requires a field or variant layout and its checked defaults.
     RequiredMemberOwner,
+    /// Retained declaration context required by a compiler-generated reference target.
+    RequiredReferenceTarget,
     Registry,
     RuntimeRequirement,
     Diagnostic,
@@ -177,6 +179,7 @@ impl SemanticFactKind {
             Self::ReferenceOwner => "reference_owner",
             Self::ReferenceSpan => "reference_span",
             Self::RequiredMemberOwner => "required_member_owner",
+            Self::RequiredReferenceTarget => "required_reference_target",
             Self::Registry => "registry",
             Self::RuntimeRequirement => "runtime_requirement",
             Self::Diagnostic => "diagnostic",

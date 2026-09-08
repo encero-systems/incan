@@ -1298,13 +1298,18 @@ impl TypeChecker {
 
     /// Record one compiler-generated member without classifying its generated Rust helper as a source declaration.
     fn record_compiler_generated_member_identity(&mut self, owner_name: &str, member: &str, span: Span) {
-        let Some(identity) =
-            self.synthetic_member_identity_for_named_owner(owner_name, member, SemanticSourceTargetKind::Method)
+        let Some(owner) = self
+            .symbols
+            .lookup(owner_name)
+            .and_then(|symbol| self.symbols.identity_of(symbol))
+            .cloned()
         else {
             return;
         };
+        let identity = Self::synthetic_member_identity(&owner, member, SemanticSourceTargetKind::Method);
         self.type_info.record_resolved_identity(span, identity.clone());
-        self.type_info.record_compiler_generated_member_identity(identity);
+        self.type_info
+            .record_compiler_generated_member_identity(identity, owner);
     }
 
     /// Resolve a builtin method through its receiver and method registries, preserving owner discrimination.

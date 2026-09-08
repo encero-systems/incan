@@ -27,7 +27,7 @@ use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclar
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 3;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 4;
 
 /// One module's checked representation, framed with the version needed to interpret it.
 ///
@@ -676,19 +676,64 @@ mod tests {
 
     #[test]
     fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
-        let bytes = postcard::to_allocvec(&(EXECUTABLE_REPRESENTATION_VERSION + 1))?;
-        assert!(matches!(
-            SurfaceReader::open(&bytes),
-            Err(ExecutableRepresentationError::UnsupportedVersion { .. })
-        ));
-        assert!(matches!(
-            decode_module(&bytes),
-            Err(ExecutableRepresentationError::UnsupportedVersion { .. })
-        ));
+        for version in [
+            EXECUTABLE_REPRESENTATION_VERSION - 1,
+            EXECUTABLE_REPRESENTATION_VERSION + 1,
+        ] {
+            let bytes = postcard::to_allocvec(&version)?;
+            assert!(matches!(
+                SurfaceReader::open(&bytes),
+                Err(ExecutableRepresentationError::UnsupportedVersion { .. })
+            ));
+            assert!(matches!(
+                decode_module(&bytes),
+                Err(ExecutableRepresentationError::UnsupportedVersion { .. })
+            ));
+        }
         assert!(matches!(
             SurfaceReader::open(&[255; 12]),
             Err(ExecutableRepresentationError::Malformed { .. })
         ));
+        Ok(())
+    }
+
+    /// A missing source field identity must not be mistaken for a compiler-proven structural projection.
+    #[test]
+    fn unresolved_named_fields_are_uncovered_and_synthesized_projections_remain_covered()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::body_ir::{LocalId, Operand, OwnershipFact, Place, PlaceElem};
+        let mut unresolved = body("unresolved", 1);
+        let mut place = Place::from_local(LocalId(0));
+        place.projection.push(PlaceElem::field("private_secret", None));
+        unresolved.block.stmts.push(Statement {
+            span: unresolved.span,
+            kind: StatementKind::Return {
+                value: Some(Operand::place(place.clone(), OwnershipFact::Copy, false)),
+            },
+        });
+        let mut structural = body("structural", 2);
+        place.projection = vec![PlaceElem::synthetic_field("0")];
+        structural.block.stmts.push(Statement {
+            span: structural.span,
+            kind: StatementKind::Return {
+                value: Some(Operand::place(place, OwnershipFact::Copy, false)),
+            },
+        });
+        let bytes = publish(
+            &module(vec![unresolved, structural]),
+            &BTreeSet::from([identity("unresolved", 1), identity("structural", 2)]),
+        )?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(matches!(
+            reader.index().coverage(&identity("unresolved", 1))?,
+            DeclarationCoverage::Uncovered(CoverageReason::UnresolvedReference)
+        ));
+        assert!(reader.covers(&identity("structural", 2)));
+        assert!(
+            !bytes
+                .windows(b"private_secret".len())
+                .any(|part| part == b"private_secret")
+        );
         Ok(())
     }
 

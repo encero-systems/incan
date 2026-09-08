@@ -1312,8 +1312,9 @@ pub struct CallArtifacts {
     /// Compiler-generated member identities observed at checked call sites.
     ///
     /// These helpers retain owner-discriminated semantic identities for tooling, but they are not source declarations
-    /// and therefore must not receive an RFC 120 recoverable source-symbol projection during lowering.
-    pub compiler_generated_member_identities: HashSet<CanonicalSymbolId>,
+    /// and therefore must not receive an RFC 120 recoverable source-symbol projection during lowering. Each entry
+    /// retains its canonical nominal owner as the context dependency used by executable admission.
+    pub compiler_generated_member_identities: HashMap<CanonicalSymbolId, CanonicalSymbolId>,
     /// Collection constructors selected from the canonical collection vocabulary.
     ///
     /// Lowering consumes this decision instead of interpreting a source spelling such as `set(...)` as an ordinary
@@ -1781,6 +1782,13 @@ impl TypeCheckInfo {
                 SemanticFactKind::SymbolIdentity,
                 SemanticFactValue::canonical_identity(identity.clone()),
             ));
+            if let Some(owner) = self.calls.compiler_generated_member_identities.get(identity) {
+                facts.push(SemanticFact::new(
+                    subject.clone(),
+                    SemanticFactKind::RequiredReferenceTarget,
+                    SemanticFactValue::canonical_identity(owner.clone()),
+                ));
+            }
             if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
                 declarations.iter().copied(),
                 incan_semantics_core::HirSourceSpan::new(span.0, span.1),
@@ -2201,12 +2209,16 @@ impl TypeCheckInfo {
 
     /// Return whether `identity` names a compiler-generated member rather than a source declaration.
     pub fn is_compiler_generated_member_identity(&self, identity: &CanonicalSymbolId) -> bool {
-        self.calls.compiler_generated_member_identities.contains(identity)
+        self.calls.compiler_generated_member_identities.contains_key(identity)
     }
 
-    /// Preserve that a checked member identity belongs to compiler-generated surface.
-    pub(crate) fn record_compiler_generated_member_identity(&mut self, identity: CanonicalSymbolId) {
-        self.calls.compiler_generated_member_identities.insert(identity);
+    /// Preserve a generated member's exact declaring nominal as its executable context requirement.
+    pub(crate) fn record_compiler_generated_member_identity(
+        &mut self,
+        identity: CanonicalSymbolId,
+        owner: CanonicalSymbolId,
+    ) {
+        self.calls.compiler_generated_member_identities.insert(identity, owner);
     }
 
     /// Return the canonical collection constructor selected for one source call.
