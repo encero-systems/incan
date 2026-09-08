@@ -44,6 +44,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 1
+      - name: Verify the release baseline
+        env:
+          RELEASE_BRANCH: ${{ github.head_ref }}
+          BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          python3 scripts/test_release_version_consistency.py
+          python3 scripts/check_release_version_consistency.py \
+            --release-branch "$RELEASE_BRANCH" --base-branch "$BASE_BRANCH"
       - name: Classify the pull request
         id: scope
         shell: bash

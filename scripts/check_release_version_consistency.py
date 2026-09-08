@@ -17,6 +17,7 @@ they are reported for awareness but never fail the check.
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -117,8 +118,24 @@ def example_lock_versions() -> list[tuple[Path, str]]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release-branch", default="", help="Pull-request source branch, when checking a release merge")
+    parser.add_argument("--base-branch", default="", help="Pull-request destination branch")
+    args = parser.parse_args()
     version = workspace_version()
     failures: list[str] = []
+
+    # A development line may integrate work while retaining the preceding released baseline. Its PR into main is
+    # the point at which it declares the new release, so mirror agreement alone is insufficient at that boundary.
+    if (
+        args.base_branch == "main"
+        and re.fullmatch(r"\d+\.\d+\.\d+-dev\.\d+", args.release_branch)
+        and version != args.release_branch
+    ):
+        failures.append(
+            f"release branch {args.release_branch!r} targets main, but the workspace is {version!r}; "
+            "bump the workspace version and its mirrors on the release branch before merging"
+        )
 
     # `Cargo.lock` is not hand-written, but bumping the workspace version without letting Cargo refresh it leaves the
     # two disagreeing, and every release job builds with `--locked`. That fails on the runner rather than here, after
@@ -144,7 +161,7 @@ def main() -> int:
             failures.append(f"{relative}: reads {match.group(1)!r}, workspace is {version!r} (expected {expected!r})")
 
     if failures:
-        print(f"check_release_version_consistency: workspace is {version}, but mirrored literals disagree:")
+        print(f"check_release_version_consistency: workspace is {version}, but version checks failed:")
         for failure in failures:
             print(f"  {failure}")
         print("\nThe npm and pip literals are overwritten during packaging, so a release still publishes the right")
