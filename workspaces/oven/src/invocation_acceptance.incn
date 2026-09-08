@@ -1,0 +1,31 @@
+"""Run the pure invocation decision contracts with an explicitly selected authoring compiler."""
+
+from test_invocation import (
+    test_absent_inputs_add_no_restrictions,
+    test_cli_enables_override_false_environment,
+    test_cli_disables_override_matching_environment,
+    test_environment_truth_spellings_are_exact,
+    test_other_environment_text_is_false,
+    test_non_unicode_stays_distinct_and_does_not_enable,
+    test_environment_frozen_applies_after_individual_disables,
+    test_disabling_frozen_keeps_independent_defaults,
+    test_raw_conflicts_match_the_cli_surface,
+    test_compatible_explicit_controls_are_not_conflicts,
+    test_decisions_repeat_and_diagnostics_exclude_values,
+)
+
+
+def main() -> None:
+    """Print success only after every decision contract has passed natively."""
+    test_absent_inputs_add_no_restrictions()
+    test_cli_enables_override_false_environment()
+    test_cli_disables_override_matching_environment()
+    test_environment_truth_spellings_are_exact()
+    test_other_environment_text_is_false()
+    test_non_unicode_stays_distinct_and_does_not_enable()
+    test_environment_frozen_applies_after_individual_disables()
+    test_disabling_frozen_keeps_independent_defaults()
+    test_raw_conflicts_match_the_cli_surface()
+    test_compatible_explicit_controls_are_not_conflicts()
+    test_decisions_repeat_and_diagnostics_exclude_values()
+    println("invocation decision: 11 contracts passed")

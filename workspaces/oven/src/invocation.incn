@@ -1,0 +1,131 @@
+"""
+Decide invocation restrictions from supplied CLI and environment observations.
+
+This module owns precedence and frozen implications. It performs no environment or filesystem reads. A decision is a
+set of additional restrictions, not evidence that a lock, native plan, network action or publication has been admitted.
+"""
+
+from std.traits.error import Error
+
+
+pub enum EnvironmentInput:
+    """
+    Preserve missing, Unicode and non-Unicode environment observations.
+
+    This is the semantic view used by the decision, not an OS-string transport format. The caller retains original OS
+    values. Non-Unicode observations remain distinct even though, like the original environment lookup, they do not
+    enable a restriction. Text is matched exactly, without trimming or lossy conversion.
+    """
+
+    Missing
+    Text(str)
+    NonUnicode
+
+    def is_enabled(self) -> bool:
+        """Recognize only the five historically supported true spellings."""
+        match self:
+            EnvironmentInput.Text(value) => return value in ["1", "true", "TRUE", "on", "ON"]
+            EnvironmentInput.Missing | EnvironmentInput.NonUnicode => return false
+
+
+pub model InvocationInputs:
+    """
+    Raw controls for one invocation, before precedence or frozen normalization.
+
+    Every CLI boolean defaults to false and every environment observation to Missing. Disable flags remain separate
+    from enables so raw callers receive the same conflict refusals as CLI callers. Environment values are never read
+    or changed by constructing this model.
+    """
+
+    pub locked: bool = false
+    pub no_locked: bool = false
+    pub offline: bool = false
+    pub no_offline: bool = false
+    pub frozen: bool = false
+    pub no_frozen: bool = false
+    pub env_locked: EnvironmentInput = EnvironmentInput.Missing
+    pub env_offline: EnvironmentInput = EnvironmentInput.Missing
+    pub env_frozen: EnvironmentInput = EnvironmentInput.Missing
+
+
+@derive(Eq)
+pub model InvocationConstraints:
+    """
+    Additional restrictions requested by the invocation.
+
+    Offline requires operations that need the network to refuse. Locked requires an existing current lock with no
+    changes. Frozen implies both. A false field adds no restriction; it grants no permission and proves no input valid.
+    Enforcing this result still requires the host's checked facts and governed operations.
+    """
+
+    pub offline: bool
+    pub locked: bool
+    pub frozen: bool
+
+
+pub enum InvocationErrorKind(str):
+    """Stable categories for refusals before an invocation decision is returned."""
+
+    ConflictingFlags = "conflicting_flags"
+
+
+pub model InvocationError with Error:
+    """A conflicting pair of fixed CLI flag names, with no environment values attached."""
+
+    pub kind: InvocationErrorKind
+    pub flags: tuple[str, str]
+
+    def message(self) -> str:
+        """Describe the conflict using only its two CLI spellings."""
+        first, second = self.flags
+        return f"conflicting invocation flags: {first} and {second}"
+
+
+pub def decide_invocation(inputs: InvocationInputs) -> Result[InvocationConstraints, InvocationError]:
+    """
+    Resolve CLI controls over environment defaults, then apply frozen's implications.
+
+    Explicit enable wins over the corresponding environment value; explicit disable removes that default. Conflicting
+    CLI controls refuse before a result is produced. Effective frozen then requires both offline and locked, so an
+    environment frozen value still implies both when only an individual default is disabled. Disable frozen itself to
+    remove that implication. With no controls, all three result fields are false.
+
+    Args:
+        inputs: Captured observations for one command; no process environment is consulted.
+
+    Returns:
+        Additional restrictions, or the first conflicting CLI pair in locked, offline, frozen order. This decision does
+        not admit a lock or selected native input and cannot authorize execution or publication.
+
+    Example:
+        decision = decide_invocation(InvocationInputs(frozen=True))?
+        assert decision.offline and decision.locked and decision.frozen
+    """
+    if inputs.locked and inputs.no_locked:
+        return Err(InvocationError(kind=InvocationErrorKind.ConflictingFlags, flags=("--locked", "--no-locked")))
+    if inputs.offline and inputs.no_offline:
+        return Err(InvocationError(kind=InvocationErrorKind.ConflictingFlags, flags=("--offline", "--no-offline")))
+    if inputs.frozen and inputs.no_frozen:
+        return Err(InvocationError(kind=InvocationErrorKind.ConflictingFlags, flags=("--frozen", "--no-frozen")))
+    if inputs.frozen and inputs.no_locked:
+        return Err(InvocationError(kind=InvocationErrorKind.ConflictingFlags, flags=("--frozen", "--no-locked")))
+    if inputs.frozen and inputs.no_offline:
+        return Err(InvocationError(kind=InvocationErrorKind.ConflictingFlags, flags=("--frozen", "--no-offline")))
+
+    frozen = resolve_flag(inputs.frozen, inputs.no_frozen, inputs.env_frozen)
+    return Ok(
+        InvocationConstraints(
+            offline=frozen or resolve_flag(inputs.offline, inputs.no_offline, inputs.env_offline),
+            locked=frozen or resolve_flag(inputs.locked, inputs.no_locked, inputs.env_locked),
+            frozen=frozen,
+        ),
+    )
+
+
+def resolve_flag(enabled: bool, disabled: bool, environment: EnvironmentInput) -> bool:
+    """Apply one validated CLI enable or disable before consulting its environment default."""
+    if enabled:
+        return true
+    if disabled:
+        return false
+    return environment.is_enabled()
