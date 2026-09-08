@@ -71,11 +71,7 @@ use super::common::{
     merge_project_requirement_dependencies, provider_used_module_paths, semantic_sdk_path_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
-use super::common::{
-    collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths,
-    ensure_rust_inspect_workspace_with_cargo_package_name, mark_oven_cargo_bootstrap_rust_inspection,
-    mark_oven_direct_rust_inspection, prewarm_rust_inspect_workspace,
-};
+use super::common::{collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths};
 
 #[cfg(test)]
 #[allow(dead_code)]
@@ -362,62 +358,38 @@ impl CanonicalLockFacts {
     }
 }
 
+/// Demanded Rust metadata for one checked compilation session.
+///
+/// The selected binding is a separate input from parsed modules and semantic lock facts. An absent selection cannot
+/// be repaired by constructing a Cargo workspace or rediscovering registry sources.
 #[cfg(feature = "rust_inspect")]
 pub(crate) struct RustInspectTypecheckRequest<'a> {
     pub project_root: &'a Path,
-    pub project_name: &'a str,
-    pub manifest: Option<&'a ProjectManifest>,
     pub modules: &'a [ParsedModule],
-    pub library_manifest_index: &'a LibraryManifestIndex,
-    pub cargo_features: &'a CargoFeatureSelection,
-    pub cargo_policy: &'a CargoPolicy,
-    pub rust_edition: Option<String>,
-    pub provider_plan: &'a ProviderPlan,
+    pub selected: Option<SelectedRustInspectWorkspace>,
 }
 
+/// An already selected physical projection and the admitted owners retaining its inputs.
+///
+/// Selection supplies the expected byte bindings and keeps every contributing source owner in these leases. This
+/// container does not infer or validate provider authority from source paths; `ValidatedInspectionProject` only
+/// verifies the physical projection. Cache and temporary directories must already be allocated outside its inputs.
 #[cfg(feature = "rust_inspect")]
-pub(crate) struct PreparedRustInspectTypecheckWorkspace {
-    manifest_dir: PathBuf,
-    _cache_lease: Option<GeneratedCacheLease>,
-    _source_loaf: Option<OvenToolchainLoaf>,
+pub(crate) struct SelectedRustInspectWorkspace {
+    pub context: PathBuf,
+    pub temporary_root: PathBuf,
+    pub projection: crate::rust_inspect::ValidatedInspectionProject,
+    pub source_loaf: Option<OvenToolchainLoaf>,
+    pub project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
 }
 
-#[cfg(feature = "rust_inspect")]
-impl PreparedRustInspectTypecheckWorkspace {
-    /// Return the generated Cargo workspace used for rust-inspect typechecking.
-    pub(crate) fn manifest_dir(&self) -> &Path {
-        &self.manifest_dir
-    }
-}
-
+/// One inspection demand and the optional explicit selection supplied by the invoking control plane.
 #[cfg(feature = "rust_inspect")]
 pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub project_root: &'a Path,
-    pub project_name: &'a str,
-    pub cargo_package_name: &'a str,
-    pub rust_edition: Option<String>,
-    pub resolved: &'a ResolvedDependencies,
-    pub project_requirements: &'a ProjectRequirements,
-    pub lock_payload: Option<String>,
-    pub cargo_lock_projection_root: Option<&'a str>,
-    pub clear_cargo_lock: bool,
-    pub cargo_policy_flags: Vec<String>,
-    pub cargo_target_dir: &'a Path,
     pub rust_inspect_query_paths: &'a [String],
-    /// Exact external Rust derive macros used by concrete Incan declarations.
     pub rust_derive_probe_paths: &'a [String],
-    pub prepare_when_empty: bool,
-    /// Select rust-analyzer's direct source graph before any inspection action can run Cargo.
-    pub direct_oven_inspection: bool,
-    /// The named Loaf publisher must materialize provider-source metadata even when ordinary lazy prewarm is
-    /// off.
-    pub force_direct_prewarm: bool,
-    /// Receipt inputs used to select the exact immutable Loaf that owns registry inspection sources.
-    pub oven_source_authority: Option<OvenRustInspectSourceAuthorityRequest<'a>>,
-    /// Command-local source authority selected once from source-current completed project outputs.
-    pub prepared_project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
-    /// Permit one locked source-authority acquisition only at `incan oven bake`'s explicit publisher boundary.
-    pub explicit_oven_bake: bool,
+    pub selected: Option<SelectedRustInspectWorkspace>,
 }
 
 /// Receipt-compatible Loaf inputs required before a normal direct Oven metadata prewarm.
@@ -432,12 +404,11 @@ pub(crate) struct OvenRustInspectSourceAuthorityRequest<'a> {
     pub registry_dependencies: &'a [DependencySpec],
 }
 
-/// Prepared projection and any generation lock retaining its source-owning Loaf through semantic analysis.
+/// A cache-bound selected projection whose source leases remain live through analysis and background queries.
 #[cfg(feature = "rust_inspect")]
+#[derive(Clone)]
 pub(crate) struct PreparedRustInspectWorkspace {
-    manifest_dir: PathBuf,
-    _source_loaf: Option<OvenToolchainLoaf>,
-    _project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
+    selected: Arc<SelectedRustInspectWorkspace>,
 }
 
 /// Command-local source authority shared by every parallel native-test unit.
@@ -458,191 +429,70 @@ pub(crate) struct PreparedOvenProjectRegistrySourceAuthorities {
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectWorkspace {
-    /// Return the compiler-authored manifest directory while this workspace retains its source Loaf.
+    /// Return the selected cache context while this handle retains its source owners.
     pub(crate) fn manifest_dir(&self) -> &Path {
-        &self.manifest_dir
+        &self.selected.context
     }
 }
 
-/// Prepare and prewarm the generated Rust workspace used for rust-inspect metadata queries.
+/// Bind and prewarm an explicitly selected Rust inspection projection without acquiring missing inputs.
+///
+/// Missing selection is terminal before any cache/output mutation. Keeping the whole selected handle in the result
+/// retains its owner leases for semantic analysis and cloned background consumers. Derive expansion remains an
+/// explicitly unsupported selected operation until the physical macro boundary is implemented (#991, #1037).
 #[cfg(feature = "rust_inspect")]
 pub(crate) fn prepare_rust_inspect_workspace(
     request: RustInspectWorkspaceRequest<'_>,
 ) -> CliResult<Option<PreparedRustInspectWorkspace>> {
-    let RustInspectWorkspaceRequest {
-        project_root,
-        project_name,
-        cargo_package_name,
-        rust_edition,
-        resolved,
-        project_requirements,
-        lock_payload,
-        cargo_lock_projection_root,
-        clear_cargo_lock,
-        cargo_policy_flags,
-        cargo_target_dir,
-        rust_inspect_query_paths,
-        rust_derive_probe_paths,
-        prepare_when_empty,
-        direct_oven_inspection,
-        force_direct_prewarm,
-        oven_source_authority,
-        prepared_project_source_authorities,
-        explicit_oven_bake,
-    } = request;
-    if rust_inspect_query_paths.is_empty() && rust_derive_probe_paths.is_empty() && !prepare_when_empty {
+    use crate::rust_inspect::{Inspector, InspectorConfig, RustMetadataError};
+
+    if request.rust_inspect_query_paths.is_empty() && request.rust_derive_probe_paths.is_empty() {
         return Ok(None);
     }
-
-    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace_with_cargo_package_name(
-        project_root,
-        project_name,
-        cargo_package_name,
-        rust_edition,
-        resolved,
-        project_requirements,
-        lock_payload,
-        cargo_lock_projection_root,
-        clear_cargo_lock,
-        cargo_target_dir,
-        &cargo_policy_flags,
-        rust_derive_probe_paths,
-    )?;
-    let mut source_loaf = None;
-    let mut project_source_authorities = None;
-    if direct_oven_inspection {
-        if std::env::var_os(crate::oven::loaf::OVEN_LOAF_ENV).is_some_and(|value| value == "1") {
-            let source = std::env::var_os(OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV)
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .ok_or_else(|| {
-                    CliError::failure("explicit Loaf baker did not supply its locked Rust inspection source authority")
-                })?;
-            let destination =
-                rust_inspect_manifest_dir.join(crate::rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE);
-            fs::copy(&source, &destination).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to install explicit baker Rust inspection authority from {}: {error}",
-                    source.display()
-                ))
-            })?;
-        } else if let Some(authority_request) = oven_source_authority {
-            let mut receipt_request = OvenGeneratedProjectRequest::new(
-                project_root,
-                project_name,
-                authority_request.project_version,
-                authority_request.target,
-                authority_request.toolchain,
-                authority_request.profile,
-                authority_request.features.to_vec(),
-            )
-            .with_generated_source("generated-root", rust_inspect_manifest_dir.join("src/main.rs"));
-            for (name, value) in authority_request.build_unit_inputs {
-                receipt_request = receipt_request.with_build_unit_input(name, value);
+    let selected = request.selected.ok_or_else(|| {
+        CliError::failure(
+            RustMetadataError::SelectedInputUnavailable {
+                path: request.project_root.to_path_buf(),
             }
-            let receipt = receipt_generated_project(&receipt_request).map_err(|error| {
-                CliError::failure(format!("failed to receipt Oven Rust inspection source: {error}"))
-            })?;
-            let command_authority_available = prepared_project_source_authorities.is_some();
-            let command_authority_installed = if let Some(prepared) = prepared_project_source_authorities.as_ref() {
-                let installed = prepared
-                    .install_for_dependencies(&rust_inspect_manifest_dir, authority_request.registry_dependencies)?;
-                if installed {
-                    project_source_authorities = Some(Arc::clone(prepared));
-                }
-                installed
-            } else {
-                false
-            };
-            if normal_inspection_requires_installed_project_authority(
-                project_root,
-                explicit_oven_bake,
-                command_authority_available,
-                command_authority_installed,
-            ) {
-                let detail = if command_authority_available {
-                    "the source-current project inspection authority could not authorize this inspection batch"
-                } else {
-                    "no source-current project inspection authority is available"
-                };
-                return Err(CliError::failure(format!(
-                    "Oven Alpha {detail}; rerun `incan oven bake --project .`"
-                )));
+            .to_string(),
+        )
+    })?;
+    if selected.source_loaf.is_none() && selected.project_source_authorities.is_none() {
+        return Err(CliError::failure(
+            RustMetadataError::InvalidSelectedInput {
+                path: selected.context,
+                message: "selected inspection projection has no retained source-owner lease".to_string(),
             }
-            if command_authority_installed {
-                // The command-local context owns every output, entry, and base-Loaf lease through this workspace.
-            } else if explicit_oven_bake {
-                if let Some(selected) =
-                    resolve_toolchain_loaf_for_registry_sources(&receipt, authority_request.registry_dependencies)
-                        .map_err(|error| CliError::failure(error.to_string()))?
-                {
-                    install_oven_inspection_source_authority(
-                        &rust_inspect_manifest_dir,
-                        &selected.artifacts.registry_sources,
-                        &selected.artifact_root,
-                        None,
-                        None,
-                    )?;
-                    install_required_oven_registry_lock(
-                        !selected.artifacts.registry_sources.is_empty(),
-                        &selected.artifact_root,
-                        &rust_inspect_manifest_dir.join("Cargo.lock"),
-                    )?;
-                    source_loaf = Some(selected);
-                } else {
-                    let release_loaf = resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])
-                        .map_err(|error| CliError::failure(error.to_string()))?;
-                    let release_registry_lock = release_loaf
-                        .as_ref()
-                        .map(|loaf| loaf.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH));
-                    acquire_explicit_project_inspection_sources(
-                        &rust_inspect_manifest_dir,
-                        authority_request.features,
-                        authority_request.registry_dependencies,
-                        release_registry_lock.as_deref(),
-                    )?;
-                    source_loaf = release_loaf;
-                }
-            } else if let Some(selected) =
-                resolve_toolchain_loaf_for_registry_sources(&receipt, authority_request.registry_dependencies)
-                    .map_err(|error| CliError::failure(error.to_string()))?
-            {
-                install_oven_inspection_source_authority(
-                    &rust_inspect_manifest_dir,
-                    &selected.artifacts.registry_sources,
-                    &selected.artifact_root,
-                    None,
-                    None,
-                )?;
-                install_required_oven_registry_lock(
-                    !selected.artifacts.registry_sources.is_empty(),
-                    &selected.artifact_root,
-                    &rust_inspect_manifest_dir.join("Cargo.lock"),
-                )?;
-                source_loaf = Some(selected);
-            } else {
-                return Err(CliError::failure(
-                    "Oven Alpha has no receipt-compatible Loaf containing the requested Rust inspection sources",
-                ));
-            }
-        }
-        if explicit_oven_bake {
-            mark_oven_cargo_bootstrap_rust_inspection(&rust_inspect_manifest_dir)?;
-        } else {
-            mark_oven_direct_rust_inspection(&rust_inspect_manifest_dir)?;
-        }
+            .to_string(),
+        ));
     }
-    prewarm_rust_inspect_workspace(
-        &rust_inspect_manifest_dir,
-        cargo_target_dir,
-        rust_inspect_query_paths,
-        force_direct_prewarm,
-    )?;
-    Ok(Some(PreparedRustInspectWorkspace {
-        manifest_dir: rust_inspect_manifest_dir,
-        _source_loaf: source_loaf,
-        _project_source_authorities: project_source_authorities,
-    }))
+    if !request.rust_derive_probe_paths.is_empty() {
+        return Err(CliError::failure(
+            RustMetadataError::UnsupportedSelectedOperation {
+                operation: "Rust derive expansion requires selected macro execution inputs (#991, #1037)",
+            }
+            .to_string(),
+        ));
+    }
+    let selected = Arc::new(selected);
+    let inspector = Inspector::new(InspectorConfig::new(&selected.context));
+    inspector
+        .cache()
+        .bind_selected_project_with_owner(
+            &selected.context,
+            selected.projection.clone(),
+            &selected.temporary_root,
+            Arc::clone(&selected),
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    // The cache owns the lease as long as its selected database exists, even if extraction fails and this local
+    // preparation handle is dropped. A later validated rebind or explicit invalidation releases that exact owner.
+    inspector
+        .prewarm(request.rust_inspect_query_paths.iter().cloned(), &|message| {
+            tracing::debug!("{message}");
+        })
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(Some(PreparedRustInspectWorkspace { selected }))
 }
 
 /// Return whether a normal direct-inspection consumer must refuse generic release-source selection.
@@ -1143,123 +993,22 @@ fn install_required_oven_registry_lock(
     install_oven_registry_lock(&sealed_lock, destination)
 }
 
-/// Prepare the rust-inspect workspace needed before metadata-backed typechecking.
+/// Prepare demanded typecheck metadata from the separately admitted inspection selection.
+///
+/// Parsed Rust uses determine demand only. Checked dependency/lock services remain available to the control plane;
+/// neither a successful semantic lock comparison nor a source catalog can stand in for a selected inspection graph.
 #[cfg(feature = "rust_inspect")]
 pub(crate) fn prepare_rust_inspect_typecheck_workspace(
     request: RustInspectTypecheckRequest<'_>,
-) -> CliResult<Option<PreparedRustInspectTypecheckWorkspace>> {
-    let RustInspectTypecheckRequest {
-        project_root,
-        project_name,
-        manifest,
-        modules,
-        library_manifest_index,
-        cargo_features,
-        cargo_policy,
-        rust_edition,
-        provider_plan,
-    } = request;
-    let metadata_query_paths = collect_rust_inspect_query_paths(modules);
-    let rust_derive_probe_paths = collect_rust_inspect_derive_probe_paths(modules);
-    // A quoted `@rust.derive("crate::path::Macro")` needs a prepared workspace for its expansion evidence even when
-    // the module imports no other `rust::` items, so probe paths keep this preparation alive on their own.
-    if metadata_query_paths.is_empty() && rust_derive_probe_paths.is_empty() {
-        return Ok(None);
-    }
-
-    let project_requirements = collect_project_requirements(modules, library_manifest_index)?;
-    let inline_imports = modules
-        .iter()
-        .flat_map(|module| collect_rust_dependency_uses(module, false))
-        .collect::<Vec<_>>();
-    let mut resolved = match resolve_reachable_dependencies(manifest, &inline_imports, true, cargo_features) {
-        Ok(resolved) => resolved,
-        Err(errors) => {
-            let mut msg = String::new();
-            let sources = build_source_map(modules);
-            for err in errors {
-                msg.push_str(&format_dependency_error(&err, &sources));
-            }
-            return Err(CliError::failure(msg.trim_end()));
-        }
-    };
-    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
-    let lock_resolution = resolve_lock_context(LockResolutionRequest {
-        project_root,
-        entry_file: modules.last().map(|module| module.file_path.as_path()),
-        manifest,
-        resolved: &resolved,
-        project_requirements: &project_requirements,
-        cargo_features,
-        semantic: None,
-        package_features: None,
-        sdk_profile_override: None,
-        command_session: None,
-    })?;
-    let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
-    let rust_inspect_cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
-    let managed_target = resolve_generated_cargo_target(
-        None,
-        project_root,
-        project_root,
-        &lock_resolution.cargo_package_name,
-        "rust-inspect",
-        cargo_lock_inputs.payload.as_deref(),
-        cargo_features,
-        &rust_inspect_cargo_flags,
-    )
-    .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))?;
-    let (cargo_target_dir, cache_lease, _cache_identity) = managed_target.into_parts();
-    let oven_build_inputs = super::build::oven_build_unit_inputs(
-        provider_plan,
-        &lock_resolution.project_requirements,
-        &lock_resolution.resolved,
-    )?;
-    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
-    let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let project_version = manifest
-        .and_then(|manifest| manifest.project.as_ref())
-        .and_then(|project| project.version.as_deref())
-        .unwrap_or("0.1.0");
-    let manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
-        project_root,
-        project_name,
-        cargo_package_name: &lock_resolution.cargo_package_name,
-        rust_edition,
-        resolved: &lock_resolution.resolved,
-        project_requirements: &lock_resolution.project_requirements,
-        lock_payload: cargo_lock_inputs.payload,
-        cargo_lock_projection_root: cargo_lock_inputs.projection_root.as_deref(),
-        clear_cargo_lock: cargo_lock_inputs.clear_existing,
-        cargo_policy_flags: rust_inspect_cargo_flags,
-        cargo_target_dir: &cargo_target_dir,
+) -> CliResult<Option<PreparedRustInspectWorkspace>> {
+    let metadata_query_paths = collect_rust_inspect_query_paths(request.modules);
+    let rust_derive_probe_paths = collect_rust_inspect_derive_probe_paths(request.modules);
+    prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+        project_root: request.project_root,
         rust_inspect_query_paths: &metadata_query_paths,
         rust_derive_probe_paths: &rust_derive_probe_paths,
-        prepare_when_empty: false,
-        // This workspace supports ordinary `incan check` metadata queries. It is an inspectable projection only:
-        // Rust-analyzer must load its receipt-derived `rust-project.json`, not rediscover a Cargo workspace from a
-        // path dependency. Besides respecting the normal Oven boundary, that avoids Cargo's global package-name
-        // ambiguity for independently selected workspace members.
-        direct_oven_inspection: true,
-        force_direct_prewarm: false,
-        oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
-            project_version,
-            target: &target,
-            toolchain: &toolchain,
-            profile: "debug",
-            features: &cargo_features.cargo_features,
-            build_unit_inputs: &oven_build_inputs,
-            registry_dependencies: &lock_resolution.resolved.dependencies,
-        }),
-        prepared_project_source_authorities: None,
-        explicit_oven_bake: false,
-    })?;
-    Ok(manifest_dir.map(|workspace| PreparedRustInspectTypecheckWorkspace {
-        manifest_dir: workspace.manifest_dir,
-        _cache_lease: cache_lease,
-        _source_loaf: workspace._source_loaf,
-    }))
+        selected: request.selected,
+    })
 }
 
 /// Collect caller requirements and observe the canonical semantic lock using the existing checked analysis.
@@ -2530,6 +2279,51 @@ regex = "1"
         assert!(!lock.deps_fingerprint.is_empty());
         let encoded: toml::Value = toml::from_str(&fs::read_to_string(project_root.join("oven.lock"))?)?;
         assert!(encoded.get("cargo").is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn inspection_demand_requires_selection_before_output_mutation() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("main.incn");
+        fs::write(&source, "def main() -> None:\n  pass\n")?;
+        let poison = temp.path().join("Cargo.toml");
+        fs::write(&poison, "invalid Cargo input; must not be read or repaired\n")?;
+        let empty = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+            project_root: temp.path(),
+            rust_inspect_query_paths: &[],
+            rust_derive_probe_paths: &[],
+            selected: None,
+        })?;
+        assert!(empty.is_none());
+        for (queries, derives) in [
+            (vec!["regex::Regex".to_string()], Vec::new()),
+            (Vec::new(), vec!["serde::Serialize".to_string()]),
+        ] {
+            let Err(error) = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+                project_root: temp.path(),
+                rust_inspect_query_paths: &queries,
+                rust_derive_probe_paths: &derives,
+                selected: None,
+            }) else {
+                return Err("required inspection without selection was accepted".into());
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains("selected Rust inspection inputs are unavailable")
+            );
+            assert!(error.to_string().contains(temp.path().to_string_lossy().as_ref()));
+        }
+        assert_eq!(
+            fs::read_to_string(&poison)?,
+            "invalid Cargo input; must not be read or repaired\n"
+        );
+        assert!(!temp.path().join("Cargo.lock").exists());
+        assert!(!temp.path().join("oven.lock").exists());
+        assert!(!temp.path().join("target").exists());
+        assert!(!crate::lockfile::compiler_lock_state_dir(temp.path()).exists());
         Ok(())
     }
 

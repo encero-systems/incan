@@ -3709,26 +3709,9 @@ fn prepare_project_with_options(
     let rust_inspect_manifest_dir = {
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
-            project_name: project_name.as_str(),
-            cargo_package_name: &cargo_package_name,
-            rust_edition: manifest
-                .as_ref()
-                .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
-            resolved: &resolved,
-            project_requirements: &project_requirements,
-            lock_payload: lock_payload.clone(),
-            cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
-            clear_cargo_lock,
-            cargo_policy_flags: cargo_flags.clone(),
-            cargo_target_dir: &rust_inspect_target_path,
             rust_inspect_query_paths: &metadata_query_paths,
             rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-            prepare_when_empty: true,
-            direct_oven_inspection: false,
-            force_direct_prewarm: false,
-            oven_source_authority: None,
-            prepared_project_source_authorities: None,
-            explicit_oven_bake: false,
+            selected: None,
         })?
         .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
         codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.manifest_dir().to_path_buf());
@@ -5572,32 +5555,9 @@ fn prepare_oven_project(
         };
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
-            project_name: project_name.as_str(),
-            cargo_package_name: project_name.as_str(),
-            rust_edition: Some(rust_edition.clone()),
-            resolved: &resolved,
-            project_requirements: &project_requirements,
-            lock_payload: None,
-            cargo_lock_projection_root: None,
-            clear_cargo_lock: false,
-            cargo_policy_flags: Vec::new(),
-            cargo_target_dir: &generator.output_dir().join("oven").join("rust-inspect"),
             rust_inspect_query_paths: &metadata_query_paths,
             rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-            prepare_when_empty: false,
-            direct_oven_inspection: true,
-            force_direct_prewarm: loaf_codegen_mode(),
-            oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
-                project_version: &project_version,
-                target: &rustc_target,
-                toolchain: &rustc_toolchain,
-                profile,
-                features: &cargo_features.cargo_features,
-                build_unit_inputs: &oven_build_inputs,
-                registry_dependencies: &resolved.dependencies,
-            }),
-            prepared_project_source_authorities,
-            explicit_oven_bake: oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
+            selected: None,
         })?;
         if let Some(manifest_dir) = rust_inspect_manifest_dir.as_ref() {
             codegen.set_rust_inspect_manifest_dir(manifest_dir.manifest_dir().to_path_buf());
@@ -10131,32 +10091,9 @@ fn prepare_library_project(
         let rust_inspect_start = Instant::now();
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
-            project_name: project_name.as_str(),
-            cargo_package_name: &lock_cargo_package_name,
-            rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
-            resolved: &resolved,
-            project_requirements: &project_requirements,
-            lock_payload: lock_payload_for_typecheck.clone(),
-            cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
-            clear_cargo_lock,
-            cargo_policy_flags: cargo_flags.clone(),
-            cargo_target_dir: &rust_inspect_target_path,
             rust_inspect_query_paths: &metadata_query_paths,
             rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-            prepare_when_empty: true,
-            direct_oven_inspection: normal_oven,
-            force_direct_prewarm: false,
-            oven_source_authority: normal_oven.then(|| OvenRustInspectSourceAuthorityRequest {
-                project_version: &project_version,
-                target: oven_target.as_deref().unwrap_or_default(),
-                toolchain: oven_toolchain.as_deref().unwrap_or_default(),
-                profile: "debug",
-                features: &cargo_features.cargo_features,
-                build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
-                registry_dependencies: &resolved.dependencies,
-            }),
-            prepared_project_source_authorities: None,
-            explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
+            selected: None,
         })?
         .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
         record_timing(&mut timings_ms, "library_rust_inspect_prewarm", rust_inspect_start);

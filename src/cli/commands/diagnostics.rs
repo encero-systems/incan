@@ -12,12 +12,8 @@ use serde::Serialize;
 use crate::backend::c_abi::CAbiVerificationPlan;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION, StableDiagnostic};
-#[cfg(feature = "rust_inspect")]
-use crate::lockfile::CargoFeatureSelection;
 use crate::provider::FeatureSelection;
 
-#[cfg(feature = "rust_inspect")]
-use super::common::CargoPolicy;
 use super::common::{
     CliDiagnostic, CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_session,
     resolve_project_root, typecheck_modules_with_import_graph_detailed_for_c_abi_target,
@@ -155,36 +151,12 @@ pub(crate) fn check_path_report_with_interop_target_selection(
         Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
     };
     let project_root = resolve_project_root(&normalized_path);
-    let library_manifest_index = compilation_session.library_manifest_index.clone();
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
-    #[cfg(feature = "rust_inspect")]
-    let project_name = manifest
-        .as_ref()
-        .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
-        .or_else(|| {
-            normalized_path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| "incan_check".to_string());
-    #[cfg(feature = "rust_inspect")]
-    let cargo_features = CargoFeatureSelection::default().normalized();
-    #[cfg(feature = "rust_inspect")]
-    let cargo_policy = CargoPolicy::default();
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = prepare_rust_inspect_typecheck_workspace(RustInspectTypecheckRequest {
         project_root: &project_root,
-        project_name: project_name.as_str(),
-        manifest: manifest.as_ref(),
         modules: &modules,
-        library_manifest_index: &library_manifest_index,
-        cargo_features: &cargo_features,
-        cargo_policy: &cargo_policy,
-        rust_edition: manifest
-            .as_ref()
-            .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone())),
-        provider_plan: &provider_plan,
+        selected: None,
     })?;
 
     let typecheck = typecheck_modules_with_import_graph_detailed_for_c_abi_target(

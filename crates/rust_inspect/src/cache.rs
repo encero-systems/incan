@@ -39,7 +39,6 @@ pub struct RustMetadataCache {
 
 #[derive(Default)]
 struct CacheInner {
-    selections: HashMap<PathBuf, InspectionContext>,
     workspaces: HashMap<PathBuf, RustWorkspace>,
     items: HashMap<(PathBuf, String), Arc<RustItemMetadata>>,
     fast_failed_items: HashSet<(PathBuf, String)>,
@@ -47,12 +46,16 @@ struct CacheInner {
     complete_items: HashSet<(PathBuf, String)>,
     failed_items: HashMap<(PathBuf, String), NegativeLookup>,
     disk_cache_state: HashMap<PathBuf, DiskCacheState>,
+    // Keep source owners last so normal field destruction also drops databases before their input leases.
+    selections: HashMap<PathBuf, InspectionContext>,
 }
 
 /// Validated selection and an explicit output location; neither requires a loaded analysis database.
 struct InspectionContext {
     projection: ValidatedInspectionProject,
     temporary_root: PathBuf,
+    // An opaque physical lease retained for as long as this context or its database can use selected inputs.
+    _source_owner: Option<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 #[derive(Default)]
@@ -566,7 +569,6 @@ fn extract_in_workspace_set(
 
 /// Clear all bookkeeping for one context while holding the cache mutex.
 fn clear_context(inner: &mut CacheInner, root: &Path) {
-    inner.selections.remove(root);
     inner.workspaces.remove(root);
     inner.items.retain(|(workspace_root, _), _| workspace_root != root);
     inner
@@ -579,6 +581,8 @@ fn clear_context(inner: &mut CacheInner, root: &Path) {
         .complete_items
         .retain(|(workspace_root, _)| workspace_root != root);
     inner.disk_cache_state.remove(root);
+    // Release selected source owners only after the database and every cache record have been discarded.
+    inner.selections.remove(root);
 }
 
 impl RustMetadataCache {
@@ -612,6 +616,32 @@ impl RustMetadataCache {
         projection: ValidatedInspectionProject,
         temporary_root: &Path,
     ) -> Result<(), RustMetadataError> {
+        self.bind_selected_project_inner(context, projection, temporary_root, None)
+    }
+
+    /// Bind selected inputs while retaining their admitted physical owner for the cache/database lifetime.
+    ///
+    /// The guard is opaque: the cache neither derives authority from it nor reads selection policy. Unlike a stack
+    /// lease around one query, this ownership survives an Inspector or preparation handle dropping, including after an
+    /// extraction error. Rebinding or invalidating the context releases the previous owner alongside its database.
+    pub fn bind_selected_project_with_owner<T: std::any::Any + Send + Sync>(
+        &self,
+        context: &Path,
+        projection: ValidatedInspectionProject,
+        temporary_root: &Path,
+        source_owner: Arc<T>,
+    ) -> Result<(), RustMetadataError> {
+        self.bind_selected_project_inner(context, projection, temporary_root, Some(source_owner))
+    }
+
+    /// Install the same validated binding for externally retained or cache-owned physical source leases.
+    fn bind_selected_project_inner(
+        &self,
+        context: &Path,
+        projection: ValidatedInspectionProject,
+        temporary_root: &Path,
+        source_owner: Option<Arc<dyn std::any::Any + Send + Sync>>,
+    ) -> Result<(), RustMetadataError> {
         let root = context.canonicalize()?;
         // Checking the allocated directory does not create the per-load projection or read selected source trees.
         let temporary_root = temporary_root.canonicalize()?;
@@ -643,6 +673,7 @@ impl RustMetadataCache {
             InspectionContext {
                 projection,
                 temporary_root,
+                _source_owner: source_owner,
             },
         );
         Ok(())

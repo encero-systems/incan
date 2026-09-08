@@ -260,3 +260,49 @@ fn selected_cache_does_not_conflate_equal_display_names() -> Result<(), Box<dyn 
     assert_eq!(left_type.fields[0].name, "left");
     Ok(())
 }
+
+/// Retain actual selected source/output trees through database use and release them only with their binding.
+#[test]
+fn selected_binding_retains_source_owner_until_rebind_or_invalidation() -> Result<(), Box<dyn std::error::Error>> {
+    let context = tempfile::tempdir()?;
+    let fixture = Arc::new(InspectionFixture::new("#![no_std]\npub struct First;\n")?);
+    let first_root = fixture.source.path().to_path_buf();
+    let first_owner = Arc::downgrade(&fixture);
+    let cache = RustMetadataCache::new();
+    cache.bind_selected_project_with_owner(
+        context.path(),
+        fixture.validate()?,
+        fixture.output.path(),
+        Arc::clone(&fixture),
+    )?;
+    drop(fixture);
+    assert!(first_owner.upgrade().is_some());
+    assert!(first_root.is_dir());
+    cache.get_or_extract_complete(context.path(), "demo::First", &|_| {})?;
+
+    let changed = Arc::new(InspectionFixture::new("#![no_std]\npub struct Second;\n")?);
+    let second_root = changed.source.path().to_path_buf();
+    let second_owner = Arc::downgrade(&changed);
+    cache.bind_selected_project_with_owner(
+        context.path(),
+        changed.validate()?,
+        changed.output.path(),
+        Arc::clone(&changed),
+    )?;
+    drop(changed);
+    assert!(first_owner.upgrade().is_none());
+    assert!(!first_root.exists());
+    assert!(cache.get_cached(context.path(), "demo::First")?.is_none());
+    cache.get_or_extract_complete(context.path(), "demo::Second", &|_| {})?;
+    assert!(second_owner.upgrade().is_some());
+    assert!(second_root.is_dir());
+
+    cache.invalidate_manifest_dir(context.path())?;
+    assert!(second_owner.upgrade().is_none());
+    assert!(!second_root.exists());
+    assert!(matches!(
+        cache.get_cached(context.path(), "demo::Second"),
+        Err(RustMetadataError::SelectedInputUnavailable { .. }),
+    ));
+    Ok(())
+}
