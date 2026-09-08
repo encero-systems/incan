@@ -2425,9 +2425,7 @@ fn parser_only_library_manifest_entry(
         .unwrap_or_else(|| "0.1.0".to_string());
     let mut manifest = LibraryManifest::new(project_name.clone(), project_version);
 
-    if let Some(vocab_extraction) =
-        collect_library_vocab_metadata_for_parser(&dependency_manifest, &project_root, None)?
-    {
+    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(&dependency_manifest, &project_root)? {
         manifest.vocab = Some(vocab_extraction.payload);
         manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
     }

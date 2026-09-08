@@ -1,32 +1,18 @@
-//! Project generator — creates the output Rust source projection
+//! Rust source projection from checked Incan compilation inputs.
 //!
-//! Generates:
-//! - `Cargo.toml` with dependencies
-//! - `src/main.rs` or `src/lib.rs`
-//! - Retains `Cargo.toml` only as an inspectable compatibility projection or explicit publisher input
-//!
-//! ## Cargo Dependency Policy
-//!
-//! The project generator receives **resolved dependency specs** from the dependency resolver,
-//! including version requirements, features, sources, optional flags, and dev-only deps.
-//! It does not perform resolution itself; it only renders `Cargo.toml` faithfully.
-//!
-//! ## Module Organisation
-//!
-//! - [`plan`] — [`CompilationPlan`], [`Executor`], [`ExecutionResult`] (separating "what" from "doing")
-//! - [`generator`] — [`ProjectGenerator`] struct, setters, and `generate*()` methods
-//! - [`cargo_toml`] — `Cargo.toml` rendering and dependency formatting
-//! - [`runner`] — Cargo-lock projection support for the explicit publisher boundary
+//! [`ProjectGenerator`] emits the selected source modules and provider facades into `src/main.rs` or `src/lib.rs`.
+//! It consumes the compiler's checked provider plan; native dependency selection and execution belong to the caller.
+//! [`plan`] contains passive emitted-file descriptions, and [`runner`] contains captured native command outcomes.
 
 pub mod generator;
 pub mod plan;
 pub mod runner;
 
-/// Cargo dependency key for the toolchain-owned runtime support crate used by generated Rust projects.
+/// Rust dependency key for the toolchain-owned runtime support crate used by emitted source.
 pub(crate) const INCAN_STDLIB_CRATE_NAME: &str = "incan_stdlib";
-/// Cargo dependency key for the toolchain-owned derive crate used by every generated Rust project.
+/// Rust dependency key for the toolchain-owned derive crate used by emitted source.
 pub(crate) const INCAN_DERIVE_CRATE_NAME: &str = "incan_derive";
-/// Complete generator-owned support-crate set emitted unconditionally into generated Cargo projects.
+/// Compiler-owned support crates required by generated source.
 pub(crate) const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_CRATE_NAME, INCAN_DERIVE_CRATE_NAME];
 
 // Re-export public types so `crate::backend::project::ProjectGenerator` (etc.) still works.

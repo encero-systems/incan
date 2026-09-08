@@ -51,6 +51,9 @@ const LEGACY_PROJECT_NAME: &str = "incan-shadow-comparison";
 /// Rust crate name for the produced legacy program.
 const LEGACY_CRATE_NAME: &str = "incan_shadow_comparison";
 
+/// Rust edition used by the legacy comparison emitter's source contract.
+const LEGACY_RUST_EDITION: &str = "2021";
+
 /// Per-process suffix for caller-owned staged result-report directories.
 ///
 /// The directory lease is host lifecycle only; the produced report remains entirely source-authored Incan. Atomic
@@ -268,7 +271,7 @@ where
         source: source_path.clone(),
         output: output_path.clone(),
         crate_name: LEGACY_CRATE_NAME.to_string(),
-        edition: crate::backend::project::cargo_toml::DEFAULT_GENERATED_RUST_EDITION.to_string(),
+        edition: LEGACY_RUST_EDITION.to_string(),
         source_evidence_key: SOURCE_EVIDENCE_KEY.to_string(),
     })
     .map_err(|error| {

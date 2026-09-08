@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::cli::{OvenInteropAdapterArgument, OvenLoafEnvelopeArgument, OvenOutputFormat};
+use crate::cli::{OvenInteropAdapterArgument, OvenOutputFormat};
 use crate::oven::OvenBuildIntent;
 
 /// Shared bounded-store location and policy inputs for Oven Alpha commands.
@@ -146,33 +146,6 @@ pub struct OvenInteropStageCommandOptions {
     pub output: PathBuf,
     /// Bounded store selection and policy.
     pub store: OvenStoreCommandOptions,
-    /// Requested rendering format.
-    pub format: OvenOutputFormat,
-}
-
-/// Inputs for the hidden baker that emits one complete compiler-owned Loaf envelope.
-#[derive(Debug, Clone)]
-pub struct OvenLoafBakeCommandOptions {
-    /// Compiler or staged toolchain root used to derive runtime source identity.
-    pub compiler_root: PathBuf,
-    /// Destination for immutable `<identity>.loaf` directories.
-    pub output: PathBuf,
-    /// Bounded compiler-suite store baked beside a compiler-suite Loaf envelope.
-    pub suite_store: Option<PathBuf>,
-    /// Built-in release or compiler-suite envelope.
-    pub envelope: OvenLoafEnvelopeArgument,
-    /// Exact SDK provider inventory used to derive compatibility identities.
-    pub sdk_inventory: PathBuf,
-    /// Cargo executable used only by this explicit baker.
-    pub cargo: PathBuf,
-    /// Rust compiler used by the baker and recorded by each receipt.
-    pub rustc: PathBuf,
-    /// Aggregate physical allowance for the selected envelope.
-    pub max_physical_bytes: Option<u64>,
-    /// Per-Loaf physical allowance.
-    pub max_domain_physical_bytes: Option<u64>,
-    /// Per-Loaf logical allowance.
-    pub max_domain_logical_bytes: Option<u64>,
     /// Requested rendering format.
     pub format: OvenOutputFormat,
 }

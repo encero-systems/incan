@@ -255,15 +255,6 @@ pub enum OvenInteropAdapterArgument {
     Ios,
 }
 
-/// Built-in compiler-owned Loaf envelope selected by the hidden baker.
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OvenLoafEnvelopeArgument {
-    /// Minimal Loafs shipped in a release toolchain.
-    Release,
-    /// Complete Loaf set used by the repository compiler suite.
-    CompilerSuite,
-}
-
 /// Incan package-feature selection shared by compilation commands.
 ///
 /// These flags select package-owned semantic features. They are intentionally separate from the explicitly prefixed

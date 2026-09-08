@@ -83,9 +83,8 @@ use crate::oven::legacy_cargo::{
 };
 use crate::oven::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
-    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT, OvenToolchainLoaf,
-    resolve_compiler_owned_loaf_by_identity, resolve_compiler_owned_loaf_for_registry_dependencies,
-    runtime_build_unit_inputs,
+    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, resolve_compiler_owned_loaf_by_identity,
+    resolve_compiler_owned_loaf_for_registry_dependencies, runtime_build_unit_inputs,
 };
 use crate::oven::native_contract::{
     OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
@@ -9812,21 +9811,9 @@ fn prepare_library_project(
     // lock collection would request this still-unpublished artifact recursively. The command owning the full project
     // remains responsible for canonical lock observation and publication, including SDK publisher invocations.
     record_timing(&mut timings_ms, "library_observe_lock_facts", lock_start);
-    let mut oven_build_inputs = normal_oven
+    let oven_build_inputs = normal_oven
         .then(|| oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved))
         .transpose()?;
-    let source_compiler_vocab_support = normal_oven
-        && manifest.vocab().is_some()
-        && crate::oven::legacy_cargo::source_compiler_vocab_support_is_available();
-    if source_compiler_vocab_support && let Some(build_inputs) = oven_build_inputs.as_mut() {
-        // A source-built compiler seals this helper at the explicit publisher boundary. Keep that closure in a
-        // distinct build unit so a v0.5.0 plan without it can neither shadow nor become ambiguous with the
-        // upgraded receipt. Packaged compilers continue to select their release-cohort helper unchanged.
-        build_inputs.insert(
-            OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT.to_string(),
-            "v1".to_string(),
-        );
-    }
     let oven_rustc = normal_oven
         .then(resolve_active_rustc)
         .transpose()
@@ -10461,50 +10448,21 @@ fn prepare_library_project(
     // A normal Oven library build derives the compiler-owned vocab helper exclusively from its selected immutable
     // release plan, but only when this project actually declares a vocab companion. Constructing that context for
     // every library made a vocab-free explicit bake require unrelated `incan_vocab` artifacts and repeated work.
-    // The selected release plan owns its lease through extraction; compatibility publication retains its explicit
-    // boundary and normal consumers remain Cargo-free.
+    // The context borrows the actual selected plan so its store lease remains live through extraction.
     let oven_vocab_context_start = Instant::now();
     let normal_oven_vocab_context = if manifest.vocab().is_some() {
         if let Some(oven) = oven.as_ref() {
             // Prefer the release selection, but fall back to whatever profile this bake actually prepared.
-            // An explicit bake may be narrowed to one profile (see `explicit_bake_profiles`), and the vocab
-            // helper is a wasm desugarer whose identity does not depend on the host profile that carried it.
+            // An explicit bake may prepare only one profile. Its exact profile and helper bytes enter the cache key.
             let release = oven
                 .profiles
                 .get("release")
                 .or_else(|| oven.profiles.values().next())
                 .ok_or_else(|| CliError::failure("normal Oven library build prepared no profile selection"))?;
-            if release.plan_selection.artifacts().vocab_auxiliary_targets.is_empty() {
-                // A receipt-exact project closure may predate project-extension publication or legitimately own a
-                // disjoint Rust ABI universe. It must not manufacture compiler-private helper artifacts or invoke
-                // Cargo merely because the source also declares a vocab companion. The helper has no project ABI:
-                // select it only from the exact compiler-owned stdlib Loaf that authorizes this receipt's
-                // release-cohort inputs and target, while the project's selected closure remains the sole authority
-                // for its code.
-                let base = project_extension_base_loaf(&release.receipt)?.ok_or_else(|| {
-                    CliError::failure(
-                        "selected Oven project closure has no compiler-owned vocabulary helper and the active Incan release has no compatible release-cohort Loaf; run the explicit release Loaf bake for this compiler version. Normal library builds will not invoke Cargo",
-                    )
-                })?;
-                Some(oven_vocab_direct_rustc_context_from_plan(
-                    &oven.rustc,
-                    &base.artifact_plan,
-                    &base.artifacts,
-                    &base.artifact_root,
-                )?)
-            } else {
-                let artifact_root = release.plan_selection.vocab_artifact_root().ok_or_else(|| {
-                    CliError::failure(
-                        "selected Oven project extension splits a vocabulary auxiliary closure across immutable roots; rebake against a compatible standard-library Loaf",
-                    )
-                })?;
-                Some(oven_vocab_direct_rustc_context_from_plan(
-                    &oven.rustc,
-                    release.plan_selection.artifact_plan(),
-                    release.plan_selection.artifacts(),
-                    artifact_root,
-                )?)
-            }
+            Some(oven_vocab_direct_rustc_context_from_plan(
+                &oven.rustc,
+                &release.plan_selection,
+            )?)
         } else {
             None
         }
@@ -10519,7 +10477,7 @@ fn prepare_library_project(
     let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
     let vocab_start = Instant::now();
     if let Some(vocab_extraction) =
-        collect_library_vocab_metadata(&manifest, &project_root, None, normal_oven_vocab_context.as_ref())?
+        collect_library_vocab_metadata(&manifest, &project_root, normal_oven_vocab_context.as_ref())?
     {
         pending_desugarer_artifact = vocab_extraction.pending_desugarer_artifact;
         library_manifest.vocab = Some(vocab_extraction.payload);
