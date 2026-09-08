@@ -162,6 +162,12 @@ def run() -> Result[None, TomlError]:
         "offset = 1979-05-27T07:32:00Z\nlocal = 1979-05-27T07:32:00\ndate = 1979-05-27\ntime = 07:32:00\nnumber = 42\nfraction = 1.5\nflag = true\ntext = \"hello\"\narray = [1, 2]\n[table]\nname = \"nested\"\n",
     )?
     assert dynamic.kind() == TomlKind.Table
+    for key, expected in [("text", TomlKind.String), ("number", TomlKind.Integer), ("fraction", TomlKind.Float), ("flag", TomlKind.Boolean), ("offset", TomlKind.Datetime), ("array", TomlKind.Array), ("table", TomlKind.Table)]:
+        match dynamic.get(key):
+            Some(value) =>
+                assert value.kind() == expected
+            None =>
+                assert false, "missing TOML kind fixture"
     match dynamic.get("offset"):
         Some(value) =>
             assert value.kind() == TomlKind.Datetime

@@ -11,6 +11,7 @@ from rust::toml::value import Datetime as RawDatetime
 from rust::toml::de import Error as DecodeError
 from rust::toml_edit import Document as SpannedDocument, TomlError as SpanParseError
 from rust::std::string import String as RustString
+from rust::std::borrow import Borrow
 from rust::serde import Serialize as RustSerialize, Deserialize as RustDeserialize
 from rust::serde::de import DeserializeOwned
 from rust::incan_stdlib::strings import str_slice_byte_range
@@ -131,14 +132,14 @@ pub type TomlValue = newtype RawValue with TomlSerialize, TomlDeserialize:
 
     def kind(self) -> TomlKind:
         """Return the TOML runtime kind without conflating dates with strings or integers with floats."""
-        match str(self.0.type_str()):
-            "string" => return TomlKind.String
-            "integer" => return TomlKind.Integer
-            "float" => return TomlKind.Float
-            "boolean" => return TomlKind.Boolean
-            "datetime" => return TomlKind.Datetime
-            "array" => return TomlKind.Array
-            _ => return TomlKind.Table
+        match self.0.borrow():
+            RawValue.String(_) => return TomlKind.String
+            RawValue.Integer(_) => return TomlKind.Integer
+            RawValue.Float(_) => return TomlKind.Float
+            RawValue.Boolean(_) => return TomlKind.Boolean
+            RawValue.Datetime(_) => return TomlKind.Datetime
+            RawValue.Array(_) => return TomlKind.Array
+            RawValue.Table(_) => return TomlKind.Table
 
     def to_toml(self) -> Result[str, TomlError]:
         """Serialize this document; top-level scalar values are rejected by TOML's document grammar."""
