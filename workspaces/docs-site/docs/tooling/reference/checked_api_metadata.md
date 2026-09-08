@@ -181,6 +181,8 @@ The `.incnlib` field `contract_metadata.native_unions` contains the defining art
 
 Older metadata may omit the table and retain structural `Applied` types named `Union`. Readers continue to accept that legacy encoding. A reader without `NativeUnion` support rejects the new variant instead of treating it as an ordinary structural union.
 
+An explicitly typed, non-generic decorator over an imported union alias can currently pass checking but fail native compilation ([#1453](https://github.com/encero-systems/incan/issues/1453)).
+
 A checked trait-bound entry may also contain `implementation_type_params`. This optional schema-v1 field records the
 generic header required by that exact implementation rather than adding those requirements to every use of the owning
 type. Each entry names the implementation parameter and its bounds; a bound records `trait_path`, structural
