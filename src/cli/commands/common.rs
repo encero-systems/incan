@@ -1,7 +1,7 @@
 //! Shared utilities used across multiple CLI command pipelines.
 //!
 //! This module contains functions for source file reading, module collection, project root resolution,
-//! dependency helpers, and Cargo flag construction.
+//! dependency helpers, and SDK provider input evidence.
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -17,7 +17,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 use crate::backend::ProjectGenerator;
 use crate::backend::c_abi::{CAbiVerificationPlan, ClangToolchain, verify_checked_c_binding};
 use crate::backend::ir::detect_serde_non_import_usage;
-use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::project::{GENERATED_TOOLCHAIN_SUPPORT_CRATES, INCAN_STDLIB_CRATE_NAME};
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
@@ -404,15 +403,11 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
 ///
 /// Development binaries are rebuilt when test-only Rust changes, and their raw bytes are not a stable description of
 /// compiler behavior. A checkout therefore contributes its compiler source closure; an installed toolchain, which has
-/// no source closure to inspect, falls back to the executable digest.
-fn sdk_provider_store_identity(
-    stdlib_root: &Path,
-    executable: &Path,
-    workspace_lock: Option<&Path>,
-    distribution_profile: &str,
-) -> CliResult<String> {
+/// no source closure to inspect, uses the executable digest. Checkout hashing includes the compiler's bootstrap
+/// Cargo.lock bytes as compiler inputs; no separately discovered Cargo lock authorizes SDK dependency selection.
+fn sdk_provider_store_identity(stdlib_root: &Path, executable: &Path, distribution_profile: &str) -> CliResult<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-provider-store-v3\0");
+    hasher.update(b"incan-sdk-provider-store-v4\0");
     hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
     hasher.update(b"compiler-version\0");
     hasher.update(crate::version::INCAN_VERSION.as_bytes());
@@ -428,15 +423,6 @@ fn sdk_provider_store_identity(
         hasher.update(sdk_provider_compiler_digest(&executable)?);
     }
 
-    hasher.update(b"workspace-lock\0");
-    if let Some(workspace_lock) = workspace_lock {
-        hasher.update(fs::read(workspace_lock).map_err(|error| {
-            CliError::failure(format!(
-                "failed to read workspace lock {}: {error}",
-                workspace_lock.display()
-            ))
-        })?);
-    }
     Ok(hex::encode(hasher.finalize()))
 }
 
@@ -455,17 +441,11 @@ pub(crate) fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path
     let executable = env::current_exe()
         .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let executable = sdk_provider_builder_executable(None, executable)?;
-    let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
     let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
         .ok()
         .filter(|profile| !profile.is_empty())
         .unwrap_or_else(|| "full".to_string());
-    sdk_provider_store_identity(
-        &stdlib_root,
-        &executable,
-        workspace_lock.as_deref(),
-        &distribution_profile,
-    )
+    sdk_provider_store_identity(&stdlib_root, &executable, &distribution_profile)
 }
 
 /// Resolve the source checkout that owns a discovered SDK tree, if this is a development layout.
@@ -735,7 +715,6 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
     let executable = sdk_provider_builder_executable(cargo_test_binary, current_exe)?;
-    let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
     let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
         .ok()
         .filter(|profile| !profile.is_empty())
@@ -756,12 +735,7 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
                 }
             })
     });
-    let identity = sdk_provider_store_identity(
-        &stdlib_root,
-        &executable,
-        workspace_lock.as_deref(),
-        &distribution_profile,
-    )?;
+    let identity = sdk_provider_store_identity(&stdlib_root, &executable, &distribution_profile)?;
     let _lock = acquire_sdk_provider_store_lock(&store_root)?;
     let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
         .filter(|path| !path.is_empty())
@@ -795,7 +769,6 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
     let staged_inventory = match build_sdk_components_into_staging(
         &catalog,
         &executable,
-        workspace_lock.as_deref(),
         &staging_root,
         &distribution_profile,
         source_root_override.map(|source_root| (source_root, stdlib_root.as_path())),
@@ -962,7 +935,6 @@ fn record_sdk_provider_root(artifact_root: &Path) -> CliResult<()> {
 fn build_sdk_components_into_staging(
     catalog: &SdkSourceCatalog,
     executable: &Path,
-    workspace_lock: Option<&Path>,
     staging_root: &Path,
     distribution_profile: &str,
     toolchain_source: Option<(&Path, &Path)>,
@@ -2455,14 +2427,9 @@ fn parser_only_library_manifest_entry(
         .unwrap_or_else(|| "0.1.0".to_string());
     let mut manifest = LibraryManifest::new(project_name.clone(), project_version);
 
-    let generated_cargo_target_dir = env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(
-        &dependency_manifest,
-        &project_root,
-        generated_cargo_target_dir.as_deref(),
-    )? {
+    if let Some(vocab_extraction) =
+        collect_library_vocab_metadata_for_parser(&dependency_manifest, &project_root, None)?
+    {
         manifest.vocab = Some(vocab_extraction.payload);
         manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
     }
@@ -4924,7 +4891,7 @@ mod tests {
             r#"printf '%s' '{"timings_ms":{"library_prepare_total":7}}' > "$4""#,
             "mock",
         ]);
-        configure_sdk_provider_build_environment(&mut child, "stdlib-data", root.path(), None, None);
+        configure_sdk_provider_build_environment(&mut child, "stdlib-data", None);
         reports.configure(&mut child, "stdlib-data");
         assert!(
             child
@@ -5017,49 +4984,11 @@ mod tests {
     }
 
     #[test]
-    fn sdk_provider_build_uses_transaction_local_cargo_target() {
-        let mut command = Command::new("incan");
-        let target = Path::new("/staging/.cargo-target");
-        configure_sdk_provider_build_environment(&mut command, "stdlib-core", target, None, None);
-        let configured_target = command
-            .get_envs()
-            .find_map(|(name, value)| (name == GENERATED_CARGO_TARGET_DIR_ENV).then_some(value))
-            .flatten();
-        assert_eq!(configured_target, Some(target.as_os_str()));
-    }
-
-    #[test]
-    fn sdk_provider_build_preserves_caller_owned_cargo_target() {
-        let mut command = Command::new("incan");
-        let transaction_target = Path::new("/staging/.cargo-target");
-        let caller_target = Path::new("/ci/shared-generated-target");
-        configure_sdk_provider_build_environment(
-            &mut command,
-            "stdlib-core",
-            transaction_target,
-            Some(caller_target.as_os_str()),
-            None,
-        );
-        let configured_target = command
-            .get_envs()
-            .find_map(|(name, value)| (name == GENERATED_CARGO_TARGET_DIR_ENV).then_some(value))
-            .flatten();
-        assert_eq!(configured_target, Some(caller_target.as_os_str()));
-    }
-
-    #[test]
     fn sdk_provider_build_pins_an_explicit_compiler_source_tree() {
         let mut command = Command::new("incan");
-        let target = Path::new("/staging/.cargo-target");
         let compiler_root = Path::new("/compiler");
         let stdlib_root = Path::new("/compiler/crates/incan_stdlib/stdlib");
-        configure_sdk_provider_build_environment(
-            &mut command,
-            "stdlib-core",
-            target,
-            None,
-            Some((compiler_root, stdlib_root)),
-        );
+        configure_sdk_provider_build_environment(&mut command, "stdlib-core", Some((compiler_root, stdlib_root)));
         let source_root = command
             .get_envs()
             .find_map(|(name, value)| (name == "INCAN_SOURCE_ROOT").then_some(value))
@@ -5129,32 +5058,8 @@ mod tests {
     }
 
     #[test]
-    fn sdk_provider_build_uses_enclosing_workspace_lock() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let workspace = tmp.path().join("workspace");
-        let stdlib_root = workspace.join("crates/incan_stdlib/stdlib");
-        let artifact_root = stdlib_root.join("target/lib");
-        fs::create_dir_all(&stdlib_root)?;
-        fs::write(workspace.join("Cargo.lock"), "workspace lock payload")?;
-
-        let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
-        let mut command = Command::new("incan");
-        configure_sdk_provider_workspace_lock(&mut command, workspace_lock.as_deref());
-        let selected = command
-            .get_envs()
-            .find(|(name, _)| *name == INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
-            .and_then(|(_, path)| path)
-            .ok_or("SDK lock authority absent from child command")?;
-        assert_eq!(fs::read_to_string(selected)?, "workspace lock payload");
-        assert!(
-            !artifact_root.exists(),
-            "the child's output transaction owns lock materialization"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn sdk_provider_store_identity_tracks_source_and_lock_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    fn sdk_provider_store_identity_tracks_installed_inputs_without_adjacent_cargo_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let stdlib_root = temp_dir.path().join("stdlib");
         fs::create_dir_all(stdlib_root.join("nested"))?;
@@ -5168,7 +5073,7 @@ mod tests {
         let executable = temp_dir.path().join("compiler-a");
         fs::write(&executable, "compiler payload")?;
 
-        let initial = sdk_provider_store_identity(&stdlib_root, &executable, Some(&workspace_lock), "full")?;
+        let initial = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
         let relocated_executable = temp_dir.path().join("relocated").join("compiler-b");
         fs::create_dir_all(
             relocated_executable
@@ -5176,16 +5081,14 @@ mod tests {
                 .ok_or("relocated compiler had no parent")?,
         )?;
         fs::copy(&executable, &relocated_executable)?;
-        let relocated =
-            sdk_provider_store_identity(&stdlib_root, &relocated_executable, Some(&workspace_lock), "full")?;
+        let relocated = sdk_provider_store_identity(&stdlib_root, &relocated_executable, "full")?;
         assert_eq!(
             initial, relocated,
             "identical compiler bytes must reuse provider artifacts across paths"
         );
         let changed_executable = temp_dir.path().join("compiler-changed");
         fs::write(&changed_executable, "different compiler payload")?;
-        let compiler_changed =
-            sdk_provider_store_identity(&stdlib_root, &changed_executable, Some(&workspace_lock), "full")?;
+        let compiler_changed = sdk_provider_store_identity(&stdlib_root, &changed_executable, "full")?;
         assert_ne!(
             initial, compiler_changed,
             "changing compiler bytes must invalidate provider artifacts"
@@ -5194,19 +5097,19 @@ mod tests {
             stdlib_root.join("nested").join("module.incn"),
             "pub def value() -> int:\n  return 2\n",
         )?;
-        let source_changed = sdk_provider_store_identity(&stdlib_root, &executable, Some(&workspace_lock), "full")?;
+        let source_changed = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
         assert_ne!(
             initial, source_changed,
             "changing a stdlib source must invalidate its artifact identity"
         );
 
         fs::write(&workspace_lock, "second lock closure")?;
-        let lock_changed = sdk_provider_store_identity(&stdlib_root, &executable, Some(&workspace_lock), "full")?;
-        assert_ne!(
+        let lock_changed = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
+        assert_eq!(
             source_changed, lock_changed,
-            "changing the resolved Cargo closure must invalidate its artifact identity"
+            "an adjacent Cargo lock is not consumed by an installed compiler or its SDK sources"
         );
-        let minimal = sdk_provider_store_identity(&stdlib_root, &executable, Some(&workspace_lock), "minimal")?;
+        let minimal = sdk_provider_store_identity(&stdlib_root, &executable, "minimal")?;
         assert_ne!(
             lock_changed, minimal,
             "distribution profiles must not share provider-store identities"
@@ -5233,8 +5136,7 @@ mod tests {
         fs::create_dir_all(executable.parent().ok_or("compiler executable had no parent")?)?;
         fs::write(&executable, "first development compiler bytes")?;
 
-        let initial =
-            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        let initial = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
         let rebuilt_executable = checkout.join("target/rebuilt/incan");
         fs::create_dir_all(
             rebuilt_executable
@@ -5242,12 +5144,7 @@ mod tests {
                 .ok_or("rebuilt compiler executable had no parent")?,
         )?;
         fs::write(&rebuilt_executable, "rebuilt development compiler bytes")?;
-        let rebuilt_executable = sdk_provider_store_identity(
-            &stdlib_root,
-            &rebuilt_executable,
-            Some(&checkout.join("Cargo.lock")),
-            "full",
-        )?;
+        let rebuilt_executable = sdk_provider_store_identity(&stdlib_root, &rebuilt_executable, "full")?;
         assert_eq!(
             initial, rebuilt_executable,
             "a rebuilt development executable with unchanged compiler source must reuse SDK providers"
@@ -5255,21 +5152,33 @@ mod tests {
 
         fs::create_dir_all(checkout.join("tests"))?;
         fs::write(checkout.join("tests/only_test.rs"), "#[test]\nfn regression() {}\n")?;
-        let changed_test =
-            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        let changed_test = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
         assert_eq!(
             initial, changed_test,
             "test-only source must not republish SDK providers"
+        );
+
+        fs::write(checkout.join("Cargo.lock"), "changed compiler bootstrap lock")?;
+        let changed_bootstrap_lock = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
+        assert_ne!(
+            initial, changed_bootstrap_lock,
+            "the compiler checkout's consumed bootstrap lock bytes remain an input",
+        );
+        let outside_lock = temp_dir.path().join("Cargo.lock");
+        fs::write(&outside_lock, "unconsumed adjacent lock")?;
+        assert_eq!(
+            changed_bootstrap_lock,
+            sdk_provider_store_identity(&stdlib_root, &executable, "full")?,
+            "a lock outside the exact compiler checkout is not an additional source authority",
         );
 
         fs::write(
             checkout.join("src/compiler.rs"),
             "pub fn compile() { let changed = true; }\n",
         )?;
-        let changed_source =
-            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        let changed_source = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
         assert_ne!(
-            initial, changed_source,
+            changed_bootstrap_lock, changed_source,
             "a compiler source change must still invalidate SDK provider artifacts"
         );
         Ok(())
