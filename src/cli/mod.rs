@@ -359,13 +359,8 @@ impl NativeInvocationConstraintInputs {
 }
 
 /// Reject retired Cargo command inputs independently from unimplemented native invocation constraints.
-fn refuse_retired_cargo_inputs(
-    arguments: &[String],
-    passthrough: &[String],
-    environment: Option<OsString>,
-) -> CliResult<()> {
+fn refuse_retired_cargo_inputs(passthrough: &[String], environment: Option<OsString>) -> CliResult<()> {
     let supplied = [
-        ("--cargo-args", !arguments.is_empty()),
         ("Cargo passthrough after --", !passthrough.is_empty()),
         ("INCAN_CARGO_ARGS", environment.is_some()),
     ]
@@ -394,7 +389,6 @@ fn validate_native_command_inputs(
             no_offline,
             frozen,
             no_frozen,
-            cargo_args,
             cargo_passthrough,
             ..
         }
@@ -405,7 +399,6 @@ fn validate_native_command_inputs(
             no_offline,
             frozen,
             no_frozen,
-            cargo_args,
             cargo_passthrough,
             ..
         }
@@ -416,7 +409,6 @@ fn validate_native_command_inputs(
             no_offline,
             frozen,
             no_frozen,
-            cargo_args,
             cargo_passthrough,
             ..
         },
@@ -435,7 +427,7 @@ fn validate_native_command_inputs(
     }
     .capture_environment(&mut lookup)
     .require_invocation_control()?;
-    refuse_retired_cargo_inputs(cargo_args, cargo_passthrough, lookup("INCAN_CARGO_ARGS"))
+    refuse_retired_cargo_inputs(cargo_passthrough, lookup("INCAN_CARGO_ARGS"))
 }
 
 #[derive(Subcommand, Debug)]
@@ -1835,7 +1827,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 exact_names,
                 partition_index,
                 partition_count,
-                fixture_cargo,
                 output,
                 store,
                 format,
@@ -1847,7 +1838,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 exact_names,
                 partition_index,
                 partition_count,
-                fixture_cargo,
                 output,
                 store: store.into(),
                 format,
@@ -3010,20 +3000,55 @@ mod tests {
 
     #[test]
     fn retired_cargo_inputs_refuse_independently_of_native_constraints() -> Result<(), Box<dyn std::error::Error>> {
-        let cases = [
-            (vec!["--timings".to_string()], Vec::new(), None, "--cargo-args"),
-            (Vec::new(), vec!["--timings".to_string()], None, "passthrough"),
-            (Vec::new(), Vec::new(), Some(OsString::new()), "INCAN_CARGO_ARGS"),
-        ];
-        for (arguments, passthrough, environment, name) in cases {
-            let Err(error) = refuse_retired_cargo_inputs(&arguments, &passthrough, environment) else {
-                return Err(format!("retired {name} was accepted").into());
+        for command in ["build", "run", "test"] {
+            let cli = parse_cli([
+                "incan",
+                command,
+                "missing-retired-input-fixture.incn",
+                "--",
+                "--timings",
+            ])?;
+            let Err(error) = validate_native_command_inputs(cli.command.as_ref(), |_| None) else {
+                return Err(format!("{command} accepted retired Cargo passthrough").into());
             };
             assert!(error.message.contains("retired Cargo input"));
-            assert!(error.message.contains(name));
+            assert!(error.message.contains("Cargo passthrough after --"));
             assert!(!error.message.contains("invocation-control"));
+            assert!(!error.message.contains("missing-retired-input-fixture"));
+
+            let cli = parse_cli(["incan", command, "missing-retired-input-fixture.incn"])?;
+            for value in ["", "--timings"] {
+                let Err(error) = validate_native_command_inputs(cli.command.as_ref(), |name| {
+                    (name == "INCAN_CARGO_ARGS").then(|| OsString::from(value))
+                }) else {
+                    return Err(format!("{command} ignored retired INCAN_CARGO_ARGS={value:?}").into());
+                };
+                assert!(error.message.contains("retired Cargo input"));
+                assert!(error.message.contains("INCAN_CARGO_ARGS"));
+                assert!(!error.message.contains("invocation-control"));
+                assert!(!error.message.contains("missing-retired-input-fixture"));
+            }
+            validate_native_command_inputs(cli.command.as_ref(), |_| None)?;
         }
-        refuse_retired_cargo_inputs(&[], &[], None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn removed_cargo_options_refuse_during_parsing() -> Result<(), Box<dyn std::error::Error>> {
+        for command in ["build", "run", "test"] {
+            for flag in ["--cargo-args", "--cargo-args=--timings"] {
+                let Err(error) = parse_cli(["incan", command, "missing-retired-input-fixture.incn", flag]) else {
+                    return Err(format!("{command} accepted removed {flag}").into());
+                };
+                assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+                assert!(error.to_string().contains("--cargo-args"));
+            }
+        }
+        let Err(error) = parse_cli(["incan", "oven", "compiler-libtests", "--fixture-cargo", "cargo"]) else {
+            return Err("compiler-libtests accepted removed --fixture-cargo".into());
+        };
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        assert!(error.to_string().contains("--fixture-cargo"));
         Ok(())
     }
 
@@ -3329,17 +3354,8 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_build_native_constraints_and_retired_args() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "build",
-            "test.incn",
-            "--offline",
-            "--locked",
-            "--cargo-args",
-            "--timings",
-            "--color=always",
-        ])?;
+    fn test_cli_parse_build_native_constraints() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "build", "test.incn", "--offline", "--locked"])?;
         let Some(Command::Build {
             offline,
             locked,
@@ -3347,7 +3363,6 @@ mod tests {
             no_offline,
             no_locked,
             no_frozen,
-            cargo_args,
             ..
         }) = cli.command
         else {
@@ -3359,7 +3374,6 @@ mod tests {
         assert!(!no_offline);
         assert!(!no_locked);
         assert!(!no_frozen);
-        assert_eq!(cargo_args, vec!["--timings", "--color=always"]);
         Ok(())
     }
 
@@ -3584,13 +3598,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_test_native_constraints_and_retired_args() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "test", "tests/", "--frozen", "--cargo-args", "--timings"])?;
-        let Some(Command::Test { frozen, cargo_args, .. }) = cli.command else {
+    fn test_cli_parse_test_native_constraints() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "test", "tests/", "--frozen"])?;
+        let Some(Command::Test { frozen, .. }) = cli.command else {
             return Err(expected_command("test"));
         };
         assert!(frozen);
-        assert_eq!(cargo_args, vec!["--timings"]);
         Ok(())
     }
 
