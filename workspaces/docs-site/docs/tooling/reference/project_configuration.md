@@ -39,7 +39,7 @@ Declared `version` and `license` values are preserved in the generated compatibi
 
 ### `[project.scripts]`
 
-Named entry points for CLI commands:
+Named executable entry points for CLI commands:
 
 ```toml
 [project.scripts]
@@ -48,6 +48,8 @@ migrate = "src/migrate.incn"  # This is an example of a named entry point called
 ```
 
 `incan new` and `incan init` set `main = "src/main.incn"` by default. When `main` is set, `incan lock` can run without a `FILE` argument.
+
+A script must not resolve to the conventional library entry point, `src/lib.incn`, including through a path alias. The manifest diagnostic names the conflicting script and path. Remove that script entry: Oven detects `src/lib.incn` as a library automatically.
 
 ### `[project.features]`
 
