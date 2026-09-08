@@ -11,8 +11,9 @@
 //! entrypoint must produce a scalar observable, although an admitted sibling may return a structural intermediate to
 //! its direct caller. The executor also consumes the retained callable vocabulary directly: captured local closures,
 //! partial presets, source-evaluable defaults, identity-selected local or same-module named calls, generator
-//! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Packages, Rust interop,
-//! unsupported callable/default forms, general destructuring, and other projections remain visible refusals. Its
+//! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Published package bodies enter
+//! the same graph after their public executable requirements are resolved. Rust interop, unsupported callable/default
+//! forms, general destructuring, and other projections remain visible refusals. Its
 //! enclosing declaration snapshot retains a deferred generator's shape, but the frame executes and adds execution-frame
 //! evidence only when collection polls it; no path falls back to generated Rust.
 //!
@@ -60,7 +61,7 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{
     AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, HirSourceSpan, IncanPrimitiveType,
-    IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, module_identity_for_path,
+    IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
 
 use crate::backend::selection::digest_output;
@@ -699,13 +700,11 @@ fn direct_declaration_id_for_canonical(
     expected_namespace: SymbolNamespace,
     expected_kind: SemanticSourceTargetKind,
 ) -> Option<CompilerNodeId> {
-    let SymbolOrigin::Module(module_path) = &identity.origin else {
-        return None;
-    };
+    let owner = incan_semantics_core::canonical_module_identity(identity)?;
     (identity.namespace == expected_namespace
         && identity.kind == expected_kind
         && identity.scope_discriminant.is_none()
-        && module_identity_for_path(module_path) == module.module_id.path())
+        && owner == module.module_id.path())
     .then(|| {
         CompilerNodeId::declaration_span(
             module.module_id.path(),
@@ -1462,6 +1461,13 @@ fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionE
     } else {
         validate_block_profile(&body.block, &tuple_iteration_locals, &scalar_tuple_collection_locals)
     }
+}
+
+/// Check the executable structural profile used by the producer before declaring published body coverage.
+///
+/// This invokes the runtime's existing structural gate without executing defaults, providers, or program effects.
+pub(crate) fn validate_published_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
+    validate_direct_body_profile(body)
 }
 
 /// Resolve one named call by its retained same-module identity for both preflight and runtime dispatch.
@@ -2925,7 +2931,8 @@ fn replacement_method_operation(
             _ => None,
         };
     }
-    (matches!(identity.origin, SymbolOrigin::Module(_)) && identity.declaration_name == "value")
+    (matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+        && identity.declaration_name == "value")
         .then_some(ReplacementMethodOperation::ValueEnumValue)
 }
 
@@ -3650,7 +3657,10 @@ fn validate_nominal_pattern_target(
 ) -> Result<(), ReplacementExecutionError> {
     if target.canonical.namespace != SymbolNamespace::OrdinaryLexical
         || target.canonical.kind != SemanticSourceTargetKind::Model
-        || !matches!(&target.canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            &target.canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || target.canonical.scope_discriminant.is_some()
     {
         return Err(unsupported(
@@ -3674,7 +3684,10 @@ fn validate_fieldless_enum_variant_target(
         || target.enum_canonical.namespace != SymbolNamespace::OrdinaryLexical
         || target.enum_canonical.kind != SemanticSourceTargetKind::Enum
         || target.enum_canonical.scope_discriminant.is_some()
-        || !matches!(target.enum_canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            target.enum_canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || target.enum_canonical.declaration_name != target.enum_name
         || target.variant_canonical.namespace != SymbolNamespace::Member
         || target.variant_canonical.kind != SemanticSourceTargetKind::Variant
@@ -3704,7 +3717,10 @@ fn validate_value_enum_variant_target(
         || target.enum_canonical.namespace != SymbolNamespace::OrdinaryLexical
         || target.enum_canonical.kind != SemanticSourceTargetKind::Enum
         || target.enum_canonical.scope_discriminant.is_some()
-        || !matches!(target.enum_canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            target.enum_canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || target.enum_canonical.declaration_name != target.enum_name
         || target.variant_canonical.namespace != SymbolNamespace::Member
         || target.variant_canonical.kind != SemanticSourceTargetKind::Variant
@@ -3843,7 +3859,10 @@ fn validate_nominal_constructor_target(
     };
     if canonical.namespace != SymbolNamespace::OrdinaryLexical
         || canonical.kind != SemanticSourceTargetKind::Model
-        || !matches!(&canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            &canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || canonical.scope_discriminant.is_some()
     {
         return Err(unsupported(
@@ -6288,6 +6307,18 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         })
     }
 
+    /// Find the declaring module in the validated graph, independently of the currently executing frame.
+    fn module_for_declaration_id(
+        &self,
+        identity: &CompilerNodeId,
+        span: HirSourceSpan,
+    ) -> Result<&BodyIrModule, ReplacementExecutionError> {
+        std::iter::once(&self.module)
+            .chain(self.reachable.iter())
+            .find(|module| is_module_span_declaration_id(module, identity))
+            .ok_or_else(|| unsupported("declaration context is absent from the execution graph", span))
+    }
+
     /// Materialize one exact source-local fieldless normal-enum member without reducing it to a source spelling.
     ///
     /// The resulting carrier stores only validated declaration identities. It has no payload and can reach a scalar
@@ -6332,16 +6363,16 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         variant_declaration_id: &CompilerNodeId,
         span: HirSourceSpan,
     ) -> Result<(FieldlessEnumDeclaration, FieldlessEnumVariantDeclaration), ReplacementExecutionError> {
-        if !is_module_span_declaration_id(&self.module, enum_declaration_id)
-            || !is_module_span_declaration_id(&self.module, variant_declaration_id)
+        let module = self.module_for_declaration_id(enum_declaration_id, span)?;
+        if !is_module_span_declaration_id(module, enum_declaration_id)
+            || !is_module_span_declaration_id(module, variant_declaration_id)
         {
             return Err(unsupported(
                 "fieldless-enum member declaration identity is not scoped to this Body-IR module",
                 span,
             ));
         }
-        let declarations = self
-            .module
+        let declarations = module
             .fieldless_enum_declarations
             .iter()
             .filter(|declaration| declaration.direct_declaration_id == *enum_declaration_id)
@@ -6352,7 +6383,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         };
-        if !valid_local_fieldless_enum_declaration(&self.module, declaration) {
+        if !valid_local_fieldless_enum_declaration(module, declaration) {
             return Err(unsupported(
                 "fieldless-enum registry lacks exact canonical owner/member identities",
                 span,
@@ -6480,8 +6511,9 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             .canonical
             .as_ref()
             .ok_or_else(|| unsupported("value-enum `.value()` without a canonical method target", span))?;
+        let module = self.module_for_declaration_id(&enum_declaration_id, span)?;
         let canonical_owner = direct_declaration_id_for_canonical(
-            &self.module,
+            module,
             canonical,
             SymbolNamespace::Member,
             SemanticSourceTargetKind::Method,
@@ -6510,16 +6542,16 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         variant_declaration_id: &CompilerNodeId,
         span: HirSourceSpan,
     ) -> Result<(ValueEnumDeclaration, ValueEnumVariantDeclaration), ReplacementExecutionError> {
-        if !is_module_span_declaration_id(&self.module, enum_declaration_id)
-            || !is_module_span_declaration_id(&self.module, variant_declaration_id)
+        let module = self.module_for_declaration_id(enum_declaration_id, span)?;
+        if !is_module_span_declaration_id(module, enum_declaration_id)
+            || !is_module_span_declaration_id(module, variant_declaration_id)
         {
             return Err(unsupported(
                 "value-enum member declaration identity is not scoped to this Body-IR module",
                 span,
             ));
         }
-        let declarations = self
-            .module
+        let declarations = module
             .value_enum_declarations
             .iter()
             .filter(|declaration| declaration.direct_declaration_id == *enum_declaration_id)
@@ -6530,7 +6562,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         };
-        if !valid_local_value_enum_declaration(&self.module, declaration) {
+        if !valid_local_value_enum_declaration(module, declaration) {
             return Err(unsupported(
                 "value-enum registry lacks exact canonical owner/member identities",
                 span,
@@ -6582,6 +6614,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             )
         })?;
+        let module = self.module_for_declaration_id(direct_declaration_id, span)?;
         let canonical = target.canonical.as_ref().ok_or_else(|| {
             unsupported(
                 format!("constructor `{}` without a canonical declaration target", target.name),
@@ -6589,7 +6622,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             )
         })?;
         let canonical_declaration_id = direct_declaration_id_for_canonical(
-            &self.module,
+            module,
             canonical,
             SymbolNamespace::OrdinaryLexical,
             SemanticSourceTargetKind::Model,
@@ -6601,8 +6634,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         }
-        let declaration = self
-            .module
+        let declaration = module
             .nominal_declarations
             .iter()
             .find(|declaration| declaration.direct_declaration_id == *direct_declaration_id)
@@ -6616,7 +6648,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                     span,
                 )
             })?;
-        if declaration.canonical != *canonical || !valid_local_nominal_declaration(&self.module, &declaration) {
+        if declaration.canonical != *canonical || !valid_local_nominal_declaration(module, &declaration) {
             return Err(unsupported(
                 "constructor canonical target disagrees with the retained declaration identity",
                 span,
@@ -6659,14 +6691,14 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         target: &NominalPatternTarget,
         span: HirSourceSpan,
     ) -> Result<NominalDeclaration, ReplacementExecutionError> {
-        if !is_module_span_declaration_id(&self.module, &target.direct_declaration_id) {
+        let module = self.module_for_declaration_id(&target.direct_declaration_id, span)?;
+        if !is_module_span_declaration_id(module, &target.direct_declaration_id) {
             return Err(unsupported(
                 "nominal match pattern declaration identity is not scoped to this Body-IR module",
                 span,
             ));
         }
-        let declarations = self
-            .module
+        let declarations = module
             .nominal_declarations
             .iter()
             .filter(|declaration| declaration.direct_declaration_id == target.direct_declaration_id)
@@ -6678,7 +6710,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             ));
         };
         if declaration.canonical != target.canonical
-            || !valid_local_nominal_declaration(&self.module, declaration)
+            || !valid_local_nominal_declaration(module, declaration)
             || declaration.type_parameter_count != 0
         {
             return Err(unsupported(
@@ -7112,8 +7144,8 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         };
-        let declaration = self
-            .module
+        let module = self.module_for_declaration_id(&direct_declaration_id, span)?;
+        let declaration = module
             .nominal_declarations
             .iter()
             .find(|declaration| declaration.direct_declaration_id == direct_declaration_id)
@@ -7123,7 +7155,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                     span,
                 )
             })?;
-        if !valid_local_nominal_declaration(&self.module, declaration)
+        if !valid_local_nominal_declaration(module, declaration)
             || declaration.fields.len() != fields.len()
             || declaration
                 .fields

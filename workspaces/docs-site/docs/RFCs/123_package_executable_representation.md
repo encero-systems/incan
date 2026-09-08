@@ -1,6 +1,6 @@
 # RFC 123: Package executable representation
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-09-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -152,6 +152,50 @@ Consumers will want the decoded form to outlive one invocation, and the natural 
 - **Typechecker / Symbol resolution**: resolving an imported declaration to a published representation through canonical identity, and reporting when none is usable.
 - **Emission**: producing the representation for a library's public surface as part of the same build that produces its manifest.
 - **Tooling**: publishing and locating the representation beside a package's other products, and surfacing version and coverage in inspection output.
+
+## Implementation Plan
+
+### Phase 1: Public executable publication
+
+Produce the representation from the compilation that finalizes the manifest. Select declarations through its canonical public graph, record explicit uncovered reasons, and retain the complete public execution closure, including defaults, deferred computations and required type context. Exclude private declarations and compiler-session identities. A public declaration that cannot satisfy those constraints remains uncovered.
+
+### Phase 2: Versioned selective consumption
+
+Separate the stable version prefix and coverage index from individually addressable declaration payloads. Resolve dependency aliases and facades through the selected package graph, retaining the declaring identity and version. Load only required bodies and type context, and reject malformed, incompatible or incomplete requirements before execution.
+
+### Phase 3: Execution and refusal parity
+
+Connect resolved package fragments to the existing non-linking execution graph. Prove producer-to-consumer execution after removing dependency source, and compare observable behavior with the Rust-linking route. Exercise aliases, transitive facades, defaults, recursion and distinct packages with identical source paths. Test missing, uncovered and incompatible content before output or a successful receipt can be published.
+
+### Phase 4: Distribution and acceptance
+
+Keep each selected semantic sidecar coherent with its manifest through publication, copying, sealed materialization and reuse. Integrate the semantic slot with the signed archive boundary owned by RFC 034 when that boundary is available; local sidecar tests do not establish signed archive acceptance. Publish user-facing coverage and refusal documentation, and retain direct execution, selective-loading and relevant repository-gate evidence before completing this RFC.
+
+## Progress Checklist
+
+### Design and publication
+
+- [x] Review the RFC contract and establish an independent implementation and acceptance design.
+- [ ] Select published identities from the finalized manifest, including public members and canonical facade targets.
+- [ ] Record uncovered exports separately from empty executable bodies.
+- [ ] Close public requirements over defaults, deferred computations, callees and type context without publishing private declarations or compiler-session state.
+- [ ] Publish semantic content from the same checked compilation as the manifest and native artifact.
+
+### Resolution and execution
+
+- [ ] Reject unsupported versions before interpreting version-specific metadata or payloads.
+- [ ] Resolve direct, aliased and transitive facade calls through canonical package identities.
+- [ ] Load only selected fragments and their required public context; prove selective loading with a three-of-four-hundred case.
+- [ ] Execute a real source-unavailable package consumer on the non-linking route with native observable-behavior parity.
+- [ ] Refuse missing, incompatible, malformed and uncovered requirements before program output or a successful receipt.
+- [ ] Preserve Rust-linking use of packages without executable representations.
+
+### Distribution and verification
+
+- [ ] Verify coherent semantic sidecar publication, copying, sealed materialization and reuse, including failed publication.
+- [ ] Verify the semantic slot within the signed package archive boundary; track RFC 034's dependency explicitly until this is executable.
+- [ ] Pass focused codec, compiler, package-boundary and failure regressions, plus applicable repository gates.
+- [ ] Update user documentation, release notes and generated RFC references with verified behavior.
 
 ## Design Decisions
 

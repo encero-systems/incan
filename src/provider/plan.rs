@@ -856,7 +856,7 @@ fn resolve_sdk_artifact_projection(
 }
 
 /// Validate the stable identity on one public compiled-provider edge before traversing it.
-fn validate_transitive_provider_dependency(
+pub(crate) fn validate_transitive_provider_dependency(
     descriptor: &ProviderDependencyMetadata,
     manifest: &LibraryManifest,
     artifact: &LibraryArtifactMetadata,

@@ -5,19 +5,16 @@
 //! representation and nothing else: encoding a checked module, decoding one back, and refusing — in terms a consumer
 //! can act on — anything it cannot interpret.
 //!
-//! ## Why this encodes the checked representation directly
-//!
-//! There is no parallel wire type mirroring [`BodyIrModule`]. RFC 123's alternatives reject exactly that shape: a
-//! second description of the same surface is a thing that can drift from the first, and the identity model exists to
-//! stop consumers reasoning about two descriptions of one declaration. Encoding the checked representation itself
-//! makes drift impossible by construction — there is only one description — and the version below is what lets a
-//! consumer refuse a representation it does not understand rather than misread one.
-//!
-//! The cost of that choice is real and worth stating: the wire form follows the checked representation's shape, so
-//! changing that shape changes the format. That is what [`EXECUTABLE_REPRESENTATION_VERSION`] is for, and why a
-//! consumer that reads an unfamiliar version must refuse rather than guess.
+//! Publication projects the checked program onto a public executable closure. Frame-local slot indices remain
+//! local to their fragment; checker-local binding identities are removed, and physical declaration addresses are
+//! package-scoped projections of canonical identities. A binary index separates explicit coverage and requirements
+//! from individually addressable payloads. File I/O belongs to the compiler's artifact resolver.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+
+mod publication;
 
 use crate::CanonicalSymbolId;
 use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclaration, ValueEnumDeclaration};
@@ -30,7 +27,7 @@ use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclar
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 1;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 2;
 
 /// One module's checked representation, framed with the version needed to interpret it.
 ///
@@ -56,7 +53,7 @@ pub enum ExecutableRepresentationError {
     /// This is the expected refusal, not a corruption: a newer package encountering an older consumer. It carries
     /// both versions so the consumer can say what it would need in order to proceed.
     #[error(
-        "executable representation is version {found}, but this compiler implements version {supported}; the package must be consumed by a compiler that implements version {found} or later"
+        "executable representation is version {found}, but this compiler implements version {supported}; the package must be consumed by a compiler that implements version {found}"
     )]
     UnsupportedVersion {
         /// Version the representation declares.
@@ -85,10 +82,10 @@ pub enum ExecutableRepresentationError {
     },
 }
 
-/// Encode one checked module as the representation a package publishes.
+/// Encode an entire checked module for internal round-trip diagnostics.
 ///
-/// The version is stamped from this compiler, because a representation is produced once by the compilation that
-/// declares the surface. Nothing re-encodes or re-versions it downstream.
+/// Package publication uses [`build_surface`], which projects public coverage and excludes private declarations.
+/// This whole-module codec deliberately retains every checked fact for compiler regression tests.
 pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableRepresentationError> {
     let framed = EncodedModuleRepresentation {
         version: EXECUTABLE_REPRESENTATION_VERSION,
@@ -99,12 +96,13 @@ pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableReprese
     })
 }
 
-/// Decode a published representation, refusing a version this compiler does not implement.
+/// Decode an internal whole-module snapshot, refusing an unfamiliar version before decoding its contents.
 ///
 /// The version is checked before the module is used, so an unfamiliar representation is refused rather than
 /// partially interpreted. A decode that succeeds has produced the same checked module the declaring compilation
 /// encoded; there is no reconstruction step in which a consumer could arrive at a different answer.
 pub fn decode_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableRepresentationError> {
+    require_supported_version(bytes)?;
     let framed: EncodedModuleRepresentation =
         postcard::from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
             reason: format!("could not decode the framed representation: {error}"),
@@ -133,393 +131,705 @@ pub fn representation_version(bytes: &[u8]) -> Result<u32, ExecutableRepresentat
     Ok(version)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        EXECUTABLE_REPRESENTATION_VERSION, EncodedModuleRepresentation, ExecutableRepresentationError, SurfaceReader,
-        build_surface, decode_module, encode_module, representation_version,
-    };
-    use crate::body_ir::{Block, Body, BodyIrModule, ScopeId};
-    use crate::facts::{CompilerNodeKind, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
-    use crate::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType};
-
-    /// The smallest real module: no declarations, but a genuine identity.
-    fn empty_module() -> BodyIrModule {
-        BodyIrModule {
-            module_id: CompilerNodeId::module("probe"),
-            nominal_declarations: Vec::new(),
-            fieldless_enum_declarations: Vec::new(),
-            value_enum_declarations: Vec::new(),
-            bodies: Vec::new(),
-        }
-    }
-
-    /// A canonical identity for a declaration of this name, in the shape the checker mints for a free function.
-    fn identity_for(name: &str) -> CanonicalSymbolId {
-        CanonicalSymbolId {
-            namespace: SymbolNamespace::OrdinaryLexical,
-            origin: SymbolOrigin::Module(vec!["probe".to_string()]),
-            declaration_name: name.to_string(),
-            kind: SemanticSourceTargetKind::Function,
-            scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(0, 1),
-        }
-    }
-
-    /// A module carrying one identified, empty body per name.
-    fn module_with_named_bodies(names: &[&str]) -> BodyIrModule {
-        BodyIrModule {
-            bodies: names
-                .iter()
-                .map(|name| Body {
-                    decl_id: CompilerNodeId::new(CompilerNodeKind::Declaration, (*name).to_string()),
-                    direct_call_id: CompilerNodeId::new(CompilerNodeKind::Declaration, (*name).to_string()),
-                    canonical: Some(identity_for(name)),
-                    name: (*name).to_string(),
-                    span: HirSourceSpan::new(0, 1),
-                    return_type: IncanType::Unknown,
-                    locals: Vec::new(),
-                    params: Vec::new(),
-                    param_locals: Vec::new(),
-                    scopes: Vec::new(),
-                    block: Block {
-                        scope: ScopeId(0),
-                        stmts: Vec::new(),
-                    },
-                    runtime_requirements: Vec::new(),
-                    panic_facts: Vec::new(),
-                    is_async: false,
-                })
-                .collect(),
-            ..empty_module()
-        }
-    }
-
-    #[test]
-    fn a_module_survives_the_round_trip_exactly() -> Result<(), Box<dyn std::error::Error>> {
-        let module = empty_module();
-        let decoded = decode_module(&encode_module(&module)?)?;
-
-        assert_eq!(
-            decoded, module,
-            "a decoded representation must be the module that was encoded, not an equivalent reconstruction of it"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_future_version_is_refused_rather_than_misread() -> Result<(), Box<dyn std::error::Error>> {
-        let framed = EncodedModuleRepresentation {
-            version: EXECUTABLE_REPRESENTATION_VERSION + 1,
-            module: empty_module(),
-        };
-        let bytes = postcard::to_allocvec(&framed)?;
-
-        match decode_module(&bytes) {
-            Err(ExecutableRepresentationError::UnsupportedVersion { found, supported }) => {
-                assert_eq!(found, EXECUTABLE_REPRESENTATION_VERSION + 1);
-                assert_eq!(supported, EXECUTABLE_REPRESENTATION_VERSION);
-            }
-            other => return Err(format!("a newer representation must be refused, got {other:?}").into()),
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn a_versions_refusal_says_what_would_be_needed() {
-        let message = ExecutableRepresentationError::UnsupportedVersion { found: 9, supported: 1 }.to_string();
-
-        assert!(
-            message.contains("version 9") && message.contains("version 1"),
-            "a refusal must name both versions so a consumer can act on it: {message}"
-        );
-    }
-
-    #[test]
-    fn the_version_is_readable_without_interpreting_the_module() -> Result<(), Box<dyn std::error::Error>> {
-        // Resolution-time refusal depends on this: a consumer settles whether it can execute a package before it
-        // commits to the package, which it cannot do if reading the version means decoding the surface.
-        let bytes = encode_module(&empty_module())?;
-
-        assert_eq!(representation_version(&bytes)?, EXECUTABLE_REPRESENTATION_VERSION);
-        Ok(())
-    }
-
-    #[test]
-    fn a_surface_addresses_one_declaration_without_decoding_the_rest() -> Result<(), Box<dyn std::error::Error>> {
-        // The normative claim: "a consumer that calls three declarations of four hundred must not be required to
-        // load four hundred". Proven by corrupting every declaration except the one asked for — if opening or
-        // reading required the others, this could not succeed.
-        let module = module_with_named_bodies(&["alpha", "beta", "gamma"]);
-        let bytes = build_surface(&module)?;
-        let wanted = identity_for("beta");
-
-        let reader = SurfaceReader::open(&bytes)?;
-        let decoded = reader.declaration(&wanted)?;
-
-        assert_eq!(decoded.name, "beta");
-        assert_eq!(
-            reader.covered_identities().count(),
-            3,
-            "all three are covered; only one was decoded"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_corrupted_neighbour_does_not_prevent_reading_the_declaration_asked_for()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let module = module_with_named_bodies(&["alpha", "beta"]);
-        let mut bytes = build_surface(&module)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        let alpha = reader.declaration(&identity_for("alpha"))?;
-        let alpha_end = postcard::to_allocvec(&alpha)
-            .map(|encoded| encoded.len())
-            .unwrap_or_default();
-
-        // Wreck the tail, which is where the later declaration lives. A whole-surface decode would now fail.
-        let last = bytes.len().saturating_sub(1);
-        bytes[last] ^= 0xff;
-
-        let reader = SurfaceReader::open(&bytes)?;
-        let recovered = reader.declaration(&identity_for("alpha"))?;
-        assert_eq!(
-            recovered.name, "alpha",
-            "reading one declaration must not depend on its neighbours being intact (alpha occupies {alpha_end} bytes)"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn an_uncovered_declaration_refuses_per_call() -> Result<(), Box<dyn std::error::Error>> {
-        // Partial coverage is permitted, so this is a working package that cannot execute one declaration — never
-        // an unsupported language construct.
-        let bytes = build_surface(&module_with_named_bodies(&["alpha"]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-
-        match reader.declaration(&identity_for("absent")) {
-            Err(ExecutableRepresentationError::DeclarationNotCovered { declaration }) => {
-                assert_eq!(declaration, "absent");
-            }
-            other => return Err(format!("an uncovered declaration must refuse by name, got {other:?}").into()),
-        }
-        assert!(!reader.covers(&identity_for("absent")));
-        Ok(())
-    }
-
-    #[test]
-    fn a_declaration_without_a_canonical_identity_is_omitted_rather_than_named()
-    -> Result<(), Box<dyn std::error::Error>> {
-        // RFC 123 forbids addressing a declaration by spelling. A body the checker minted no identity for is a body
-        // no consumer could resolve to, so it is left out rather than keyed by its name.
-        let mut module = module_with_named_bodies(&["alpha"]);
-        module.bodies[0].canonical = None;
-        let bytes = build_surface(&module)?;
-
-        assert_eq!(
-            SurfaceReader::open(&bytes)?.covered_identities().count(),
-            0,
-            "an identity-less body must not be published under any key"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_surface_is_byte_identical_for_the_same_module() -> Result<(), Box<dyn std::error::Error>> {
-        // A published archive is digested and compared, so the same module must always encode the same way.
-        let first = build_surface(&module_with_named_bodies(&["gamma", "alpha", "beta"]))?;
-        let second = build_surface(&module_with_named_bodies(&["gamma", "alpha", "beta"]))?;
-
-        assert_eq!(first, second, "the same module must produce the same bytes");
-        Ok(())
-    }
-
-    #[test]
-    fn unreadable_bytes_are_malformed_rather_than_an_unsupported_version() {
-        // A consumer must be able to tell "I decline to interpret this" from "this is not a representation", because
-        // only the first is a package it could execute with a different compiler.
-        match decode_module(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]) {
-            Err(ExecutableRepresentationError::Malformed { .. }) => {}
-            other => panic!("unreadable bytes must refuse as malformed, got {other:?}"),
-        }
-    }
-}
-
-// ============================================================================
-// Identity-addressed surface
-// ============================================================================
-
-/// One package module's executable surface, addressed by canonical identity.
-///
-/// RFC 123 makes addressing normative rather than advisory: "a consumer that calls three declarations of four
-/// hundred must not be required to load four hundred". A whole-module encoding cannot honour that — decoding it
-/// costs the same whichever declaration you wanted — so the published form is an index and a payload, and a
-/// consumer decodes only the declarations it asks for.
-///
-/// The layout is a postcard-encoded [`SurfaceHeader`] followed by the payload bytes. Postcard decodes a prefix and
-/// hands back the remainder, so opening a surface reads the header alone.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct SurfaceHeader {
-    /// Encoded-shape version, checked before anything is interpreted.
-    version: u32,
-    /// Identity of the module this surface belongs to.
-    module_id: crate::CompilerNodeId,
-    /// Where each covered declaration lives in the payload.
-    entries: Vec<SurfaceIndexEntry>,
-    /// Type layouts a decoded body may refer to.
-    ///
-    /// These stay in the header rather than the addressed payload because a body cannot be interpreted without the
-    /// declarations it names, so a consumer that decodes any body needs them. They are per-module type layouts
-    /// rather than bodies, and are small beside the payload they describe — but that is a size argument, not a
-    /// guarantee, and a module with many types and few called declarations pays for it.
-    nominal_declarations: Vec<NominalDeclaration>,
-    fieldless_enum_declarations: Vec<FieldlessEnumDeclaration>,
-    value_enum_declarations: Vec<ValueEnumDeclaration>,
-}
-
-/// Where one covered declaration's encoded body lives in the payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct SurfaceIndexEntry {
-    /// Canonical identity this declaration is addressed by. Never a spelling, path, or generated Rust name.
-    identity: CanonicalSymbolId,
-    /// Byte offset of the encoded body within the payload.
-    offset: u64,
-    /// Byte length of the encoded body.
-    length: u64,
-}
-
-/// Build the published surface for one checked module.
-///
-/// Only declarations the checker minted a canonical identity for are covered. A body without one is omitted rather
-/// than addressed by its name: RFC 123 forbids identifying a declaration by spelling, and a body the checker could
-/// not give an identity is exactly a body no consumer could resolve to. Coverage is permitted to be partial, so an
-/// omission is a supported outcome rather than an error.
-pub fn build_surface(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    let mut payload = Vec::new();
-    let mut entries = Vec::new();
-    for body in &module.bodies {
-        let Some(identity) = body.canonical.as_ref() else {
-            continue;
-        };
-        let encoded = postcard::to_allocvec(body).map_err(|error| ExecutableRepresentationError::Malformed {
-            reason: format!("could not encode declaration `{}`: {error}", body.name),
-        })?;
-        entries.push(SurfaceIndexEntry {
-            identity: identity.clone(),
-            offset: payload.len() as u64,
-            length: encoded.len() as u64,
+/// Reject an unfamiliar encoding from its stable leading version, before decoding any version-specific fields.
+pub fn require_supported_version(bytes: &[u8]) -> Result<(), ExecutableRepresentationError> {
+    let found = representation_version(bytes)?;
+    if found != EXECUTABLE_REPRESENTATION_VERSION {
+        return Err(ExecutableRepresentationError::UnsupportedVersion {
+            found,
+            supported: EXECUTABLE_REPRESENTATION_VERSION,
         });
-        payload.extend_from_slice(&encoded);
     }
-    // Sorted so a surface is byte-identical for the same module regardless of the order lowering happened to emit
-    // bodies in, which is what lets a published archive be compared and its digest be meaningful.
-    entries.sort_by(|left, right| left.identity.cmp(&right.identity));
-    let header = SurfaceHeader {
-        version: EXECUTABLE_REPRESENTATION_VERSION,
-        module_id: module.module_id.clone(),
-        entries,
-        nominal_declarations: module.nominal_declarations.clone(),
-        fieldless_enum_declarations: module.fieldless_enum_declarations.clone(),
-        value_enum_declarations: module.value_enum_declarations.clone(),
+    Ok(())
+}
+
+/// Stable reason a public export has no executable fragment. Reasons never disclose private declaration names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CoverageReason {
+    /// Checked lowering retained an operation with no portable execution contract.
+    UnsupportedConstruct,
+    /// Execution needs a declaration or layout outside the manifest's public surface.
+    PrivateDependency,
+    /// The checked body lacks a portable canonical reference or a concrete type fact.
+    UnresolvedReference,
+    /// A public callee or required type is itself uncovered.
+    RequiredDeclarationUnavailable,
+    /// This exported declaration has no retained executable body or supported type context.
+    NoExecutableDeclaration,
+}
+
+/// One individually decodable public declaration. Type context is indexed exactly like executable bodies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ExecutableDeclaration {
+    /// Checked executable meaning of one public function or method.
+    Body(Body),
+    /// Checked source field order and canonical members for a public plain model.
+    Nominal(NominalDeclaration),
+    /// Checked public fieldless enum and canonical variants.
+    FieldlessEnum(FieldlessEnumDeclaration),
+    /// Checked public value enum and canonical scalar variants.
+    ValueEnum(ValueEnumDeclaration),
+}
+
+impl ExecutableDeclaration {
+    /// Canonical identity carried by this fragment; it must agree with the index identity used to select it.
+    pub fn identity(&self) -> Option<&CanonicalSymbolId> {
+        match self {
+            Self::Body(body) => body.canonical.as_ref(),
+            Self::Nominal(value) => Some(&value.canonical),
+            Self::FieldlessEnum(value) => Some(&value.canonical),
+            Self::ValueEnum(value) => Some(&value.canonical),
+        }
+    }
+}
+
+/// Explicit admission and payload address for one public declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeclarationCoverage {
+    /// Covered content and its complete direct public requirements; consumers resolve the transitive closure.
+    Covered {
+        /// Offset relative to the first payload byte.
+        offset: u64,
+        /// Exact encoded fragment length.
+        length: u64,
+        /// Canonical declarations whose executable content or public type context this fragment requires.
+        requirements: Vec<CanonicalSymbolId>,
+    },
+    /// Deliberate absence of a fragment, distinct from a covered empty function.
+    Uncovered(CoverageReason),
+    /// A public member executes through its separately addressed declaring type context.
+    TypeContext {
+        /// Canonical public type declaration that owns this member.
+        owner: CanonicalSymbolId,
+    },
+}
+
+/// Small version-specific index, decoded only after the stable envelope version is accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceIndex {
+    /// Declaring package. Consumers compare it with the resolved artifact's manifest.
+    pub library: String,
+    /// Package version from the same build as the accompanying manifest.
+    pub package_version: String,
+    /// Declared coverage for every public identity owned by this package.
+    pub declarations: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+}
+
+/// Build one package's deterministic public representation from its single declaring compilation.
+///
+/// `public` comes from the finalized manifest, including public members. `unrepresentable` records the current
+/// execution profile's refusals in addition to this layer's portable-reference checks. Repeatedly removing callers
+/// of uncovered owned declarations computes a fixed point, so mutual public recursion is independent of order.
+pub fn build_surface(
+    modules: &[BodyIrModule],
+    library: &str,
+    package_version: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+    unrepresentable: &BTreeSet<CanonicalSymbolId>,
+) -> Result<Vec<u8>, ExecutableRepresentationError> {
+    let mut declarations = public.iter().filter(|identity| matches!(&identity.origin, crate::SymbolOrigin::Package { library: owner, .. } if owner == library))
+        .map(|identity| (identity.clone(), DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration)))
+        .collect::<BTreeMap<_, _>>();
+    let mut admitted: BTreeMap<CanonicalSymbolId, (ExecutableDeclaration, BTreeSet<CanonicalSymbolId>)> =
+        BTreeMap::new();
+    for module in modules {
+        for body in &module.bodies {
+            let Some(identity) = body.canonical.as_ref() else {
+                continue;
+            };
+            if !declarations.contains_key(identity) {
+                continue;
+            }
+            let projected = if unrepresentable.contains(identity) {
+                Err(CoverageReason::UnsupportedConstruct)
+            } else {
+                publication::project_body(body, module, library, public)
+            };
+            match projected {
+                Ok(projected) => {
+                    admitted.insert(
+                        identity.clone(),
+                        (ExecutableDeclaration::Body(projected.body), projected.requirements),
+                    );
+                }
+                Err(reason) => {
+                    declarations.insert(identity.clone(), DeclarationCoverage::Uncovered(reason));
+                }
+            }
+        }
+        for nominal in &module.nominal_declarations {
+            if !declarations.contains_key(&nominal.canonical) {
+                continue;
+            }
+            if !nominal.field_identities.iter().all(|field| public.contains(field)) {
+                declarations.insert(
+                    nominal.canonical.clone(),
+                    DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency),
+                );
+                continue;
+            }
+            let mut nominal = nominal.clone();
+            nominal.direct_declaration_id = publication::declaration_id(&nominal.canonical)
+                .map_err(|_| malformed("nominal has no canonical owner"))?;
+            admitted.insert(
+                nominal.canonical.clone(),
+                (ExecutableDeclaration::Nominal(nominal), BTreeSet::new()),
+            );
+        }
+        for value in &module.fieldless_enum_declarations {
+            if !declarations.contains_key(&value.canonical)
+                || !value.variants.iter().all(|variant| public.contains(&variant.canonical))
+            {
+                continue;
+            }
+            let mut value = value.clone();
+            value.direct_declaration_id =
+                publication::declaration_id(&value.canonical).map_err(|_| malformed("enum has no canonical owner"))?;
+            for variant in &mut value.variants {
+                variant.direct_declaration_id = publication::declaration_id(&variant.canonical)
+                    .map_err(|_| malformed("variant has no canonical owner"))?;
+            }
+            admitted.insert(
+                value.canonical.clone(),
+                (ExecutableDeclaration::FieldlessEnum(value), BTreeSet::new()),
+            );
+        }
+        for value in &module.value_enum_declarations {
+            if !declarations.contains_key(&value.canonical)
+                || !value.variants.iter().all(|variant| public.contains(&variant.canonical))
+            {
+                continue;
+            }
+            let mut value = value.clone();
+            value.direct_declaration_id = publication::declaration_id(&value.canonical)
+                .map_err(|_| malformed("value enum has no canonical owner"))?;
+            for variant in &mut value.variants {
+                variant.direct_declaration_id = publication::declaration_id(&variant.canonical)
+                    .map_err(|_| malformed("variant has no canonical owner"))?;
+            }
+            admitted.insert(
+                value.canonical.clone(),
+                (ExecutableDeclaration::ValueEnum(value), BTreeSet::new()),
+            );
+        }
+    }
+    loop {
+        let rejected = admitted
+            .iter()
+            .filter(|(_, (_, requirements))| {
+                requirements.iter().any(|required| {
+                    matches!(&required.origin, crate::SymbolOrigin::Package { library: owner, .. } if owner == library)
+                        && !admitted.contains_key(required)
+                })
+            })
+            .map(|(identity, _)| identity.clone())
+            .collect::<Vec<_>>();
+        if rejected.is_empty() {
+            break;
+        }
+        for identity in rejected {
+            admitted.remove(&identity);
+            declarations.insert(
+                identity,
+                DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable),
+            );
+        }
+    }
+    for (identity, (declaration, _)) in &admitted {
+        let members = match declaration {
+            ExecutableDeclaration::Nominal(value) => value.field_identities.iter().collect::<Vec<_>>(),
+            ExecutableDeclaration::FieldlessEnum(value) => {
+                value.variants.iter().map(|variant| &variant.canonical).collect()
+            }
+            ExecutableDeclaration::ValueEnum(value) => {
+                value.variants.iter().map(|variant| &variant.canonical).collect()
+            }
+            ExecutableDeclaration::Body(_) => Vec::new(),
+        };
+        for member in members {
+            declarations.insert(
+                member.clone(),
+                DeclarationCoverage::TypeContext {
+                    owner: identity.clone(),
+                },
+            );
+        }
+    }
+    let mut payload = Vec::new();
+    for (identity, (declaration, requirements)) in admitted {
+        let encoded = postcard::to_allocvec(&declaration).map_err(|error| malformed(error.to_string()))?;
+        declarations.insert(
+            identity,
+            DeclarationCoverage::Covered {
+                offset: u64::try_from(payload.len()).map_err(|_| malformed("payload offset exceeds wire range"))?,
+                length: u64::try_from(encoded.len()).map_err(|_| malformed("fragment length exceeds wire range"))?,
+                requirements: requirements.into_iter().collect(),
+            },
+        );
+        payload.extend(encoded);
+    }
+    let index = SurfaceIndex {
+        library: library.to_owned(),
+        package_version: package_version.to_owned(),
+        declarations,
     };
-    let mut bytes = postcard::to_allocvec(&header).map_err(|error| ExecutableRepresentationError::Malformed {
-        reason: format!("could not encode the surface index: {error}"),
-    })?;
-    bytes.extend_from_slice(&payload);
+    let encoded_index = postcard::to_allocvec(&index).map_err(|error| malformed(error.to_string()))?;
+    let mut bytes =
+        postcard::to_allocvec(&EXECUTABLE_REPRESENTATION_VERSION).map_err(|error| malformed(error.to_string()))?;
+    bytes.extend(
+        u64::try_from(encoded_index.len())
+            .map_err(|_| malformed("index length exceeds wire range"))?
+            .to_le_bytes(),
+    );
+    bytes.extend(encoded_index);
+    bytes.extend(payload);
     Ok(bytes)
 }
 
-/// A published surface opened for reading, with its payload still encoded.
-///
-/// Opening reads the index and nothing else. Each [`SurfaceReader::declaration`] decodes one body from the payload,
-/// so the cost of a call is the declaration called rather than the surface it came from.
+/// Normalize codec and contract errors without coupling this layer to package filesystem diagnostics.
+fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
+    ExecutableRepresentationError::Malformed { reason: reason.into() }
+}
+
+impl SurfaceIndex {
+    /// Validate duplicate-free canonical ownership, contiguous disjoint ranges, and payload bounds before selection.
+    pub fn validate(&self, payload_length: u64) -> Result<(), ExecutableRepresentationError> {
+        let mut next_offset = 0;
+        for (identity, coverage) in &self.declarations {
+            if identity.scope_discriminant.is_some()
+                || !matches!(&identity.origin, crate::SymbolOrigin::Package { library, .. } if library == &self.library)
+            {
+                return Err(malformed("index identity does not belong to the declaring package"));
+            }
+            if let DeclarationCoverage::TypeContext { owner } = coverage {
+                if !matches!(
+                    identity.kind,
+                    crate::SemanticSourceTargetKind::Field | crate::SemanticSourceTargetKind::Variant
+                ) || owner.origin != identity.origin
+                    || !matches!(
+                        owner.kind,
+                        crate::SemanticSourceTargetKind::Model | crate::SemanticSourceTargetKind::Enum
+                    )
+                    || !matches!(self.declarations.get(owner), Some(DeclarationCoverage::Covered { .. }))
+                {
+                    return Err(malformed(
+                        "public member context does not select a covered declaring type",
+                    ));
+                }
+            }
+            if let DeclarationCoverage::Covered {
+                offset,
+                length,
+                requirements,
+            } = coverage
+            {
+                if *offset != next_offset || *length == 0 {
+                    return Err(malformed("fragment ranges overlap, contain gaps, or are empty"));
+                }
+                next_offset = offset
+                    .checked_add(*length)
+                    .ok_or_else(|| malformed("fragment range overflow"))?;
+                if requirements.windows(2).any(|pair| pair[0] >= pair[1]) {
+                    return Err(malformed("requirements are duplicated or unsorted"));
+                }
+            }
+        }
+        if next_offset != payload_length {
+            return Err(malformed("index does not match payload length"));
+        }
+        Ok(())
+    }
+
+    /// Decode a bounded index. The caller must already have accepted the stable envelope version.
+    pub fn decode(bytes: &[u8], payload_length: u64) -> Result<Self, ExecutableRepresentationError> {
+        let index: Self = postcard::from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        // Re-encoding checks map ordering and duplicates, which serde's BTreeMap decoder otherwise normalizes.
+        if postcard::to_allocvec(&index).map_err(|error| malformed(error.to_string()))? != bytes {
+            return Err(malformed("noncanonical or duplicate index entries"));
+        }
+        index.validate(payload_length)?;
+        Ok(index)
+    }
+
+    /// Inspect explicit coverage before any payload is decoded.
+    pub fn coverage(
+        &self,
+        identity: &CanonicalSymbolId,
+    ) -> Result<&DeclarationCoverage, ExecutableRepresentationError> {
+        self.declarations
+            .get(identity)
+            .ok_or_else(|| ExecutableRepresentationError::DeclarationNotCovered {
+                declaration: identity.declaration_name.clone(),
+            })
+    }
+
+    /// Decode exactly the selected range and bind its payload identity back to the index and manifest identity.
+    pub fn decode_declaration(
+        &self,
+        identity: &CanonicalSymbolId,
+        bytes: &[u8],
+    ) -> Result<ExecutableDeclaration, ExecutableRepresentationError> {
+        let DeclarationCoverage::Covered { length, .. } = self.coverage(identity)? else {
+            return Err(ExecutableRepresentationError::DeclarationNotCovered {
+                declaration: identity.declaration_name.clone(),
+            });
+        };
+        if u64::try_from(bytes.len()).ok() != Some(*length) {
+            return Err(malformed("selected fragment length differs from its index"));
+        }
+        let declaration: ExecutableDeclaration =
+            postcard::from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        if declaration.identity() != Some(identity) {
+            return Err(malformed("fragment identity differs from its index"));
+        }
+        Ok(declaration)
+    }
+}
+
+/// In-memory reader for already-loaded artifact bytes. File consumers use the same index with bounded range reads.
 #[derive(Debug, Clone)]
 pub struct SurfaceReader<'bytes> {
-    header: SurfaceHeader,
+    index: SurfaceIndex,
     payload: &'bytes [u8],
 }
 
 impl<'bytes> SurfaceReader<'bytes> {
-    /// Open a published surface, refusing a version this compiler does not implement.
-    ///
-    /// The version is checked before the index is trusted, so an unfamiliar surface is refused rather than partially
-    /// read.
+    /// Refuse the stable prefix first, then decode only the bounded metadata index.
     pub fn open(bytes: &'bytes [u8]) -> Result<Self, ExecutableRepresentationError> {
-        let (header, payload) = postcard::take_from_bytes::<SurfaceHeader>(bytes).map_err(|error| {
-            ExecutableRepresentationError::Malformed {
-                reason: format!("could not decode the surface index: {error}"),
-            }
-        })?;
-        if header.version != EXECUTABLE_REPRESENTATION_VERSION {
-            return Err(ExecutableRepresentationError::UnsupportedVersion {
-                found: header.version,
-                supported: EXECUTABLE_REPRESENTATION_VERSION,
-            });
-        }
-        Ok(Self { header, payload })
+        require_supported_version(bytes)?;
+        let (_, remainder) = postcard::take_from_bytes::<u32>(bytes).map_err(|error| malformed(error.to_string()))?;
+        let length_bytes: [u8; 8] = remainder
+            .get(..8)
+            .ok_or_else(|| malformed("missing index length"))?
+            .try_into()
+            .map_err(|_| malformed("invalid index length"))?;
+        let index_length =
+            usize::try_from(u64::from_le_bytes(length_bytes)).map_err(|_| malformed("index too large"))?;
+        let end = 8usize
+            .checked_add(index_length)
+            .ok_or_else(|| malformed("index length overflow"))?;
+        let encoded_index = remainder
+            .get(8..end)
+            .ok_or_else(|| malformed("index extends beyond representation"))?;
+        let payload = remainder.get(end..).ok_or_else(|| malformed("missing payload"))?;
+        let index = SurfaceIndex::decode(
+            encoded_index,
+            u64::try_from(payload.len()).map_err(|_| malformed("payload too large"))?,
+        )?;
+        Ok(Self { index, payload })
     }
 
-    /// Identity of the module this surface belongs to.
-    pub fn module_id(&self) -> &crate::CompilerNodeId {
-        &self.header.module_id
+    /// Declared package coverage, inspectable without decoding executable payloads.
+    pub fn index(&self) -> &SurfaceIndex {
+        &self.index
     }
 
-    /// Every canonical identity this surface covers, in a stable order.
-    ///
-    /// A consumer settling a requirement at resolution time reads this rather than decoding declarations.
+    /// Canonical identities with covered executable fragments; uncovered exports remain visible through the index.
     pub fn covered_identities(&self) -> impl Iterator<Item = &CanonicalSymbolId> {
-        self.header.entries.iter().map(|entry| &entry.identity)
-    }
-
-    /// Whether this surface covers one declaration.
-    pub fn covers(&self, identity: &CanonicalSymbolId) -> bool {
-        self.header.entries.iter().any(|entry| &entry.identity == identity)
-    }
-
-    /// Decode one covered declaration, and only that one.
-    ///
-    /// An identity this surface does not cover refuses per call, which is what RFC 123 requires: coverage is
-    /// permitted to be partial, so an uncovered declaration is a supported state of a valid package rather than a
-    /// broken one, and it must never surface as an unsupported language construct.
-    pub fn declaration(&self, identity: &CanonicalSymbolId) -> Result<Body, ExecutableRepresentationError> {
-        let entry = self
-            .header
-            .entries
-            .iter()
-            .find(|entry| &entry.identity == identity)
-            .ok_or_else(|| ExecutableRepresentationError::DeclarationNotCovered {
-                declaration: identity.declaration_name.clone(),
-            })?;
-        let start = usize::try_from(entry.offset).map_err(|_| ExecutableRepresentationError::Malformed {
-            reason: format!("declaration `{}` has an unreadable offset", identity.declaration_name),
-        })?;
-        let length = usize::try_from(entry.length).map_err(|_| ExecutableRepresentationError::Malformed {
-            reason: format!("declaration `{}` has an unreadable length", identity.declaration_name),
-        })?;
-        let slice = self.payload.get(start..start.saturating_add(length)).ok_or_else(|| {
-            ExecutableRepresentationError::Malformed {
-                reason: format!(
-                    "declaration `{}` points outside the surface payload",
-                    identity.declaration_name
-                ),
-            }
-        })?;
-        postcard::from_bytes(slice).map_err(|error| ExecutableRepresentationError::Malformed {
-            reason: format!("could not decode declaration `{}`: {error}", identity.declaration_name),
+        self.index.declarations.iter().filter_map(|(identity, coverage)| {
+            matches!(coverage, DeclarationCoverage::Covered { .. }).then_some(identity)
         })
     }
 
-    /// Type layouts a decoded body may refer to, rebuilt as the module container a consumer already understands.
-    ///
-    /// The bodies are deliberately absent: this is the surrounding context for declarations the consumer chooses to
-    /// decode, not an invitation to load them all.
-    pub fn declaration_context(&self) -> BodyIrModule {
-        BodyIrModule {
-            module_id: self.header.module_id.clone(),
-            nominal_declarations: self.header.nominal_declarations.clone(),
-            fieldless_enum_declarations: self.header.fieldless_enum_declarations.clone(),
-            value_enum_declarations: self.header.value_enum_declarations.clone(),
-            bodies: Vec::new(),
+    /// Whether the index explicitly covers this identity.
+    pub fn covers(&self, identity: &CanonicalSymbolId) -> bool {
+        matches!(
+            self.index.declarations.get(identity),
+            Some(DeclarationCoverage::Covered { .. })
+        )
+    }
+
+    /// Decode one public body. A type fragment is never treated as a callable.
+    pub fn declaration(&self, identity: &CanonicalSymbolId) -> Result<Body, ExecutableRepresentationError> {
+        match self.fragment(identity)? {
+            ExecutableDeclaration::Body(body) => Ok(body),
+            _ => Err(malformed(
+                "selected declaration is type context, not an executable body",
+            )),
         }
+    }
+
+    /// Decode only one indexed fragment, preserving unrelated payloads as uninterpreted bytes.
+    pub fn fragment(
+        &self,
+        identity: &CanonicalSymbolId,
+    ) -> Result<ExecutableDeclaration, ExecutableRepresentationError> {
+        let DeclarationCoverage::Covered { offset, length, .. } = self.index.coverage(identity)? else {
+            return Err(ExecutableRepresentationError::DeclarationNotCovered {
+                declaration: identity.declaration_name.clone(),
+            });
+        };
+        let start = usize::try_from(*offset).map_err(|_| malformed("fragment offset exceeds host range"))?;
+        let length = usize::try_from(*length).map_err(|_| malformed("fragment length exceeds host range"))?;
+        let end = start
+            .checked_add(length)
+            .ok_or_else(|| malformed("fragment range overflow"))?;
+        self.index.decode_declaration(
+            identity,
+            self.payload
+                .get(start..end)
+                .ok_or_else(|| malformed("fragment outside payload"))?,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{
+        CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
+        ExecutableRepresentationError, SurfaceReader, build_surface, decode_module,
+    };
+    use crate::body_ir::{
+        ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,
+        NamedCallableTarget, ScopeId, Statement, StatementKind,
+    };
+    use crate::{
+        CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
+        SymbolNamespace, SymbolOrigin,
+    };
+
+    /// Distinct package identities remain stable even when input bodies are reordered.
+    fn identity(name: &str, ordinal: usize) -> CanonicalSymbolId {
+        CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "probe".into(),
+                module_path: vec!["lib".into()],
+            },
+            declaration_name: name.into(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(ordinal * 100, ordinal * 100 + 99),
+        }
+    }
+
+    /// A checked, empty unit function has executable coverage distinct from an uncovered export.
+    fn body(name: &str, ordinal: usize) -> Body {
+        let identity = identity(name, ordinal);
+        Body {
+            decl_id: CompilerNodeId::declaration_span(
+                "lib",
+                identity.declaration_span.start,
+                identity.declaration_span.end,
+            ),
+            direct_call_id: CompilerNodeId::declaration_span(
+                "lib",
+                identity.declaration_span.start,
+                identity.declaration_span.end,
+            ),
+            canonical: Some(identity.clone()),
+            name: name.into(),
+            span: identity.declaration_span,
+            return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            locals: Vec::new(),
+            params: Vec::new(),
+            param_locals: Vec::new(),
+            scopes: Vec::new(),
+            block: Block {
+                scope: ScopeId(0),
+                stmts: Vec::new(),
+            },
+            runtime_requirements: Vec::new(),
+            panic_facts: Vec::new(),
+            is_async: false,
+        }
+    }
+
+    /// Synthetic module context used only for codec and public-closure invariants.
+    fn module(bodies: Vec<Body>) -> BodyIrModule {
+        BodyIrModule {
+            module_id: CompilerNodeId::module("lib"),
+            nominal_declarations: Vec::new(),
+            fieldless_enum_declarations: Vec::new(),
+            value_enum_declarations: Vec::new(),
+            bodies,
+        }
+    }
+
+    /// Build with an explicit public set, as the finalized manifest supplies at the real producer seam.
+    fn publish(
+        module: &BodyIrModule,
+        public: &BTreeSet<CanonicalSymbolId>,
+    ) -> Result<Vec<u8>, ExecutableRepresentationError> {
+        build_surface(std::slice::from_ref(module), "probe", "1.2.3", public, &BTreeSet::new())
+    }
+
+    /// A canonical call participates in closure even before any branch is executed.
+    fn call(target: CanonicalSymbolId) -> Statement {
+        Statement {
+            span: target.declaration_span,
+            kind: StatementKind::Call {
+                destination: None,
+                callee: Callee::Function(CallableTarget::Named(NamedCallableTarget {
+                    name: "arbitrary_alias".into(),
+                    direct_call_id: None,
+                    builtin: None,
+                    type_args: Vec::new(),
+                    binding: ArgumentBinding::UnresolvedPositional,
+                    canonical: Some(target),
+                })),
+                args: Vec::new(),
+                may_panic: false,
+            },
+        }
+    }
+
+    #[test]
+    fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = postcard::to_allocvec(&(EXECUTABLE_REPRESENTATION_VERSION + 1))?;
+        assert!(matches!(
+            SurfaceReader::open(&bytes),
+            Err(ExecutableRepresentationError::UnsupportedVersion { .. })
+        ));
+        assert!(matches!(
+            decode_module(&bytes),
+            Err(ExecutableRepresentationError::UnsupportedVersion { .. })
+        ));
+        assert!(matches!(
+            SurfaceReader::open(&[255; 12]),
+            Err(ExecutableRepresentationError::Malformed { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn std::error::Error>> {
+        let module = module(vec![body("public", 1), body("private_secret", 2)]);
+        let public = BTreeSet::from([identity("public", 1), identity("unlowered", 3)]);
+        let bytes = publish(&module, &public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(reader.covers(&identity("public", 1)));
+        assert!(matches!(
+            reader.index().coverage(&identity("unlowered", 3))?,
+            DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration)
+        ));
+        assert!(
+            !bytes
+                .windows(b"private_secret".len())
+                .any(|part| part == b"private_secret")
+        );
+        assert_eq!(
+            reader.declaration(&identity("public", 1))?.direct_call_id.path(),
+            "pub::probe::lib#decl.100..199"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn private_and_unsupported_dependencies_are_uncovered_transitively() -> Result<(), Box<dyn std::error::Error>> {
+        let mut caller = body("caller", 1);
+        caller.block.stmts.push(call(identity("private_secret", 2)));
+        let mut dependent = body("dependent", 3);
+        dependent.block.stmts.push(call(identity("caller", 1)));
+        let mut unsupported = body("unsupported", 4);
+        unsupported.block.stmts.push(Statement {
+            span: unsupported.span,
+            kind: StatementKind::Unsupported {
+                description: "never serialized".into(),
+            },
+        });
+        let module = module(vec![caller, body("private_secret", 2), dependent, unsupported]);
+        let public = BTreeSet::from([
+            identity("caller", 1),
+            identity("dependent", 3),
+            identity("unsupported", 4),
+        ]);
+        let bytes = publish(&module, &public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert_eq!(reader.covered_identities().count(), 0);
+        assert!(matches!(
+            reader.index().coverage(&identity("caller", 1))?,
+            DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency)
+        ));
+        assert!(matches!(
+            reader.index().coverage(&identity("dependent", 3))?,
+            DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable)
+        ));
+        assert!(
+            !bytes
+                .windows(b"private_secret".len())
+                .any(|part| part == b"private_secret")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recursive_public_closure_is_order_independent() -> Result<(), Box<dyn std::error::Error>> {
+        let mut alpha = body("alpha", 1);
+        let mut beta = body("beta", 2);
+        alpha.block.stmts.push(call(identity("beta", 2)));
+        beta.block.stmts.push(call(identity("alpha", 1)));
+        let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
+        let forward = publish(&module(vec![alpha.clone(), beta.clone()]), &public)?;
+        let reverse = publish(&module(vec![beta, alpha]), &public)?;
+        assert_eq!(forward, reverse);
+        assert_eq!(SurfaceReader::open(&forward)?.covered_identities().count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn private_default_dependency_is_not_hidden_by_an_empty_main_block() -> Result<(), Box<dyn std::error::Error>> {
+        let mut exported = body("exported", 1);
+        exported.params.push(CallableParam {
+            local: crate::body_ir::LocalId(0),
+            name: "x".into(),
+            ty: IncanType::Primitive(IncanPrimitiveType::Int),
+            span: exported.span,
+            default: CallableParamDefault::Source(Box::new(crate::body_ir::DefaultComputation {
+                span: exported.span,
+                stmts: vec![call(identity("secret", 2))],
+                result: crate::body_ir::Operand::Constant(crate::body_ir::Constant::Int(1)),
+            })),
+        });
+        let bytes = publish(
+            &module(vec![exported, body("secret", 2)]),
+            &BTreeSet::from([identity("exported", 1)]),
+        )?;
+        assert!(!SurfaceReader::open(&bytes)?.covers(&identity("exported", 1)));
+        Ok(())
+    }
+
+    #[test]
+    fn three_selected_fragments_ignore_unrelated_corrupt_payloads() -> Result<(), Box<dyn std::error::Error>> {
+        let bodies = (0..400)
+            .map(|index| body(&format!("f{index:03}"), index))
+            .collect::<Vec<_>>();
+        let public = bodies.iter().filter_map(|body| body.canonical.clone()).collect();
+        let mut bytes = publish(&module(bodies), &public)?;
+        let last = bytes.len().checked_sub(1).ok_or("surface cannot be empty")?;
+        bytes[last] ^= 255;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert_eq!(reader.covered_identities().count(), 400);
+        for index in [1, 2, 3] {
+            assert_eq!(
+                reader.declaration(&identity(&format!("f{index:03}"), index))?.name,
+                format!("f{index:03}")
+            );
+        }
+        assert!(reader.declaration(&identity("f399", 399)).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn index_refuses_overlaps_and_payload_identity_substitution() -> Result<(), Box<dyn std::error::Error>> {
+        let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
+        let bytes = publish(&module(vec![body("alpha", 1), body("beta", 2)]), &public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        let mut index = reader.index().clone();
+        let Some(DeclarationCoverage::Covered { offset, .. }) = index.declarations.get_mut(&identity("beta", 2)) else {
+            return Err("covered beta missing".into());
+        };
+        *offset = 0;
+        assert!(index.validate(u64::try_from(reader.payload.len())?).is_err());
+        let wrong = postcard::to_allocvec(&ExecutableDeclaration::Body(reader.declaration(&identity("beta", 2))?))?;
+        assert!(
+            reader
+                .index()
+                .decode_declaration(&identity("alpha", 1), &wrong)
+                .is_err()
+        );
+        Ok(())
     }
 }

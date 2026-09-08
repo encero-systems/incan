@@ -43,7 +43,7 @@ pub use facts::{
     AuthorityProvenance, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, ScopeDiscriminant, SemanticFact,
     SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticRegistryEntry, SemanticRegistrySubjectKind,
     SemanticRegistryValue, SemanticSourceTarget, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
-    module_identity_for_path,
+    canonical_module_identity, module_identity_for_path, package_module_identity,
 };
 pub use hir::{HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot};
 pub use types::{

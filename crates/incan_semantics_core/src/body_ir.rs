@@ -48,9 +48,7 @@ use incan_core::lang::surface::string_methods::StringMethodId;
 use incan_core::lang::types::numerics::NumericTypeId;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, module_identity_for_path,
-};
+use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType};
 
 // ============================================================================
 // Module / body containers
@@ -100,10 +98,10 @@ impl BodyIrModule {
     /// would hand back whichever came first.
     ///
     /// `None` has three distinct causes and is never permission to fall back to [`NamedCallableTarget::name`]: the
-    /// identity is owned by another module; its origin is not a project source module at all (a package, a `rust::`
-    /// crate, or a builtin); or this module owns it but it has no lowered body, as for a model or a `const`.
+    /// identity is owned by another source or published module; its origin has no Body-IR module (a `rust::` crate or
+    /// builtin); or this module owns it but it has no lowered body, as for a model or a `const`.
     pub fn body_for_canonical_target(&self, target: &CanonicalSymbolId) -> Option<&Body> {
-        if module_identity_for_path(target.module_path()?) != self.module_id.path() {
+        if crate::canonical_module_identity(target)? != self.module_id.path() {
             return None;
         }
         let mut bodies = self

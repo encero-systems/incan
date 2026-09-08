@@ -36,9 +36,8 @@ pub fn module_is_held_to_source_profile(module_path: &[String]) -> bool {
 ///
 /// #1260 executes a call that leaves the entry module, so an import naming a sibling of that module is inside the
 /// profile: the session analyzes the whole source graph at once, and the execution graph resolves the callee's
-/// canonical identity to the module that declares it. Everything reaching outside that graph stays refused -- the
-/// standard library, a `pub::` package dependency, and every Rust or Python interop form each bring a boundary the
-/// source-only profile has no evidence for, and each is owned by a separate child of #989.
+/// canonical identity to the module that declares it. Published dependencies have a separate artifact-resolution
+/// admission path. Standard-library and interop imports require their own execution contracts.
 fn is_local_module_import(import: &crate::frontend::ast::ImportDecl) -> bool {
     let path = match &import.kind {
         ImportKind::Module(path) | ImportKind::From { module: path, .. } => path,
@@ -104,6 +103,10 @@ pub fn source_profile_refusal(program: &crate::frontend::ast::Program) -> Option
             continue;
         }
         if let Declaration::Import(import) = &declaration.node {
+            if matches!(import.kind, ImportKind::PubLibrary { .. } | ImportKind::PubFrom { .. }) {
+                // Package semantics are admitted separately from the resolved artifact before any program effect.
+                continue;
+            }
             let exact_async_activation = matches!(
                 (&import.visibility, &import.kind, &import.alias),
                 (Visibility::Private, ImportKind::Module(path), None)
