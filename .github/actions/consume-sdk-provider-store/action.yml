@@ -1,0 +1,27 @@
+name: Consume the Linux SDK handoff
+description: Download this run's selected SDK and validate it with the matching compiler before exposing consumer paths.
+inputs:
+  store:
+    description: Local destination for the immutable SDK handoff.
+    default: target/incan_test_sdk_provider_store
+  path-file:
+    description: Local SDK path file used by Makefile test prerequisites.
+    default: target/incan_test_sdk_provider_path
+runs:
+  using: composite
+  steps:
+    - name: Download this run's SDK provider store
+      uses: actions/download-artifact@v7
+      with:
+        name: test-linux-sdk-provider-store
+        path: ${{ inputs.store }}
+    - name: Validate the exact SDK handoff
+      shell: bash
+      env:
+        HANDOFF_STORE: ${{ inputs.store }}
+        HANDOFF_PATH_FILE: ${{ inputs.path-file }}
+      run: >-
+        python3 scripts/ci_sdk_handoff.py consume
+        --artifact "$HANDOFF_STORE"
+        --path-file "$HANDOFF_PATH_FILE"
+        --env-file "$GITHUB_ENV"

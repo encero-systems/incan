@@ -93,6 +93,8 @@ pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBR
 /// Unlike artifact-only mode, an Oven direct-rustc dependency build must emit caller-owned rlibs. It still targets
 /// exactly the dependency project selected by the parent, even if that project is the root of a larger workspace.
 pub(crate) const INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV: &str = "INCAN_INTERNAL_LIBRARY_DEPENDENCY_PREPARATION";
+/// Optional external directory for SDK publication timing evidence.
+const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
 /// Internal provider-store override used by isolated compiler and packaging tests.
 const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
 /// Internal file through which release packaging receives the exact immutable SDK provider root.
@@ -803,6 +805,10 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         &distribution_profile,
     )?;
     let _lock = acquire_sdk_provider_store_lock(&store_root)?;
+    let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
+        .filter(|path| !path.is_empty())
+        .map(|path| SdkBuildReports::new(Path::new(&path), &store_root, &identity))
+        .transpose()?;
     let artifact_root = store_root.join(&identity);
     let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
     if inventory_path.is_file() {
@@ -815,6 +821,9 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
             )
             .map_err(|error| CliError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
+        if let Some(reports) = &mut build_reports {
+            reports.finish("cache_hit");
+        }
         return Ok(Arc::new(inventory));
     }
     if artifact_root.exists() {
@@ -831,8 +840,8 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         workspace_lock.as_deref(),
         &staging_root,
         &distribution_profile,
-        source_root_override,
-        &stdlib_root,
+        source_root_override.map(|source_root| (source_root, stdlib_root.as_path())),
+        build_reports.as_ref(),
     ) {
         Ok(inventory) => inventory,
         Err(error) => {
@@ -857,7 +866,125 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         ))
     })?;
     record_sdk_provider_root(&artifact_root)?;
+    if let Some(reports) = &mut build_reports {
+        reports.finish("published");
+    }
     Ok(Arc::new(published))
+}
+
+/// Optional operational evidence kept outside the immutable provider store.
+struct SdkBuildReports {
+    directory: PathBuf,
+    identity: String,
+    started: std::time::Instant,
+    completed: bool,
+}
+
+impl SdkBuildReports {
+    /// Require an existing external directory before creating a unique publication report session.
+    fn new(directory: &Path, store: &Path, identity: &str) -> CliResult<Self> {
+        let directory = fs::canonicalize(directory).map_err(|error| {
+            CliError::failure(format!(
+                "SDK build report directory must already exist: {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let store = fs::canonicalize(store).map_err(|error| CliError::failure(error.to_string()))?;
+        if directory.starts_with(&store) || store.starts_with(&directory) {
+            return Err(CliError::failure(
+                "SDK build report directory must be separate from the provider store",
+            ));
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .as_nanos();
+        let directory = directory.join(format!("sdk-build-{}-{nonce}", std::process::id()));
+        fs::create_dir(&directory).map_err(|error| CliError::failure(error.to_string()))?;
+        let reports = Self {
+            directory,
+            identity: identity.to_string(),
+            started: std::time::Instant::now(),
+            completed: false,
+        };
+        reports.summary("preparing");
+        Ok(reports)
+    }
+
+    /// Persist telemetry without changing the compiler's publication result or original failure diagnostic.
+    fn write(&self, name: &str, value: &serde_json::Value) {
+        let result = serde_json::to_vec_pretty(value)
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| fs::write(self.directory.join(name), bytes));
+        if let Err(error) = result {
+            eprintln!("warning: SDK build timing report unavailable: {error}");
+        }
+    }
+
+    /// Describe work after acquiring the store lock; source identity calculation and lock waiting precede this scope.
+    fn summary(&self, status: &str) {
+        self.write(
+            "summary.json",
+            &serde_json::json!({
+                "schema_version": 1, "status": status, "sdk_store_identity": self.identity,
+                "elapsed_scope": "after_store_lock",
+                "elapsed_ms": self.started.elapsed().as_millis()
+            }),
+        );
+    }
+
+    /// Mark a successfully validated cache acquisition or completed publication.
+    fn finish(&mut self, status: &str) {
+        self.summary(status);
+        self.completed = true;
+    }
+
+    /// Select a component-specific child output; the SDK environment helper disables descendant report sessions.
+    fn configure(&self, command: &mut Command, component: &str) {
+        command
+            .args(["--report", "json", "--report-output"])
+            .arg(self.directory.join(format!("{component}.build.json")));
+    }
+
+    /// Retain bounded successful phase data and an explicit unavailable reason on missing or malformed child output.
+    fn component(&self, component: &str, elapsed: std::time::Duration, output: &std::process::Output) {
+        let path = self.directory.join(format!("{component}.build.json"));
+        let parsed = (|| -> Result<serde_json::Value, String> {
+            let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.len() > 4 * 1024 * 1024 {
+                return Err("child report exceeds 4 MiB".to_string());
+            }
+            let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+            let report: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            let timings = report
+                .get("timings_ms")
+                .and_then(serde_json::Value::as_object)
+                .filter(|timings| !timings.is_empty() && timings.values().all(|value| value.as_u64().is_some()))
+                .ok_or("child report has no valid timings_ms")?;
+            Ok(serde_json::Value::Object(timings.clone()))
+        })();
+        let (status, timings, reason) = match parsed {
+            Ok(timings) => ("available", timings, None),
+            Err(reason) => ("unavailable", serde_json::Value::Null, Some(reason)),
+        };
+        self.write(
+            &format!("{component}.timing.json"),
+            &serde_json::json!({
+                "schema_version": 1, "component": component, "elapsed_ms": elapsed.as_millis(),
+                "success": output.status.success(), "exit_code": output.status.code(),
+                "report_status": status, "timings_ms": timings, "unavailable_reason": reason,
+                "timings_semantics": "inclusive_nested_scopes"
+            }),
+        );
+    }
+}
+
+impl Drop for SdkBuildReports {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.summary("failed");
+        }
+    }
 }
 
 /// Report the exact immutable provider root to release packaging when requested.
@@ -880,8 +1007,8 @@ fn build_sdk_components_into_staging(
     workspace_lock: Option<&Path>,
     staging_root: &Path,
     distribution_profile: &str,
-    source_root_override: Option<&Path>,
-    stdlib_root: &Path,
+    toolchain_source: Option<(&Path, &Path)>,
+    build_reports: Option<&SdkBuildReports>,
 ) -> CliResult<SdkInventory> {
     fs::create_dir_all(staging_root).map_err(|error| {
         CliError::failure(format!(
@@ -936,7 +1063,7 @@ fn build_sdk_components_into_staging(
             &component.id,
             &cargo_target_dir,
             caller_cargo_target.as_deref(),
-            source_root_override.map(|source_root| (source_root, stdlib_root)),
+            toolchain_source,
         );
         if built_any {
             inventory
@@ -949,6 +1076,10 @@ fn build_sdk_components_into_staging(
         if let Some(workspace_lock) = workspace_lock {
             command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
         }
+        if let Some(reports) = build_reports {
+            reports.configure(&mut command, &component.id);
+        }
+        let component_started = std::time::Instant::now();
         let output = command.output().map_err(|error| {
             CliError::failure(format!(
                 "failed to run SDK component build for `{}` at {}: {error}",
@@ -956,6 +1087,9 @@ fn build_sdk_components_into_staging(
                 component.project_root.display()
             ))
         })?;
+        if let Some(reports) = build_reports {
+            reports.component(&component.id, component_started.elapsed(), &output);
+        }
         if !output.status.success() {
             return Err(nested_sdk_component_build_error(
                 component.id.as_str(),
@@ -1036,6 +1170,7 @@ fn configure_sdk_provider_build_environment(
     command
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
+        .env_remove(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
         .env(SDK_PROVIDER_BUILD_ENV, component_id)
         .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
         // Share transient Cargo artifacts across components, then remove them before immutable provider publication.
@@ -5418,6 +5553,81 @@ mod tests {
 
         assert_eq!(binding.header, "interop/include/bridge.h");
         assert_eq!(resolved.header, "/workspace/c_header_fixture/interop/include/bridge.h");
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_build_reports_reject_store_paths_and_distinguish_cache_hits() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = root.path().join("store");
+        let reports_root = root.path().join("reports");
+        fs::create_dir_all(store.join("artifact"))?;
+        fs::create_dir(&reports_root)?;
+        assert!(SdkBuildReports::new(&store.join("artifact"), &store, "identity").is_err());
+        let mut reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
+        reports.finish("cache_hit");
+        let summary: serde_json::Value = serde_json::from_slice(&fs::read(reports.directory.join("summary.json"))?)?;
+        assert_eq!(summary["status"], "cache_hit");
+        assert_eq!(summary["elapsed_scope"], "after_store_lock");
+        assert_eq!(fs::read_dir(&reports.directory)?.count(), 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sdk_build_reports_transport_mock_children_without_replacing_failures() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let store = root.path().join("store");
+        let reports_root = root.path().join("reports");
+        fs::create_dir(&store)?;
+        fs::create_dir(&reports_root)?;
+        let reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
+        let mut child = Command::new("sh");
+        child.args([
+            "-c",
+            r#"printf '%s' '{"timings_ms":{"library_prepare_total":7}}' > "$4""#,
+            "mock",
+        ]);
+        configure_sdk_provider_build_environment(&mut child, "stdlib-data", root.path(), None, None);
+        reports.configure(&mut child, "stdlib-data");
+        assert!(
+            child
+                .get_envs()
+                .any(|(name, value)| name == INTERNAL_SDK_BUILD_REPORT_DIR_ENV && value.is_none())
+        );
+        let output = child.output()?;
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        reports.component("stdlib-data", std::time::Duration::from_millis(11), &output);
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(reports.directory.join("stdlib-data.timing.json"))?)?;
+        assert_eq!(value["report_status"], "available");
+        assert_eq!(value["timings_semantics"], "inclusive_nested_scopes");
+        assert_eq!(value["timings_ms"]["library_prepare_total"], 7);
+        let failed = Command::new("sh")
+            .args(["-c", "printf original-diagnostic >&2; exit 9"])
+            .output()?;
+        reports.component("missing", std::time::Duration::ZERO, &failed);
+        fs::write(reports.directory.join("malformed.build.json"), "not-json")?;
+        reports.component("malformed", std::time::Duration::ZERO, &output);
+        for component in ["missing", "malformed"] {
+            let value: serde_json::Value =
+                serde_json::from_slice(&fs::read(reports.directory.join(format!("{component}.timing.json")))?)?;
+            assert_eq!(value["report_status"], "unavailable");
+            assert!(value["timings_ms"].is_null());
+        }
+        assert_eq!(failed.status.code(), Some(9));
+        assert_eq!(failed.stderr, b"original-diagnostic");
+        assert!(
+            nested_sdk_component_build_error("missing", root.path(), &failed)
+                .to_string()
+                .contains("original-diagnostic")
+        );
+        let directory = reports.directory.clone();
+        drop(reports);
+        let summary: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("summary.json"))?)?;
+        assert_eq!(summary["status"], "failed");
         Ok(())
     }
 
