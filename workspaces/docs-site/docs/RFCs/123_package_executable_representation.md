@@ -187,27 +187,28 @@ Keep each selected semantic sidecar coherent with its manifest through publicati
 ### Design and publication
 
 - [x] Review the RFC contract and establish an independent implementation and acceptance design.
-- [ ] Select published identities from the finalized manifest, including public members and canonical facade targets.
-- [ ] Record uncovered exports separately from empty executable bodies.
-- [ ] Close public requirements over defaults, deferred computations, callees and type context without publishing private declarations or compiler-session state.
-- [ ] Share checked dependency relationships with RFC 106 codegraph and prove agreement for aliases, facades, members, type context and defaults without another analysis pass.
-- [ ] Publish semantic content from the same checked compilation as the manifest and native artifact.
+- [x] Select published identities from the finalized manifest, including public members and canonical facade targets.
+- [x] Record uncovered exports separately from empty executable bodies.
+- [x] Close public requirements over defaults, deferred computations, callees and type context without publishing private declarations or compiler-session state.
+- [x] Share checked dependency relationships with RFC 106 codegraph and prove agreement for aliases, facades, members, type context and defaults without another analysis pass.
+- [x] Publish semantic content from the same checked compilation as the manifest and native artifact.
 
 ### Resolution and execution
 
-- [ ] Reject unsupported versions before interpreting version-specific metadata or payloads.
-- [ ] Resolve direct, aliased and transitive facade calls through canonical package identities.
-- [ ] Load only selected fragments and their required public context; prove selective loading with a three-of-four-hundred case.
-- [ ] Execute a real source-unavailable package consumer on the non-linking route with native observable-behavior parity.
-- [ ] Refuse missing, incompatible, malformed and uncovered requirements before program output or a successful receipt.
+- [x] Reject unsupported versions before interpreting version-specific metadata or payloads.
+- [x] Resolve direct, aliased and transitive facade calls through canonical package identities.
+- [x] Load only selected fragments and their required public context; prove selective loading with a three-of-four-hundred case.
+- [x] Execute a real source-unavailable package consumer on the non-linking route with native observable-behavior parity.
+- [x] Refuse missing, incompatible, malformed and uncovered requirements before program output or a successful receipt.
 - [ ] Preserve Rust-linking use of packages without executable representations.
 
 ### Distribution and verification
 
-- [ ] Verify coherent semantic sidecar publication, copying, sealed materialization and reuse, including failed publication.
+- [x] Verify coherent semantic sidecar publication, copying, sealed materialization and reuse, including failed publication.
 - [ ] Verify the semantic slot within the signed package archive boundary; track RFC 034's dependency explicitly until this is executable.
-- [ ] Pass focused codec, compiler, package-boundary and failure regressions, plus applicable repository gates.
-- [ ] Update user documentation, release notes and generated RFC references with verified behavior.
+- [x] Pass focused codec, compiler, package-boundary and failure regressions.
+- [ ] Complete the applicable PR integration gates for the final published head.
+- [x] Update user documentation, release notes and generated RFC references with verified behavior.
 
 ## Design Decisions
 
