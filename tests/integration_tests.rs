@@ -8663,7 +8663,11 @@ async def main() -> None:
         );
         let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
         assert!(
-            stderr.contains("generated with provider codegen revision 4") && stderr.contains("requires revision 5"),
+            stderr.contains("generated with provider codegen revision 4")
+                && stderr.contains(&format!(
+                    "requires revision {}",
+                    incan::version::SDK_PROVIDER_CODEGEN_REVISION
+                )),
             "the failure should report the exact incompatible provider revision:\n{stderr}"
         );
         assert!(

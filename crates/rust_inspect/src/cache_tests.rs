@@ -35,6 +35,7 @@ fn dummy_function_metadata(path: &str) -> RustItemMetadata {
         definition_path: None,
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            receiver_contract: None,
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
@@ -1670,6 +1671,10 @@ impl NestedFrame {
     pub fn into_view(self) -> std::sync::Arc<dyn NestedProvider> { todo!() }
     /// Return a static borrowed nested frame.
     pub fn static_ref(self) -> Option<&'static NestedFrame> { todo!() }
+    /// Return a child using receiver lifetime elision.
+    pub fn child(&self, key: &str) -> Option<&NestedFrame> { todo!() }
+    /// The same normalized return type can instead borrow an unrelated argument.
+    pub fn other<'a>(&self, other: &'a NestedFrame) -> Option<&'a NestedFrame> { todo!() }
 }
 "#,
     )?;
@@ -1931,6 +1936,35 @@ impl NestedFrame {
     assert_eq!(
         static_ref.signature.return_type,
         "Option<&source_dep::frame::NestedFrame>"
+    );
+    assert!(
+        !static_ref
+            .signature
+            .receiver_contract
+            .is_some_and(|contract| contract.returns_receiver_borrow)
+    );
+    let child = nested_frame_info
+        .methods
+        .iter()
+        .find(|method| method.name == "child")
+        .ok_or("expected receiver child metadata")?;
+    let other = nested_frame_info
+        .methods
+        .iter()
+        .find(|method| method.name == "other")
+        .ok_or("expected unrelated lifetime metadata")?;
+    assert_eq!(child.signature.return_type, other.signature.return_type);
+    assert!(
+        child
+            .signature
+            .receiver_contract
+            .is_some_and(|contract| contract.shared && contract.returns_receiver_borrow)
+    );
+    assert!(
+        other
+            .signature
+            .receiver_contract
+            .is_some_and(|contract| contract.shared && !contract.returns_receiver_borrow)
     );
     let table_frame = cache.get_or_extract(&root, "source_dep::table::TableFrame", &|_| ())?;
     let RustItemKind::Type(table_frame_info) = &table_frame.kind else {
@@ -2451,6 +2485,85 @@ fn dependency_reexport_alias_miss_skips_wrapper_workspace() -> Result<(), Box<dy
     assert!(
         !inner.workspaces.contains_key(&(wrapper_root, true)),
         "a miss through a public crate re-export should not repeat the lookup through the wrapper dependency"
+    );
+    Ok(())
+}
+
+/// Receiver contracts come from explicit Rust implementations; inherent and shadowed names never inherit a guess.
+#[test]
+fn source_prelude_methods_preserve_actual_receiver_and_name_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let root = temporary.path().join("probe");
+    let dependency = temporary.path().join("fixture");
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(dependency.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "probe"
+version = "0.1.0"
+[dependencies]
+fixture = { path = "../fixture" }
+"#,
+    )?;
+    fs::write(root.join("src/lib.rs"), "")?;
+    fs::write(
+        dependency.join("Cargo.toml"),
+        r#"[package]
+name = "fixture"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        dependency.join("src/lib.rs"),
+        r#"
+pub struct Shared;
+impl Clone for Shared { fn clone(&self) -> Self { Shared } }
+pub struct Consumed;
+impl Clone for Consumed { fn clone(&self) -> Self { Consumed } }
+impl Consumed { pub fn clone(self) -> Self { self } }
+#[derive(Clone)]
+pub struct Derived;
+pub mod shadow {
+    pub trait Clone { fn clone(self) -> Self; }
+    pub struct Local;
+    impl Clone for Local { fn clone(self) -> Self { self } }
+}
+pub mod qualified_shadow {
+    pub mod std { pub mod clone { pub trait Clone { fn clone(self) -> Self; } } }
+    pub struct Local;
+    impl std::clone::Clone for Local { fn clone(self) -> Self { self } }
+}
+"#,
+    )?;
+    let cache = RustMetadataCache::new();
+    for (path, expected) in [
+        ("fixture::Shared", Some(true)),
+        ("fixture::Consumed", Some(false)),
+        ("fixture::Derived", None),
+        ("fixture::shadow::Local", None),
+        ("fixture::qualified_shadow::Local", None),
+    ] {
+        let hit = cache
+            .get_cached_or_extract_fast(&root, path)?
+            .ok_or("missing fixture metadata")?;
+        let RustItemKind::Type(info) = &hit.metadata.kind else {
+            return Err("expected fixture type".into());
+        };
+        let contract = info
+            .methods
+            .iter()
+            .find(|method| method.name == "clone")
+            .and_then(|method| method.signature.receiver_contract);
+        assert_eq!(contract.map(|contract| contract.shared), expected, "{path}");
+    }
+    let inner = cache
+        .inner
+        .lock()
+        .map_err(|_| std::io::Error::other("poisoned cache"))?;
+    assert!(
+        inner.workspaces.is_empty(),
+        "source proof must not load the Rust sysroot"
     );
     Ok(())
 }
