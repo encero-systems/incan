@@ -38,7 +38,7 @@ fn root_var_name(expr: &super::super::expr::IrExpr) -> Option<&str> {
 /// Check if an assignment target mutates a variable.
 fn target_mutates_var(target: &AssignTarget, var: &str) -> bool {
     match target {
-        AssignTarget::Var(name) => name == var,
+        AssignTarget::Var { name, .. } => name == var,
         AssignTarget::StaticBinding(name) => name == var,
         AssignTarget::Static { .. } => false,
         AssignTarget::Field { object, .. } => root_var_name(object).is_some_and(|n| n == var),
@@ -552,7 +552,7 @@ fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
                         names.insert(name.to_string());
                     }
                 }
-                AssignTarget::Var(_) | AssignTarget::Static { .. } => {}
+                AssignTarget::Var { .. } | AssignTarget::Static { .. } => {}
             }
             expr_mutates_storage_binding(value, names);
         }
@@ -1248,7 +1248,10 @@ impl<'a> IrEmitter<'a> {
                     return Ok(quote! { #t = #v; });
                 }
                 let t = self.emit_assign_target(target)?;
-                let v = self.emit_assignment_value(value, None)?;
+                let v = match target {
+                    AssignTarget::Var { ty, .. } => self.emit_value_for_target(value, ty)?,
+                    _ => self.emit_assignment_value(value, None)?,
+                };
                 Ok(quote! { #t = #v; })
             }
             IrStmtKind::Return(Some(expr)) => {
@@ -1718,7 +1721,10 @@ mod tests {
                 value: TypedExpr::new(IrExprKind::Int(1), IrType::Int),
             }),
             IrStmt::new(IrStmtKind::Assign {
-                target: AssignTarget::Var("current".to_string()),
+                target: AssignTarget::Var {
+                    name: "current".to_string(),
+                    ty: IrType::Int,
+                },
                 value: TypedExpr::new(IrExprKind::Int(2), IrType::Int),
             }),
         ];
@@ -1784,6 +1790,26 @@ mod tests {
             "a let binding materializing a borrowed as_ref() result must clone exactly once \
              (the mod.rs ownership-plan fix and the statement-level plan must not both apply it), got `{rendered}`"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn local_reassignment_materializes_borrowed_method_result_exactly_once() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let value = boxed_node_as_ref_call();
+        let stmt = IrStmt::new(IrStmtKind::Assign {
+            target: AssignTarget::Var {
+                name: "current".to_string(),
+                ty: value.ty.clone(),
+            },
+            value,
+        });
+        let emitted = emitter
+            .emit_stmt(&stmt)
+            .map_err(|error| format!("assignment emission failed: {error:?}"))?;
+        let rendered = emitted.to_string();
+        assert_eq!(rendered.matches(". clone ()").count(), 1, "{rendered}");
         Ok(())
     }
 
