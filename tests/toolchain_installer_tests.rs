@@ -1208,11 +1208,14 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         "the Linux prewarm is the sole publisher of the provider-store artifact"
     );
     assert!(
-        workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS")
-            && workflow.contains("INCAN_TEST_COMMAND_TIMINGS")
+        !workflow.contains("INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS"),
+        "case timings are no longer an opt-in switch; every root reports them, so CI must not carry a marker that turns them on"
+    );
+    assert!(
+        workflow.contains("INCAN_TEST_COMMAND_TIMINGS")
             && workflow.contains("INCAN_TEST_OVEN_COMPILER_SUITE_REPORT")
             && workflow.contains("oven-pr-linux-partition-${{ matrix.partition }}"),
-        "the first pinned Linux partition must retain case and nested-command timing evidence needed to investigate remaining native test costs"
+        "every pinned Linux partition must retain the measured-duration report, and the first must additionally retain nested-command timing evidence"
     );
     let provider_cache_action =
         fs::read_to_string(repo_root().join(".github/actions/restore-sdk-provider-store/action.yml"))?;

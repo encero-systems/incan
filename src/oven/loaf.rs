@@ -342,6 +342,15 @@ impl LoafTemporaryDirectory {
         &self.path
     }
 
+    /// Reclaim scratch space at an explicit, measurable boundary and report any filesystem failure.
+    ///
+    /// A failed removal leaves the remaining path for diagnosis; Drop must not silently retry expensive cleanup
+    /// after the caller has already recorded its duration and failure.
+    pub(crate) fn close(mut self) -> std::io::Result<()> {
+        self.keep = true;
+        fs::remove_dir_all(&self.path)
+    }
+
     /// Retain the staging directory after its caller has atomically published it.
     pub(crate) fn persist(mut self) -> PathBuf {
         self.keep = true;

@@ -7,3 +7,11 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+pub use crate::__incan_std::Debug;
+pub use crate::__incan_std::Eq;
+pub use crate::__incan_std::Clone;
+pub use crate::__incan_std::From;
+pub use crate::__incan_std::Add;
+pub use crate::__incan_std::Error;
+pub use crate::__incan_std::Index;
+pub use crate::__incan_std::Callable1;

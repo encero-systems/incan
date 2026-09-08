@@ -11,7 +11,7 @@ use incan::oven::legacy_cargo::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoPrepareRequest,
     OvenLegacyCargoPublicationKind, prepare_direct_rustc_plan,
 };
-use incan::oven::native_test::run_native_test_batch_all_in_directory_with_timeout;
+use incan::oven::native_test::{OvenNativeTestBatchRequest, run_native_test_batch_all_for_request};
 use incan::oven::store::{OvenStore, OvenStoreLimits};
 use incan::oven::{OvenGeneratedProjectRequest, receipt_generated_project};
 
@@ -29,12 +29,15 @@ fn native_timeout_terminates_descendants_that_retain_output_pipes() -> Result<()
     )?;
 
     let started = Instant::now();
-    let report = run_native_test_batch_all_in_directory_with_timeout(
-        &executable,
-        &BTreeMap::new(),
-        Some(fixture.path()),
-        Some(Duration::from_millis(100)),
-    )?;
+    let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+        executable: &executable,
+        environment: &BTreeMap::new(),
+        working_directory: Some(fixture.path()),
+        timeout: Some(Duration::from_millis(100)),
+        test_threads: None,
+        root_label: None,
+        progress: None,
+    })?;
 
     assert!(report.timed_out, "stalled native test unexpectedly completed");
     assert!(!report.success, "timed-out native test was reported as successful");

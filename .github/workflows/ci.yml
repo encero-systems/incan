@@ -20,7 +20,9 @@ on:
         default: true
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Irrelevant label events skip the scope job, but still enter workflow concurrency. Give them a separate group so
+  # auto-labelling cannot cancel the substantive PR run before its tests finish.
+  group: ci-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && format('label-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -579,8 +581,7 @@ jobs:
           test -s target/incan_test_sdk_provider_path
       - name: Run receipt-bound Oven partition
         env:
-          INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
-          INCAN_TEST_COMMAND_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
+          INCAN_TEST_COMMAND_TIMINGS: '1'
           INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: target/oven-pr-linux-partition-${{ matrix.partition }}.json
         run: >-
           CARGO_NET_OFFLINE=true
@@ -591,9 +592,8 @@ jobs:
           make -s test-oven-partition
           INCAN_TEST_OVEN_PARTITION_INDEX=${{ matrix.partition }}
           INCAN_TEST_OVEN_PARTITION_COUNT=4
-      # The JSON report is only written on success. A failing partition instead retains the complete libtest
-      # transcript beside its caller output, and that transcript is the only place every failing case is named:
-      # the terminal summary is deliberately bounded, so a few large panics can crowd the rest out of the log.
+      # Every partition retains measured root/case durations for future replay weighting (#1065). Consumption is
+      # separate work; publishing these records does not mean this run's partitioner already uses them.
       - name: Upload Oven partition report
         if: always()
         uses: actions/upload-artifact@v6
@@ -601,9 +601,26 @@ jobs:
           name: oven-pr-linux-partition-${{ matrix.partition }}
           path: |
             target/oven-pr-linux-partition-${{ matrix.partition }}.json
-            target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
+            target/oven-pr-linux-partition-${{ matrix.partition }}.json.wall-time.json
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: 30
+      # Successful diagnostic output stays out of live progress but remains available with failed-case diagnostics.
+      - name: Upload Oven partition transcripts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-partition-${{ matrix.partition }}-transcripts
+          path: target/oven-pr-linux-partition-${{ matrix.partition }}.json.transcripts.tar.gz
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload retained caller transcripts after a failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-partition-${{ matrix.partition }}-raw-transcripts
+          path: target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
+          if-no-files-found: warn
+          retention-days: 7
 
   oven-release-smoke:
     name: Oven release Loaf guard
