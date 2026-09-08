@@ -129,6 +129,35 @@ fn build(source: &str, module_path: &[&str]) -> Result<bir::BodyIrModule, Box<dy
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
 }
 
+/// Both operand and recursively lowered place fields retain checked tuple structure without nominal identities.
+#[test]
+fn nested_source_tuple_fields_retain_checked_structural_projection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def answer() -> int:\n    pair = ((1, 42), 3)\n    return (pair.0).1\n",
+        &["lib"],
+    )?;
+    let body = module.bodies.first().ok_or("tuple body missing")?;
+    let projection = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(value)),
+            } => Some(&value.place.projection),
+            _ => None,
+        })
+        .ok_or("nested tuple return missing")?;
+    assert_eq!(
+        projection,
+        &[
+            bir::PlaceElem::structural_field("0"),
+            bir::PlaceElem::structural_field("1")
+        ]
+    );
+    Ok(())
+}
+
 #[test]
 fn imported_callable_without_call_site_identity_does_not_recover_authority_from_its_binding_name()
 -> Result<(), Box<dyn std::error::Error>> {

@@ -3937,12 +3937,12 @@ fn validate_read_place(
         [
             PlaceElem::Field {
                 canonical: Some(_),
-                synthesized: false,
+                structural: false,
                 ..
             }
             | PlaceElem::Field {
                 canonical: None,
-                synthesized: true,
+                structural: true,
                 ..
             },
         ] => Ok(()),
@@ -7128,14 +7128,14 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 PlaceElem::Field {
                     name,
                     canonical: None,
-                    synthesized: true,
+                    structural: true,
                 },
             ] if name.parse::<usize>().is_ok() => project_tuple_field(value, place, span),
             [
                 PlaceElem::Field {
                     name,
                     canonical: Some(canonical),
-                    synthesized: false,
+                    structural: false,
                 },
             ] => self.project_nominal_field(value, name, canonical, span),
             [PlaceElem::Index(index)] => {
@@ -7389,7 +7389,7 @@ fn project_tuple_field(
         PlaceElem::Field {
             name: field,
             canonical: None,
-            synthesized: true,
+            structural: true,
         },
     ] = place.projection.as_slice()
     else {

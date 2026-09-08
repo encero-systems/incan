@@ -500,7 +500,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let mut element_place = value_place.clone();
             element_place
                 .projection
-                .push(bir::PlaceElem::synthetic_field(index.to_string()));
+                .push(bir::PlaceElem::structural_field(index.to_string()));
             let (fact, last_use) = self.ownership_fact_for_place(&element_place, element_ty);
             let element_operand = bir::Operand::place(element_place, fact, last_use);
             let place = match self.bind_multi_target_name(
@@ -556,7 +556,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let mut element_place = value_place.clone();
             element_place
                 .projection
-                .push(bir::PlaceElem::synthetic_field(index.to_string()));
+                .push(bir::PlaceElem::structural_field(index.to_string()));
             let (fact, last_use) = self.ownership_fact_for_place(&element_place, element_ty);
             let element_operand = bir::Operand::place(element_place, fact, last_use);
             element_operands.push(self.push_assign_temp(

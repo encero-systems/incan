@@ -622,7 +622,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// field on every iteration without the range appearing to be moved out from under itself.
     fn read_range_field(&mut self, range: &bir::Place, field: &str, field_ty: &IncanType) -> bir::Operand {
         let mut place = range.clone();
-        place.projection.push(bir::PlaceElem::synthetic_field(field));
+        place.projection.push(bir::PlaceElem::structural_field(field));
         let (fact, last_use) = self.ownership_fact_for_place(&place, field_ty);
         bir::Operand::place(place, fact, last_use)
     }
@@ -934,7 +934,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     let mut field_place = place.clone();
                     field_place
                         .projection
-                        .push(bir::PlaceElem::synthetic_field(index.to_string()));
+                        .push(bir::PlaceElem::structural_field(index.to_string()));
                     self.bind_for_pattern_fields(item, element_ty, &field_place, loop_scope, reads, out);
                 }
             }

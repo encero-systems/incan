@@ -292,7 +292,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         let mut field_place = place.clone();
                         field_place
                             .projection
-                            .push(bir::PlaceElem::synthetic_field(index.to_string()));
+                            .push(bir::PlaceElem::structural_field(index.to_string()));
                         self.lower_match_pattern(item, element_ty, &field_place, arm_scope, reads, seen, saved_bindings)
                     })
                     .collect();
@@ -416,7 +416,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             let mut field_place = place.clone();
                             field_place
                                 .projection
-                                .push(bir::PlaceElem::synthetic_field(positional_index.to_string()));
+                                .push(bir::PlaceElem::structural_field(positional_index.to_string()));
                             positional_index += 1;
                             let lowered = self.lower_match_pattern(
                                 pat,

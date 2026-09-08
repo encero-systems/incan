@@ -229,12 +229,12 @@ impl<'a> PublicationAudit<'a> {
             match projection {
                 PlaceElem::Field {
                     canonical: Some(identity),
-                    synthesized: false,
+                    structural: false,
                     ..
                 } => self.identity(identity, false)?,
                 PlaceElem::Field {
                     canonical: None,
-                    synthesized: true,
+                    structural: true,
                     ..
                 } => {}
                 PlaceElem::Field { .. } => return Err(CoverageReason::UnresolvedReference),

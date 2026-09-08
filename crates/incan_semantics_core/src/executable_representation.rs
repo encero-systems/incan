@@ -712,7 +712,7 @@ mod tests {
             },
         });
         let mut structural = body("structural", 2);
-        place.projection = vec![PlaceElem::synthetic_field("0")];
+        place.projection = vec![PlaceElem::structural_field("0")];
         structural.block.stmts.push(Statement {
             span: structural.span,
             kind: StatementKind::Return {

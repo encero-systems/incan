@@ -727,9 +727,9 @@ pub enum PlaceElem {
         name: String,
         /// Canonical member selected by typechecking, independent of the source spelling.
         canonical: Option<CanonicalSymbolId>,
-        /// Whether the compiler introduced this projection for a checked structural operation.
+        /// Whether checked tuple/range/protocol lowering proved a structural projection without a nominal member.
         #[serde(default)]
-        synthesized: bool,
+        structural: bool,
     },
     /// `[index]` access. Boxed because the index itself is an arbitrary operand.
     Index(Box<Operand>),
@@ -749,16 +749,16 @@ impl PlaceElem {
         Self::Field {
             name: name.into(),
             canonical,
-            synthesized: false,
+            structural: false,
         }
     }
 
-    /// Build a compiler-synthesized structural projection with no source member identity.
-    pub fn synthetic_field(name: impl Into<String>) -> Self {
+    /// Build a projection proved by checked structural type or protocol lowering, with no nominal member identity.
+    pub fn structural_field(name: impl Into<String>) -> Self {
         Self::Field {
             name: name.into(),
             canonical: None,
-            synthesized: true,
+            structural: true,
         }
     }
 }
@@ -2108,7 +2108,7 @@ pub enum AggregateKind {
     /// [`crate::AbiV0RuntimeRequirement`], the same as [`Self::Tuple`] and unlike [`Self::List`]/[`Self::Set`].
     ///
     /// Operands appear in exactly [`Self::RANGE_FIELDS`] order, and a consumer reading one back projects it by
-    /// that name (`PlaceElem::synthetic_field("start")`). Inclusivity is an *operand*, not a static property of this
+    /// that name (`PlaceElem::structural_field("start")`). Inclusivity is an *operand*, not a static property of this
     /// variant: `..` versus `..=` is fixed per construction site, but the site that constructs a range and the
     /// loop that later iterates it need not be the same statement, so a consumer holding only the value must be
     /// able to read which one it is instead of having to prove where it came from.
@@ -3522,10 +3522,12 @@ mod tests {
         let mut read_only_projection = read_only.clone();
         read_only_projection
             .projection
-            .push(PlaceElem::synthetic_field("member"));
+            .push(PlaceElem::structural_field("member"));
         let projection_only = sample_global_place(SemanticSourceTargetKind::Static, GlobalWritePolicy::ProjectionOnly);
         let mut mutable_projection = projection_only.clone();
-        mutable_projection.projection.push(PlaceElem::synthetic_field("member"));
+        mutable_projection
+            .projection
+            .push(PlaceElem::structural_field("member"));
         let rebindable = sample_global_place(SemanticSourceTargetKind::Static, GlobalWritePolicy::Rebindable);
 
         assert!(local.permits_write());
