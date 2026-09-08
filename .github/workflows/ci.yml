@@ -581,7 +581,7 @@ jobs:
           test -s target/incan_test_sdk_provider_path
       - name: Run receipt-bound Oven partition
         env:
-          INCAN_TEST_COMMAND_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
+          INCAN_TEST_COMMAND_TIMINGS: '1'
           INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: target/oven-pr-linux-partition-${{ matrix.partition }}.json
         run: >-
           CARGO_NET_OFFLINE=true
@@ -599,7 +599,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: oven-pr-linux-partition-${{ matrix.partition }}
-          path: target/oven-pr-linux-partition-${{ matrix.partition }}.json
+          path: |
+            target/oven-pr-linux-partition-${{ matrix.partition }}.json
+            target/oven-pr-linux-partition-${{ matrix.partition }}.json.wall-time.json
           if-no-files-found: warn
           retention-days: 30
       # Successful diagnostic output stays out of live progress but remains available with failed-case diagnostics.

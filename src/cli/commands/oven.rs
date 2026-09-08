@@ -66,6 +66,7 @@ use crate::oven::native_test::{
     OvenNativeTestCommandTiming, OvenNativeTestRequest, run_native_test_batch_all_for_request, run_native_tests,
     run_native_tests_exact_in_directory_with_timeout,
 };
+use crate::oven::progress::{PhaseProgress, announce as announce_oven_progress, elapsed_detail};
 use crate::oven::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenStoredDirectRustcRunRequest,
     OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot,
@@ -1619,6 +1620,7 @@ fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOutputFormat)
 /// roots and is not available to normal Incan commands.
 pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions) -> CliResult<ExitCode> {
     let suite_started = Instant::now();
+    let receipt_phase = PhaseProgress::start("compiler-suite receipt and selection");
     let rustc = options.rustc.unwrap_or(resolve_active_rustc().map_err(oven_error)?);
     let compiler_data_root = crate::toolchain_layout::compiler_owned_oven_data_root().ok_or_else(|| {
         CliError::failure(
@@ -1837,8 +1839,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             output_directory.display()
         ))
     })?;
-    let receipt_and_selection_elapsed_ms = suite_started.elapsed().as_millis();
-    let shared_setup_started = Instant::now();
+    let receipt_and_selection_elapsed_ms = receipt_phase.finish();
+    let shared_setup_phase = PhaseProgress::start("compiler-suite shared setup");
     let fixture_cargo = options
         .fixture_cargo
         .as_deref()
@@ -1976,18 +1978,19 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
     // the suite from a deeply nested worktree, where forwarding that path makes otherwise-valid Cargo metadata
     // inspection fail before Oven has a chance to execute the stored root. Keep this mutable scratch directory
     // invocation-owned but deliberately short; all durable suite output remains under the caller-selected output.
+    environment.insert(
+        "CARGO_BIN_EXE_incan".to_string(),
+        compiler_suite_environment_path(&cli_bake.output)?.display().to_string(),
+    );
     let suite_temporary_directory = compiler_suite_temporary_directory()?;
     environment.insert(
         "TMPDIR".to_string(),
         suite_temporary_directory.path().display().to_string(),
     );
-    environment.insert(
-        "CARGO_BIN_EXE_incan".to_string(),
-        compiler_suite_environment_path(&cli_bake.output)?.display().to_string(),
-    );
-    let shared_setup_elapsed_ms = shared_setup_started.elapsed().as_millis();
+    let shared_setup_elapsed_ms = shared_setup_phase.finish();
     let run_children = || -> CliResult<(CompilerSuiteChildrenReport, usize, usize, CompilerSuiteChildPhaseTimings)> {
         if suite.schema_version == 8 {
+            let target_preparation_phase = PhaseProgress::start("compiler-suite target preparation");
             let test_artifact_closure = suite.test_artifact_closure.as_ref().ok_or_else(|| {
                 CliError::failure("stored compiler-suite payload has no direct-rustc test closure".to_string())
             })?;
@@ -2007,7 +2010,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 None,
                 &mut binary_cache,
             )?;
-            let root_execution_started = Instant::now();
+            let target_preparation_elapsed_ms = target_preparation_phase.finish();
+            let root_execution_phase = PhaseProgress::start("compiler-suite root execution");
             let suite_report = run_planned_compiler_suite_children(
                 &suite.test_targets,
                 test_artifact_closure,
@@ -2030,12 +2034,12 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 suite.test_targets.len(),
                 suite.binary_targets.len(),
                 CompilerSuiteChildPhaseTimings {
-                    target_preparation_elapsed_ms: 0,
-                    root_execution_elapsed_ms: root_execution_started.elapsed().as_millis(),
+                    target_preparation_elapsed_ms,
+                    root_execution_elapsed_ms: root_execution_phase.finish(),
                 },
             ))
         } else {
-            let target_preparation_started = Instant::now();
+            let target_preparation_phase = PhaseProgress::start("compiler-suite target preparation");
             let mut prepared_children = Vec::with_capacity(shard_executions.len());
             let mut planned_binary_count = 0;
             for (index, shard) in shard_executions.iter().enumerate() {
@@ -2111,8 +2115,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 )?);
                 planned_binary_count += shard.payload.binary_targets.len();
             }
-            let target_preparation_elapsed_ms = target_preparation_started.elapsed().as_millis();
-            let root_execution_started = Instant::now();
+            let target_preparation_elapsed_ms = target_preparation_phase.finish();
+            let root_execution_phase = PhaseProgress::start("compiler-suite root execution");
             let suite_report = run_prepared_compiler_suite_children(
                 prepared_children,
                 &receipt,
@@ -2125,19 +2129,24 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 planned_binary_count,
                 CompilerSuiteChildPhaseTimings {
                     target_preparation_elapsed_ms,
-                    root_execution_elapsed_ms: root_execution_started.elapsed().as_millis(),
+                    root_execution_elapsed_ms: root_execution_phase.finish(),
                 },
             ))
         }
     };
-    let (mut suite_report, planned_target_count, planned_binary_count, child_phase_timings) =
+    let (
+        (mut suite_report, planned_target_count, planned_binary_count, child_phase_timings),
+        scratch_cleanup_elapsed_ms,
+    ) = run_compiler_suite_with_scratch(suite_temporary_directory, || {
         run_compiler_suite_children_with_leases_retained(
             &suite_lease,
             &shard_executions,
             &foundation_executions,
             &toolchain_data_executions,
             run_children,
-        )?;
+        )
+    })?;
+    let aggregation_phase = PhaseProgress::start("compiler-suite result aggregation");
     let completion_failures = compiler_suite_completion_failures(&suite_report, planned_target_count);
     suite_report.failed.extend(completion_failures);
     let native_test_case_totals = suite_report.native_test_case_totals();
@@ -2177,14 +2186,21 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
     );
     let complete_root_success = success && selection.complete_root_evidence;
     let complete_suite_success = success && selection.complete_suite_evidence;
+    let result_aggregation_elapsed_ms = aggregation_phase.finish();
+    let inspection_phase = PhaseProgress::start("compiler-suite store inspection");
+    let store_inspection = store.inspect().map_err(oven_error)?;
+    let store_inspection_elapsed_ms = inspection_phase.finish();
     let timing = CompilerSuiteTimingReport {
         receipt_and_selection_elapsed_ms,
         shared_setup_elapsed_ms,
         target_preparation_elapsed_ms: child_phase_timings.target_preparation_elapsed_ms,
         root_execution_elapsed_ms: child_phase_timings.root_execution_elapsed_ms,
+        scratch_cleanup_elapsed_ms,
+        result_aggregation_elapsed_ms,
+        store_inspection_elapsed_ms,
         total_elapsed_ms: suite_started.elapsed().as_millis(),
     };
-    let store_inspection = store.inspect().map_err(oven_error)?;
+    let publication_phase = PhaseProgress::start("compiler-suite report publication");
     let report_path = output_directory.join("compiler-suite-report.json");
     let report = serde_json::json!({
         "success": success,
@@ -2211,10 +2227,12 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             "roots": fixture_cargo_roots,
         },
         "timing": timing,
+        "timing_scope": "command entry through store inspection; excludes report publication, process teardown and wrapper retention",
         "store": store_inspection,
         "failures": suite_report.failed.clone(),
     });
     write_compiler_suite_report(&report_path, &report)?;
+    publication_phase.finish();
     if !success {
         if matches!(options.format, OvenOutputFormat::Json) {
             print_json(&report)?;
@@ -2488,6 +2506,31 @@ fn compiler_suite_temporary_directory() -> CliResult<LoafTemporaryDirectory> {
 fn compiler_suite_temporary_directory() -> CliResult<LoafTemporaryDirectory> {
     LoafTemporaryDirectory::create(&env::temp_dir(), ".incan-oven-suite-")
         .map_err(|error| CliError::failure(format!("cannot create compiler-suite temporary directory: {error}")))
+}
+
+/// Execute prepared children and reclaim their scratch before returning either success or failure.
+///
+/// Deletion is measured and observable instead of happening silently after the report. If execution and cleanup
+/// both fail, preserve both explanations; a cleanup error alone cannot erase a child's primary failure.
+fn run_compiler_suite_with_scratch<T>(
+    directory: LoafTemporaryDirectory,
+    run: impl FnOnce() -> CliResult<T>,
+) -> CliResult<(T, u128)> {
+    let result = run();
+    let subject = format!("compiler-suite scratch cleanup {}", directory.path().display());
+    let phase = PhaseProgress::start(&subject);
+    let cleanup = directory.close();
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok((value, phase.finish())),
+        (Err(error), Ok(())) => {
+            phase.finish();
+            Err(error)
+        }
+        (Ok(_), Err(error)) => Err(CliError::failure(format!("{subject} failed: {error}"))),
+        (Err(error), Err(cleanup_error)) => Err(CliError::failure(format!(
+            "{error}\n{subject} also failed: {cleanup_error}"
+        ))),
+    }
 }
 
 /// Convert a scheduler-selected path into an absolute environment value before a test changes directory.
@@ -3146,29 +3189,6 @@ fn run_prepared_compiler_suite_children(
     Ok(report)
 }
 
-/// Format a measured phase duration for a progress line.
-///
-/// Seconds with one decimal, because these phases run from seconds to tens of minutes and a reader comparing two
-/// of them cares about the magnitude rather than the millisecond.
-fn elapsed_detail(started: Instant) -> String {
-    format!("{:.1}s", started.elapsed().as_secs_f64())
-}
-
-/// Report one unit of Oven progress on a single line, in the shape every long-running Oven command uses.
-///
-/// A run that goes quiet for forty minutes cannot be told from one that has hung. One line per state change fixes
-/// that, and keeping every command on the same shape — a fixed-width state, the subject, then an optional detail —
-/// means a reader learns to scan it once rather than per command.
-///
-/// It goes to stderr because stdout carries the caller's machine-readable report. A `--format json` run must still
-/// be able to say what it is doing without interleaving prose into the document a caller is parsing.
-fn announce_oven_progress(state: &str, subject: &str, detail: Option<&str>) {
-    match detail {
-        Some(detail) => eprintln!("{state:<10} {subject} ({detail})"),
-        None => eprintln!("{state:<10} {subject}"),
-    }
-}
-
 /// Summarize one native root's terminal result for its announcement line.
 ///
 /// Missing or invalid case evidence is reported separately from process success. A green exit cannot repair
@@ -3819,6 +3839,10 @@ struct CompilerSuiteTimingReport {
     shared_setup_elapsed_ms: u128,
     target_preparation_elapsed_ms: u128,
     root_execution_elapsed_ms: u128,
+    scratch_cleanup_elapsed_ms: u128,
+    result_aggregation_elapsed_ms: u128,
+    store_inspection_elapsed_ms: u128,
+    /// Command entry through store inspection; outer wrapper evidence additionally includes publication and exit.
     total_elapsed_ms: u128,
 }
 
@@ -6393,6 +6417,58 @@ mod tests {
     }
 
     #[test]
+    fn compiler_suite_scratch_is_removed_before_success_and_preparation_error_return()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent = tempfile::tempdir()?;
+        for succeed in [true, false] {
+            let scratch = crate::oven::loaf::LoafTemporaryDirectory::create(parent.path(), "scratch-")?;
+            let path = scratch.path().to_path_buf();
+            let result = super::run_compiler_suite_with_scratch(scratch, || {
+                fs::write(path.join("fixture"), b"owned child scratch")
+                    .map_err(|error| crate::cli::CliError::failure(error.to_string()))?;
+                if succeed {
+                    Ok(7)
+                } else {
+                    Err(crate::cli::CliError::failure("preparation failed"))
+                }
+            });
+            assert!(!path.exists(), "scratch outlived the returned result");
+            if succeed {
+                assert_eq!(result?.0, 7);
+            } else {
+                assert!(
+                    result
+                        .err()
+                        .ok_or("missing preparation error")?
+                        .to_string()
+                        .contains("preparation failed")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compiler_suite_cleanup_error_preserves_the_primary_failure_and_remaining_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent = tempfile::tempdir()?;
+        let scratch = crate::oven::loaf::LoafTemporaryDirectory::create(parent.path(), "scratch-")?;
+        let path = scratch.path().to_path_buf();
+        fs::remove_dir(&path)?;
+        fs::write(&path, b"unexpected replacement")?;
+        let error = super::run_compiler_suite_with_scratch(scratch, || -> crate::cli::CliResult<()> {
+            Err(crate::cli::CliError::failure("child preparation failed"))
+        })
+        .err()
+        .ok_or("cleanup unexpectedly succeeded")?;
+        assert!(error.to_string().contains("child preparation failed"));
+        assert!(error.to_string().contains("scratch cleanup"));
+        assert_eq!(fs::read(path)?, b"unexpected replacement");
+        Ok(())
+    }
+
+    #[test]
     fn compiler_suite_timing_report_keeps_shared_and_root_measurements_distinct()
     -> Result<(), Box<dyn std::error::Error>> {
         let report = serde_json::json!({
@@ -6401,7 +6477,10 @@ mod tests {
                 shared_setup_elapsed_ms: 20,
                 target_preparation_elapsed_ms: 30,
                 root_execution_elapsed_ms: 40,
-                total_elapsed_ms: 100,
+                scratch_cleanup_elapsed_ms: 50,
+                result_aggregation_elapsed_ms: 60,
+                store_inspection_elapsed_ms: 70,
+                total_elapsed_ms: 280,
             },
             "native_test_roots": [CompilerSuiteNativeTestRootReport {
                 package_name: "fixture".to_string(),
@@ -6432,6 +6511,9 @@ mod tests {
         });
 
         assert_eq!(report["timing"]["shared_setup_elapsed_ms"], 20);
+        assert_eq!(report["timing"]["scratch_cleanup_elapsed_ms"], 50);
+        assert_eq!(report["timing"]["store_inspection_elapsed_ms"], 70);
+        assert_eq!(report["timing"]["total_elapsed_ms"], 280);
         assert_eq!(report["native_test_roots"][0]["direct_rustc_bake_elapsed_ms"], 50);
         assert_eq!(report["native_test_roots"][0]["libtest_inventory_elapsed_ms"], 6);
         assert_eq!(report["native_test_roots"][0]["libtest_execution_elapsed_ms"], 7);

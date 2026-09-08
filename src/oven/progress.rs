@@ -112,6 +112,74 @@ pub fn elapsed_detail(started: Instant) -> String {
     format!("{:.1}s", started.elapsed().as_secs_f64())
 }
 
+/// One measured operation with start, liveness and terminal progress on stderr.
+///
+/// Finishing returns its wall duration. An early return drops the guard with a stopped event, so progress cannot
+/// claim a failed or abandoned operation completed. The heartbeat is joined before either terminal event.
+pub(crate) struct PhaseProgress {
+    subject: String,
+    started: Instant,
+    sink: ProgressSink,
+    heartbeat: Option<Heartbeat>,
+    finished: bool,
+}
+
+impl PhaseProgress {
+    /// Start an operation using the shared console cadence.
+    pub(crate) fn start(subject: impl Into<String>) -> Self {
+        Self::with_sink(subject.into(), ProgressSink::stderr(), DEFAULT_HEARTBEAT_INTERVAL)
+    }
+
+    /// Supply a collecting sink and a short cadence for lifecycle tests without changing process-global state.
+    fn with_sink(subject: String, sink: ProgressSink, interval: Duration) -> Self {
+        let started = Instant::now();
+        sink.line(&format!("{:<10} {subject}", "START"));
+        let heartbeat_subject = subject.clone();
+        let heartbeat = Heartbeat::start(sink.clone(), interval, move || {
+            Some(format!(
+                "{:<10} {heartbeat_subject} ({} elapsed)",
+                "WAIT",
+                elapsed_detail(started)
+            ))
+        });
+        Self {
+            subject,
+            started,
+            sink,
+            heartbeat: Some(heartbeat),
+            finished: false,
+        }
+    }
+
+    /// Stop liveness reporting and mark the operation complete before returning its measured milliseconds.
+    pub(crate) fn finish(mut self) -> u128 {
+        drop(self.heartbeat.take());
+        self.finished = true;
+        self.sink.line(&format!(
+            "{:<10} {} ({})",
+            "DONE",
+            self.subject,
+            elapsed_detail(self.started)
+        ));
+        self.started.elapsed().as_millis()
+    }
+}
+
+impl Drop for PhaseProgress {
+    /// An early return must stop the heartbeat without announcing successful completion.
+    fn drop(&mut self) {
+        drop(self.heartbeat.take());
+        if !self.finished {
+            self.sink.line(&format!(
+                "{:<10} {} ({})",
+                "STOPPED",
+                self.subject,
+                elapsed_detail(self.started)
+            ));
+        }
+    }
+}
+
 /// Say what is still in flight on a fixed interval, whether or not anything is producing output.
 ///
 /// This exists because every output-driven signal has the same blind spot. libtest's own slow-case warning is emitted
@@ -175,7 +243,7 @@ impl Drop for Heartbeat {
 
 #[cfg(test)]
 mod tests {
-    use super::{Heartbeat, ProgressSink, announce, elapsed_detail};
+    use super::{Heartbeat, PhaseProgress, ProgressSink, announce, elapsed_detail};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -234,6 +302,34 @@ mod tests {
             0,
             "quick work must stay quiet rather than announce itself on the way out"
         );
+    }
+
+    #[test]
+    fn measured_phase_reports_during_work_and_stops_before_completion() -> Result<(), Box<dyn std::error::Error>> {
+        let sink = ProgressSink::collecting();
+        let phase = PhaseProgress::with_sink("scratch cleanup".into(), sink.clone(), Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(90));
+        assert!(sink.collected().ok_or("missing sink")?.contains("WAIT"));
+        assert!(phase.finish() >= 90);
+        let finished = sink.collected().ok_or("missing sink")?;
+        assert!(finished.lines().last().ok_or("missing completion")?.starts_with("DONE"));
+        std::thread::sleep(Duration::from_millis(40));
+        assert_eq!(sink.collected().ok_or("missing sink")?, finished);
+        Ok(())
+    }
+
+    #[test]
+    fn abandoned_phase_reports_stopped_instead_of_done() -> Result<(), Box<dyn std::error::Error>> {
+        let sink = ProgressSink::collecting();
+        drop(PhaseProgress::with_sink(
+            "failed operation".into(),
+            sink.clone(),
+            Duration::from_secs(30),
+        ));
+        let output = sink.collected().ok_or("missing sink")?;
+        assert!(output.contains("STOPPED"));
+        assert!(!output.contains("DONE"));
+        Ok(())
     }
 
     #[test]
