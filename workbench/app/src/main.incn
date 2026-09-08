@@ -3,10 +3,19 @@
 from rust::regex import Regex
 from orders import quotation_lines
 from presentation import print_quotation
+from settings import load_settings
+
+
+def run() -> Result[None, str]:
+    """Read the order configuration and print a quotation after validating its SKU rule."""
+    settings = load_settings("quote.toml")?
+    pattern = Regex.new(settings.sku_pattern).map_err((error) => f"Could not compile the SKU pattern: {error}")?
+    print_quotation(quotation_lines(settings.first_quantity, settings.second_quantity), pattern)
+    return Ok(None)
 
 
 def main() -> None:
-    """Validate SKU syntax before printing each quoted line and its total."""
-    match Regex.new("^SKU-[0-9]+$"):
-        Ok(pattern) => print_quotation(quotation_lines(), pattern)
-        Err(error) => println(f"Could not compile the SKU pattern: {error}")
+    """Print the configured quotation or the concrete input error."""
+    match run():
+        Ok(_) => pass
+        Err(error) => println(error)

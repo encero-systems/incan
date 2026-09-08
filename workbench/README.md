@@ -6,11 +6,11 @@ The project prints an order quotation from a small catalog. The application and 
 
 - `catalog/`: product data and line-price calculation.
 - `pricing/`: a package consumer that produces a typed quotation.
-- `app/`: the executable, with Rust regex used for SKU validation.
+- `app/`: the executable, with typed TOML settings and Rust regex used for SKU validation.
 
 Use the compiler built from the owning hot-path worktree. Keep its exact path, revision, toolchain and SDK/provider identity in the run record. No installed/global toolchain or Cargo cache should be modified to run this project.
 
-Initial source is prepared; native baseline and the Cargo removal are still pending RFC 123 acceptance. There is no claim that this project currently builds or meets the time budget.
+Initial source is prepared; native baseline and the Cargo removal are still pending RFC 123 acceptance. The TOML settings use the accepted #1438 API. There is no claim that the complete project currently builds or meets the time budget.
 
 ## Working loop
 
@@ -30,4 +30,4 @@ SKU-200: 3 units, 375 cents
 total: 1075 cents
 ```
 
-Change `catalog/src/sample.incn` for the first implementation-edit experiment. Change `pricing/src/quotation.incn` for a public API edit. Keep previous output/store state so we can observe actual invalidation.
+Change `app/quote.toml` for a runtime-only edit that should rebuild nothing. The application reads this file from its working directory and rejects negative quantities. Change `catalog/src/sample.incn` for the first implementation-edit experiment. Change `pricing/src/quotation.incn` for a public API edit. Keep previous output/store state so we can observe actual invalidation.
