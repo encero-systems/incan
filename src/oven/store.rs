@@ -354,7 +354,7 @@ impl OvenStore {
 
     /// Publish an immutable payload after capacity admission and atomic same-filesystem staging.
     pub fn publish(&self, request: &OvenArtifactPublishRequest) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, false, true)
+        self.publish_internal(request, true)
     }
 
     /// Publish a portable package constituent under its exact receipt-bound identity.
@@ -366,26 +366,13 @@ impl OvenStore {
         &self,
         request: &OvenArtifactPublishRequest,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, false, false)
+        self.publish_internal(request, false)
     }
 
-    /// Publish one immutable result owned by the explicit compatibility baker.
-    ///
-    /// The caller must already have reserved the remaining aggregate/domain allowance through
-    /// [`Self::reserve_legacy_cargo_publisher_capacity`]. This narrow entry point lets that owner finish its atomic
-    /// hand-off while ordinary publishers refuse to overlap its private staging allocation.
-    pub(crate) fn publish_from_legacy_cargo(
+    /// Admit and atomically publish one validated native artifact under the store lock.
+    fn publish_internal(
         &self,
         request: &OvenArtifactPublishRequest,
-    ) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, true, true)
-    }
-
-    /// Implement one publication, admitting the active legacy publisher only through its named transition boundary.
-    fn publish_with_legacy_cargo_publisher_permission(
-        &self,
-        request: &OvenArtifactPublishRequest,
-        allow_legacy_cargo_publisher: bool,
         reuse_equivalent_direct_plan: bool,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
         let domain = normalized_domain(&request.domain)?;
@@ -415,9 +402,7 @@ impl OvenStore {
             source,
         })?;
         self.reclaim_stale_staging()?;
-        if !allow_legacy_cargo_publisher {
-            self.reject_active_legacy_cargo_publisher()?;
-        }
+        self.reject_active_legacy_cargo_publisher()?;
 
         let entry_path = self.entry_root_for_kind(&manifest.identity, manifest.kind);
         if entry_path.exists() {
@@ -571,42 +556,24 @@ impl OvenStore {
         &self,
         requests: &[OvenArtifactPublishRequest],
     ) -> Result<Vec<OvenArtifactManifest>, OvenStoreError> {
-        self.publish_batch_with_legacy_cargo_publisher_permission(requests, false)
+        self.publish_batch_internal(requests)
     }
 
-    /// Publish a related batch from the explicitly named `legacy_cargo` transition publisher.
-    ///
-    /// This is intentionally not a general bypass: the caller has to reserve the full transient aggregate before
-    /// creating its private staging and ordinary publications are rejected for that interval.
-    pub(crate) fn publish_batch_from_legacy_cargo(
+    /// Publish a validated native batch under the same capacity and atomic commit rules as individual artifacts.
+    fn publish_batch_internal(
         &self,
         requests: &[OvenArtifactPublishRequest],
     ) -> Result<Vec<OvenArtifactManifest>, OvenStoreError> {
-        self.publish_batch_with_legacy_cargo_publisher_permission(requests, true)
-    }
-
-    /// Implement a related publication while allowing only the active named transition publisher to overlap its
-    /// reserved private staging allocation.
-    fn publish_batch_with_legacy_cargo_publisher_permission(
-        &self,
-        requests: &[OvenArtifactPublishRequest],
-        allow_legacy_cargo_publisher: bool,
-    ) -> Result<Vec<OvenArtifactManifest>, OvenStoreError> {
-        self.publish_batch_with_legacy_cargo_publisher_permission_and_commit_hook(
-            requests,
-            allow_legacy_cargo_publisher,
-            || Ok(()),
-        )
+        self.publish_batch_with_commit_hook(requests, || Ok(()))
     }
 
     /// Implement one related publication with an internal hook at the compiler-suite authority commit point.
     ///
     /// Production supplies a no-op hook. Focused tests interrupt this exact boundary after durable members but before
     /// the index rename, proving that the only executable authority is committed last.
-    fn publish_batch_with_legacy_cargo_publisher_permission_and_commit_hook(
+    fn publish_batch_with_commit_hook(
         &self,
         requests: &[OvenArtifactPublishRequest],
-        allow_legacy_cargo_publisher: bool,
         before_authority_commit: impl FnOnce() -> Result<(), OvenStoreError>,
     ) -> Result<Vec<OvenArtifactManifest>, OvenStoreError> {
         if requests.is_empty() {
@@ -660,9 +627,7 @@ impl OvenStore {
             source,
         })?;
         self.reclaim_stale_staging()?;
-        if !allow_legacy_cargo_publisher {
-            self.reject_active_legacy_cargo_publisher()?;
-        }
+        self.reject_active_legacy_cargo_publisher()?;
 
         let mut pending = Vec::new();
         for publication in &prepared {
@@ -1213,186 +1178,6 @@ impl OvenStore {
             source,
         })?;
         self.prune_with_superseded_release_reclamation(false)
-    }
-
-    /// Reserve the remaining aggregate and compatibility-domain allowance for the explicit compatibility baker.
-    ///
-    /// A live lease must never be pruned. The old all-or-nothing reservation treated even a tiny live Loaf as a
-    /// reason to reject the next serialized bake, which made debug/release preparation impossible in one process.
-    /// Instead, inactive entries are reclaimed as before, active entries stay intact, and Cargo's staging monitor is
-    /// capped at the exact remaining aggregate/domain capacity. The publisher lock excludes another staging writer
-    /// while that cap is in force, so this remains a hard physical bound rather than post-hoc accounting.
-    pub(crate) fn reserve_legacy_cargo_publisher_capacity(
-        &self,
-        domain: &str,
-    ) -> Result<OvenLegacyCargoPublisherReservation, OvenStoreError> {
-        if domain.trim().is_empty() {
-            return Err(OvenStoreError::InvalidInput {
-                field: "compatibility baker domain",
-                message: "must not be empty".to_string(),
-            });
-        }
-        self.ensure_layout()?;
-        let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
-        manager.lock().map_err(|source| OvenStoreError::Io {
-            path: self.root.join(MANAGER_LOCK_FILE),
-            source,
-        })?;
-        self.reclaim_stale_staging()?;
-        // Entries sealed by a superseded compiler release can never be reused, so they are removed before the
-        // remaining allowance is measured. Without this a store that merely fits its retention policy can still
-        // starve a large build of transient staging space with bytes nothing will ever read again.
-        if self.holds_superseded_release_entry(domain)? {
-            self.reclaim_superseded_release_entries(domain, true)?;
-        }
-        // A reservation is not itself evidence that an existing immutable entry is obsolete. Keep every entry that
-        // already fits policy so a debug/release sibling or a second project can reuse it; the measured hand-off
-        // below is where the actual pending closure is admitted and any necessary inactive reclamation occurs.
-        // The staging monitor still receives only the remaining aggregate/domain allowance, so this preserves the
-        // hard transient bound without turning each explicit bake into a cache flush.
-        let report = self.prune_to_limits(None, 0, 0, true)?;
-        let entries = self.collect_entries_for_admission()?;
-        let retained_physical_bytes = entries.iter().map(|entry| entry.physical_bytes).sum::<u64>();
-        let (_, retained_domain_physical_bytes) = domain_totals(&entries, domain);
-        let aggregate_remaining = self.limits.max_physical_bytes.saturating_sub(retained_physical_bytes);
-        let domain_remaining = self
-            .limits
-            .max_domain_physical_bytes
-            .saturating_sub(retained_domain_physical_bytes);
-        let transient_limit_bytes = aggregate_remaining.min(domain_remaining);
-        if transient_limit_bytes == 0 {
-            return Err(OvenStoreError::CapacityBlocked {
-                domain: domain.to_string(),
-                message: format!(
-                    "active retained physical bytes leave no compatibility-baker staging capacity; skipped active entries {:?}. Run `incan oven store inspect`, then `incan oven store prune --max-physical-bytes <bytes>` to reclaim inactive artifacts before retrying; active leases remain protected",
-                    report.skipped_active_entries,
-                ),
-            });
-        }
-        Ok(OvenLegacyCargoPublisherReservation {
-            prune_report: report,
-            transient_limit_bytes,
-        })
-    }
-
-    /// Refuse the named publisher's final hand-off when its live private staging plus every new immutable file would
-    /// exceed the aggregate physical policy.
-    ///
-    /// Materialized files beneath `legacy-cargo-staging` are hard-linked into the atomic entry staging, so they are
-    /// counted once here. Sources outside that private tree are copied by [`write_staged_entry`] and are reserved
-    /// once per digest/executable pair, exactly as the batch writer shares them. The publisher reservation can retain
-    /// leased entries while capping staging at the remaining capacity, so this hand-off includes those entries again
-    /// and remains safe if another explicit transition owner reuses the primitive.
-    pub(crate) fn ensure_legacy_cargo_batch_physical_capacity(
-        &self,
-        staging: &Path,
-        requests: &[OvenArtifactPublishRequest],
-    ) -> Result<(), OvenStoreError> {
-        if requests.is_empty() {
-            return Err(OvenStoreError::InvalidInput {
-                field: "internal compatibility publication batch",
-                message: "must contain at least one immutable artifact".to_string(),
-            });
-        }
-        self.ensure_layout()?;
-        let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
-        manager.lock().map_err(|source| OvenStoreError::Io {
-            path: self.root.join(MANAGER_LOCK_FILE),
-            source,
-        })?;
-        self.reclaim_stale_staging()?;
-        let publisher_root = self.root.join(LEGACY_CARGO_STAGING_DIRECTORY);
-        let publisher_root = fs::canonicalize(&publisher_root).map_err(|source| OvenStoreError::Io {
-            path: publisher_root,
-            source,
-        })?;
-        let staging = fs::canonicalize(staging).map_err(|source| OvenStoreError::Io {
-            path: staging.to_path_buf(),
-            source,
-        })?;
-        if !staging.starts_with(&publisher_root) {
-            return Err(OvenStoreError::InvalidInput {
-                field: "internal compatibility publisher staging",
-                message: format!(
-                    "{} must remain below the private publisher root {}",
-                    staging.display(),
-                    publisher_root.display()
-                ),
-            });
-        }
-        let mut observed_physical = unique_publisher_staging_physical_bytes(&staging)?;
-        observed_physical = observed_physical.saturating_add(
-            self.collect_entries_for_admission()?
-                .iter()
-                .map(|entry| entry.physical_bytes)
-                .sum::<u64>(),
-        );
-        let mut copied_materializations = BTreeSet::new();
-        for request in requests {
-            let manifest = self.manifest_for_publication(request)?;
-            observed_physical = observed_physical.saturating_add(round_physical(
-                u64::try_from(request.payload.len()).map_err(|_| OvenStoreError::InvalidInput {
-                    field: "internal compatibility publication payload",
-                    message: "length does not fit supported physical accounting".to_string(),
-                })?,
-            ));
-            let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| OvenStoreError::Manifest {
-                path: PathBuf::from(ARTIFACT_MANIFEST_FILE),
-                message: error.to_string(),
-            })?;
-            let manifest_length = u64::try_from(manifest_bytes.len()).map_err(|_| OvenStoreError::Manifest {
-                path: PathBuf::from(ARTIFACT_MANIFEST_FILE),
-                message: "manifest length does not fit supported physical accounting".to_string(),
-            })?;
-            observed_physical = observed_physical
-                .saturating_add(round_physical(manifest_length))
-                // `write_staged_entry` adds the trailing manifest newline and the mutable access timestamp.
-                .saturating_add(round_physical(1))
-                .saturating_add(round_physical(20));
-            // `manifest_for_publication` has just read and digest-validated this request's files. Capacity needs the
-            // canonical source location plus the resulting manifest accounting, not a second full content read.
-            // `publish_batch` validates them again at the actual atomic hand-off, so a source mutation between these
-            // phases still fails closed rather than changing the admitted identity.
-            let source_paths = request
-                .materialized_files
-                .iter()
-                .map(|file| {
-                    let relative = normalized_materialized_relative_path(&file.relative_path)?;
-                    Ok((relative, file.source_path.clone()))
-                })
-                .collect::<Result<BTreeMap<_, _>, OvenStoreError>>()?;
-            for file in &manifest.materialized_files {
-                let source_path = source_paths
-                    .get(&file.relative_path)
-                    .ok_or_else(|| OvenStoreError::Integrity {
-                        identity: manifest.identity.clone(),
-                        message: format!(
-                            "validated manifest path `{}` has no publication source",
-                            file.relative_path
-                        ),
-                    })?;
-                let source = fs::canonicalize(source_path).map_err(|source_error| OvenStoreError::Io {
-                    path: source_path.clone(),
-                    source: source_error,
-                })?;
-                if source.starts_with(&publisher_root)
-                    || !copied_materializations.insert((file.digest.clone(), file.executable))
-                {
-                    continue;
-                }
-                observed_physical = observed_physical.saturating_add(round_physical(file.logical_bytes));
-            }
-        }
-        if observed_physical <= self.limits.max_physical_bytes {
-            return Ok(());
-        }
-        Err(OvenStoreError::CapacityBlocked {
-            domain: "legacy-cargo-publisher".to_string(),
-            message: format!(
-                "private staging plus immutable batch reserve {observed_physical} physical bytes, exceeding aggregate allowance {}",
-                self.limits.max_physical_bytes
-            ),
-        })
     }
 
     /// Ensure published entries leave enough capacity for the pending immutable artifact.
@@ -4027,19 +3812,15 @@ mod tests {
         let shard_identity = store.manifest_for_publication(&shard)?.identity;
         let reached_commit_point = Cell::new(false);
 
-        let interrupted = store.publish_batch_with_legacy_cargo_publisher_permission_and_commit_hook(
-            &[index.clone(), shard.clone()],
-            false,
-            || {
-                reached_commit_point.set(true);
-                assert!(store.entry_root(&shard_identity).is_dir());
-                assert!(!store.entry_root(&index_identity).exists());
-                Err(OvenStoreError::InvalidInput {
-                    field: "test compiler-suite commit hook",
-                    message: "simulated interruption before authority commit".to_string(),
-                })
-            },
-        );
+        let interrupted = store.publish_batch_with_commit_hook(&[index.clone(), shard.clone()], false, || {
+            reached_commit_point.set(true);
+            assert!(store.entry_root(&shard_identity).is_dir());
+            assert!(!store.entry_root(&index_identity).exists());
+            Err(OvenStoreError::InvalidInput {
+                field: "test compiler-suite commit hook",
+                message: "simulated interruption before authority commit".to_string(),
+            })
+        });
 
         assert!(matches!(interrupted, Err(OvenStoreError::InvalidInput { .. })));
         assert!(reached_commit_point.get());

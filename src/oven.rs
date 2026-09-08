@@ -5,10 +5,8 @@
 //! directly. It must remain a narrow, removable boundary rather than growing into a Rust orchestration layer for
 //! the product workflow.
 //!
-//! Oven reads frozen Cargo declarations only as compatibility evidence. Receipt and consumer paths do not invoke
-//! Cargo, inspect a target directory, or claim to have performed native package resolution. The explicitly named
-//! `legacy_cargo` baker is the sole Alpha bootstrap boundary that may invoke Cargo. Later Oven store and executor
-//! stages consume portable identities and sealed Loafs rather than project-local build paths.
+//! Receipts and executors consume checked identities and selected native inputs. Cargo publication, frozen-project
+//! adoption and its plan producers have been removed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
@@ -23,8 +21,8 @@ use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectMan
 
 pub(crate) mod compiler_suite_env;
 pub(crate) mod interop;
-pub mod legacy_cargo;
 pub mod loaf;
+pub mod native_contract;
 pub mod native_test;
 mod process;
 pub mod progress;
@@ -118,17 +116,6 @@ pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 6 * 1024 
 /// The complete LSP closure measures 3,271,283,026 logical bytes on Linux;
 /// 4 GiB leaves practical policy headroom without relaxing its physical bound.
 pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-
-/// Explicit, portable build facts for one frozen-project import.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OvenImportRequest {
-    project_root: PathBuf,
-    target: String,
-    toolchain: String,
-    profile: String,
-    features: Vec<String>,
-    supplemental_source_digests: BTreeMap<String, String>,
-}
 
 /// Compiler-owned request to receipt generated Rust without making Cargo metadata a normal-command dependency.
 ///
@@ -266,40 +253,6 @@ impl OvenCompilerSuiteRequest {
     }
 }
 
-impl OvenImportRequest {
-    /// Construct a request whose target and toolchain are caller-provided evidence rather than host defaults.
-    #[must_use]
-    pub fn new(
-        project_root: impl AsRef<Path>,
-        target: impl Into<String>,
-        toolchain: impl Into<String>,
-        profile: impl Into<String>,
-        features: Vec<String>,
-    ) -> Self {
-        Self {
-            project_root: project_root.as_ref().to_path_buf(),
-            target: target.into(),
-            toolchain: toolchain.into(),
-            profile: profile.into(),
-            features,
-            supplemental_source_digests: BTreeMap::new(),
-        }
-    }
-
-    /// Add immutable source evidence not expressed by Cargo declarations, such as a generated Incan test harness.
-    #[must_use]
-    pub fn with_supplemental_source_digest(mut self, name: impl Into<String>, digest: impl Into<String>) -> Self {
-        self.supplemental_source_digests.insert(name.into(), digest.into());
-        self
-    }
-
-    /// Return the root whose frozen declarations are imported.
-    #[must_use]
-    pub fn project_root(&self) -> &Path {
-        &self.project_root
-    }
-}
-
 /// Stable package identity shared by the imported Cargo package and optional Incan project declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenProjectIdentity {
@@ -353,8 +306,6 @@ pub const OVEN_COMPILER_TEST_PROFILE: &str = "oven-test";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OvenCompatibilityKind {
-    /// One root Cargo package with an available lock file; virtual workspaces are not supported in Alpha.
-    FrozenCargoPackage,
     /// Generated Rust from one checked Incan project, selected without a Cargo consumer process or target directory.
     GeneratedIncanProject,
     /// The repository compiler's source-backed Rust libtest suite, executed by a receipt-bound direct-rustc runner.
@@ -481,40 +432,6 @@ impl OvenReceipt {
             actual: actual_build_unit,
         })
     }
-}
-
-/// Import a frozen root Cargo package without resolving dependencies or launching Cargo.
-pub fn import_frozen_project(request: &OvenImportRequest) -> Result<OvenReceipt, OvenError> {
-    let cargo_manifest_path = request.project_root.join("Cargo.toml");
-    let cargo_lock_path = request.project_root.join("Cargo.lock");
-    let cargo_manifest = read_required_input(&cargo_manifest_path, "Cargo.toml")?;
-    let cargo_lock = read_required_input(&cargo_lock_path, "Cargo.lock")?;
-    let project = parse_cargo_package(&cargo_manifest_path, &cargo_manifest)?;
-    validate_cargo_lock(&cargo_lock_path, &cargo_lock)?;
-    let incan_manifest_digest = validate_optional_incan_identity(&request.project_root, &project)?;
-    let sources = OvenSourceEvidence {
-        cargo_manifest_digest: Some(digest_content(&cargo_manifest)),
-        cargo_lock_digest: Some(digest_content(&cargo_lock)),
-        incan_manifest_digest,
-        supplemental_digests: normalized_supplemental_source_digests(request)?,
-        build_unit_inputs: BTreeMap::new(),
-    };
-    let intent = normalized_intent(request)?;
-    let compatibility = OvenCompatibility {
-        kind: OvenCompatibilityKind::FrozenCargoPackage,
-        cargo_input_only: true,
-    };
-    let identity = receipt_identity(&project, &sources, &intent, &compatibility)?;
-    let build_unit_identity = build_unit_identity(&intent, &compatibility, &BTreeMap::new())?;
-    Ok(OvenReceipt {
-        schema_version: OVEN_RECEIPT_SCHEMA_VERSION,
-        identity,
-        build_unit_identity,
-        project,
-        sources,
-        intent,
-        compatibility,
-    })
 }
 
 /// Receipt one generated Incan/Rust source closure without reading Cargo metadata or launching Cargo.
@@ -758,40 +675,6 @@ fn read_required_input(path: &Path, file_name: &'static str) -> Result<String, O
             source,
         }),
     }
-}
-
-/// Extract a root package identity without resolving a Cargo dependency graph.
-fn parse_cargo_package(path: &Path, content: &str) -> Result<OvenProjectIdentity, OvenError> {
-    let document = toml::from_str::<toml::Value>(content).map_err(|error| OvenError::InvalidCargoManifest {
-        path: path.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    let package =
-        document
-            .get("package")
-            .and_then(toml::Value::as_table)
-            .ok_or_else(|| OvenError::UnsupportedCargoPackage {
-                path: path.to_path_buf(),
-                message: "must declare one [package] table; virtual workspaces are not supported".to_string(),
-            })?;
-    let workspace_package = document
-        .get("workspace")
-        .and_then(toml::Value::as_table)
-        .and_then(|workspace| workspace.get("package"))
-        .and_then(toml::Value::as_table);
-    let name = package_string_field(path, package, workspace_package, "name")?;
-    let version = package_string_field(path, package, workspace_package, "version")?;
-    Ok(OvenProjectIdentity { name, version })
-}
-
-/// Validate that the imported lock retains Cargo's TOML-based frozen representation.
-fn validate_cargo_lock(path: &Path, content: &str) -> Result<(), OvenError> {
-    toml::from_str::<toml::Value>(content)
-        .map(|_| ())
-        .map_err(|error| OvenError::InvalidCargoLock {
-            path: path.to_path_buf(),
-            message: error.to_string(),
-        })
 }
 
 /// Resolve one root package field, including explicit Cargo workspace-package inheritance.

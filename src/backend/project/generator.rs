@@ -4,8 +4,6 @@
 //! Its responsibilities are split across sibling modules:
 //!
 //! - **This module** — struct definition, setters, and `generate*()` methods
-//! - [`super::cargo_toml`] — `Cargo.toml` rendering (`generate_cargo_toml`, `format_dependency_spec`)
-//! - [`super::runner`] — Cargo-lock projection support for the explicit publisher boundary
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -25,55 +23,6 @@ use sha2::{Digest as _, Sha256};
 use toml_edit::{DocumentMut, Item, value};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
-pub(crate) const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
-
-/// Hash Cargo configuration files visible from one project without making their absolute roots part of the identity.
-pub(crate) fn cargo_config_identity(start: &Path) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"incan-cargo-config-v2\0");
-    let mut seen = BTreeSet::new();
-    let absolute_start = if start.is_absolute() {
-        start.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|current| current.join(start))
-            .unwrap_or_else(|_| start.to_path_buf())
-    };
-    for ancestor in absolute_start.ancestors() {
-        for file_name in ["config.toml", "config"] {
-            let path = ancestor.join(".cargo").join(file_name);
-            if !seen.insert(path.clone()) {
-                continue;
-            }
-            if let Ok(payload) = fs::read(&path) {
-                hasher.update(file_name.as_bytes());
-                hasher.update(b"\0");
-                hasher.update(payload);
-                hasher.update(b"\0");
-            }
-        }
-    }
-    let cargo_home = std::env::var_os("CARGO_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")));
-    if let Some(cargo_home) = cargo_home {
-        for file_name in ["config.toml", "config"] {
-            let path = cargo_home.join(file_name);
-            if !seen.insert(path.clone()) {
-                continue;
-            }
-            if let Ok(payload) = fs::read(path) {
-                hasher.update(b"cargo-home\0");
-                hasher.update(file_name.as_bytes());
-                hasher.update(b"\0");
-                hasher.update(payload);
-                hasher.update(b"\0");
-            }
-        }
-    }
-    hex::encode(hasher.finalize())
-}
 
 /// One checked dependency edge and its effective projected artifact root.
 struct ProjectedArtifactEdge {
@@ -286,19 +235,9 @@ pub struct ProjectGenerator {
     pub(super) dev_dependencies: Vec<DependencySpec>,
     /// Whether dev dependencies should be emitted.
     pub(super) include_dev_dependencies: bool,
-    /// Optional Cargo.lock payload to materialize.
-    pub(super) cargo_lock_payload: Option<String>,
-    /// Canonical source-less Cargo root that authorizes a caller-local lock projection.
-    pub(super) cargo_lock_projection_root: Option<String>,
-    /// Whether generation must remove any prior Cargo.lock before Cargo resolves without canonical authority.
-    pub(super) clear_cargo_lock: bool,
-    /// Extra cargo policy flags (e.g. --locked, --frozen).
-    pub(super) cargo_policy_flags: Vec<String>,
-    /// Optional shared Cargo target directory for generated Rust projects.
-    pub(super) cargo_target_dir_override: Option<PathBuf>,
     /// Stable digest of the generated root crate source used to bound shared-target root artifacts.
     pub(super) generated_source_identity: RwLock<Option<String>>,
-    /// Active-use lease retained while Cargo may read or write one managed target domain.
+    /// Active-use lease for the generated native output domain.
     #[cfg(feature = "cli")]
     pub(super) generated_cache_lease: RwLock<Option<GeneratedCacheLease>>,
     /// Compatibility-domain identity used to validate project-local run publications.
@@ -447,16 +386,6 @@ impl ProjectGenerator {
         self.package_license = license;
     }
 
-    /// Return the Cargo package name selected for the generated manifest and lockfile root.
-    pub(super) fn cargo_package_name(&self) -> &str {
-        self.package_name.as_deref().unwrap_or(&self.name)
-    }
-
-    /// Return the authored Cargo package version or the compiler-version fallback.
-    pub(super) fn cargo_package_version(&self) -> &str {
-        self.package_version.as_deref().unwrap_or(crate::version::INCAN_VERSION)
-    }
-
     /// Set resolved Rust dependencies.
     pub fn set_dependencies(&mut self, dependencies: Vec<DependencySpec>) {
         self.dependencies = dependencies;
@@ -479,42 +408,6 @@ impl ProjectGenerator {
     /// artifact.
     pub(crate) fn enable_companion_library_target(&mut self) {
         self.companion_library_target = true;
-    }
-
-    /// Provide a Cargo.lock payload to write alongside Cargo.toml.
-    pub fn set_cargo_lock_payload(&mut self, payload: Option<String>) {
-        self.cargo_lock_payload = payload;
-    }
-
-    /// Select the exact canonical root whose lock payload Cargo may project onto this generated manifest.
-    pub fn set_cargo_lock_projection_root(&mut self, root: Option<String>) {
-        self.cargo_lock_projection_root = root;
-    }
-
-    /// Require the next generated Cargo invocation to start without a previously projected Cargo.lock.
-    pub fn set_clear_cargo_lock(&mut self, clear: bool) {
-        self.clear_cargo_lock = clear;
-    }
-
-    /// Build the validated pure projection descriptor for the configured canonical seed.
-    pub(super) fn cargo_lock_projection(&self) -> io::Result<Option<super::lock_projection::CargoLockProjection>> {
-        let Some(root) = &self.cargo_lock_projection_root else {
-            return Ok(None);
-        };
-        let payload = self.cargo_lock_payload.clone().ok_or_else(|| {
-            io::Error::other("generated Cargo lock projection root was configured without a canonical payload")
-        })?;
-        super::lock_projection::CargoLockProjection::new(payload, root.clone()).map(Some)
-    }
-
-    /// Set additional cargo policy flags (e.g. --locked, --frozen).
-    pub fn set_cargo_policy_flags(&mut self, flags: Vec<String>) {
-        self.cargo_policy_flags = flags;
-    }
-
-    /// Set the Cargo target directory used by generated Rust projects.
-    pub fn set_cargo_target_dir_override(&mut self, target_dir: Option<PathBuf>) {
-        self.cargo_target_dir_override = target_dir;
     }
 
     /// Retain the managed-cache lease for as long as this generator can invoke Cargo.
@@ -560,7 +453,7 @@ impl ProjectGenerator {
         }
     }
 
-    /// Override the Rust edition used in Cargo.toml.
+    /// Select the Rust edition for emitted native source.
     pub fn set_rust_edition(&mut self, edition: Option<String>) {
         self.rust_edition = edition;
     }
@@ -659,442 +552,9 @@ impl ProjectGenerator {
         self.sdk_artifact_projections = projections;
     }
 
-    /// Materialize project-owned views of compiled libraries whose private SDK paths belong to an older cache root.
-    ///
-    /// Neither the published library artifact nor either SDK cache generation is mutated. The generated consumer
-    /// instead links a deterministic shadow containing the same Rust source and public manifest with only its private
-    /// SDK Cargo path and relocatable descriptor projected onto the logically equivalent active inventory artifact.
-    pub(super) fn dependencies_with_sdk_rebindings(&self) -> io::Result<(Vec<DependencySpec>, Vec<DependencySpec>)> {
-        if self.sdk_artifact_projections.is_empty() {
-            return Ok((self.dependencies.clone(), self.dev_dependencies.clone()));
-        }
-        let projected = self.sdk_projection_shadow_roots()?;
-        let mut materialized = BTreeSet::new();
-        let mut visiting = BTreeSet::new();
-        for artifact_root in projected.keys() {
-            self.materialize_sdk_rebound_artifact(artifact_root, &projected, &mut visiting, &mut materialized)?;
-        }
-        let redirect = |dependencies: &[DependencySpec]| {
-            dependencies
-                .iter()
-                .cloned()
-                .map(|mut dependency| {
-                    if let DependencySource::Path { path } = &mut dependency.source
-                        && let Some((_, shadow)) = projected.get(&normalize_artifact_path(path))
-                    {
-                        *path = shadow.clone();
-                    }
-                    dependency
-                })
-                .collect()
-        };
-        Ok((redirect(&self.dependencies), redirect(&self.dev_dependencies)))
-    }
-
-    /// Return the exact normal dependency specifications used by generated Cargo metadata after SDK projection.
-    pub(crate) fn effective_dependencies(&self) -> io::Result<Vec<DependencySpec>> {
-        self.dependencies_with_sdk_rebindings()
-            .map(|(dependencies, _)| dependencies)
-    }
-
-    /// Assign deterministic consumer-owned shadow roots to the complete compiled-artifact projection closure.
-    fn sdk_projection_shadow_roots(&self) -> io::Result<BTreeMap<PathBuf, (LibraryArtifactMetadata, PathBuf)>> {
-        let shadow_parent = self
-            .output_dir
-            .parent()
-            .unwrap_or(self.output_dir.as_path())
-            .join(".incan-sdk-rebound");
-        let mut projection_identity = Sha256::new();
-        projection_identity.update(b"incan-sdk-artifact-projection/v4\0");
-        let mut rebindings = self.sdk_dependency_rebindings.iter().collect::<Vec<_>>();
-        rebindings.sort_by(|left, right| {
-            (
-                &left.containing_artifact.crate_root,
-                &left.dependency_key,
-                &left.active_crate_root,
-            )
-                .cmp(&(
-                    &right.containing_artifact.crate_root,
-                    &right.dependency_key,
-                    &right.active_crate_root,
-                ))
-        });
-        for rebinding in rebindings {
-            projection_identity.update(rebinding.containing_artifact.crate_root.as_os_str().as_encoded_bytes());
-            projection_identity.update(b"\0");
-            projection_identity.update(rebinding.dependency_key.as_bytes());
-            projection_identity.update(b"\0");
-            projection_identity.update(rebinding.active_crate_root.as_os_str().as_encoded_bytes());
-            projection_identity.update(b"\0");
-            let active_digest = digest_provider_artifact(&rebinding.active_crate_root).map_err(io::Error::other)?;
-            projection_identity.update(active_digest.as_bytes());
-            projection_identity.update(b"\0");
-        }
-        let mut sdk_path_dependencies = self.sdk_path_dependencies.iter().collect::<Vec<_>>();
-        sdk_path_dependencies.sort_by(|left, right| {
-            (&left.crate_name, left.package.as_deref()).cmp(&(&right.crate_name, right.package.as_deref()))
-        });
-        for dependency in sdk_path_dependencies {
-            let DependencySource::Path { path } = &dependency.source else {
-                continue;
-            };
-            projection_identity.update(dependency.crate_name.as_bytes());
-            projection_identity.update(b"\0");
-            projection_identity.update(
-                dependency
-                    .package
-                    .as_deref()
-                    .unwrap_or(&dependency.crate_name)
-                    .as_bytes(),
-            );
-            projection_identity.update(b"\0");
-            projection_identity.update(path.as_os_str().as_encoded_bytes());
-            projection_identity.update(b"\0");
-            let active_digest = digest_provider_artifact(path).map_err(io::Error::other)?;
-            projection_identity.update(active_digest.as_bytes());
-            projection_identity.update(b"\0");
-        }
-        let projection_identity = projection_identity.finalize();
-        let mut projected = BTreeMap::new();
-        for projection in &self.sdk_artifact_projections {
-            let artifact_root = normalize_artifact_path(&projection.artifact.crate_root);
-            let artifact_digest = digest_provider_artifact(&artifact_root).map_err(io::Error::other)?;
-            let mut hasher = Sha256::new();
-            hasher.update(b"incan-sdk-artifact-shadow/v4\0");
-            hasher.update(artifact_digest.as_bytes());
-            hasher.update(b"\0");
-            hasher.update(projection_identity.as_slice());
-            let shadow_id = hex::encode(&hasher.finalize()[..12]);
-            let shadow_root = shadow_parent.join(format!(
-                "{}-{shadow_id}",
-                sanitize_artifact_name(&projection.artifact.manifest_name)
-            ));
-            projected.insert(artifact_root, (projection.artifact.clone(), shadow_root));
-        }
-        Ok(projected)
-    }
-
-    /// Copy one immutable compiled artifact after recursively materializing every projected public child.
-    fn materialize_sdk_rebound_artifact(
-        &self,
-        artifact_root: &Path,
-        projected: &BTreeMap<PathBuf, (LibraryArtifactMetadata, PathBuf)>,
-        visiting: &mut BTreeSet<PathBuf>,
-        materialized: &mut BTreeSet<PathBuf>,
-    ) -> io::Result<PathBuf> {
-        let artifact_root = normalize_artifact_path(artifact_root);
-        let Some((artifact, shadow_root)) = projected.get(&artifact_root) else {
-            return Err(io::Error::other(format!(
-                "compiled artifact {} is absent from the SDK projection closure",
-                artifact_root.display()
-            )));
-        };
-        if materialized.contains(&artifact_root) {
-            return Ok(shadow_root.clone());
-        }
-        if !visiting.insert(artifact_root.clone()) {
-            return Err(io::Error::other("compiled SDK projection graph contains a cycle"));
-        }
-        let original_manifest = LibraryManifest::read_from_path(&artifact.manifest_path).map_err(io::Error::other)?;
-        for dependency in &original_manifest.contract_metadata.provider.provider_dependencies {
-            if dependency.kind != ProviderDependencyKind::PublicPackage {
-                continue;
-            }
-            let child_root = normalize_artifact_path(&artifact_root.join(&dependency.relative_artifact_path));
-            if projected.contains_key(&child_root) {
-                self.materialize_sdk_rebound_artifact(&child_root, projected, visiting, materialized)?;
-            }
-        }
-
-        let shadow_parent = shadow_root
-            .parent()
-            .ok_or_else(|| io::Error::other("SDK projection shadow has no parent directory"))?;
-        fs::create_dir_all(shadow_parent)?;
-        let shadow_name = shadow_root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| io::Error::other("SDK projection shadow has no valid file name"))?;
-        let lock_path = shadow_parent.join(format!(".{shadow_name}.lock"));
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)?;
-        lock.lock()?;
-        let ready_marker = shadow_root.join(".incan-sdk-rebound-ready");
-        let integrity_marker = shadow_parent.join(format!(".{shadow_name}.integrity"));
-        let shadow_is_valid = fs::read_to_string(&ready_marker)
-            .ok()
-            .is_some_and(|marker| marker.trim() == "v4")
-            && fs::read_to_string(&integrity_marker)
-                .ok()
-                .zip(digest_provider_artifact(shadow_root).ok())
-                .is_some_and(|(expected, actual)| expected.trim() == actual);
-        if shadow_is_valid {
-            visiting.remove(&artifact_root);
-            materialized.insert(artifact_root);
-            return Ok(shadow_root.clone());
-        }
-        if integrity_marker.exists() {
-            fs::remove_file(&integrity_marker)?;
-        }
-        if shadow_root.exists() {
-            fs::remove_dir_all(shadow_root)?;
-        }
-        let elapsed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(io::Error::other)?;
-        let staging_root = shadow_parent.join(format!(
-            ".{shadow_name}-staging-{}-{}",
-            std::process::id(),
-            elapsed.as_nanos()
-        ));
-        let projection = (|| -> io::Result<()> {
-            copy_compiled_artifact_tree(&artifact_root, &staging_root)?;
-
-            let mut edges = Vec::new();
-            for descriptor in &original_manifest.contract_metadata.provider.provider_dependencies {
-                let source_root = normalize_artifact_path(&artifact_root.join(&descriptor.relative_artifact_path));
-                let target_root = if descriptor.kind == ProviderDependencyKind::PrivateImplementation {
-                    self.sdk_dependency_rebindings
-                        .iter()
-                        .find(|rebinding| {
-                            normalize_artifact_path(&rebinding.containing_artifact.crate_root) == artifact_root
-                                && rebinding.dependency_key == descriptor.dependency_key
-                                && rebinding.provider_name == descriptor.provider_name
-                        })
-                        .map(|rebinding| rebinding.active_crate_root.clone())
-                        .unwrap_or_else(|| source_root.clone())
-                } else {
-                    projected
-                        .get(&source_root)
-                        .map(|(_, shadow)| shadow.clone())
-                        .unwrap_or_else(|| source_root.clone())
-                };
-                edges.push(ProjectedArtifactEdge {
-                    dependency_key: descriptor.dependency_key.clone(),
-                    provider_name: descriptor.provider_name.clone(),
-                    source_root,
-                    target_root,
-                    kind: descriptor.kind,
-                    default_features: descriptor.default_features,
-                    optional: descriptor.optional,
-                });
-            }
-
-            let cargo_relative = artifact
-                .cargo_toml_path
-                .strip_prefix(&artifact.crate_root)
-                .map_err(|_| io::Error::other("compiled Cargo manifest is outside its artifact root"))?;
-            let cargo_manifest_path = staging_root.join(cargo_relative);
-            let cargo_source = fs::read_to_string(&cargo_manifest_path)?;
-            let mut cargo_document = cargo_source
-                .parse::<DocumentMut>()
-                .map_err(|error| io::Error::other(format!("failed to parse rebound Cargo manifest: {error}")))?;
-            let original_cargo_dir = artifact
-                .cargo_toml_path
-                .parent()
-                .ok_or_else(|| io::Error::other("compiled library Cargo manifest has no parent directory"))?;
-            let projected_cargo_manifest = shadow_root.join(cargo_relative);
-            let projected_cargo_dir = projected_cargo_manifest
-                .parent()
-                .ok_or_else(|| io::Error::other("projected Cargo manifest has no parent directory"))?;
-            let mut matched_edges = BTreeSet::new();
-            for table_name in ["dependencies", "dev-dependencies"] {
-                let Some(dependencies) = cargo_document.get_mut(table_name).and_then(Item::as_table_like_mut) else {
-                    continue;
-                };
-                for (dependency_key, dependency_item) in dependencies.iter_mut() {
-                    let dependency_key = dependency_key.get();
-                    let Some(dependency) = dependency_item.as_table_like_mut() else {
-                        continue;
-                    };
-                    let Some(authored_path) = dependency.get("path").and_then(Item::as_str) else {
-                        continue;
-                    };
-                    if ["git", "registry", "branch", "tag", "rev"]
-                        .iter()
-                        .any(|key| dependency.contains_key(key))
-                    {
-                        return Err(io::Error::other(format!(
-                            "compiled library Cargo dependency `{dependency_key}` is not an exclusive path dependency"
-                        )));
-                    }
-                    let frozen_path = if Path::new(authored_path).is_absolute() {
-                        PathBuf::from(authored_path)
-                    } else {
-                        original_cargo_dir.join(authored_path)
-                    };
-                    let frozen_path = normalize_artifact_path(&frozen_path);
-                    let cargo_package = dependency
-                        .get("package")
-                        .and_then(Item::as_str)
-                        .unwrap_or(dependency_key)
-                        .to_string();
-                    let edge = (table_name == "dependencies")
-                        .then(|| {
-                            edges
-                                .iter()
-                                .enumerate()
-                                .find(|(_, edge)| edge.dependency_key == dependency_key)
-                        })
-                        .flatten();
-                    if let Some((edge_index, edge)) = edge {
-                        matched_edges.insert(edge_index);
-                        if frozen_path != edge.source_root {
-                            return Err(io::Error::other(format!(
-                                "compiled library Cargo dependency `{}` points to `{}`, but its checked .incnlib descriptor freezes `{}`",
-                                dependency_key,
-                                frozen_path.display(),
-                                edge.source_root.display()
-                            )));
-                        }
-                        if cargo_package != edge.provider_name {
-                            return Err(io::Error::other(format!(
-                                "compiled library Cargo dependency `{}` names package `{cargo_package}`, but its checked .incnlib descriptor names `{}`",
-                                dependency_key, edge.provider_name
-                            )));
-                        }
-                        let cargo_optional = dependency.get("optional").and_then(Item::as_bool).unwrap_or(false);
-                        let cargo_default_features = dependency
-                            .get("default-features")
-                            .and_then(Item::as_bool)
-                            .unwrap_or(true);
-                        let flags_match = if edge.kind == ProviderDependencyKind::PublicPackage {
-                            cargo_optional == edge.optional && cargo_default_features == edge.default_features
-                        } else {
-                            !cargo_optional
-                                && match dependency.get("default-features") {
-                                    None => true,
-                                    Some(authored) => authored.as_bool() == Some(edge.default_features),
-                                }
-                        };
-                        if !flags_match {
-                            return Err(io::Error::other(format!(
-                                "compiled library Cargo dependency `{}` optional/default feature flags disagree with its checked .incnlib descriptor",
-                                dependency_key,
-                            )));
-                        }
-                        if edge.kind == ProviderDependencyKind::PrivateImplementation
-                            && dependency.get("default-features").is_none()
-                        {
-                            // v0.5 development artifacts recorded the checked private value in `.incnlib` but
-                            // omitted it from Cargo.toml. The checked descriptor is authoritative; normalize the
-                            // copied shadow while new producers emit the key explicitly.
-                            dependency.insert("default-features", value(edge.default_features));
-                        }
-                    }
-                    let trusted_sdk_targets = self
-                        .sdk_path_dependencies
-                        .iter()
-                        .filter(|resolved| {
-                            resolved.crate_name == dependency_key
-                                && resolved.package.as_deref().unwrap_or(resolved.crate_name.as_str())
-                                    == cargo_package.as_str()
-                        })
-                        .filter_map(|resolved| match &resolved.source {
-                            DependencySource::Path { path } => Some(normalize_artifact_path(path)),
-                            DependencySource::Registry | DependencySource::Git { .. } => None,
-                        })
-                        .collect::<BTreeSet<_>>();
-                    if trusted_sdk_targets.len() > 1 {
-                        return Err(io::Error::other(format!(
-                            "compiled library Cargo dependency `{dependency_key}` has multiple active SDK path targets"
-                        )));
-                    }
-                    let trusted_sdk_target = trusted_sdk_targets.into_iter().next().filter(|target| {
-                        self.sdk_dependency_rebindings.iter().any(|rebinding| {
-                            relative_artifact_path(&rebinding.source_crate_root, &frozen_path)
-                                == relative_artifact_path(&rebinding.active_crate_root, target)
-                        })
-                    });
-                    let target_root = if let Some((_, edge)) = edge {
-                        edge.target_root.clone()
-                    } else if let Some(target) = trusted_sdk_target {
-                        target
-                    } else if let Ok(relative) = frozen_path.strip_prefix(&artifact_root) {
-                        shadow_root.join(relative)
-                    } else {
-                        frozen_path
-                    };
-                    let relative = relative_artifact_path(projected_cargo_dir, &target_root);
-                    dependency.insert("path", value(relative));
-                }
-            }
-            if let Some(edge) = edges
-                .iter()
-                .enumerate()
-                .find_map(|(index, edge)| (!matched_edges.contains(&index)).then_some(edge))
-            {
-                return Err(io::Error::other(format!(
-                    "compiled library Cargo manifest has no path dependency `{}` for checked provider `{}`",
-                    edge.dependency_key, edge.provider_name
-                )));
-            }
-            fs::write(&cargo_manifest_path, cargo_document.to_string())?;
-
-            let manifest_relative = artifact
-                .manifest_path
-                .strip_prefix(&artifact.crate_root)
-                .ok()
-                .ok_or_else(|| io::Error::other("compiled library manifest is outside its artifact root"))?;
-            let rebound_manifest_path = staging_root.join(manifest_relative);
-            let mut library_manifest =
-                LibraryManifest::read_from_path(&rebound_manifest_path).map_err(io::Error::other)?;
-            for edge in &edges {
-                let descriptor = library_manifest
-                    .contract_metadata
-                    .provider
-                    .provider_dependencies
-                    .iter_mut()
-                    .find(|dependency| {
-                        dependency.kind == edge.kind
-                            && dependency.dependency_key == edge.dependency_key
-                            && dependency.provider_name == edge.provider_name
-                    })
-                    .ok_or_else(|| {
-                        io::Error::other(format!(
-                            "compiled library manifest has no checked dependency `{}`",
-                            edge.provider_name
-                        ))
-                    })?;
-                let digest = digest_provider_artifact(&edge.target_root).map_err(io::Error::other)?;
-                if edge.kind == ProviderDependencyKind::PrivateImplementation && digest != descriptor.artifact_digest {
-                    return Err(io::Error::other(format!(
-                        "active SDK provider `{}` has digest `{digest}`, but the checked dependency freezes `{}`",
-                        edge.provider_name, descriptor.artifact_digest
-                    )));
-                }
-                descriptor.relative_artifact_path = relative_artifact_path(shadow_root, &edge.target_root);
-                descriptor.artifact_digest = digest;
-            }
-            library_manifest
-                .write_to_path(&rebound_manifest_path)
-                .map_err(io::Error::other)?;
-            fs::write(staging_root.join(".incan-sdk-rebound-ready"), "v4\n")?;
-            Ok(())
-        })();
-        if let Err(error) = projection {
-            let _ = fs::remove_dir_all(&staging_root);
-            return Err(error);
-        }
-        fs::rename(&staging_root, shadow_root)?;
-        let projected_digest = digest_provider_artifact(shadow_root).map_err(io::Error::other)?;
-        fs::write(&integrity_marker, format!("{projected_digest}\n"))?;
-        visiting.remove(&artifact_root);
-        materialized.insert(artifact_root);
-        Ok(shadow_root.clone())
-    }
-
     /// Return the generated Rust project directory.
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
-    }
-
-    /// Return the generated Cargo manifest path.
-    pub fn cargo_manifest_path(&self) -> PathBuf {
-        self.output_dir.join("Cargo.toml")
     }
 
     /// Return the generated Rust crate root file.
@@ -1104,28 +564,6 @@ impl ProjectGenerator {
         } else {
             self.output_dir.join("src").join("lib.rs")
         }
-    }
-
-    /// Resolve the optional generated-project Cargo target override.
-    ///
-    /// CLI callers normally install either the managed cache path or an explicit command-line override directly on the
-    /// generator. This environment form remains for CI, integration tests, and internal callers that own one shared
-    /// target lifecycle.
-    pub(super) fn generated_cargo_target_dir_override() -> Option<PathBuf> {
-        let raw = std::env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)?;
-        let raw = PathBuf::from(raw);
-        if raw.as_os_str().is_empty() {
-            return None;
-        }
-        Some(Self::resolve_target_dir(raw))
-    }
-
-    /// Return the explicit target override, falling back to the legacy environment variable.
-    pub(super) fn cargo_target_dir_override(&self) -> Option<PathBuf> {
-        self.cargo_target_dir_override
-            .clone()
-            .map(Self::resolve_target_dir)
-            .or_else(Self::generated_cargo_target_dir_override)
     }
 
     /// Resolve the cargo target directory for a generated project.
@@ -1166,29 +604,6 @@ impl ProjectGenerator {
         target_name
     }
 
-    /// Cargo target name used for the generated binary or library target.
-    ///
-    /// When a caller opts into a broad shared target directory, multiple unrelated generated projects can have the same
-    /// user-facing project name (`main`, `consumer`, etc.). Cargo writes root binaries and libraries at
-    /// `target/<profile>/<target-name>`, so shared target dirs need a unique target name to avoid stale binary reuse
-    /// and parallel build collisions. Library target names use [`Self::rust_target_name`] so native Rust consumers
-    /// import the same valid crate identifier that the manifest declares.
-    pub(super) fn cargo_target_name(&self) -> String {
-        if self.is_binary && self.cargo_target_dir_override().is_some() {
-            let root_identity = self
-                .generated_source_identity
-                .read()
-                .unwrap_or_else(|error| error.into_inner())
-                .clone()
-                .unwrap_or_else(|| self.output_dir.to_string_lossy().into_owned());
-            Self::shared_target_safe_name(&self.name, &root_identity)
-        } else if self.is_binary {
-            self.name.clone()
-        } else {
-            Self::rust_target_name(&self.name)
-        }
-    }
-
     /// Return a filesystem-safe name for a shared cargo target directory.
     pub(super) fn shared_target_safe_name(name: &str, root_identity: &str) -> String {
         let mut normalized = name
@@ -1214,81 +629,6 @@ impl ProjectGenerator {
         let digest = hex::encode(&digest_bytes[..8]);
 
         format!("{normalized}_{digest}")
-    }
-
-    /// Remember a path-independent identity for the generated root crate before rendering its Cargo target name.
-    fn remember_generated_source_identity(&self, mut sources: Vec<(String, &str)>) {
-        sources.sort_by(|left, right| left.0.cmp(&right.0));
-        let mut hasher = Sha256::new();
-        hasher.update(b"incan-generated-root-source-v1\0");
-        hasher.update(crate::version::INCAN_VERSION.as_bytes());
-        hasher.update(b"\0name\0");
-        hasher.update(self.name.as_bytes());
-        hasher.update(b"\0package\0");
-        hasher.update(self.package_name.as_deref().unwrap_or(&self.name).as_bytes());
-        hasher.update(b"\0version\0");
-        hasher.update(self.package_version.as_deref().unwrap_or_default().as_bytes());
-        hasher.update(b"\0edition\0");
-        hasher.update(self.rust_edition.as_deref().unwrap_or_default().as_bytes());
-        hash_logical_records(
-            &mut hasher,
-            b"\0dependencies\0",
-            self.dependencies.iter().map(dependency_spec_identity).collect(),
-        );
-        hash_logical_records(
-            &mut hasher,
-            b"\0dev-dependencies\0",
-            self.dev_dependencies.iter().map(dependency_spec_identity).collect(),
-        );
-        hasher.update(b"\0stdlib-features\0");
-        hasher.update(format!("{:?}", self.stdlib_features).as_bytes());
-        hasher.update(b"\0compiled-providers\0");
-        hasher.update(format!("{:?}", self.compiled_provider_modules).as_bytes());
-        hash_logical_records(
-            &mut hasher,
-            b"\0sdk-rebindings\0",
-            self.sdk_dependency_rebindings
-                .iter()
-                .map(|rebinding| {
-                    format!(
-                        "{}\0{}\0{}",
-                        artifact_metadata_identity(&rebinding.containing_artifact),
-                        rebinding.provider_name,
-                        rebinding.dependency_key,
-                    )
-                })
-                .collect(),
-        );
-        hash_logical_records(
-            &mut hasher,
-            b"\0sdk-path-dependencies\0",
-            self.sdk_path_dependencies
-                .iter()
-                .map(dependency_spec_identity)
-                .collect(),
-        );
-        hash_logical_records(
-            &mut hasher,
-            b"\0sdk-artifact-projections\0",
-            self.sdk_artifact_projections
-                .iter()
-                .map(|projection| artifact_metadata_identity(&projection.artifact))
-                .collect(),
-        );
-        // The shared-root identity covers emitted Rust and manifest inputs. A valid caller-local lock projection is
-        // external authority, not generated source: changing only that authority must not rewrite Cargo.toml with a
-        // different target name or invalidate a direct-Rustc Oven consumer.
-        hasher.update([u8::from(self.include_dev_dependencies)]);
-        for (path, source) in sources {
-            hasher.update(path.as_bytes());
-            hasher.update(b"\0");
-            hasher.update(source.as_bytes());
-            hasher.update(b"\0");
-        }
-        *self
-            .generated_source_identity
-            .write()
-            .unwrap_or_else(|error| error.into_inner()) = Some(hex::encode(hasher.finalize()));
     }
 
     /// Ensure the generated `src/` directory exists.
@@ -1417,11 +757,6 @@ impl ProjectGenerator {
         let mut changed = false;
         self.remember_generated_source_identity(vec![("main.rs".to_string(), rust_code)]);
 
-        // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
-
         // Single-file consumers need the same artifact-backed compatibility namespace as nested projects. Compiler
         // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
         // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
@@ -1479,11 +814,6 @@ impl ProjectGenerator {
                 changed |= Self::remove_conflicting_module_artifact(&src_dir.join(format!("{module_name}.rs")))?;
             }
         }
-
-        // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
 
         // Write each module file
         for (module_name, module_code) in modules {
@@ -1563,11 +893,6 @@ impl ProjectGenerator {
                 .map(|(path, source)| (format!("{}.rs", path.join("/")), source.as_str())),
         );
         self.remember_generated_source_identity(identity_sources);
-
-        // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
 
         // ---- RFC 023: Transform stdlib paths to __incan_std ----
         let mut transformed_modules: HashMap<Vec<String>, String> = HashMap::new();
@@ -1818,72 +1143,6 @@ impl ProjectGenerator {
 
     /// Name of the sidecar recording which generated manifest a Cargo-owned lock was resolved against.
     const LOCK_MANIFEST_WITNESS: &'static str = ".incan-cargo-lock-manifest";
-
-    /// Discard a Cargo-owned lock that no longer belongs to the generated manifest beside it.
-    ///
-    /// When nothing supplies a lock payload, Cargo owns resolution for this generated root and writes the lock
-    /// itself. A lock left by an earlier generation then describes a manifest that no longer exists — most visibly
-    /// after a compiler upgrade, which rewrites the generated dependency set. The publisher runs Cargo with
-    /// `--locked`, so that stale file fails the build with advice only the compiler can act on.
-    ///
-    /// The witness records the manifest digest the lock corresponds to, so staleness is decided from what is on disk
-    /// rather than from whether this particular run rewrote the manifest. That matters because a run that already
-    /// rewrote the manifest and then failed leaves the two in disagreement permanently: keying on "the manifest
-    /// changed just now" would never fire again and the project would stay broken. A missing witness is treated as
-    /// stale for the same reason, which lets an already-broken generated root heal itself on the next build.
-    fn discard_lock_superseded_by_its_manifest(&self, lock_path: &Path, manifest: &str) -> io::Result<bool> {
-        let witness_path = self.output_dir.join(Self::LOCK_MANIFEST_WITNESS);
-        let expected = crate::oven::digest_bytes(manifest.as_bytes());
-        let witness_matches = fs::read_to_string(&witness_path).is_ok_and(|recorded| recorded.trim() == expected);
-        if witness_matches && lock_path.is_file() {
-            return Ok(false);
-        }
-        let removed = match fs::remove_file(lock_path) {
-            Ok(()) => true,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-            Err(error) => return Err(error),
-        };
-        Self::write_file_if_changed(&witness_path, &expected)?;
-        Ok(removed)
-    }
-
-    /// Apply the closed Cargo-lock authority state at the generated-project boundary.
-    ///
-    /// Explicit stale authority removes a previous generated lock. Exact authority writes its payload directly.
-    /// Projection authority preserves a valid caller-local projection or writes the canonical seed when projection is
-    /// due. Only that final seed is subsequently aligned by the runner, which asks Cargo to select the caller root
-    /// without inferring or rewriting dependency edges itself.
-    ///
-    /// No authority means Cargo owns the lock, which is not the same as leaving it untouched: the lock must still
-    /// belong to the manifest beside it, so that case is delegated to
-    /// [`Self::discard_lock_superseded_by_its_manifest`].
-    fn write_cargo_lock_if_needed(&self, manifest: &str) -> io::Result<bool> {
-        let lock_path = self.output_dir.join("Cargo.lock");
-        if self.clear_cargo_lock {
-            return match fs::remove_file(&lock_path) {
-                Ok(()) => Ok(true),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-                Err(error) => Err(error),
-            };
-        }
-        let Some(payload) = &self.cargo_lock_payload else {
-            return self.discard_lock_superseded_by_its_manifest(&lock_path, manifest);
-        };
-        if self.cargo_lock_projection_root.is_some() {
-            let projection = self
-                .cargo_lock_projection()?
-                .ok_or_else(|| io::Error::other("generated Cargo lock projection descriptor disappeared"))?;
-            if fs::read_to_string(&lock_path).is_ok_and(|existing| {
-                projection
-                    .validate_projected(&existing, self.cargo_package_name(), self.cargo_package_version())
-                    .is_ok()
-            }) {
-                return Ok(false);
-            }
-            return Self::write_file_if_changed(&lock_path, projection.seed_payload());
-        }
-        Self::write_file_if_changed(&lock_path, payload)
-    }
 }
 
 #[cfg(test)]

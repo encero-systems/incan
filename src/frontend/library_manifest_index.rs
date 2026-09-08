@@ -65,8 +65,6 @@ pub struct LibraryArtifactMetadata {
     pub manifest_path: PathBuf,
     /// Root of generated library crate (typically `target/lib`).
     pub crate_root: PathBuf,
-    /// Path to generated `Cargo.toml` for `pub::` crate wiring.
-    pub cargo_toml_path: PathBuf,
     /// Path to generated crate entrypoint (`src/lib.rs`).
     pub crate_lib_path: PathBuf,
     /// Whether this entry names a complete generated artifact or source-derived parser metadata only.
@@ -221,7 +219,6 @@ impl LibraryManifestIndex {
                         dependency_key: namespace,
                         manifest_name: manifest.name.clone(),
                         manifest_path: manifest_path.to_path_buf(),
-                        cargo_toml_path: crate_root.join("Cargo.toml"),
                         crate_lib_path: crate_root.join(LIBRARY_CRATE_LIB_RS),
                         crate_root: crate_root.to_path_buf(),
                         kind: LibraryArtifactKind::StandardVocab,
@@ -684,139 +681,6 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
     Ok(candidates.remove(0))
 }
 
-fn validate_artifact_contract(
-    dependency_key: &str,
-    manifest: &LibraryManifest,
-    manifest_path: &Path,
-    crate_root: &Path,
-) -> Result<LibraryArtifactMetadata, LibraryManifestLoadFailure> {
-    let cargo_toml_path = crate_root.join("Cargo.toml");
-    if !cargo_toml_path.is_file() {
-        return Err(LibraryManifestLoadFailure {
-            path: cargo_toml_path,
-            kind: LibraryManifestFailureKind::ArtifactMissing,
-            message: "missing generated Cargo.toml".to_string(),
-        });
-    }
-
-    let crate_lib_path = crate_root.join(LIBRARY_CRATE_LIB_RS);
-    if !crate_lib_path.is_file() {
-        return Err(LibraryManifestLoadFailure {
-            path: crate_lib_path,
-            kind: LibraryManifestFailureKind::ArtifactMissing,
-            message: format!("missing generated `{LIBRARY_CRATE_LIB_RS}`"),
-        });
-    }
-    if let Some(vocab) = &manifest.vocab
-        && let Some(desugarer_artifact) = &vocab.desugarer_artifact
-    {
-        let artifact_path = crate_root.join(&desugarer_artifact.relative_path);
-        if !artifact_path.is_file() {
-            return Err(LibraryManifestLoadFailure {
-                path: artifact_path,
-                kind: LibraryManifestFailureKind::ArtifactMissing,
-                message: "missing packaged vocab desugarer artifact".to_string(),
-            });
-        }
-    }
-
-    let cargo_contract = parse_cargo_contract(&cargo_toml_path)?;
-    if cargo_contract.package_name != manifest.name {
-        return Err(LibraryManifestLoadFailure {
-            path: cargo_toml_path,
-            kind: LibraryManifestFailureKind::ArtifactMismatch,
-            message: format!(
-                "manifest name `{}` does not match Cargo package `{}`",
-                manifest.name, cargo_contract.package_name
-            ),
-        });
-    }
-    if !cargo_contract.uses_default_lib_target {
-        return Err(LibraryManifestLoadFailure {
-            path: cargo_toml_path,
-            kind: LibraryManifestFailureKind::ArtifactInvalid,
-            message: format!("library crate target must use `{LIBRARY_CRATE_LIB_RS}` for `pub::{dependency_key}`"),
-        });
-    }
-
-    let expected_manifest_file = format!("{}.incnlib", manifest.name);
-    let actual_manifest_file = manifest_path
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_default();
-    if actual_manifest_file != expected_manifest_file {
-        return Err(LibraryManifestLoadFailure {
-            path: manifest_path.to_path_buf(),
-            kind: LibraryManifestFailureKind::ArtifactMismatch,
-            message: format!(
-                "manifest filename `{actual_manifest_file}` does not match manifest name `{}`",
-                manifest.name
-            ),
-        });
-    }
-
-    Ok(LibraryArtifactMetadata::from_manifest_path(
-        dependency_key,
-        manifest.name.clone(),
-        manifest_path.to_path_buf(),
-        crate_root.to_path_buf(),
-    ))
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoContractToml {
-    package: Option<CargoContractPackage>,
-    lib: Option<CargoContractLib>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoContractPackage {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoContractLib {
-    path: Option<String>,
-}
-
-struct ParsedCargoContract {
-    package_name: String,
-    uses_default_lib_target: bool,
-}
-
-fn parse_cargo_contract(path: &Path) -> Result<ParsedCargoContract, LibraryManifestLoadFailure> {
-    let content = fs::read_to_string(path).map_err(|error| LibraryManifestLoadFailure {
-        path: path.to_path_buf(),
-        kind: LibraryManifestFailureKind::ArtifactInvalid,
-        message: format!("failed to read Cargo.toml: {error}"),
-    })?;
-
-    let parsed: CargoContractToml = toml::from_str(&content).map_err(|error| LibraryManifestLoadFailure {
-        path: path.to_path_buf(),
-        kind: LibraryManifestFailureKind::ArtifactInvalid,
-        message: format!("failed to parse Cargo.toml: {error}"),
-    })?;
-
-    let package_name = parsed
-        .package
-        .map(|package| package.name)
-        .filter(|name| !name.trim().is_empty())
-        .ok_or_else(|| LibraryManifestLoadFailure {
-            path: path.to_path_buf(),
-            kind: LibraryManifestFailureKind::ArtifactInvalid,
-            message: "Cargo.toml is missing `[package].name`".to_string(),
-        })?;
-    let uses_default_lib_target = match parsed.lib.as_ref().and_then(|lib| lib.path.as_ref()) {
-        Some(path) => path.trim().replace('\\', "/") == LIBRARY_CRATE_LIB_RS,
-        None => true,
-    };
-
-    Ok(ParsedCargoContract {
-        package_name,
-        uses_default_lib_target,
-    })
-}
-
 impl LibraryArtifactMetadata {
     /// Build artifact metadata when both the resolved `.incnlib` path and crate root are known.
     pub fn from_manifest_path(
@@ -831,7 +695,6 @@ impl LibraryArtifactMetadata {
             dependency_key,
             manifest_name,
             manifest_path,
-            cargo_toml_path: crate_root.join("Cargo.toml"),
             crate_lib_path: crate_root.join(LIBRARY_CRATE_LIB_RS),
             crate_root,
             kind: LibraryArtifactKind::Materialized,
@@ -849,7 +712,6 @@ impl LibraryArtifactMetadata {
         let crate_root = project_root.into().join(LIBRARY_ARTIFACT_DIR);
         Self {
             manifest_path: crate_root.join(format!("{manifest_name}.incnlib")),
-            cargo_toml_path: crate_root.join("Cargo.toml"),
             crate_lib_path: crate_root.join(LIBRARY_CRATE_LIB_RS),
             dependency_key,
             manifest_name,

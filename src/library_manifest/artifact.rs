@@ -192,169 +192,6 @@ enum CargoSourceCoverage {
     ConservativePathCrate,
 }
 
-/// Resolve one package plus its recursive Cargo path dependencies into a path-independent digest.
-fn digest_cargo_package_inner(
-    root: &Path,
-    visiting: &mut BTreeSet<PathBuf>,
-    resolved_packages: &mut BTreeMap<PathBuf, String>,
-    coverage: CargoSourceCoverage,
-) -> Result<String, ProviderArtifactDigestError> {
-    if !root.is_dir() {
-        return Err(ProviderArtifactDigestError::InvalidRoot {
-            path: root.to_path_buf(),
-        });
-    }
-    if coverage == CargoSourceCoverage::ConservativePathCrate {
-        let metadata = fs::symlink_metadata(root).map_err(|source| ProviderArtifactDigestError::Io {
-            path: root.to_path_buf(),
-            source,
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(ProviderArtifactDigestError::UnsupportedEntry {
-                path: root.to_path_buf(),
-            });
-        }
-    }
-    let normalized_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    if let Some(digest) = resolved_packages.get(&normalized_root) {
-        return Ok(digest.clone());
-    }
-    if !visiting.insert(normalized_root.clone()) {
-        return Err(ProviderArtifactDigestError::Normalization {
-            path: root.to_path_buf(),
-            message: match coverage {
-                CargoSourceCoverage::ToolchainSemantic => {
-                    "toolchain Cargo path-dependency graph contains a cycle".to_string()
-                }
-                CargoSourceCoverage::ConservativePathCrate => {
-                    "Cargo path-dependency source graph contains a cycle".to_string()
-                }
-            },
-        });
-    }
-
-    let manifest_path = root.join("Cargo.toml");
-    let manifest_bytes = fs::read(&manifest_path).map_err(|source| ProviderArtifactDigestError::Io {
-        path: manifest_path.clone(),
-        source,
-    })?;
-    let manifest_text =
-        std::str::from_utf8(&manifest_bytes).map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: manifest_path.clone(),
-            message: error.to_string(),
-        })?;
-    let mut manifest: toml::Value =
-        toml::from_str(manifest_text).map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: manifest_path.clone(),
-            message: error.to_string(),
-        })?;
-    let mut direct_path_roots = BTreeSet::new();
-    normalize_cargo_manifest_path_dependencies(
-        &mut manifest,
-        root,
-        visiting,
-        resolved_packages,
-        coverage,
-        &mut direct_path_roots,
-    )?;
-    let workspace_context = inherited_workspace_context(
-        root,
-        &manifest,
-        visiting,
-        resolved_packages,
-        coverage,
-        &mut direct_path_roots,
-    )?;
-    let normalized_manifest =
-        toml::to_string(&manifest).map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: manifest_path.clone(),
-            message: error.to_string(),
-        })?;
-
-    let mut hasher = Sha256::new();
-    hasher.update(match coverage {
-        CargoSourceCoverage::ToolchainSemantic => b"incan-toolchain-cargo-package-v1\0".as_slice(),
-        CargoSourceCoverage::ConservativePathCrate => b"incan-cargo-path-source-closure-v1\0".as_slice(),
-    });
-    hash_named_bytes(&mut hasher, "Cargo.toml", normalized_manifest.as_bytes());
-    if let Some(context) = workspace_context {
-        let context = toml::to_string(&context).map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: manifest_path.clone(),
-            message: error.to_string(),
-        })?;
-        hash_named_bytes(&mut hasher, "workspace-inherited.toml", context.as_bytes());
-    }
-    match coverage {
-        CargoSourceCoverage::ToolchainSemantic => {
-            hash_compiled_source_inputs(root, &root.join("src"), &mut hasher)?;
-            let build_script = manifest
-                .get("package")
-                .and_then(toml::Value::as_table)
-                .and_then(|package| package.get("build"))
-                .and_then(toml::Value::as_str)
-                .map(|path| root.join(path))
-                .unwrap_or_else(|| root.join("build.rs"));
-            if build_script.is_file() {
-                hash_compiled_file(root, &build_script, &mut hasher)?;
-            }
-            hash_declared_semantic_inputs(root, &manifest, &mut hasher)?;
-        }
-        CargoSourceCoverage::ConservativePathCrate => {
-            hash_conservative_package_inputs(root, root, &manifest_path, &direct_path_roots, &mut hasher)?;
-        }
-    }
-    visiting.remove(&normalized_root);
-    let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
-    resolved_packages.insert(normalized_root, digest.clone());
-    Ok(digest)
-}
-
-/// Replace path dependencies in one Cargo manifest with the source digests of their target packages.
-fn normalize_cargo_manifest_path_dependencies(
-    manifest: &mut toml::Value,
-    base: &Path,
-    visiting: &mut BTreeSet<PathBuf>,
-    resolved_packages: &mut BTreeMap<PathBuf, String>,
-    coverage: CargoSourceCoverage,
-    direct_path_roots: &mut BTreeSet<PathBuf>,
-) -> Result<(), ProviderArtifactDigestError> {
-    let Some(root) = manifest.as_table_mut() else {
-        return Ok(());
-    };
-    for section in ["dependencies", "build-dependencies"] {
-        if let Some(dependencies) = root.get_mut(section) {
-            normalize_cargo_dependency_table(
-                dependencies,
-                base,
-                visiting,
-                resolved_packages,
-                coverage,
-                direct_path_roots,
-            )?;
-        }
-    }
-    if let Some(targets) = root.get_mut("target").and_then(toml::Value::as_table_mut) {
-        for (_, target_value) in targets.iter_mut() {
-            let Some(target) = target_value.as_table_mut() else {
-                continue;
-            };
-            for section in ["dependencies", "build-dependencies"] {
-                if let Some(dependencies) = target.get_mut(section) {
-                    normalize_cargo_dependency_table(
-                        dependencies,
-                        base,
-                        visiting,
-                        resolved_packages,
-                        coverage,
-                        direct_path_roots,
-                    )?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Normalize every direct path dependency in one Cargo dependency table.
 fn normalize_cargo_dependency_table(
     dependencies: &mut toml::Value,
@@ -402,66 +239,6 @@ fn normalize_cargo_dependency_table(
     Ok(())
 }
 
-/// Materialize only the workspace package and dependency values inherited by one Cargo package.
-fn inherited_workspace_context(
-    package_root: &Path,
-    package_manifest: &toml::Value,
-    visiting: &mut BTreeSet<PathBuf>,
-    resolved_packages: &mut BTreeMap<PathBuf, String>,
-    coverage: CargoSourceCoverage,
-    direct_path_roots: &mut BTreeSet<PathBuf>,
-) -> Result<Option<toml::Value>, ProviderArtifactDigestError> {
-    let Some((workspace_root, workspace_manifest)) = find_workspace_manifest(package_root, package_manifest)? else {
-        return Ok(None);
-    };
-    let mut context = toml::map::Map::new();
-    if let (Some(package), Some(workspace_package)) = (
-        package_manifest.get("package").and_then(toml::Value::as_table),
-        workspace_manifest
-            .get("workspace")
-            .and_then(toml::Value::as_table)
-            .and_then(|workspace| workspace.get("package"))
-            .and_then(toml::Value::as_table),
-    ) {
-        let inherited = package
-            .iter()
-            .filter(|(_, value)| {
-                value
-                    .as_table()
-                    .and_then(|table| table.get("workspace"))
-                    .and_then(toml::Value::as_bool)
-                    == Some(true)
-            })
-            .filter_map(|(key, _)| workspace_package.get(key).cloned().map(|value| (key.clone(), value)))
-            .collect::<toml::map::Map<_, _>>();
-        if !inherited.is_empty() {
-            context.insert("package".to_string(), toml::Value::Table(inherited));
-        }
-    }
-    let workspace_dependencies = workspace_manifest
-        .get("workspace")
-        .and_then(toml::Value::as_table)
-        .and_then(|workspace| workspace.get("dependencies"))
-        .and_then(toml::Value::as_table);
-    if let Some(workspace_dependencies) = workspace_dependencies {
-        let mut inherited = toml::map::Map::new();
-        collect_inherited_workspace_dependencies(package_manifest, workspace_dependencies, &mut inherited);
-        if !inherited.is_empty() {
-            let mut dependencies = toml::Value::Table(inherited);
-            normalize_cargo_dependency_table(
-                &mut dependencies,
-                &workspace_root,
-                visiting,
-                resolved_packages,
-                coverage,
-                direct_path_roots,
-            )?;
-            context.insert("dependencies".to_string(), dependencies);
-        }
-    }
-    Ok((!context.is_empty()).then_some(toml::Value::Table(context)))
-}
-
 /// Copy workspace dependency entries selected with `{ workspace = true }` into the semantic context.
 fn collect_inherited_workspace_dependencies(
     manifest: &toml::Value,
@@ -504,46 +281,6 @@ fn collect_inherited_workspace_dependency_table(
             inherited.insert(key.clone(), value.clone());
         }
     }
-}
-
-/// Locate the explicitly declared Cargo workspace, otherwise the nearest containing workspace manifest.
-fn find_workspace_manifest(
-    root: &Path,
-    package_manifest: &toml::Value,
-) -> Result<Option<(PathBuf, toml::Value)>, ProviderArtifactDigestError> {
-    if let Some(workspace) = package_manifest
-        .get("package")
-        .and_then(toml::Value::as_table)
-        .and_then(|package| package.get("workspace"))
-    {
-        let workspace = workspace
-            .as_str()
-            .ok_or_else(|| ProviderArtifactDigestError::Normalization {
-                path: root.join("Cargo.toml"),
-                message: "package.workspace must be a path string".to_string(),
-            })?;
-        let workspace_root = root.join(workspace);
-        let path = workspace_root.join("Cargo.toml");
-        let value = read_workspace_manifest(&path)?;
-        if value.get("workspace").is_none() {
-            return Err(ProviderArtifactDigestError::Normalization {
-                path,
-                message: "explicit package.workspace manifest has no [workspace] table".to_string(),
-            });
-        }
-        return Ok(Some((workspace_root, value)));
-    }
-    for ancestor in root.ancestors().skip(1) {
-        let path = ancestor.join("Cargo.toml");
-        if !path.is_file() {
-            continue;
-        }
-        let value = read_workspace_manifest(&path)?;
-        if value.get("workspace").is_some() {
-            return Ok(Some((ancestor.to_path_buf(), value)));
-        }
-    }
-    Ok(None)
 }
 
 /// Parse one candidate workspace manifest with a path-rich failure.
@@ -899,150 +636,6 @@ struct ProviderSemanticDigestContext<'a> {
     resolved_artifacts: &'a mut BTreeMap<PathBuf, String>,
 }
 
-/// Recursive implementation that resolves present transitive artifacts while bounding malformed cycles.
-fn digest_provider_semantic_artifact_inner(
-    root: &Path,
-    manifest_path: &Path,
-    cargo_toml_path: &Path,
-    manifest: &LibraryManifest,
-    context: &mut ProviderSemanticDigestContext<'_>,
-) -> Result<String, ProviderArtifactDigestError> {
-    if !root.is_dir() {
-        return Err(ProviderArtifactDigestError::InvalidRoot {
-            path: root.to_path_buf(),
-        });
-    }
-    let normalized_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    if let Some(digest) = context.resolved_artifacts.get(&normalized_root) {
-        return Ok(digest.clone());
-    }
-    if !context.visiting.insert(normalized_root.clone()) {
-        return Err(ProviderArtifactDigestError::Normalization {
-            path: root.to_path_buf(),
-            message: "compiled provider dependency graph contains a cycle".to_string(),
-        });
-    }
-
-    let mut normalized_manifest = manifest.clone();
-    let mut delivery_coordinates = BTreeMap::<String, BTreeSet<String>>::new();
-    for dependency in &mut normalized_manifest.contract_metadata.provider.provider_dependencies {
-        let physical_digest = dependency.artifact_digest.clone();
-        let dependency_root = root.join(&dependency.relative_artifact_path);
-        let semantic_digest = if let Some(digest) = context.dependency_semantic_digests.get(&physical_digest) {
-            Some(digest.clone())
-        } else if dependency_root.is_dir() {
-            let dependency_manifest_path = dependency_root.join(format!("{}.incnlib", dependency.provider_name));
-            let dependency_cargo_toml_path = dependency_root.join("Cargo.toml");
-            let dependency_manifest = LibraryManifest::read_from_path(&dependency_manifest_path).map_err(|error| {
-                ProviderArtifactDigestError::Normalization {
-                    path: dependency_manifest_path.clone(),
-                    message: error.to_string(),
-                }
-            })?;
-            Some(digest_provider_semantic_artifact_inner(
-                &dependency_root,
-                &dependency_manifest_path,
-                &dependency_cargo_toml_path,
-                &dependency_manifest,
-                context,
-            )?)
-        } else {
-            None
-        };
-        if let Some(semantic_digest) = semantic_digest {
-            dependency.artifact_digest = semantic_digest;
-        }
-        let coordinate = provider_dependency_semantic_coordinate(dependency);
-        delivery_coordinates
-            .entry(dependency.relative_artifact_path.clone())
-            .or_default()
-            .insert(coordinate.clone());
-        dependency.relative_artifact_path = coordinate;
-    }
-    let mut toolchain_dependencies = normalized_manifest
-        .contract_metadata
-        .provider
-        .implementation_facets
-        .iter()
-        .flat_map(|facet| facet.cargo_dependencies.iter())
-        .filter(|dependency| matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }))
-        .map(|dependency| {
-            (
-                dependency.crate_name.clone(),
-                toolchain_dependency_coordinate(dependency),
-            )
-        })
-        .fold(
-            BTreeMap::<String, BTreeSet<ToolchainDependencyCoordinate>>::new(),
-            |mut dependencies, (crate_name, coordinate)| {
-                dependencies.entry(crate_name).or_default().insert(coordinate);
-                dependencies
-            },
-        );
-    for dependency in context.sdk_toolchain_dependencies {
-        let candidates = toolchain_dependencies.entry(dependency.crate_name.clone()).or_default();
-        // Exact catalog provenance supersedes the manifest-relative fallback for the same Cargo package. Retain
-        // multiple typed roots so aliases remain safe: the generated Cargo path must still match exactly one of them.
-        candidates.retain(|candidate| {
-            candidate.package_name != dependency.package_name || candidate.expected_artifact_root.is_some()
-        });
-        candidates.insert(ToolchainDependencyCoordinate {
-            package_name: dependency.package_name.clone(),
-            semantic_coordinate: format!(
-                "incan-sdk-toolchain://{}?package={}#{}",
-                dependency.crate_name, dependency.package_name, dependency.content_digest
-            ),
-            expected_artifact_root: Some(dependency.artifact_root.clone()),
-        });
-    }
-    let has_semantic_source_digest = normalized_manifest
-        .contract_metadata
-        .provider
-        .semantic_source_digest
-        .is_some();
-    if has_semantic_source_digest {
-        // Rust ABI extraction is required physical consumer metadata, but its host analyzer graph is not the authored
-        // provider identity. The source digest plus normalized contract and Cargo requirements own that identity.
-        normalized_manifest.rust_abi = None;
-    }
-    let normalized_manifest_bytes = serde_json::to_vec(&RawLibraryManifest::from_semantic(&normalized_manifest))
-        .map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: manifest_path.to_path_buf(),
-            message: error.to_string(),
-        })?;
-    let cargo_bytes = fs::read(cargo_toml_path).map_err(|source| ProviderArtifactDigestError::Io {
-        path: cargo_toml_path.to_path_buf(),
-        source,
-    })?;
-    let normalized_cargo_bytes = normalize_cargo_delivery_coordinates(
-        cargo_toml_path,
-        &cargo_bytes,
-        &delivery_coordinates,
-        &toolchain_dependencies,
-    )?;
-
-    let mut hasher = Sha256::new();
-    if let Some(source_digest) = &normalized_manifest.contract_metadata.provider.semantic_source_digest {
-        hasher.update(b"incan-provider-semantic-artifact-v2\0");
-        hash_named_bytes(&mut hasher, "authored-source", source_digest.as_bytes());
-        hash_named_bytes(&mut hasher, "provider-manifest", &normalized_manifest_bytes);
-        hash_named_bytes(&mut hasher, "Cargo.toml", &normalized_cargo_bytes);
-    } else {
-        let normalization = SemanticArtifactNormalization {
-            manifest_path,
-            cargo_toml_path,
-            normalized_manifest_bytes: &normalized_manifest_bytes,
-            normalized_cargo_bytes: &normalized_cargo_bytes,
-        };
-        hasher.update(b"incan-provider-semantic-artifact-v1\0");
-        hash_directory_with_normalization(root, root, &mut hasher, Some(&normalization), false)?;
-    }
-    context.visiting.remove(&normalized_root);
-    let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
-    context.resolved_artifacts.insert(normalized_root, digest.clone());
-    Ok(digest)
-}
-
 /// Render every semantic dimension that authorizes replacing one physical provider path.
 fn provider_dependency_semantic_coordinate(dependency: &ProviderDependencyMetadata) -> String {
     let features = dependency
@@ -1093,32 +686,6 @@ struct ToolchainDependencyCoordinate {
     package_name: String,
     semantic_coordinate: String,
     expected_artifact_root: Option<PathBuf>,
-}
-
-/// Replace only Cargo `path` values that exactly match checked provider dependency coordinates.
-fn normalize_cargo_delivery_coordinates(
-    cargo_toml_path: &Path,
-    bytes: &[u8],
-    delivery_coordinates: &BTreeMap<String, BTreeSet<String>>,
-    toolchain_dependencies: &BTreeMap<String, BTreeSet<ToolchainDependencyCoordinate>>,
-) -> Result<Vec<u8>, ProviderArtifactDigestError> {
-    let content = std::str::from_utf8(bytes).map_err(|error| ProviderArtifactDigestError::Normalization {
-        path: cargo_toml_path.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    let mut cargo: toml::Value =
-        toml::from_str(content).map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: cargo_toml_path.to_path_buf(),
-            message: error.to_string(),
-        })?;
-    normalize_toml_paths(&mut cargo, delivery_coordinates);
-    normalize_toolchain_dependency_paths(&mut cargo, cargo_toml_path, toolchain_dependencies);
-    toml::to_string(&cargo)
-        .map(String::into_bytes)
-        .map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: cargo_toml_path.to_path_buf(),
-            message: error.to_string(),
-        })
 }
 
 /// Normalize paths only for unambiguous Cargo entries backed by checked provider toolchain metadata.
@@ -1181,36 +748,6 @@ fn dependency_paths_match(left: &Path, right: &Path) -> bool {
     }
 }
 
-/// Walk generated Cargo metadata and normalize exact provider-owned path values, including patch tables.
-fn normalize_toml_paths(value: &mut toml::Value, delivery_coordinates: &BTreeMap<String, BTreeSet<String>>) {
-    match value {
-        toml::Value::Table(table) => {
-            if let Some(toml::Value::String(path)) = table.get_mut("path")
-                && let Some(coordinates) = delivery_coordinates.get(path)
-            {
-                *path = coordinates.iter().cloned().collect::<Vec<_>>().join("+");
-            }
-            for (_, nested) in table.iter_mut() {
-                normalize_toml_paths(nested, delivery_coordinates);
-            }
-        }
-        toml::Value::Array(values) => {
-            for nested in values {
-                normalize_toml_paths(nested, delivery_coordinates);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Precomputed path-specific content substitutions for the semantic artifact digest.
-struct SemanticArtifactNormalization<'a> {
-    manifest_path: &'a Path,
-    cargo_toml_path: &'a Path,
-    normalized_manifest_bytes: &'a [u8],
-    normalized_cargo_bytes: &'a [u8],
-}
-
 /// Feed one artifact directory into the stable digest in lexical path order while excluding mutable output trees.
 fn hash_directory(root: &Path, directory: &Path, hasher: &mut Sha256) -> Result<(), ProviderArtifactDigestError> {
     hash_directory_with_normalization(root, directory, hasher, None, false)
@@ -1244,13 +781,6 @@ fn hash_directory_with_normalization(
                 path: path.clone(),
                 root: root.to_path_buf(),
             })?;
-        // The generated provider-root Cargo.lock is a projection of the canonical Incan lock, not an independent
-        // provider input. Including it here creates a two-pass identity cycle: artifact-only preparation has no
-        // Cargo.lock, while the first locked build materializes one from oven.lock and would otherwise change the
-        // provider's semantic identity. Nested Cargo.lock files remain part of the artifact content projection.
-        if normalization.is_some() && relative == Path::new("Cargo.lock") {
-            continue;
-        }
         let file_name = path.file_name().and_then(|name| name.to_str());
         let file_type = entry.file_type().map_err(|source| ProviderArtifactDigestError::Io {
             path: path.clone(),
@@ -1277,8 +807,6 @@ fn hash_directory_with_normalization(
             let bytes = if let Some(normalization) = normalization {
                 if path == normalization.manifest_path {
                     normalization.normalized_manifest_bytes.to_vec()
-                } else if path == normalization.cargo_toml_path {
-                    normalization.normalized_cargo_bytes.to_vec()
                 } else {
                     fs::read(&path).map_err(|source| ProviderArtifactDigestError::Io {
                         path: path.clone(),

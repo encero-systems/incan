@@ -206,24 +206,6 @@ fn legacy_versioned_workspace_fingerprint(root: &Path, inspector_version: &str) 
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Hash the workspace files that affect rust-inspect extraction results for this generated Cargo workspace.
-///
-/// `Cargo.lock` does not content-checksum `path = "..."` dependencies, so an edit to a local path-dependency crate
-/// leaves `Cargo.toml`/`Cargo.lock` byte-identical. Path-dependency directories are hashed alongside them so an edit
-/// to a hand-written interop crate invalidates this cache instead of serving stale extracted metadata.
-fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result<(), RustMetadataError> {
-    hasher.update(fs::read(root.join("Cargo.toml"))?);
-    match fs::read(root.join("Cargo.lock")) {
-        Ok(lock) => hasher.update(lock),
-        Err(err) if err.kind() == ErrorKind::NotFound => {}
-        Err(err) => return Err(err.into()),
-    }
-    for dependency_dir in crate::cache_resolve::path_dependency_dirs_from_manifest(root) {
-        hash_dir_contents(hasher, &dependency_dir, &dependency_dir)?;
-    }
-    Ok(())
-}
-
 /// Hash file paths (relative to `root`) and contents under `dir` in a stable order, skipping build output, VCS
 /// metadata, and symlinks.
 ///
@@ -688,22 +670,6 @@ fn normalized_crate_cache_key(crate_name: &str) -> String {
     crate_name.replace('-', "_")
 }
 
-/// Resolve a dependency manifest directory once per generated lock workspace and crate spelling.
-fn resolve_dependency_manifest_dir(
-    inner: &mut CacheInner,
-    root: &Path,
-    crate_name: &str,
-    registry_src_roots: Option<&[PathBuf]>,
-) -> Option<PathBuf> {
-    let key = (root.to_path_buf(), normalized_crate_cache_key(crate_name));
-    if let Some(cached) = inner.dependency_manifest_dirs.get(&key) {
-        return cached.clone();
-    }
-    let resolved = dependency_manifest_dir_for_crate(root, crate_name, registry_src_roots);
-    inner.dependency_manifest_dirs.insert(key, resolved.clone());
-    resolved
-}
-
 /// Read and normalize a string field from a Cargo manifest table.
 fn manifest_string_field(value: &toml::Value, table: &str, key: &str) -> Option<String> {
     value
@@ -740,68 +706,6 @@ fn manifest_dependency_crate_entries(manifest: &toml::Value, table: &str, names:
             .unwrap_or(key);
         names.push(normalized_crate_cache_key(name));
     }
-}
-
-/// Return normalized direct dependency crate names for a generated root workspace.
-fn load_root_dependency_crate_names(root: &Path) -> Vec<String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return Vec::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
-        return Vec::new();
-    };
-    let mut names = Vec::new();
-    for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        manifest_dependency_crate_entries(&manifest, table, &mut names);
-    }
-    names.sort();
-    names.dedup();
-    names
-}
-
-/// Load normalized dependency crate names from the crate whose generated `OUT_DIR` Rust is being parsed.
-///
-/// The generated-source fallback uses this to distinguish local relative paths from external dependency paths while it
-/// normalizes syntax-only field and variant metadata.
-fn load_dependency_crate_names(root: &Path) -> HashSet<String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return HashSet::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
-        return HashSet::new();
-    };
-    let mut names = HashSet::new();
-    for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        manifest_dependency_crate_names(&manifest, table, &mut names);
-    }
-    names
-}
-
-/// Load the crate names declared by the generated root workspace so root out-dir extraction only runs for root items.
-fn load_root_crate_names(root: &Path) -> Vec<String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return Vec::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
-        return Vec::new();
-    };
-    let mut names = Vec::new();
-    if let Some(name) = manifest_string_field(&manifest, "package", "name") {
-        names.push(name);
-    }
-    if let Some(name) = manifest_string_field(&manifest, "lib", "name") {
-        names.push(name);
-    }
-    if let Some(bins) = manifest.get("bin").and_then(toml::Value::as_array) {
-        for bin in bins {
-            if let Some(name) = bin.get("name").and_then(toml::Value::as_str) {
-                names.push(normalized_crate_cache_key(name));
-            }
-        }
-    }
-    names.sort();
-    names.dedup();
-    names
 }
 
 /// Resolve the root crate's library source path from `Cargo.toml`, defaulting to `src/lib.rs`.
@@ -848,37 +752,6 @@ fn crate_reexport_alias_from_use_tree(tree: &ast::UseTree) -> Option<(String, St
 /// Return whether a use item is exactly public at crate level, excluding restricted visibility such as `pub(crate)`.
 fn use_item_is_plain_public(use_item: &ast::Use) -> bool {
     ast_visibility_is_public(use_item.visibility())
-}
-
-/// Load root-level public crate re-export aliases from a dependency crate's library source.
-fn load_crate_reexport_aliases(root: &Path) -> HashMap<String, String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return HashMap::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
-        return HashMap::new();
-    };
-    let source_path = manifest_lib_source_path(root, &manifest);
-    let Ok(source) = fs::read_to_string(source_path) else {
-        return HashMap::new();
-    };
-    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
-    let mut aliases = HashMap::new();
-    for item in parsed.items() {
-        let ast::Item::Use(use_item) = item else {
-            continue;
-        };
-        if !use_item_is_plain_public(&use_item) {
-            continue;
-        }
-        let Some(tree) = use_item.use_tree() else {
-            continue;
-        };
-        if let Some((alias, target)) = crate_reexport_alias_from_use_tree(&tree) {
-            aliases.insert(alias, target);
-        }
-    }
-    aliases
 }
 
 /// Collect root-facing module paths for public module-glob crate reexports such as
@@ -932,24 +805,6 @@ fn collect_crate_module_glob_reexport_paths(
             _ => {}
         }
     }
-}
-
-/// Load public root-facing module paths for crate-wide glob reexports from one dependency root.
-fn load_crate_module_glob_reexport_paths(root: &Path, crate_name: &str) -> HashMap<String, String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return HashMap::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
-        return HashMap::new();
-    };
-    let source_path = manifest_lib_source_path(root, &manifest);
-    let Ok(source) = fs::read_to_string(source_path) else {
-        return HashMap::new();
-    };
-    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
-    let mut paths = HashMap::new();
-    collect_crate_module_glob_reexport_paths(parsed.items(), crate_name, &[], &mut paths);
-    paths
 }
 
 /// Return the canonical target path for a dependency-owned item addressed through a public crate re-export.
@@ -1027,27 +882,6 @@ fn preferred_external_rust_path_display(path: &str, preferred_external_paths: &H
     } else {
         format!("{prefix}::{rest}")
     }
-}
-
-/// Return the Cargo target directory configured for a generated workspace, falling back to the workspace-local
-/// `target` directory when no `.cargo/config.toml` target override is present.
-pub(crate) fn cargo_configured_target_dir(root: &Path) -> PathBuf {
-    let config_path = root.join(".cargo").join("config.toml");
-    let Ok(payload) = fs::read_to_string(config_path) else {
-        return root.join("target");
-    };
-    let Ok(config) = toml::from_str::<toml::Value>(payload.as_str()) else {
-        return root.join("target");
-    };
-    let Some(target_dir) = config
-        .get("build")
-        .and_then(|build| build.get("target-dir"))
-        .and_then(toml::Value::as_str)
-    else {
-        return root.join("target");
-    };
-    let path = PathBuf::from(target_dir);
-    if path.is_absolute() { path } else { root.join(path) }
 }
 
 /// Read the exact version a dependency's manifest declares, if it declares one inline.
@@ -3958,17 +3792,6 @@ fn root_workspace_declares_crate(inner: &mut CacheInner, root: &Path, crate_name
     names
         .iter()
         .any(|name| name == normalized_crate_cache_key(crate_name).as_str())
-}
-
-/// Cargo metadata includes the root package in its package list; dependency fast paths must not treat it as an external
-/// dependency or root-package lookups bypass the primary workspace and disk-cache behavior.
-fn non_root_dependency_manifest_dir(root: &Path, dep_root: PathBuf) -> Option<PathBuf> {
-    let canonical_dep = fs::canonicalize(&dep_root).unwrap_or(dep_root);
-    if canonical_dep == root {
-        None
-    } else {
-        Some(canonical_dep)
-    }
 }
 
 /// Typed rust-inspect workspace route used for one extraction attempt.

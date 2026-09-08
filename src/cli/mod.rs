@@ -345,9 +345,6 @@ pub enum Command {
         /// Disable INCAN_FROZEN for this invocation
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo argument surface; normal Oven commands reject it
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
-        cargo_args: Vec<String>,
         /// Retired Cargo feature surface; normal Oven commands reject it
         #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
         cargo_features: Vec<String>,
@@ -463,9 +460,6 @@ pub enum Command {
         /// Disable INCAN_FROZEN for this invocation
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo argument surface; normal Oven commands reject it
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
-        cargo_args: Vec<String>,
         /// Retired Cargo feature surface; normal Oven commands reject it
         #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
         cargo_features: Vec<String>,
@@ -652,9 +646,6 @@ pub enum Command {
         /// Disable INCAN_FROZEN for this invocation
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo argument surface; normal Oven commands reject it
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
-        cargo_args: Vec<String>,
         /// Retired Cargo feature surface; normal Oven commands reject it
         #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
         cargo_features: Vec<String>,
@@ -1031,43 +1022,10 @@ pub enum OvenCommand {
         #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
         compiler_root: PathBuf,
     },
-    /// Import frozen Cargo declarations as receipt evidence without launching Cargo
-    Import {
-        /// Root of the frozen Cargo package to import
-        #[arg(long, value_name = "PATH", default_value = ".")]
-        project: PathBuf,
-        /// Explicit target triple recorded in the receipt
-        #[arg(long, value_name = "TRIPLE")]
-        target: String,
-        /// Exact selected Rust toolchain identity recorded in the receipt
-        #[arg(long, value_name = "IDENTITY")]
-        toolchain: String,
-        /// Build profile recorded in the receipt
-        #[arg(long, default_value = "release")]
-        profile: String,
-        /// Explicit feature selected for the build unit; may be repeated
-        #[arg(long = "feature", value_name = "NAME")]
-        features: Vec<String>,
-        /// Generated source evidence expressed as `NAME=PATH`; paths are digested, never persisted
-        #[arg(long = "source", value_name = "NAME=PATH")]
-        source_inputs: Vec<String>,
-        /// Receipt output path; defaults to `.incan/oven/receipt.json` below --project
-        #[arg(long, value_name = "PATH")]
-        output: Option<PathBuf>,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: OvenOutputFormat,
-    },
     /// Bake locked C/C++ interop shims and static inputs into one receipt-bound direct-rustc plan
     Interop {
         #[command(subcommand)]
         command: OvenInteropCommand,
-    },
-    /// Internal compatibility publisher; never used by normal build, run, or test execution
-    #[command(hide = true)]
-    LegacyCargo {
-        #[command(subcommand)]
-        command: OvenLegacyCargoCommand,
     },
     /// Compile and run the stored compiler workspace native suite through a direct-rustc plan
     CompilerLibtests {
@@ -1102,9 +1060,6 @@ pub enum OvenCommand {
             hide = true
         )]
         partition_count: Option<usize>,
-        /// Explicit Cargo for compiler-suite roots that deliberately exercise the Loaf baker
-        #[arg(long = "fixture-cargo", value_name = "PATH", hide = true)]
-        fixture_cargo: Option<PathBuf>,
         /// Caller-owned direct-rustc libtest output path
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,
@@ -1257,71 +1212,6 @@ pub enum OvenInteropCommand {
         output: PathBuf,
         #[command(flatten)]
         store: OvenStoreCliFlags,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: OvenOutputFormat,
-    },
-}
-
-/// Internal compatibility-publisher commands for baking immutable Oven inputs.
-#[derive(Subcommand, Debug)]
-pub enum OvenLegacyCargoCommand {
-    /// Prepare one receipt-bound direct-rustc closure and retain only the bounded Oven result
-    Prepare {
-        /// Generated-project receipt authorizing this preparation
-        #[arg(long, value_name = "PATH")]
-        receipt: PathBuf,
-        /// Caller-owned generated Rust project with Cargo.toml and src/main.rs
-        #[arg(long = "generated-project", value_name = "PATH")]
-        generated_project: PathBuf,
-        /// Explicit Cargo executable used only for this publisher transition
-        #[arg(long, value_name = "PATH")]
-        cargo: PathBuf,
-        /// Explicit Rust compiler required to match the receipt
-        #[arg(long, value_name = "PATH")]
-        rustc: PathBuf,
-        /// Stable compatibility domain for bounded Oven storage
-        #[arg(long, value_name = "NAME")]
-        domain: String,
-        #[command(flatten)]
-        store: OvenStoreCliFlags,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: OvenOutputFormat,
-    },
-    /// Bake or reuse one complete compiler-owned Alpha Loaf envelope
-    #[command(hide = true)]
-    BakeLoafs {
-        /// Compiler checkout or staged toolchain root used for runtime-source identity
-        #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
-        compiler_root: PathBuf,
-        /// Destination directory for immutable `<identity>.loaf` bundles
-        #[arg(long, value_name = "PATH")]
-        output: PathBuf,
-        /// Bounded compiler-suite store baked with the compiler-suite envelope
-        #[arg(long = "suite-store", value_name = "PATH")]
-        suite_store: Option<PathBuf>,
-        /// Built-in release or compiler-suite Loaf envelope
-        #[arg(long, value_enum)]
-        envelope: OvenLoafEnvelopeArgument,
-        /// Exact compiler-owned SDK provider inventory
-        #[arg(long = "sdk-inventory", value_name = "PATH")]
-        sdk_inventory: PathBuf,
-        /// Explicit Cargo executable used only for a genuine Loaf miss
-        #[arg(long, value_name = "PATH")]
-        cargo: PathBuf,
-        /// Explicit Rust compiler recorded by each Loaf receipt
-        #[arg(long, value_name = "PATH")]
-        rustc: PathBuf,
-        /// Aggregate physical Loaf-envelope allowance
-        #[arg(long = "max-physical-bytes", value_name = "BYTES")]
-        max_physical_bytes: Option<u64>,
-        /// Physical allowance for one Loaf compatibility domain
-        #[arg(long = "max-domain-physical-bytes", value_name = "BYTES")]
-        max_domain_physical_bytes: Option<u64>,
-        /// Logical allowance for one Loaf compatibility domain
-        #[arg(long = "max-domain-logical-bytes", value_name = "BYTES")]
-        max_domain_logical_bytes: Option<u64>,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
@@ -1817,25 +1707,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 println!("{identity}");
                 Ok(ExitCode::SUCCESS)
             }
-            OvenCommand::Import {
-                project,
-                target,
-                toolchain,
-                profile,
-                features,
-                source_inputs,
-                output,
-                format,
-            } => commands::oven_import(commands::OvenImportCommandOptions {
-                project,
-                target,
-                toolchain,
-                profile,
-                features,
-                source_inputs,
-                output,
-                format,
-            }),
             OvenCommand::Interop { command } => match command {
                 OvenInteropCommand::Bake {
                     project,
@@ -1879,50 +1750,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     adapter,
                     output,
                     store: store.into(),
-                    format,
-                }),
-            },
-            OvenCommand::LegacyCargo { command } => match command {
-                OvenLegacyCargoCommand::Prepare {
-                    receipt,
-                    generated_project,
-                    cargo,
-                    rustc,
-                    domain,
-                    store,
-                    format,
-                } => commands::oven_legacy_cargo_prepare(commands::OvenLegacyCargoPrepareCommandOptions {
-                    receipt,
-                    generated_project,
-                    cargo,
-                    rustc,
-                    domain,
-                    store: store.into(),
-                    format,
-                }),
-                OvenLegacyCargoCommand::BakeLoafs {
-                    compiler_root,
-                    output,
-                    suite_store,
-                    envelope,
-                    sdk_inventory,
-                    cargo,
-                    rustc,
-                    max_physical_bytes,
-                    max_domain_physical_bytes,
-                    max_domain_logical_bytes,
-                    format,
-                } => commands::oven_legacy_cargo_bake_loafs(commands::OvenLoafBakeCommandOptions {
-                    compiler_root,
-                    output,
-                    suite_store,
-                    envelope,
-                    sdk_inventory,
-                    cargo,
-                    rustc,
-                    max_physical_bytes,
-                    max_domain_physical_bytes,
-                    max_domain_logical_bytes,
                     format,
                 }),
             },

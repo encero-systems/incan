@@ -26,11 +26,10 @@ pub use cache::RustMetadataCache;
 pub use error::RustMetadataError;
 pub use extractor::{extract_rust_item, rust_type_implements_trait};
 pub use loader::{
-    GeneratedOutDirRecord, OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER, OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
-    OVEN_DIRECT_INSPECTION_MARKER, OvenInspectionRegistrySource, RustWorkspace, SealedGeneratedOutDir,
-    oven_inspection_registry_source_roots, read_generated_out_dirs_map, write_generated_out_dirs_map,
-    write_oven_generated_out_dirs, write_oven_inspection_source_authority,
-    write_sealed_oven_inspection_source_authority,
+    GeneratedOutDirRecord, OVEN_DIRECT_INSPECTION_AUTHORITY_FILE, OVEN_DIRECT_INSPECTION_MARKER,
+    OvenInspectionRegistrySource, RustWorkspace, SealedGeneratedOutDir, oven_inspection_registry_source_roots,
+    read_generated_out_dirs_map, write_generated_out_dirs_map, write_oven_generated_out_dirs,
+    write_oven_inspection_source_authority, write_sealed_oven_inspection_source_authority,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

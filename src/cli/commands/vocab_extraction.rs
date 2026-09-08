@@ -547,36 +547,6 @@ fn read_companion_package_name(cargo_manifest_path: &Path) -> CliResult<String> 
     Ok(package_name.to_string())
 }
 
-/// Build one generated vocab companion for the requested Rust target and profile.
-fn run_cargo_build_for_target(
-    cargo_manifest_path: &Path,
-    target_dir: &Path,
-    target: &str,
-    profile: &str,
-) -> CliResult<()> {
-    let mut command = crate::backend::project::runner::cargo_command();
-    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
-    command.arg("build").arg("--manifest-path").arg(cargo_manifest_path);
-    if profile == "release" {
-        command.arg("--release");
-    }
-    command.arg("--target").arg(target).arg("--quiet");
-
-    let output = command
-        .output()
-        .map_err(|err| CliError::failure(format!("failed to run cargo build for vocab desugarer target: {err}")))?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(CliError::failure(format!(
-        "vocab companion crate failed to build desugarer target `{target}` profile `{profile}` ({}):\n{}",
-        cargo_manifest_path.display(),
-        stderr.trim()
-    )))
-}
-
 fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> CliResult<()> {
     let content = fs::read_to_string(cargo_manifest_path)
         .map_err(|err| CliError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
@@ -650,68 +620,6 @@ fn parse_installed_rust_targets(stdout: &str) -> HashSet<String> {
         .filter(|line| !line.is_empty())
         .map(std::string::ToString::to_string)
         .collect()
-}
-
-/// Run the vocab extraction helper against a companion crate entrypoint.
-fn extract_vocab_metadata_from_library_entrypoint(
-    companion_crate_root: &Path,
-    package_name: &str,
-    target_dir: &Path,
-    direct_rustc: Option<&OvenVocabDirectRustcContext>,
-) -> CliResult<incan_vocab::VocabMetadata> {
-    if let Some(context) = direct_rustc {
-        return extract_vocab_metadata_with_direct_rustc(context, companion_crate_root, package_name);
-    }
-    if env::var_os(OVEN_COMPILER_SUITE_RUSTC_ENV).is_some() {
-        let context = oven_compiler_suite_rustc_context()?.ok_or_else(|| {
-            CliError::failure(
-                "stored Oven compiler suite has no direct-Rustc vocab companion capability; Cargo fallback is forbidden"
-                    .to_string(),
-            )
-        })?;
-        return extract_vocab_metadata_with_direct_rustc(&context, companion_crate_root, package_name);
-    }
-
-    let extraction_dir = create_extraction_workspace_dir()?;
-    let helper_root = extraction_dir.join("runner");
-    fs::create_dir_all(helper_root.join("src")).map_err(|err| {
-        CliError::failure(format!(
-            "failed to create vocab extraction workspace {}: {err}",
-            helper_root.display()
-        ))
-    })?;
-    write_extraction_runner_manifest(&helper_root, companion_crate_root, package_name)?;
-    write_extraction_runner_source(&helper_root)?;
-
-    let mut command = crate::backend::project::runner::cargo_command();
-    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
-    let output = command
-        .arg("run")
-        .arg("--quiet")
-        .arg("--manifest-path")
-        .arg(helper_root.join("Cargo.toml"))
-        .output()
-        .map_err(|err| CliError::failure(format!("failed to run vocab extraction helper: {err}")))?;
-
-    let metadata_result = if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        serde_json::from_str::<incan_vocab::VocabMetadata>(stdout.trim()).map_err(|err| {
-            CliError::failure(format!(
-                "failed to parse metadata extracted from `library_vocab()` in {}: {err}",
-                companion_crate_root.display()
-            ))
-        })
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(CliError::failure(format!(
-            "failed to extract vocab metadata from companion crate via `library_vocab()` ({}):\n{}",
-            companion_crate_root.display(),
-            stderr.trim()
-        )))
-    };
-
-    let _ = fs::remove_dir_all(&extraction_dir);
-    metadata_result
 }
 
 /// Load the direct-Rustc capability exported by an active Oven compiler-suite scheduler.

@@ -1,9 +1,7 @@
 //! Explicit Oven Alpha command surface for receipts, bounded plans, and native direct-rustc consumers.
 //!
-//! Normal build, run, and test consumers never wrap, probe, or launch Cargo. Frozen Cargo declarations are
-//! compatibility input to `oven import`; only the hidden, explicitly named `oven legacy-cargo` baker may materialize
-//! missing compatibility inputs with Cargo. The compiler self-suite uses the same sealed direct-rustc executor and
-//! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
+//! Native lifecycle commands and compiler-suite replay. Cargo publication and compatibility adoption have been
+//! removed; missing native plan producers remain explicit at the Jackhammer cut checkpoint.
 
 mod options;
 mod support;
@@ -42,12 +40,7 @@ use crate::oven::interop::{
     write_interop_execution_receipt,
 };
 use crate::oven::legacy_cargo::{
-    OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
-    OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
-    OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION, OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV,
-    OvenCompilerTestSuiteFoundationPayload, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,
-    OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteToolchainDataPayload,
-    OvenCompilerTestSuiteToolchainDataReference, OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
+    OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1, OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV,
     OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource,
     OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, legacy_cargo_inspection_sources,
     legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite, prepare_direct_rustc_plan,
@@ -60,6 +53,13 @@ use crate::oven::loaf::{
     commit_loaf_generation, digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
     loaf_envelope_specifications, loaf_raw_disk_bytes, prepare_loaf_from_generated_project,
     retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
+};
+use crate::oven::native_contract::{
+    OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
+    OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION,
+    OvenCompilerTestSuiteFoundationPayload, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,
+    OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteToolchainDataPayload,
+    OvenCompilerTestSuiteToolchainDataReference, OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
 };
 use crate::oven::native_test::{
     OvenNativeTestBatchReport, OvenNativeTestBatchRequest, OvenNativeTestCaseCounts, OvenNativeTestCaseTiming,
@@ -160,34 +160,6 @@ pub fn oven_bake_project(
     Ok(ExitCode::SUCCESS)
 }
 
-/// Import frozen project declarations, record named source digests, and atomically publish a portable Oven receipt.
-pub fn oven_import(options: OvenImportCommandOptions) -> CliResult<ExitCode> {
-    let mut request = OvenImportRequest::new(
-        &options.project,
-        options.target,
-        options.toolchain,
-        options.profile,
-        options.features,
-    );
-    for source_input in &options.source_inputs {
-        let (name, path) = parse_named_path(source_input)?;
-        let bytes = fs::read(&path).map_err(|error| {
-            CliError::failure(format!("failed to read Oven source input {}: {error}", path.display()))
-        })?;
-        request = request.with_supplemental_source_digest(name, digest_bytes(&bytes));
-    }
-    let receipt = import_frozen_project(&request).map_err(oven_error)?;
-    let output = options
-        .output
-        .unwrap_or_else(|| default_receipt_path(request.project_root()));
-    write_receipt(&receipt, &output).map_err(oven_error)?;
-    match options.format {
-        OvenOutputFormat::Text => println!("Published Oven receipt {} at {}.", receipt.identity, output.display()),
-        OvenOutputFormat::Json => print_json(&receipt)?,
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
 /// Validate and publish an immutable direct-rustc artifact manifest into the bounded Oven store.
 pub fn oven_publish_direct_rustc_plan(options: OvenPlanPublishCommandOptions) -> CliResult<ExitCode> {
     let receipt = read_receipt(&options.receipt)?;
@@ -225,42 +197,6 @@ pub fn oven_publish_direct_rustc_plan(options: OvenPlanPublishCommandOptions) ->
     match options.format {
         OvenOutputFormat::Text => println!("Published Oven direct-rustc plan {}.", artifact.identity),
         OvenOutputFormat::Json => print_json(&artifact)?,
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Prepare one store-owned direct-rustc closure through the explicitly named hidden `legacy_cargo` boundary.
-///
-/// This command is intentionally separate from normal `build`, `run`, and `test`. It retains the resulting Oven
-/// plan and provenance only; its private Cargo target is reclaimed before success returns.
-pub fn oven_legacy_cargo_prepare(options: OvenLegacyCargoPrepareCommandOptions) -> CliResult<ExitCode> {
-    let receipt = read_receipt(&options.receipt)?;
-    let store = open_store(&options.store)?;
-    let result = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
-        store: &store,
-        receipt,
-        generated_project: options.generated_project,
-        cargo: options.cargo,
-        rustc: options.rustc,
-        sdk_inventory: None,
-        compiler_loaf_root: None,
-        domain: options.domain,
-        publication_kind: OvenLegacyCargoPublicationKind::Executable,
-        source_evidence_key: "generated-root".to_string(),
-        compile_environment: std::collections::BTreeMap::new(),
-        inspection_packages: None,
-        direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
-        compact_debug_info: false,
-        source_compiler_vocab_support: false,
-        base_loaf: None,
-    })
-    .map_err(oven_error)?;
-    match options.format {
-        OvenOutputFormat::Text => println!(
-            "Prepared Oven direct-rustc plan {} through the internal compatibility publisher.",
-            result.plan_identity
-        ),
-        OvenOutputFormat::Json => print_json(&result)?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -926,487 +862,6 @@ fn loaf_fixture_probe_is_expected_miss(stderr: &str) -> bool {
     .iter()
     .any(|summary| stderr.contains(summary))
         && stderr.contains(crate::oven::loaf::OVEN_NO_IMPLICIT_DEPENDENCY_BUILD)
-}
-
-/// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
-///
-/// The command is hidden beneath `legacy_cargo` because Cargo may run only for a genuine Loaf miss. Normal
-/// build/run/test commands never call this function and never fall back to it.
-pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliResult<ExitCode> {
-    let started = Instant::now();
-    if !options.compiler_root.is_dir() {
-        return Err(CliError::failure(format!(
-            "Loaf compiler root is not a directory: {}",
-            options.compiler_root.display()
-        )));
-    }
-    if !options.sdk_inventory.is_file() {
-        return Err(CliError::failure(format!(
-            "Loaf SDK inventory is not a regular file: {}",
-            options.sdk_inventory.display()
-        )));
-    }
-    if !options.cargo.is_file() || !options.rustc.is_file() {
-        return Err(CliError::failure(
-            "the explicit Loaf baker requires regular --cargo and --rustc executables".to_string(),
-        ));
-    }
-    fs::create_dir_all(&options.output).map_err(|error| {
-        CliError::failure(format!(
-            "could not create Loaf output {}: {error}",
-            options.output.display()
-        ))
-    })?;
-    let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
-    let output_parent = options
-        .output
-        .parent()
-        .ok_or_else(|| CliError::failure("Loaf output has no parent directory".to_string()))?;
-    let scratch = LoafTemporaryDirectory::create(output_parent, ".incan-oven-loaf-envelope-")
-        .map_err(|error| CliError::failure(format!("could not allocate Loaf baker scratch directory: {error}")))?;
-    let staged_root = scratch.path().join("staged");
-    fs::create_dir_all(&staged_root)
-        .map_err(|error| CliError::failure(format!("could not create Loaf staging root: {error}")))?;
-
-    let envelope = match options.envelope {
-        OvenLoafEnvelopeArgument::Release => OvenLoafEnvelope::Release,
-        OvenLoafEnvelopeArgument::CompilerSuite => OvenLoafEnvelope::CompilerSuite,
-    };
-    let default_limits = loaf_envelope_default_limits(envelope);
-    let combined_max_physical_bytes = options.max_physical_bytes.unwrap_or(default_limits.max_physical_bytes);
-    let existing_suite_physical_bytes = if envelope == OvenLoafEnvelope::CompilerSuite {
-        let suite_store = compiler_suite_store_path(&options)?;
-        if suite_store.is_dir() {
-            crate::oven::legacy_cargo::conservative_directory_reservation(&suite_store).map_err(oven_error)?
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-    let max_physical_bytes = combined_max_physical_bytes
-        .checked_sub(existing_suite_physical_bytes)
-        .filter(|remaining| *remaining > 0)
-        .ok_or_else(|| {
-            CliError::failure(format!(
-                "existing compiler-suite storage uses {existing_suite_physical_bytes} bytes of the complete {combined_max_physical_bytes}-byte baker allowance"
-            ))
-        })?;
-    let max_domain_physical_bytes = options
-        .max_domain_physical_bytes
-        .unwrap_or(default_limits.max_domain_physical_bytes)
-        .min(max_physical_bytes);
-    let max_domain_logical_bytes = options
-        .max_domain_logical_bytes
-        .unwrap_or(default_limits.max_domain_logical_bytes);
-    let limits = OvenStoreLimits::new(max_physical_bytes, max_domain_physical_bytes, max_domain_logical_bytes);
-    if max_physical_bytes == 0 || max_domain_physical_bytes == 0 || max_domain_logical_bytes == 0 {
-        return Err(CliError::failure(
-            "Loaf storage limits must be greater than zero".to_string(),
-        ));
-    }
-    if options
-        .max_domain_physical_bytes
-        .unwrap_or(default_limits.max_domain_physical_bytes)
-        > combined_max_physical_bytes
-    {
-        return Err(CliError::failure(
-            "Loaf per-domain physical limit cannot exceed its aggregate physical limit".to_string(),
-        ));
-    }
-
-    let current_executable = env::current_exe()
-        .map_err(|error| CliError::failure(format!("could not resolve the active Incan executable: {error}")))?;
-    let evidence = loaf_envelope_evidence(
-        envelope,
-        &options.compiler_root,
-        &current_executable,
-        &options.sdk_inventory,
-        &options.rustc,
-    )?;
-    let mut phase_timing = OvenLoafBakePhaseTiming {
-        preflight_elapsed_ms: started.elapsed().as_millis(),
-        ..OvenLoafBakePhaseTiming::default()
-    };
-    if let Some(report) =
-        reuse_complete_loaf_envelope(&options.output, scratch.path(), envelope, &evidence, limits, started)?
-    {
-        // Exact envelope validation and retirement require exclusive publication authority. Compiler-suite
-        // completion then consumes the committed Loafs through a shared generation lease, so retaining the writer
-        // lock across that transition would make this process wait on itself.
-        let report = finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
-        print_loaf_bake_report(&report, options.format)?;
-        return Ok(ExitCode::SUCCESS);
-    }
-    // Private fixture analysis may execute a normal Incan command. That command must be able to take a shared lease
-    // on the currently committed generation while it determines whether the old Loaf is compatible. Holding the
-    // publisher's exclusive lock here would make the parent wait for a child that is waiting for the parent. The
-    // staged generation is private and has no publication authority, so release exclusivity until the atomic commit.
-    drop(publication_lock);
-    let compatibility_evidence = loaf_envelope_compatibility_map(&evidence);
-    let generation_identity = digest_bytes(
-        &serde_json::to_vec(&(loaf_envelope_name(envelope), &compatibility_evidence))
-            .map_err(|error| CliError::failure(format!("could not encode Loaf generation identity: {error}")))?,
-    );
-    let generation_name = generation_identity
-        .strip_prefix("sha256:")
-        .unwrap_or(&generation_identity);
-    let generation_relative = Path::new("generations").join(generation_name);
-    let generation_output = options.output.join(&generation_relative);
-    let generations_root = options.output.join("generations");
-    fs::create_dir_all(&generations_root)
-        .map_err(|error| CliError::failure(format!("could not create Loaf generations root: {error}")))?;
-    let mut pending = Vec::new();
-    let envelope_inspection_packages = loaf_envelope_inspection_packages(envelope).map_err(CliError::failure)?;
-    // A cold first bake cannot consume a Loaf that does not exist yet. Resolve its Rust inspection sources once at
-    // this already explicit Cargo boundary, then hand the typed locked authority to every no-Cargo fixture child.
-    let inspection_authority_started = Instant::now();
-    announce_oven_progress("RESOLVE", "Rust inspection authority", None);
-    let authority_dir = scratch.path().join("rust-inspect-authority");
-    fs::create_dir_all(&authority_dir).map_err(|error| {
-        CliError::failure(format!(
-            "could not create explicit baker Rust inspection authority directory: {error}"
-        ))
-    })?;
-    let compiler_manifest = loaf_compiler_manifest_path(&options.compiler_root)?;
-    let envelope_inspection_sources = match envelope {
-        OvenLoafEnvelope::CompilerSuite => legacy_cargo_resolved_registry_sources(
-            &options.cargo,
-            &compiler_manifest,
-            &["lsp".to_string()],
-            &authority_dir,
-        ),
-        OvenLoafEnvelope::Release => legacy_cargo_inspection_sources(
-            &options.cargo,
-            &compiler_manifest,
-            &[],
-            &envelope_inspection_packages,
-            &authority_dir,
-        ),
-    }
-    .map_err(oven_error)?;
-    #[cfg(feature = "rust_inspect")]
-    let baker_inspection_authority = {
-        let sources = envelope_inspection_sources
-            .iter()
-            .map(|source| OvenInspectionRegistrySource {
-                package: source.package.clone(),
-                version: source.version.clone(),
-                registry: source.registry.clone(),
-                checksum: source.checksum.clone(),
-                features: source.features.clone(),
-                source_root: source.source_root.clone(),
-                source_digest: source.source_digest.clone(),
-            })
-            .collect();
-        write_sealed_oven_inspection_source_authority(&authority_dir, sources).map_err(|error| {
-            CliError::failure(format!(
-                "could not write explicit baker Rust inspection authority: {error}"
-            ))
-        })?
-    };
-    phase_timing.inspection_authority_elapsed_ms = inspection_authority_started.elapsed().as_millis();
-    announce_oven_progress(
-        "RESOLVED",
-        "Rust inspection authority",
-        Some(&elapsed_detail(inspection_authority_started)),
-    );
-    let cargo_process_started = true;
-    let mut transient_peak_physical_bytes = 0_u64;
-    let compiler_support_target = scratch.path().join("compiler-support-target");
-    let probe_toolchain_data_root = scratch.path().join("probe-toolchain-data");
-    fs::create_dir_all(probe_toolchain_data_root.join("share/incan/oven/loafs")).map_err(|error| {
-        CliError::failure(format!(
-            "could not create isolated Loaf fixture toolchain data: {error}"
-        ))
-    })?;
-    let compiler_lock = loaf_compiler_lock_path(&options.compiler_root)?;
-    let fixture_preparation_started = Instant::now();
-    let specifications = loaf_envelope_specifications(envelope);
-    let specification_count = specifications.len();
-    for (position, specification) in specifications.iter().enumerate() {
-        let fixture_started = Instant::now();
-        let fixture_subject = format!("{}/{}", specification.label, specification.profile);
-        announce_oven_progress(
-            "BAKE",
-            &fixture_subject,
-            Some(&format!("{}/{specification_count}", position + 1)),
-        );
-        let inspection_packages = if specification.role.provides_source_authority() {
-            specification.inspection_packages().map_err(CliError::failure)?
-        } else {
-            Vec::new()
-        };
-        let inspection_sources: &[OvenLegacyCargoInspectionSource] = if specification.role.provides_source_authority() {
-            &envelope_inspection_sources
-        } else {
-            &[]
-        };
-        let project_root = scratch
-            .path()
-            .join("fixtures")
-            .join(specification.label)
-            .join(specification.profile);
-        fs::create_dir_all(&project_root).map_err(|error| {
-            CliError::failure(format!(
-                "could not create checked Loaf fixture {}: {error}",
-                specification.label
-            ))
-        })?;
-        // Project-output authority hashes the conventional `src/` tree. The fixture must use that shape so its
-        // deliberate first Oven miss still reaches receipt creation.
-        let source_root = project_root.join("src");
-        fs::create_dir_all(&source_root).map_err(|error| {
-            CliError::failure(format!(
-                "could not create checked Loaf fixture source directory {}: {error}",
-                source_root.display()
-            ))
-        })?;
-        let source = source_root.join("main.incn");
-        fs::write(&source, specification.source).map_err(|error| {
-            CliError::failure(format!(
-                "could not write checked Loaf fixture {}: {error}",
-                source.display()
-            ))
-        })?;
-        fs::write(project_root.join("loaf.toml"), specification.manifest).map_err(|error| {
-            CliError::failure(format!(
-                "could not write checked Loaf manifest {}: {error}",
-                specification.label
-            ))
-        })?;
-        let mut command = Command::new(&current_executable);
-        command
-            .env_remove("INCAN_STDLIB")
-            .env_remove("INCAN_STDLIB_DIR")
-            .env("INCAN_SOURCE_ROOT", &options.compiler_root)
-            .env("INCAN_SDK_INVENTORY", &options.sdk_inventory)
-            .env(OVEN_LOAF_ENV, "1")
-            .env("INCAN_HOME", project_root.join(".oven-home"));
-        #[cfg(feature = "rust_inspect")]
-        command.env(OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, &baker_inspection_authority);
-        pin_loaf_fixture_rustc(&mut command, &options.rustc);
-        isolate_loaf_fixture_toolchain_data(&mut command, &probe_toolchain_data_root);
-        match (specification.action, specification.profile) {
-            (OvenLoafFixtureAction::Build, "release") => {
-                command.args(["build", "--release"]).arg(&source);
-            }
-            (OvenLoafFixtureAction::Build, _) => {
-                command.arg("build").arg(&source);
-            }
-            (OvenLoafFixtureAction::Run, "release") => {
-                command.args(["run", "--release"]).arg(&source);
-            }
-            (OvenLoafFixtureAction::Run, _) => {
-                command.arg("run").arg(&source);
-            }
-        }
-        let probe = command.output().map_err(|error| {
-            CliError::failure(format!(
-                "could not analyze checked Loaf fixture {}: {error}",
-                specification.label
-            ))
-        })?;
-        let receipt_path = project_root.join(".incan/oven/receipt.json");
-        let generated_project = project_root.join("target/incan").join(specification.project_name);
-        let probe_stderr = String::from_utf8_lossy(&probe.stderr);
-        if !probe.status.success() && !loaf_fixture_probe_is_expected_miss(&probe_stderr) {
-            return Err(CliError::failure(format!(
-                "checked Loaf fixture `{}` failed before its expected Oven miss:\n{}",
-                specification.label,
-                probe_stderr.trim()
-            )));
-        }
-        if !receipt_path.is_file() || !generated_project.is_dir() {
-            return Err(CliError::failure(format!(
-                "checked Loaf fixture `{}` did not produce its receipt and generated project",
-                specification.label
-            )));
-        }
-        stage_locked_loaf_fixture(&options.cargo, &generated_project, &compiler_lock).map_err(oven_error)?;
-        let receipt = read_receipt(&receipt_path)?;
-        let result = prepare_loaf_from_generated_project(
-            &staged_root,
-            &OvenLoafBakerContext {
-                compiler_root: &options.compiler_root,
-                compiler_support_target: &compiler_support_target,
-                capacity_roots: [&options.output, scratch.path()],
-                transient_limit: max_physical_bytes,
-                cargo: &options.cargo,
-                rustc: &options.rustc,
-                inspection_packages: &inspection_packages,
-                inspection_sources,
-                retain_complete_registry_leaves: specification.retain_complete_registry_leaves,
-                retain_checked_direct_dependencies: specification.retain_checked_direct_dependencies,
-                limits,
-            },
-            receipt,
-            &generated_project,
-        )
-        .map_err(oven_error)?;
-        let observed_transient = crate::oven::legacy_cargo::conservative_directory_reservation(&options.output)
-            .and_then(|owned| {
-                crate::oven::legacy_cargo::conservative_directory_reservation(scratch.path())
-                    .map(|transient| owned.saturating_add(transient))
-            })
-            .map_err(oven_error)?;
-        transient_peak_physical_bytes = transient_peak_physical_bytes
-            .max(result.transient_peak_physical_bytes)
-            .max(observed_transient);
-        if observed_transient > max_physical_bytes {
-            return Err(CliError::failure(format!(
-                "Loaf baker transient storage reached {observed_transient} bytes, exceeding its {max_physical_bytes}-byte allowance"
-            )));
-        }
-        if result.logical_bytes > max_domain_logical_bytes {
-            return Err(CliError::failure(format!(
-                "Loaf `{}` uses {} logical bytes, exceeding its {}-byte domain allowance",
-                specification.label, result.logical_bytes, max_domain_logical_bytes
-            )));
-        }
-        if result.physical_bytes > max_domain_physical_bytes {
-            return Err(CliError::failure(format!(
-                "Loaf `{}` uses {} physical bytes, exceeding its {}-byte domain allowance",
-                specification.label, result.physical_bytes, max_domain_physical_bytes
-            )));
-        }
-        announce_oven_progress(
-            "BAKED",
-            &fixture_subject,
-            Some(&format!(
-                "{}/{specification_count}, {}, {}",
-                position + 1,
-                human_bytes(result.physical_bytes),
-                elapsed_detail(fixture_started)
-            )),
-        );
-        pending.push(OvenLoafBakeEntryReport {
-            label: specification.label.to_string(),
-            profile: specification.profile.to_string(),
-            action: match specification.action {
-                OvenLoafFixtureAction::Build => "build",
-                OvenLoafFixtureAction::Run => "run",
-            }
-            .to_string(),
-            role: specification.role,
-            result,
-        });
-    }
-    phase_timing.fixture_preparation_elapsed_ms = fixture_preparation_started.elapsed().as_millis();
-
-    let logical_bytes = pending.iter().map(|entry| entry.result.logical_bytes).sum::<u64>();
-    let physical_bytes = pending.iter().map(|entry| entry.result.physical_bytes).sum::<u64>();
-    if physical_bytes > max_physical_bytes {
-        return Err(CliError::failure(format!(
-            "Loaf envelope uses {physical_bytes} physical bytes, exceeding its {max_physical_bytes}-byte allowance"
-        )));
-    }
-
-    let prepared_count = pending.len();
-    let envelope_publication_started = Instant::now();
-    announce_oven_progress("PUBLISH", "Loaf envelope", Some(&format!("{prepared_count} Loaf(s)")));
-    let manifest = OvenLoafEnvelopeManifest {
-        schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
-        envelope: loaf_envelope_name(envelope).to_string(),
-        generation_identity: generation_identity.clone(),
-        evidence: compatibility_evidence,
-        loafs: pending
-            .iter()
-            .map(|entry| {
-                let identity = entry
-                    .result
-                    .loaf_identity
-                    .strip_prefix("sha256:")
-                    .unwrap_or(&entry.result.loaf_identity);
-                OvenLoafEnvelopeMember {
-                    label: entry.label.clone(),
-                    profile: entry.profile.clone(),
-                    action: entry.action.clone(),
-                    role: entry.role,
-                    build_unit_identity: entry.result.build_unit_identity.clone(),
-                    loaf_identity: entry.result.loaf_identity.clone(),
-                    plan_identity: entry.result.plan_identity.clone(),
-                    logical_bytes: entry.result.logical_bytes,
-                    physical_bytes: entry.result.physical_bytes,
-                    path: generation_relative.join(format!("{identity}.loaf/loaf.json")),
-                }
-            })
-            .collect(),
-    };
-    let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
-    let replacement_high_water = crate::oven::legacy_cargo::conservative_directory_reservation(&options.output)
-        .and_then(|owned| {
-            crate::oven::legacy_cargo::conservative_directory_reservation(scratch.path())
-                .map(|transient| owned.saturating_add(transient))
-        })
-        .map_err(oven_error)?;
-    transient_peak_physical_bytes = transient_peak_physical_bytes.max(replacement_high_water);
-    if replacement_high_water > max_physical_bytes {
-        return Err(CliError::failure(format!(
-            "Loaf replacement high water reached {replacement_high_water} bytes, exceeding its {max_physical_bytes}-byte allowance"
-        )));
-    }
-    commit_loaf_generation(
-        &options.output,
-        &generations_root,
-        &generation_output,
-        &staged_root,
-        &manifest,
-        scratch.path(),
-        || Ok(()),
-    )
-    .map_err(oven_error)?;
-
-    // The new manifest is the envelope's single authority. Retire old content-addressed generations only after that
-    // authority has committed, so any earlier publication failure leaves the previous complete envelope usable.
-    // A retirement failure is safe: the newly committed Loafs remain valid and obsolete unreferenced data can be
-    // reclaimed by the next successful bake.
-    retire_unreferenced_loaf_generations(&options.output, &generation_identity, scratch.path()).map_err(oven_error)?;
-
-    let (_, owned_physical_bytes) = loaf_directory_byte_counts(&options.output).map_err(oven_error)?;
-    let raw_disk_bytes = loaf_raw_disk_bytes(&options.output).map_err(oven_error)?;
-    if owned_physical_bytes > max_physical_bytes {
-        return Err(CliError::failure(format!(
-            "published Loaf output uses {owned_physical_bytes} physical bytes after reclaiming obsolete generations, exceeding its {max_physical_bytes}-byte allowance"
-        )));
-    }
-    phase_timing.envelope_publication_elapsed_ms = envelope_publication_started.elapsed().as_millis();
-    announce_oven_progress(
-        "PUBLISHED",
-        "Loaf envelope",
-        Some(&elapsed_detail(envelope_publication_started)),
-    );
-    let reused_count = 0;
-    let report = OvenLoafBakeReport {
-        action: "prepared".to_string(),
-        envelope: loaf_envelope_name(envelope).to_string(),
-        loaf_count: pending.len(),
-        prepared_count,
-        reused_count,
-        logical_bytes,
-        physical_bytes,
-        owned_physical_bytes,
-        raw_disk_bytes,
-        // Publication retires every obsolete generation before this report. The active manifest/lock account for
-        // owned overhead beyond the referenced Loafs and must not be misreported as reclaimable data.
-        reclaimable_physical_bytes: 0,
-        active_lease_physical_bytes: 0,
-        transient_peak_physical_bytes,
-        max_physical_bytes,
-        max_domain_physical_bytes,
-        max_domain_logical_bytes,
-        elapsed_ms: started.elapsed().as_millis(),
-        phase_timing,
-        cargo_process_started,
-        evidence,
-        loafs: pending,
-        compiler_suite: None,
-    };
-    // `finish_loaf_bake` opens the committed Loafs as a normal shared-lease consumer. Publication and retirement
-    // are complete, so release exclusive authority before crossing into that consumer phase.
-    let report = finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
-    print_loaf_bake_report(&report, options.format)?;
-    Ok(ExitCode::SUCCESS)
 }
 
 /// Cross from exclusive envelope publication into normal shared-lease consumption.
@@ -2718,8 +2173,8 @@ fn bake_compiler_suite_warning_check_artifacts(
 /// no Cargo-produced binary is retained or executed from the immutable Oven entry.
 #[allow(clippy::too_many_arguments)]
 fn bake_planned_compiler_suite_binaries(
-    targets: &[crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget],
-    closure: &crate::oven::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    targets: &[crate::oven::native_contract::OvenCompilerTestSuiteTarget],
+    closure: &crate::oven::native_contract::OvenCompilerTestSuiteArtifactClosure,
     intent: &OvenBuildIntent,
     receipt: &OvenReceipt,
     artifact_root: &Path,
@@ -2835,109 +2290,6 @@ impl CompilerSuiteFixtureCargoProxy {
     }
 }
 
-/// Create a transient logged Cargo proxy inside caller-owned suite output.
-#[cfg(unix)]
-fn prepare_compiler_suite_fixture_cargo_proxy(
-    output_directory: &Path,
-    cargo: &Path,
-) -> CliResult<CompilerSuiteFixtureCargoProxy> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let real = fs::canonicalize(cargo).map_err(|error| {
-        CliError::failure(format!(
-            "cannot resolve explicit compiler-suite fixture Cargo {}: {error}",
-            cargo.display()
-        ))
-    })?;
-    let metadata = fs::symlink_metadata(&real).map_err(|error| {
-        CliError::failure(format!(
-            "cannot inspect explicit compiler-suite fixture Cargo {}: {error}",
-            real.display()
-        ))
-    })?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
-        return Err(CliError::failure(format!(
-            "explicit compiler-suite fixture Cargo must be an executable regular file: {}",
-            real.display()
-        )));
-    }
-    let real_rustc = real
-        .parent()
-        .map(|directory| directory.join("rustc"))
-        .ok_or_else(|| CliError::failure("explicit compiler-suite fixture Cargo has no toolchain directory"))?;
-    let rustc_metadata = fs::symlink_metadata(&real_rustc).map_err(|error| {
-        CliError::failure(format!(
-            "cannot inspect matching compiler-suite fixture Rustc {}: {error}",
-            real_rustc.display()
-        ))
-    })?;
-    if !rustc_metadata.is_file() || rustc_metadata.permissions().mode() & 0o111 == 0 {
-        return Err(CliError::failure(format!(
-            "explicit compiler-suite fixture Cargo requires its matching executable Rustc: {}",
-            real_rustc.display()
-        )));
-    }
-    let home = user_home()
-        .map(PathBuf::from)
-        .filter(|path| path.is_dir())
-        .ok_or_else(|| {
-            CliError::failure(
-                "explicit compiler-suite fixture Cargo requires a readable HOME for its offline source cache",
-            )
-        })?;
-    let root = output_directory.join("fixture-cargo");
-    fs::create_dir_all(&root).map_err(|error| {
-        CliError::failure(format!(
-            "cannot create compiler-suite fixture Cargo proxy directory {}: {error}",
-            root.display()
-        ))
-    })?;
-    let executable = root.join("cargo");
-    let log = root.join("invocations.log");
-    let proxy = concat!(
-        "#!/bin/sh\n",
-        "printf '%s\\n' \"$*\" >> \"$INCAN_INTERNAL_OVEN_FIXTURE_CARGO_LOG\"\n",
-        "if [ -z \"${RUSTC:-}\" ]; then export RUSTC=\"$INCAN_INTERNAL_OVEN_FIXTURE_RUSTC_REAL\"; fi\n",
-        "exec \"$INCAN_INTERNAL_OVEN_FIXTURE_CARGO_REAL\" \"$@\"\n",
-    );
-    fs::write(&executable, proxy).map_err(|error| {
-        CliError::failure(format!(
-            "cannot write compiler-suite fixture Cargo proxy {}: {error}",
-            executable.display()
-        ))
-    })?;
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o500)).map_err(|error| {
-        CliError::failure(format!(
-            "cannot make compiler-suite fixture Cargo proxy executable {}: {error}",
-            executable.display()
-        ))
-    })?;
-    fs::write(&log, []).map_err(|error| {
-        CliError::failure(format!(
-            "cannot initialize compiler-suite fixture Cargo log {}: {error}",
-            log.display()
-        ))
-    })?;
-    Ok(CompilerSuiteFixtureCargoProxy {
-        executable: compiler_suite_environment_path(&executable)?,
-        real,
-        real_rustc,
-        home: compiler_suite_environment_path(&home)?,
-        log: compiler_suite_environment_path(&log)?,
-    })
-}
-
-/// The v0.5 compiler suite is supported on the Unix hosts used by release CI.
-#[cfg(not(unix))]
-fn prepare_compiler_suite_fixture_cargo_proxy(
-    _output_directory: &Path,
-    _cargo: &Path,
-) -> CliResult<CompilerSuiteFixtureCargoProxy> {
-    Err(CliError::failure(
-        "the compiler-suite compatibility Cargo fixture proxy is supported only on Unix hosts".to_string(),
-    ))
-}
-
 /// Resolve every mutable input for one compiler-suite child before the bounded parallel execution phase starts.
 ///
 /// This phase runs after the suite has acquired every shard/foundation lease and after shared workspace libraries and
@@ -2946,8 +2298,8 @@ fn prepare_compiler_suite_fixture_cargo_proxy(
 /// the complete shared artifact closure serially before the bounded parallel execution phase starts.
 #[allow(clippy::too_many_arguments)]
 fn prepare_compiler_suite_child<'a>(
-    target: &'a crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
-    closure: &'a crate::oven::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    target: &'a crate::oven::native_contract::OvenCompilerTestSuiteTarget,
+    closure: &'a crate::oven::native_contract::OvenCompilerTestSuiteArtifactClosure,
     intent: &'a OvenBuildIntent,
     artifact_root: &'a Path,
     rustc: &Path,
@@ -3035,65 +2387,6 @@ fn prepare_compiler_suite_child<'a>(
 /// the schema-10 foundation contract for Cargo-published third-party artifacts, so they must never bypass this path.
 fn compiler_suite_uses_indexed_foundations(schema_version: u32) -> bool {
     matches!(schema_version, 10..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION)
-}
-
-/// Apply the package-qualified process capabilities owned by the compiler-suite registry.
-fn apply_compiler_suite_target_capabilities(
-    target: &crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
-    environment: &mut BTreeMap<String, String>,
-    fixture_cargo: Option<&CompilerSuiteFixtureCargoProxy>,
-) -> CliResult<()> {
-    let capabilities = OvenCompilerSuiteTargetCapabilities::for_target(
-        &target.package_name,
-        &target.target_kind,
-        &target.source_relative_path,
-    );
-    if !capabilities.generated_rust_closure {
-        compiler_suite_remove_generated_rust_closure(environment);
-    }
-    if capabilities.cargo_fixture {
-        let fixture_cargo = fixture_cargo.ok_or_else(|| {
-            CliError::failure(format!(
-                "compiler-suite root `{}` exercises Cargo compatibility and requires explicit --fixture-cargo",
-                target.source_relative_path
-            ))
-        })?;
-        environment.insert("CARGO".to_string(), fixture_cargo.executable.display().to_string());
-        environment.insert(
-            OVEN_COMPILER_SUITE_FIXTURE_CARGO_REAL_ENV.to_string(),
-            fixture_cargo.real.display().to_string(),
-        );
-        environment.insert(
-            OVEN_COMPILER_SUITE_FIXTURE_RUSTC_REAL_ENV.to_string(),
-            fixture_cargo.real_rustc.display().to_string(),
-        );
-        environment.insert(
-            OVEN_COMPILER_SUITE_FIXTURE_CARGO_LOG_ENV.to_string(),
-            fixture_cargo.log.display().to_string(),
-        );
-        // Only a package-qualified explicit-bake root receives the caller's offline Cargo source cache. The baker
-        // copies and digests the sources it uses; ordinary roots remain in their child-owned homes without Cargo.
-        environment.insert("HOME".to_string(), fixture_cargo.home.display().to_string());
-    }
-    if capabilities.explicit_bake_cargo {
-        let fixture_cargo = fixture_cargo.ok_or_else(|| {
-            CliError::failure(format!(
-                "compiler-suite root `{}` explicitly bakes a Loaf and requires --fixture-cargo",
-                target.source_relative_path
-            ))
-        })?;
-        // Do not set `CARGO` here. The test helper receives the three values below and installs them only on its
-        // explicit `incan oven bake` child; all normal command probes retain the scheduler's Cargo guard.
-        environment.insert(
-            OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV.to_string(),
-            fixture_cargo.real.display().to_string(),
-        );
-        environment.insert(
-            OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV.to_string(),
-            fixture_cargo.home.display().to_string(),
-        );
-    }
-    Ok(())
 }
 
 /// Remove direct generated-Rust closure details while retaining the suite marker used by Cargo-free fixture paths.
@@ -3418,8 +2711,8 @@ fn compiler_suite_libtest_threads(logical_cores: usize, root_workers: usize) -> 
 /// still held by the caller. No Cargo-linked test executable is copied or run from the immutable entry.
 #[allow(clippy::too_many_arguments)]
 fn run_planned_compiler_suite_children(
-    targets: &[crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget],
-    closure: &crate::oven::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    targets: &[crate::oven::native_contract::OvenCompilerTestSuiteTarget],
+    closure: &crate::oven::native_contract::OvenCompilerTestSuiteArtifactClosure,
     intent: &OvenBuildIntent,
     receipt: &OvenReceipt,
     artifact_root: &Path,
@@ -3575,7 +2868,7 @@ fn run_planned_compiler_suite_children(
 /// Resolve a target-plan source only beneath the current receipt-authorized compiler root.
 fn compiler_suite_target_source(
     compiler_root: &Path,
-    target: &crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &crate::oven::native_contract::OvenCompilerTestSuiteTarget,
 ) -> CliResult<PathBuf> {
     compiler_suite_source_path(
         compiler_root,
@@ -3649,7 +2942,7 @@ fn compiler_suite_source_path(compiler_root: &Path, relative_path: &str, subject
 fn compiler_suite_target_working_directory(
     compiler_root: &Path,
     source: &Path,
-    target: &crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &crate::oven::native_contract::OvenCompilerTestSuiteTarget,
 ) -> CliResult<PathBuf> {
     let compiler_root = fs::canonicalize(compiler_root).map_err(|error| {
         CliError::failure(format!(
@@ -3693,7 +2986,7 @@ fn compiler_suite_target_working_directory(
 /// Keep caller-owned test shard paths deterministic and safely inside the selected output directory.
 fn compiler_suite_target_output_name(
     index: usize,
-    target: &crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &crate::oven::native_contract::OvenCompilerTestSuiteTarget,
 ) -> String {
     format!(
         "{index:04}-{}-{}-{}",
@@ -3709,7 +3002,7 @@ fn compiler_suite_target_output_name(
 /// targets are not: each root receives a distinct location so its nested normal commands cannot race a sibling.
 fn compiler_suite_child_state_root(
     output_directory: &Path,
-    target: &crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &crate::oven::native_contract::OvenCompilerTestSuiteTarget,
 ) -> PathBuf {
     output_directory
         .join("children")
@@ -4077,8 +3370,8 @@ fn run_compiler_suite_children_with_leases_retained<T>(
 /// It intentionally borrows the enclosing suite's still-leased immutable payload, so a worker can reconstruct its
 /// target-local manifest without serially cloning the complete closure for every root before execution begins.
 struct PreparedCompilerSuiteChild<'a> {
-    target: &'a crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
-    closure: &'a crate::oven::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    target: &'a crate::oven::native_contract::OvenCompilerTestSuiteTarget,
+    closure: &'a crate::oven::native_contract::OvenCompilerTestSuiteArtifactClosure,
     intent: &'a OvenBuildIntent,
     artifact_root: &'a Path,
     compiler_root: &'a Path,
@@ -4641,7 +3934,7 @@ fn compiler_suite_composed_artifact_plan(
 #[allow(clippy::too_many_arguments)]
 fn bake_planned_compiler_suite_workspace_libraries(
     libraries: &[OvenCompilerWorkspaceLibrary],
-    closure: &crate::oven::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    closure: &crate::oven::native_contract::OvenCompilerTestSuiteArtifactClosure,
     intent: &OvenBuildIntent,
     receipt: &OvenReceipt,
     artifact_root: &Path,
@@ -4833,7 +4126,7 @@ fn compiler_suite_workspace_library_cache_key(
 /// exact target declaration, immutable closure, foundations, and selected caller-owned workspace outputs.
 fn compiler_suite_target_cache_key(
     receipt: &OvenReceipt,
-    target: &crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &crate::oven::native_contract::OvenCompilerTestSuiteTarget,
     closure_identity: &str,
     foundation_references: &[OvenCompilerTestSuiteFoundationReference],
     workspace_library_outputs: &BTreeMap<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>,
@@ -4859,7 +4152,7 @@ fn compiler_suite_target_cache_key(
 /// every shared workspace library turns a cache hit into repeated closure-sized allocation and serialization. Its
 /// deterministic digest preserves the same cache boundary without that work on each library node.
 fn compiler_suite_artifact_closure_cache_identity(
-    closure: &crate::oven::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    closure: &crate::oven::native_contract::OvenCompilerTestSuiteArtifactClosure,
 ) -> CliResult<String> {
     serde_json::to_vec(closure)
         .map(|bytes| digest_bytes(&bytes))
@@ -4918,7 +4211,7 @@ fn compiler_suite_dynamic_library_environment(
 /// Attach a target's declared direct-Rustc workspace inputs after every prerequisite has been materialized.
 fn attach_compiler_suite_target_workspace_libraries(
     artifact_plan: &mut OvenRustcArtifactPlan,
-    target: &crate::oven::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &crate::oven::native_contract::OvenCompilerTestSuiteTarget,
     libraries: &[OvenCompilerWorkspaceLibrary],
     outputs: &BTreeMap<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>,
 ) -> CliResult<()> {
@@ -5613,19 +4906,20 @@ mod tests {
         write_native_test_transcript,
     };
     use crate::cli::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
-    use crate::oven::legacy_cargo::{
-        OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
-        OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,
-        OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget,
-        OvenCompilerTestSuiteTargetKey, OvenCompilerTestSuiteToolchainLoafGenerationReference,
-        OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
-    };
+    use crate::oven::legacy_cargo::OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1;
     use crate::oven::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
         OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole,
         acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
     };
     use crate::oven::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
+    use crate::oven::native_contract::{
+        OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OvenCompilerTestSuiteArtifactClosure,
+        OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
+        OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget, OvenCompilerTestSuiteTargetKey,
+        OvenCompilerTestSuiteToolchainLoafGenerationReference, OvenCompilerWorkspaceLibrary,
+        OvenCompilerWorkspaceLibraryKey,
+    };
     use crate::oven::native_test::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming};
     use crate::oven::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactManifest, OvenRustcArtifactPlan,

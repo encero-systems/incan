@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
-use super::legacy_cargo::{
+use super::native_contract::{
     OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
 };
 use super::process::{isolate_process_group, terminate_process_group};
@@ -1583,25 +1583,6 @@ pub struct OvenDirectRustcBake {
     pub reused: bool,
     /// Held for stored consumers until their caller finishes executing the native test binary.
     lease: Option<OvenStoreLease>,
-}
-
-impl OvenDirectRustcBake {
-    /// Wrap a binary produced by the unified-Cargo fallback compile as a completed bake result.
-    ///
-    /// Downstream run/report consumers only need the output path and its digest; there is no store lease because a
-    /// Cargo-produced binary is published project-locally rather than admitted to the bounded Oven store.
-    /// `cargo_process_started` is `true` here by definition -- this constructor exists precisely because a Cargo
-    /// process performed the compile.
-    pub(crate) fn from_external_cargo_build(source_digest: String, output: PathBuf, output_digest: String) -> Self {
-        Self {
-            source_digest,
-            output,
-            output_digest,
-            cargo_process_started: true,
-            reused: false,
-            lease: None,
-        }
-    }
 }
 
 /// The concrete caller-owned output Rustc must produce for one Oven materialization step.
@@ -5450,15 +5431,6 @@ pub(crate) fn incan_owned_target_installed(target: &str) -> Option<bool> {
     Some(toolchain_root.join("lib").join("rustlib").join(target).is_dir())
 }
 
-/// Return the Cargo belonging to Incan's own provisioned toolchain, when one exists.
-///
-/// The compatibility baker's Cargo must match the compiler [`resolve_active_rustc`] selects; resolving one from the
-/// isolated installation and the other from the user's ambient default would reintroduce the toolchain mismatch this
-/// isolation exists to prevent.
-pub(crate) fn incan_owned_cargo() -> Option<PathBuf> {
-    incan_owned_tool(&incan_owned_rustup_home()?, "cargo")
-}
-
 /// Resolve the Rust compiler belonging to Incan's own provisioned toolchain.
 ///
 /// Pairs with [`incan_owned_cargo`]. A toolchain-direct Cargo does not imply a matching compiler: Cargo resolves
@@ -6305,7 +6277,7 @@ mod tests {
         validate_project_inspection_authority_payload,
     };
     use crate::manifest::{DependencySource, DependencySpec};
-    use crate::oven::legacy_cargo::{
+    use crate::oven::native_contract::{
         OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
     };
     use crate::oven::native_test::run_native_test_batch_all;

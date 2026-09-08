@@ -1,7 +1,6 @@
 //! `oven.lock` parsing, validation, and fingerprinting.
 //!
-//! The lockfile embeds a Cargo.lock payload and records a dependency fingerprint for strict `--locked` / `--frozen`
-//! builds.
+//! The lockfile records the selected semantic graph and its dependency fingerprint for strict builds.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
@@ -33,8 +32,7 @@ use crate::provider::{
 /// a lock's own filename; renaming this constant must not be taken to rename either of those.
 pub const LOCK_FILENAME: &str = "oven.lock";
 
-const LOCKFILE_FORMAT_VERSION: u32 = 2;
-const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
+const LOCKFILE_FORMAT_VERSION: u32 = 3;
 #[derive(Debug, thiserror::Error)]
 pub enum LockfileError {
     #[error("failed to read {path}: {source}")]
@@ -74,7 +72,6 @@ pub struct IncanLock {
     pub deps_fingerprint: String,
     pub cargo_features: CargoFeatureSelection,
     pub semantic: SemanticLockState,
-    pub cargo_lock_payload: String,
 }
 
 /// Advisory guards retained for one canonical lockfile publication critical section.
@@ -216,9 +213,6 @@ impl IncanLock {
                 cargo_all_features: self.cargo_features.cargo_all_features,
             },
             semantic: self.semantic.clone(),
-            cargo: RawCargoLock {
-                lock: self.cargo_lock_payload.clone(),
-            },
         };
 
         let body = toml::to_string(&raw).map_err(|e| LockfileError::Serialize(e.to_string()))?;
@@ -232,13 +226,8 @@ impl IncanLock {
     }
 
     /// Construct a lock for callers that have no provider or package-feature semantic state.
-    pub fn new(deps_fingerprint: String, cargo_features: CargoFeatureSelection, cargo_lock_payload: String) -> Self {
-        Self::new_with_semantic(
-            deps_fingerprint,
-            cargo_features,
-            SemanticLockState::default(),
-            cargo_lock_payload,
-        )
+    pub fn new(deps_fingerprint: String, cargo_features: CargoFeatureSelection) -> Self {
+        Self::new_with_semantic(deps_fingerprint, cargo_features, SemanticLockState::default())
     }
 
     /// Construct a lock containing both the backend dependency payload and the resolved semantic provider graph.
@@ -246,7 +235,6 @@ impl IncanLock {
         deps_fingerprint: String,
         cargo_features: CargoFeatureSelection,
         semantic: SemanticLockState,
-        cargo_lock_payload: String,
     ) -> Self {
         Self {
             format: LOCKFILE_FORMAT_VERSION,
@@ -254,7 +242,6 @@ impl IncanLock {
             deps_fingerprint,
             cargo_features: cargo_features.normalized(),
             semantic,
-            cargo_lock_payload: normalize_cargo_lock_payload(&cargo_lock_payload),
         }
     }
 }
@@ -957,14 +944,6 @@ pub fn compute_resolved_fingerprint_with_sdk_paths(
     format!("sha256:{}", hex::encode(hash))
 }
 
-pub fn normalize_cargo_lock_payload(payload: &str) -> String {
-    let mut out = payload.replace("\r\n", "\n");
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out
-}
-
 /// Parse and validate one lockfile while retaining its path in all diagnostics.
 fn parse_lockfile(content: &str, path: &Path) -> Result<IncanLock, LockfileError> {
     let raw: RawIncanLock = toml::from_str(content).map_err(|e| LockfileError::Parse {
@@ -972,7 +951,7 @@ fn parse_lockfile(content: &str, path: &Path) -> Result<IncanLock, LockfileError
         source: e,
     })?;
 
-    if raw.incan.format != LOCKFILE_FORMAT_VERSION && raw.incan.format != LEGACY_LOCKFILE_FORMAT_VERSION {
+    if raw.incan.format != LOCKFILE_FORMAT_VERSION {
         return Err(LockfileError::Invalid {
             path: path.to_path_buf(),
             message: format!(
@@ -993,16 +972,15 @@ fn parse_lockfile(content: &str, path: &Path) -> Result<IncanLock, LockfileError
         }
         .normalized(),
         semantic: raw.semantic,
-        cargo_lock_payload: normalize_cargo_lock_payload(&raw.cargo.lock),
     })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawIncanLock {
     incan: RawIncanMeta,
     #[serde(default)]
     semantic: SemanticLockState,
-    cargo: RawCargoLock,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1018,11 +996,6 @@ struct RawIncanMeta {
     cargo_no_default_features: bool,
     #[serde(rename = "cargo-all-features", default)]
     cargo_all_features: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RawCargoLock {
-    lock: String,
 }
 
 #[derive(Debug, Serialize)]

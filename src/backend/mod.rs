@@ -65,10 +65,7 @@ pub use shadow::{
 };
 
 // Project generation (public API)
-pub use project::{
-    CargoCommand, CompilationPlan, ExecutionResult, Executor, PlannedDirectory, PlannedFile, ProjectGenerator,
-    RunProfile,
-};
+pub use project::{CompilationPlan, ExecutionResult, PlannedDirectory, PlannedFile, ProjectGenerator, RunProfile};
 
 // For tests that need to verify lowering behavior
 #[doc(hidden)]

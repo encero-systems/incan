@@ -18,9 +18,7 @@
 //! - [`cargo_toml`] — `Cargo.toml` rendering and dependency formatting
 //! - [`runner`] — Cargo-lock projection support for the explicit publisher boundary
 
-pub mod cargo_toml;
 pub mod generator;
-pub(crate) mod lock_projection;
 pub mod plan;
 pub mod runner;
 
@@ -33,4 +31,4 @@ pub(crate) const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_C
 
 // Re-export public types so `crate::backend::project::ProjectGenerator` (etc.) still works.
 pub use generator::{ProjectGenerator, RunProfile};
-pub use plan::{CargoCommand, CompilationPlan, ExecutionResult, Executor, PlannedDirectory, PlannedFile};
+pub use plan::{CompilationPlan, ExecutionResult, PlannedDirectory, PlannedFile};

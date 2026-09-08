@@ -101,8 +101,6 @@ const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE
 const INTERNAL_SDK_PROVIDER_PATH_FILE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE";
 /// Internal SDK distribution profile used by release packaging to omit component payloads physically.
 const INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV: &str = "INCAN_INTERNAL_SDK_DISTRIBUTION_PROFILE";
-/// Internal path override for the Cargo.lock payload used while producing a compiler-owned artifact.
-pub(crate) const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CARGO_LOCK_PAYLOAD_PATH";
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
 pub(crate) const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
 
@@ -304,31 +302,6 @@ fn sdk_provider_builder_executable(
         parent_sibling.display(),
         current_executable.display(),
     )))
-}
-
-/// Find the verified workspace Cargo.lock available to a development SDK provider build.
-///
-/// A standalone artifact crate otherwise resolves its own newest compatible versions, which can differ from the
-/// compiler workspace's verified offline cache. Installed SDK layouts need not contain a workspace lockfile, so they
-/// deliberately retain normal Cargo resolution.
-fn sdk_provider_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
-    stdlib_root
-        .ancestors()
-        .skip(1)
-        .map(|parent| parent.join("Cargo.lock"))
-        .find(|path| path.is_file())
-        .map(|path| fs::canonicalize(&path).unwrap_or(path))
-}
-
-/// Pass the verified SDK lock to the child that owns generated output publication.
-///
-/// The child's lock resolver and project generator materialize this payload inside its library transaction. Writing
-/// Cargo.lock into the output beforehand would create a nonempty directory without generated-library ownership.
-fn configure_sdk_provider_workspace_lock(command: &mut Command, workspace_lock: Option<&Path>) {
-    let Some(workspace_lock) = workspace_lock else {
-        return;
-    };
-    command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
 }
 
 /// Keep the bootstrap artifact lock alive for the whole preparation/publish transaction.
@@ -1001,18 +974,8 @@ fn build_sdk_components_into_staging(
             staging_root.display()
         ))
     })?;
-    if let Some(workspace_lock) = workspace_lock {
-        fs::copy(workspace_lock, staging_root.join("Cargo.lock")).map_err(|error| {
-            CliError::failure(format!(
-                "failed to publish shared SDK provider lock from {}: {error}",
-                workspace_lock.display()
-            ))
-        })?;
-    }
     let mut inventory = source_catalog_inventory(catalog, staging_root);
     let inventory_path = staging_root.join(SDK_INVENTORY_FILE);
-    let cargo_target_dir = staging_root.join(".cargo-target");
-    let caller_cargo_target = env::var_os(GENERATED_CARGO_TARGET_DIR_ENV).filter(|path| !path.is_empty());
     let mut built_any = false;
 
     for component in catalog.publication_order() {
@@ -1042,13 +1005,7 @@ fn build_sdk_components_into_staging(
             .args(["build", "--lib", "."])
             .arg(&output_root)
             .arg("--all-features");
-        configure_sdk_provider_build_environment(
-            &mut command,
-            &component.id,
-            &cargo_target_dir,
-            caller_cargo_target.as_deref(),
-            toolchain_source,
-        );
+        configure_sdk_provider_build_environment(&mut command, &component.id, toolchain_source);
         if built_any {
             inventory
                 .write_to_path(&inventory_path)
@@ -1057,7 +1014,6 @@ fn build_sdk_components_into_staging(
         } else {
             command.env_remove(SDK_INVENTORY_OVERRIDE_ENV);
         }
-        configure_sdk_provider_workspace_lock(&mut command, workspace_lock);
         if let Some(reports) = build_reports {
             reports.configure(&mut command, &component.id);
         }
@@ -1087,15 +1043,6 @@ fn build_sdk_components_into_staging(
                 manifest_path.display()
             ))
         })?;
-        let component_lock = output_root.join("Cargo.lock");
-        if component_lock.is_file() {
-            fs::remove_file(&component_lock).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to remove duplicated SDK component lock {}: {error}",
-                    component_lock.display()
-                ))
-            })?;
-        }
         let namespace_claims = sdk_component_namespace_claims(
             &component.id,
             &component.namespace_roots,
@@ -1125,14 +1072,6 @@ fn build_sdk_components_into_staging(
         }];
         built_any = true;
     }
-    if cargo_target_dir.exists() {
-        fs::remove_dir_all(&cargo_target_dir).map_err(|error| {
-            CliError::failure(format!(
-                "failed to remove transient SDK provider Cargo target {}: {error}",
-                cargo_target_dir.display()
-            ))
-        })?;
-    }
     restrict_staged_sdk_profile(catalog, distribution_profile, staging_root, &mut inventory)?;
     inventory
         .write_to_path(&inventory_path)
@@ -1140,23 +1079,18 @@ fn build_sdk_components_into_staging(
     Ok(inventory)
 }
 
-/// Preserve a caller-owned Cargo target while keeping the ordinary provider-publication fallback transaction-local.
+/// Isolate component compilation under its exact SDK namespace and compiler source inputs.
 fn configure_sdk_provider_build_environment(
     command: &mut Command,
     component_id: &str,
-    transaction_cargo_target: &Path,
-    caller_cargo_target: Option<&std::ffi::OsStr>,
     toolchain_source: Option<(&Path, &Path)>,
 ) {
-    let cargo_target_dir = caller_cargo_target.map(Path::new).unwrap_or(transaction_cargo_target);
     command
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
         .env_remove(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
         .env(SDK_PROVIDER_BUILD_ENV, component_id)
-        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
-        // Share transient Cargo artifacts across components, then remove them before immutable provider publication.
-        .env(GENERATED_CARGO_TARGET_DIR_ENV, cargo_target_dir);
+        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
     if let Some((source_root, stdlib_root)) = toolchain_source {
         command
             .env("INCAN_SOURCE_ROOT", source_root)
@@ -1289,88 +1223,6 @@ fn nested_sdk_component_build_error(component: &str, project_root: &Path, output
     ))
 }
 
-/// Cargo execution policy resolved from CLI inputs and environment defaults.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CargoPolicy {
-    pub(crate) offline: bool,
-    pub(crate) locked: bool,
-    pub(crate) frozen: bool,
-    pub(crate) extra_args: Vec<String>,
-}
-
-/// CLI policy flags, including explicit disables for environment defaults.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct CargoPolicyCliFlags {
-    pub offline: bool,
-    pub no_offline: bool,
-    pub locked: bool,
-    pub no_locked: bool,
-    pub frozen: bool,
-    pub no_frozen: bool,
-}
-
-impl CargoPolicy {
-    /// Resolve policy for a user-facing build/run/test command.
-    pub(crate) fn from_cli_and_env(
-        cli_flags: CargoPolicyCliFlags,
-        cli_cargo_args: Vec<String>,
-        cli_passthrough_args: Vec<String>,
-    ) -> Self {
-        Self::from_sources(cli_flags, cli_cargo_args, cli_passthrough_args, |name| {
-            env::var(name).ok()
-        })
-    }
-
-    /// Build an explicit policy for internal Cargo invocations that should not read RFC 020 env defaults.
-    pub(crate) fn explicit(offline: bool, locked: bool, frozen: bool, extra_args: Vec<String>) -> Self {
-        let mut policy = Self {
-            offline,
-            locked,
-            frozen,
-            extra_args,
-        };
-        policy.normalize();
-        policy
-    }
-
-    /// Resolve policy from injected sources; used by tests to avoid mutating process env.
-    fn from_sources<F>(
-        cli_flags: CargoPolicyCliFlags,
-        mut cli_cargo_args: Vec<String>,
-        cli_passthrough_args: Vec<String>,
-        env_value: F,
-    ) -> Self
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        let env_frozen = env_flag_value(env_value("INCAN_FROZEN").as_deref());
-        let env_offline = env_flag_value(env_value("INCAN_OFFLINE").as_deref());
-        let env_locked = env_flag_value(env_value("INCAN_LOCKED").as_deref());
-
-        cli_cargo_args.extend(cli_passthrough_args);
-        let extra_args = if cli_cargo_args.is_empty() {
-            split_env_cargo_args(env_value("INCAN_CARGO_ARGS").as_deref())
-        } else {
-            cli_cargo_args
-        };
-
-        Self::explicit(
-            resolve_cli_env_flag(env_offline, cli_flags.offline, cli_flags.no_offline),
-            resolve_cli_env_flag(env_locked, cli_flags.locked, cli_flags.no_locked),
-            resolve_cli_env_flag(env_frozen, cli_flags.frozen, cli_flags.no_frozen),
-            extra_args,
-        )
-    }
-
-    /// Apply derived policy semantics after raw source resolution.
-    fn normalize(&mut self) {
-        if self.frozen {
-            self.offline = true;
-            self.locked = true;
-        }
-    }
-}
-
 /// Enforce the project-level `requires-incan` constraint for a project-aware command.
 pub(crate) fn enforce_project_toolchain_constraint(manifest: &ProjectManifest) -> CliResult<()> {
     enforce_toolchain_constraints(&ToolchainConstraintSet::from_project_manifest(manifest))
@@ -1397,15 +1249,6 @@ fn resolve_cli_env_flag(env_default: bool, cli_enable: bool, cli_disable: bool) 
 /// Parse a boolean RFC 020 environment flag value.
 fn env_flag_value(value: Option<&str>) -> bool {
     value.is_some_and(|value| matches!(value, "1" | "true" | "TRUE" | "on" | "ON"))
-}
-
-/// Split `INCAN_CARGO_ARGS` using the RFC 020 whitespace-only rule.
-fn split_env_cargo_args(value: Option<&str>) -> Vec<String> {
-    value
-        .into_iter()
-        .flat_map(str::split_whitespace)
-        .map(str::to_string)
-        .collect()
 }
 
 /// Discover the active component-aware SDK relative to the selected toolchain or an explicit override.
@@ -3379,49 +3222,6 @@ fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerpri
 }
 
 #[cfg(feature = "rust_inspect")]
-/// Build a deterministic fingerprint for generated build-script metadata prewarm inputs and requested Rust paths.
-fn rust_inspect_out_dirs_fingerprint(
-    manifest_dir: &Path,
-    target_dir: &Path,
-    query_paths: &[String],
-) -> CliResult<String> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"incan_rust_inspect_out_dirs/1\0");
-    hasher.update(target_dir.as_os_str().as_encoded_bytes());
-    hasher.update(b"\0");
-    for relative in ["Cargo.toml", "Cargo.lock", "src/main.rs"] {
-        let path = manifest_dir.join(relative);
-        match fs::read(&path) {
-            Ok(bytes) => {
-                hasher.update(relative.as_bytes());
-                hasher.update(b"\0");
-                hasher.update(bytes);
-                hasher.update(b"\0");
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound && relative == "Cargo.lock" => {}
-            Err(err) => {
-                return Err(CliError::failure(format!(
-                    "Failed to fingerprint rust-inspect out-dir prewarm input {}: {err}",
-                    path.display()
-                )));
-            }
-        }
-    }
-    let mut sorted_paths = query_paths.to_vec();
-    sorted_paths.sort();
-    sorted_paths.dedup();
-    for query_path in sorted_paths {
-        hasher.update(query_path.as_bytes());
-        hasher.update(b"\0");
-    }
-    Ok(format!(
-        "{}{}",
-        RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE,
-        hex::encode(hasher.finalize())
-    ))
-}
-
-#[cfg(feature = "rust_inspect")]
 /// Return whether the stored out-dir prewarm stamp matches the current fingerprint and the shared target still exists.
 fn rust_inspect_out_dirs_stamp_matches(stamp_path: &Path, fingerprint: &str, target_dir: &Path) -> bool {
     target_dir.is_dir()
@@ -3431,120 +3231,10 @@ fn rust_inspect_out_dirs_stamp_matches(stamp_path: &Path, fingerprint: &str, tar
 }
 
 #[cfg(feature = "rust_inspect")]
-/// Write a Cargo config that points the generated rust-inspect workspace at the shared target directory.
-fn write_rust_inspect_cargo_config(manifest_dir: &Path, target_dir: &Path) -> CliResult<()> {
-    let cargo_dir = manifest_dir.join(".cargo");
-    fs::create_dir_all(&cargo_dir).map_err(|err| {
-        CliError::failure(format!(
-            "Failed to create rust-inspect Cargo config directory {}: {err}",
-            cargo_dir.display()
-        ))
-    })?;
-    let escaped_target_dir = target_dir.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
-    fs::write(
-        cargo_dir.join("config.toml"),
-        format!("[build]\ntarget-dir = \"{escaped_target_dir}\"\n"),
-    )
-    .map_err(|err| {
-        CliError::failure(format!(
-            "Failed to write rust-inspect Cargo config {}: {err}",
-            cargo_dir.join("config.toml").display()
-        ))
-    })
-}
-
-#[cfg(feature = "rust_inspect")]
-/// Point one generated rust-inspect workspace at its selected Cargo target.
-pub(crate) fn configure_rust_inspect_cargo_target(manifest_dir: &Path, target_dir: &Path) -> CliResult<()> {
-    write_rust_inspect_cargo_config(manifest_dir, target_dir)
-}
-
-#[cfg(feature = "rust_inspect")]
-/// Detect Cargo's stale-lockfile failure so prewarm can retry with an offline lock refresh instead of silently
-/// skipping.
-fn rust_inspect_locked_prewarm_needs_lock_update(stderr: &str) -> bool {
-    stderr.contains("--locked was passed")
-        && stderr.contains("lock file")
-        && (stderr.contains("cannot update") || stderr.contains("needs to be updated"))
-}
-
-#[cfg(feature = "rust_inspect")]
-/// Run the Cargo command that warms generated build-script output for rust-inspect metadata extraction.
-fn run_rust_inspect_out_dirs_prewarm_command(
-    manifest_dir: &Path,
-    target_dir: &Path,
-    mode: RustInspectPrewarmCargoMode,
-) -> CliResult<std::process::Output> {
-    let mut command = crate::backend::project::runner::cargo_command();
-    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
-    command.arg("check");
-    command.arg("--manifest-path");
-    command.arg(manifest_dir.join("Cargo.toml"));
-    match mode {
-        RustInspectPrewarmCargoMode::Locked if manifest_dir.join("Cargo.lock").is_file() => {
-            command.arg("--locked");
-        }
-        RustInspectPrewarmCargoMode::Offline => {
-            command.arg("--offline");
-        }
-        RustInspectPrewarmCargoMode::Locked => {}
-    }
-    command
-        .env_remove("SSL_CERT_FILE")
-        .env_remove("SSL_CERT_DIR")
-        .env_remove("CURL_CA_BUNDLE")
-        .env_remove("REQUESTS_CA_BUNDLE")
-        .env_remove("CARGO_HTTP_CAINFO")
-        .output()
-        .map_err(|err| CliError::failure(format!("Failed to run rust-inspect build-script prewarm: {err}")))
-}
-
-#[cfg(feature = "rust_inspect")]
 #[derive(Debug, Clone, Copy)]
 enum RustInspectPrewarmCargoMode {
     Locked,
     Offline,
-}
-
-#[cfg(feature = "rust_inspect")]
-/// Prewarm generated build-script output directories for rust-inspect lookups and stamp successful runs for reuse.
-fn prewarm_rust_inspect_out_dirs(manifest_dir: &Path, target_dir: &Path, query_paths: &[String]) -> CliResult<()> {
-    write_rust_inspect_cargo_config(manifest_dir, target_dir)?;
-    let fingerprint = rust_inspect_out_dirs_fingerprint(manifest_dir, target_dir, query_paths)?;
-    let stamp_path = manifest_dir.join(RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE);
-    if rust_inspect_out_dirs_stamp_matches(&stamp_path, &fingerprint, target_dir) {
-        return Ok(());
-    }
-
-    eprintln!(
-        "rust-inspect build-script prewarm: checking generated metadata workspace into {}",
-        target_dir.display()
-    );
-    let mut output =
-        run_rust_inspect_out_dirs_prewarm_command(manifest_dir, target_dir, RustInspectPrewarmCargoMode::Locked)?;
-    if !output.status.success()
-        && rust_inspect_locked_prewarm_needs_lock_update(String::from_utf8_lossy(&output.stderr).as_ref())
-    {
-        eprintln!("rust-inspect build-script prewarm: generated Cargo.lock is stale; retrying offline lock refresh");
-        output =
-            run_rust_inspect_out_dirs_prewarm_command(manifest_dir, target_dir, RustInspectPrewarmCargoMode::Offline)?;
-    }
-
-    if !output.status.success() {
-        return Err(CliError::failure(format!(
-            "rust-inspect build-script prewarm failed with status {}:\n{}{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    fs::write(&stamp_path, &fingerprint).map_err(|err| {
-        CliError::failure(format!(
-            "Failed to write rust-inspect out-dir prewarm fingerprint {}: {err}",
-            stamp_path.display()
-        ))
-    })?;
-    Ok(())
 }
 
 /// Generate the rust-inspect workspace that semantic Rust extraction should query for this project.
@@ -3580,171 +3270,6 @@ pub(crate) fn ensure_rust_inspect_workspace(
         cargo_policy_flags,
         &[],
     )
-}
-
-/// Generate a rust-inspect workspace whose Cargo package identity matches the canonical lock owner.
-#[cfg(feature = "rust_inspect")]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
-    project_root: &Path,
-    project_name: &str,
-    cargo_package_name: &str,
-    rust_edition: Option<String>,
-    resolved: &ResolvedDependencies,
-    project_requirements: &ProjectRequirements,
-    cargo_lock_payload: Option<String>,
-    cargo_lock_projection_root: Option<&str>,
-    clear_cargo_lock: bool,
-    cargo_target_dir: &Path,
-    cargo_policy_flags: &[String],
-    rust_derive_probe_paths: &[String],
-) -> CliResult<PathBuf> {
-    let project_manifest =
-        ProjectManifest::discover(project_root).map_err(|error| CliError::failure(error.to_string()))?;
-    let cargo_lock_payload =
-        project_rust_inspect_lock_projection(cargo_lock_payload, cargo_package_name, project_manifest.as_ref())?;
-    let rust_derive_probe_paths = declared_rust_derive_probe_paths(resolved, rust_derive_probe_paths);
-    let fingerprint = rust_inspect_workspace_fingerprint(
-        project_name,
-        cargo_package_name,
-        rust_edition.as_deref(),
-        resolved,
-        &project_requirements.stdlib_features,
-        &project_requirements.sdk_dependency_rebindings,
-        &project_requirements.sdk_path_dependencies,
-        &project_requirements.sdk_artifact_projections,
-        cargo_lock_payload.as_deref(),
-        cargo_lock_projection_root,
-        clear_cargo_lock,
-        cargo_target_dir,
-        rust_derive_probe_paths.as_slice(),
-    );
-    let rust_inspect_manifest_dir = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
-    let fingerprint_path = rust_inspect_manifest_dir.join(RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE);
-    let cargo_toml_path = rust_inspect_manifest_dir.join("Cargo.toml");
-    let main_rs_path = rust_inspect_manifest_dir.join("src").join("main.rs");
-
-    let fingerprint_matches = match fs::read_to_string(&fingerprint_path) {
-        Ok(existing) => existing.trim() == fingerprint.as_str(),
-        Err(_) => false,
-    };
-
-    if cargo_toml_path.is_file()
-        && main_rs_path.is_file()
-        && fingerprint_matches
-        && project_requirements.sdk_artifact_projections.is_empty()
-    {
-        return Ok(rust_inspect_manifest_dir);
-    }
-
-    let mut generator = ProjectGenerator::new(&rust_inspect_manifest_dir, project_name, true);
-    generator.set_package_name(Some(cargo_package_name.to_string()));
-    if let Some(project) = project_manifest.as_ref().and_then(|manifest| manifest.project.as_ref()) {
-        generator.set_package_metadata(project.version.clone(), project.license.clone());
-    }
-    generator.set_dependencies(resolved.dependencies.clone());
-    generator.set_dev_dependencies(resolved.dev_dependencies.clone());
-    generator.set_include_dev_dependencies(true);
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-    generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
-    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
-    generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
-    generator.set_rust_edition(rust_edition);
-    generator.set_cargo_lock_payload(cargo_lock_payload);
-    generator.set_cargo_lock_projection_root(cargo_lock_projection_root.map(ToOwned::to_owned));
-    generator.set_clear_cargo_lock(clear_cargo_lock);
-    generator.set_cargo_policy_flags(cargo_policy_flags.to_vec());
-    let mut referenced_crates = std::collections::BTreeSet::new();
-    for dep in resolved.dependencies.iter().chain(resolved.dev_dependencies.iter()) {
-        referenced_crates.insert(dep.crate_name.replace('-', "_"));
-    }
-    let mut rust_inspect_stub = String::new();
-    for crate_name in referenced_crates {
-        rust_inspect_stub.push_str(format!("use {crate_name} as _;\n").as_str());
-    }
-    for (index, derive_path) in rust_derive_probe_paths.iter().enumerate() {
-        rust_inspect_stub.push_str(format!("#[derive({derive_path})]\nstruct __IncanDeriveProbe{index};\n").as_str());
-    }
-    rust_inspect_stub.push_str("fn main() {}");
-
-    #[cfg(all(test, feature = "rust_inspect"))]
-    record_test_rust_inspect_workspace_generation(&rust_inspect_manifest_dir);
-
-    generator.generate(rust_inspect_stub.as_str()).map_err(|e| {
-        CliError::failure(format!(
-            "Failed to generate rust-inspect lock project at {}: {e}",
-            rust_inspect_manifest_dir.display()
-        ))
-    })?;
-    generator.materialize_cargo_lock_projection().map_err(|error| {
-        CliError::failure(format!(
-            "Failed to project rust-inspect Cargo.lock at {}: {error}",
-            rust_inspect_manifest_dir.display()
-        ))
-    })?;
-
-    if let Err(err) = fs::write(&fingerprint_path, &fingerprint) {
-        return Err(CliError::failure(format!(
-            "Failed to write rust-inspect workspace fingerprint {}: {err}",
-            fingerprint_path.display()
-        )));
-    }
-
-    Ok(rust_inspect_manifest_dir)
-}
-
-/// Project a canonical dependency lock into the generated rust-inspect root without re-resolving dependencies.
-///
-/// A Cargo lock records the local package's version alongside registry packages. Incan's dependency fingerprint
-/// intentionally excludes that local version because it cannot alter the resolved third-party graph. When a project
-/// changes only its own version, passing the old root record to Cargo with `--locked` spuriously rejects the source
-/// inspection projection. Rewrite only that source-less root record to the current manifest version; registry package
-/// entries, checksums, and dependency edges remain selected from the canonical lock. This stays a projection, never
-/// a lock publication or dependency resolver.
-#[cfg(feature = "rust_inspect")]
-fn project_rust_inspect_lock_projection(
-    cargo_lock_payload: Option<String>,
-    cargo_package_name: &str,
-    manifest: Option<&ProjectManifest>,
-) -> CliResult<Option<String>> {
-    let Some(payload) = cargo_lock_payload else {
-        return Ok(None);
-    };
-    let Some(version) = manifest
-        .and_then(|manifest| manifest.project.as_ref())
-        .and_then(|project| project.version.as_deref())
-    else {
-        return Ok(Some(payload));
-    };
-    let mut lock = toml::from_str::<toml::Value>(&payload).map_err(|error| {
-        CliError::failure(format!(
-            "failed to parse canonical Cargo.lock for rust-inspect projection: {error}"
-        ))
-    })?;
-    let Some(packages) = lock.get_mut("package").and_then(toml::Value::as_array_mut) else {
-        // Modern semantic Incan locks intentionally have no Cargo package graph until the explicit Oven publisher
-        // creates one. They are not a Cargo projection and must remain untouched here.
-        return Ok(Some(payload));
-    };
-    let mut matching_roots = packages
-        .iter_mut()
-        .filter_map(|package| {
-            let table = package.as_table_mut()?;
-            let name = table.get("name")?.as_str()?;
-            (name == cargo_package_name && !table.contains_key("source")).then_some(table)
-        })
-        .collect::<Vec<_>>();
-    let [root] = matching_roots.as_mut_slice() else {
-        // A provider-only or workspace lock can legitimately omit the generated inspection package. It is still an
-        // exact external dependency authority, so leave it intact rather than manufacturing a local root record.
-        return Ok(Some(payload));
-    };
-    root.insert("version".to_string(), toml::Value::String(version.to_string()));
-    toml::to_string_pretty(&lock).map(Some).map_err(|error| {
-        CliError::failure(format!(
-            "failed to serialize rust-inspect Cargo.lock projection: {error}"
-        ))
-    })
 }
 
 /// Collect canonical rust-inspect query paths from parsed `rust::` imports.
@@ -3928,88 +3453,15 @@ pub(crate) fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) 
     probes.into_iter().collect()
 }
 
-/// Return whether rust-inspect prewarm should run for the supplied environment value.
-#[cfg(feature = "rust_inspect")]
-fn parse_rust_inspect_prewarm_env(raw: Option<&str>) -> bool {
-    let Some(raw) = raw else {
-        return false;
-    };
-    matches!(raw.trim(), "1" | "true" | "TRUE" | "on" | "ON" | "yes" | "YES")
-}
-
-/// Return whether Rust inspection prewarming is enabled.
-#[cfg(feature = "rust_inspect")]
-fn rust_inspect_prewarm_enabled() -> bool {
-    parse_rust_inspect_prewarm_env(std::env::var("INCAN_RUST_INSPECT_PREWARM").ok().as_deref())
-}
-
-/// Return whether rust-inspect should eagerly run Cargo to materialize every generated build-script `OUT_DIR`.
-#[cfg(feature = "rust_inspect")]
-fn parse_rust_inspect_eager_out_dirs_prewarm_env(raw: Option<&str>) -> bool {
-    raw.is_some_and(|raw| matches!(raw.trim(), "1" | "true" | "TRUE" | "on" | "ON" | "yes" | "YES"))
-}
-
-/// Return whether rust-inspect should eagerly run Cargo to materialize every generated build-script `OUT_DIR`.
-#[cfg(feature = "rust_inspect")]
-fn rust_inspect_eager_out_dirs_prewarm_enabled() -> bool {
-    parse_rust_inspect_eager_out_dirs_prewarm_env(
-        std::env::var("INCAN_RUST_INSPECT_EAGER_OUT_DIRS_PREWARM")
-            .ok()
-            .as_deref(),
-    )
-}
-
-/// Surface rust-inspect preparation progress from explicit CLI prewarm phases.
-#[cfg(feature = "rust_inspect")]
-fn print_rust_inspect_prewarm_progress(message: String) {
-    if message.starts_with("rust-inspect prewarm") {
-        eprintln!("{message}");
-    }
-}
-
 /// Marker understood by `rust_inspect` that selects its build-system-neutral `rust-project.json` loader.
 ///
 /// Mark one compiler-authored Rust inspection projection for receipt-bound direct-Rustc loading.
 #[cfg(feature = "rust_inspect")]
 pub(crate) fn mark_oven_direct_rust_inspection(manifest_dir: &Path) -> CliResult<()> {
-    let bootstrap_marker = manifest_dir.join(crate::rust_inspect::OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER);
-    if bootstrap_marker.is_file() {
-        fs::remove_file(&bootstrap_marker).map_err(|error| {
-            CliError::failure(format!(
-                "failed to retire explicit Oven Cargo inspection marker {}: {error}",
-                bootstrap_marker.display()
-            ))
-        })?;
-    }
     let marker = manifest_dir.join(crate::rust_inspect::OVEN_DIRECT_INSPECTION_MARKER);
     fs::write(&marker, b"receipt-bound direct-rustc inspection\n").map_err(|error| {
         CliError::failure(format!(
             "failed to mark Oven Rust inspection projection {}: {error}",
-            marker.display()
-        ))
-    })
-}
-
-/// Mark the explicit Oven publisher's generated inspection workspace for one Cargo-backed semantic bootstrap.
-///
-/// The publisher already owns Cargo authority while preparing a new dependency closure. Letting rust-analyzer load
-/// real proc-macro output here records generated trait implementations without teaching ordinary build/run paths to
-/// invoke Cargo or infer macro behavior from source text.
-#[cfg(feature = "rust_inspect")]
-pub(crate) fn mark_oven_cargo_bootstrap_rust_inspection(manifest_dir: &Path) -> CliResult<()> {
-    let direct_marker = manifest_dir.join(crate::rust_inspect::OVEN_DIRECT_INSPECTION_MARKER);
-    if direct_marker.is_file() {
-        fs::remove_file(&direct_marker).map_err(|error| {
-            CliError::failure(format!(
-                "failed to retire direct Oven inspection marker {}: {error}",
-                direct_marker.display()
-            ))
-        })?;
-    }
-    let marker = manifest_dir.join(crate::rust_inspect::OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER);
-    fs::write(&marker, b"explicit Oven Cargo semantic bootstrap\n").map_err(|error| {
-        CliError::failure(format!(
-            "failed to mark explicit Oven Cargo inspection projection {}: {error}",
             marker.display()
         ))
     })
@@ -4021,59 +3473,6 @@ fn oven_direct_rust_inspection_marked(manifest_dir: &Path) -> bool {
     manifest_dir
         .join(crate::rust_inspect::OVEN_DIRECT_INSPECTION_MARKER)
         .is_file()
-}
-
-/// Prepare rust-inspect metadata access before typechecking/codegen hot paths.
-///
-/// Metadata extraction now defaults to lazy lookup because eager rust-analyzer extraction across every imported Rust
-/// path can dominate cold downstream builds before the real generated Rust build starts. The Cargo target configuration
-/// is still prepared up front so lazy build-script `OUT_DIR` routes share the generated-project target directory. Set
-/// `INCAN_RUST_INSPECT_PREWARM=1` to opt into eager metadata prewarm, and set
-/// `INCAN_RUST_INSPECT_EAGER_OUT_DIRS_PREWARM=1` only when debugging a suspected out-dir cache regression.
-#[cfg(feature = "rust_inspect")]
-pub(crate) fn prewarm_rust_inspect_workspace(
-    manifest_dir: &Path,
-    target_dir: &Path,
-    query_paths: &[String],
-    force_direct_prewarm: bool,
-) -> CliResult<()> {
-    if oven_direct_rust_inspection_marked(manifest_dir) {
-        // The direct loader consumes the compiler-authored source graph without Cargo. Its only build-script
-        // OUT_DIR sources are the sealed plan directories the installer recorded, so ignore the legacy eager-OUT_DIR
-        // knob rather than letting a normal Oven command regain a Cargo subprocess through an inspection side path.
-        if !query_paths.is_empty() && (force_direct_prewarm || rust_inspect_prewarm_enabled()) {
-            let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
-            inspector
-                .prewarm(query_paths.iter().cloned(), &print_rust_inspect_prewarm_progress)
-                .map_err(|err| {
-                    CliError::failure(format!(
-                        "failed to prewarm direct Oven rust-inspect cache from {}: {err}",
-                        manifest_dir.display()
-                    ))
-                })?;
-        }
-        return Ok(());
-    }
-
-    configure_rust_inspect_cargo_target(manifest_dir, target_dir)?;
-    if query_paths.is_empty() {
-        return Ok(());
-    }
-    if !rust_inspect_prewarm_enabled() {
-        return Ok(());
-    }
-    if rust_inspect_eager_out_dirs_prewarm_enabled() {
-        prewarm_rust_inspect_out_dirs(manifest_dir, target_dir, query_paths)?;
-    }
-    let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
-    inspector
-        .prewarm(query_paths.iter().cloned(), &print_rust_inspect_prewarm_progress)
-        .map_err(|err| {
-            CliError::failure(format!(
-                "failed to prewarm rust-inspect cache from {}: {err}",
-                manifest_dir.display()
-            ))
-        })
 }
 
 /// Resolve the source path for a stdlib module path (e.g. `["std", "testing"]`).
@@ -4906,52 +4305,6 @@ pub(crate) fn format_dependency_error(error: &DependencyError, sources: &HashMap
     }
 
     format!("error: {}\n  --> {}\n", error.error.message, error.file_path.display())
-}
-
-/// Build Cargo policy flags (`--offline` / `--locked` / `--frozen`).
-pub(crate) fn cargo_policy_flags(policy: &CargoPolicy) -> Vec<String> {
-    if policy.frozen {
-        return vec!["--frozen".to_string()];
-    }
-
-    let mut flags = Vec::new();
-    if policy.offline {
-        flags.push("--offline".to_string());
-    }
-    if policy.locked {
-        flags.push("--locked".to_string());
-    }
-    flags
-}
-
-/// Build Cargo feature-selection flags without policy or arbitrary extra args.
-fn cargo_feature_flags(cargo_features: &CargoFeatureSelection) -> Vec<String> {
-    let mut flags = Vec::new();
-    if cargo_features.cargo_all_features {
-        flags.push("--all-features".to_string());
-    }
-    if cargo_features.cargo_no_default_features {
-        flags.push("--no-default-features".to_string());
-    }
-    if !cargo_features.cargo_features.is_empty() {
-        flags.push("--features".to_string());
-        flags.push(cargo_features.cargo_features.join(","));
-    }
-    flags
-}
-
-/// Build flags for lockfile-oriented Cargo commands.
-pub(crate) fn cargo_lockfile_flags(policy: &CargoPolicy, cargo_features: &CargoFeatureSelection) -> Vec<String> {
-    let mut flags = cargo_policy_flags(policy);
-    flags.extend(cargo_feature_flags(cargo_features));
-    flags
-}
-
-/// Build Cargo command flags (policy flags + feature flags + extra Cargo args).
-pub(crate) fn cargo_command_flags(policy: &CargoPolicy, cargo_features: &CargoFeatureSelection) -> Vec<String> {
-    let mut flags = cargo_lockfile_flags(policy, cargo_features);
-    flags.extend(policy.extra_args.clone());
-    flags
 }
 
 /// Build a lookup map from canonical module key (`a_b_c`) to module index in `collect_modules` output.
@@ -7005,7 +6358,6 @@ version = "0.1.0"
     Allowed
     Denied
 
-
 pub model Decision:
     pub admitted: bool
     pub reason: str
@@ -7015,10 +6367,8 @@ pub model Decision:
             src_dir.join("consumer.incn"),
             r#"from crate.types import Access, Decision
 
-
 pub def allowed() -> Access:
     return Access.Allowed
-
 
 pub def explain(decision: Decision) -> str:
     if decision.admitted:
