@@ -978,6 +978,11 @@ pub struct DeclarationArtifacts {
     pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
     /// RFC 036: Decorated function bindings keyed by declaration span, preserving same-name overloads.
     pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
+    /// Checked decorator applications whose sole parameter and result are the same generic type variable.
+    ///
+    /// This relation is captured before substitution, so native representation can follow the input callable
+    /// without inferring representation identity from structurally equal result types.
+    pub generic_identity_decorator_applications: HashSet<(usize, usize)>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
 }

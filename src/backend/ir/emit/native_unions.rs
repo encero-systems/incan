@@ -1203,6 +1203,7 @@ mod tests {
         )?);
         assert_private_signature_bridge_projection(&plan)?;
         assert_local_native_callable_projection(&plan)?;
+        assert_decorated_native_callable_projection(&plan)?;
         let source = "pub from pub::admitted import select as forwarded\n";
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
@@ -1389,6 +1390,117 @@ mod tests {
         let wrapper = declared[0].union_type_name().ok_or("native wrapper absent")?;
         let compact = rust.split_whitespace().collect::<String>();
         assert!(compact.contains(&format!("{wrapper}::V0(Charge{{value:42}}")), "{rust}");
+        Ok(())
+    }
+
+    /// Source checking, original registration, decorator storage, and both wrappers retain one admitted return.
+    fn assert_decorated_native_callable_projection(plan: &std::sync::Arc<crate::provider::ProviderPlan>) -> TestResult {
+        let source = r#"from pub::admitted import Answer
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+pub def echo(value: Answer) -> Answer:
+    return value
+
+@preserve()
+pub def generic[T](unused: T, value: Answer) -> Answer:
+    return value
+
+def change(func: (Answer) -> Answer) -> ((Answer) -> (int | bool)):
+    return (value) => true
+
+@change
+pub def changed(value: Answer) -> Answer:
+    return value
+
+def change_same(func: (Answer) -> Answer) -> ((Answer) -> (int | str)):
+    return (value) => "changed"
+
+@change_same
+pub def changed_same(value: Answer) -> Answer:
+    return value
+
+@preserve()
+def read(value: Answer) -> Answer:
+    return value
+
+@preserve()
+def read(value: bool) -> bool:
+    return value
+"#;
+        let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("consumer".into()));
+        checker.set_current_module_path(Some(vec!["lib".into()]));
+        checker.set_provider_plan(plan.clone());
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        for declaration in &ast.declarations {
+            if let crate::frontend::ast::Declaration::Function(function) = &declaration.node {
+                for decorator in &function.decorators {
+                    assert_eq!(
+                        checker
+                            .type_info()
+                            .declarations
+                            .generic_identity_decorator_applications
+                            .contains(&(decorator.span.start, decorator.span.end)),
+                        matches!(function.name.as_str(), "echo" | "generic" | "read"),
+                        "{} must use the checked unsubstituted relation",
+                        function.name,
+                    );
+                }
+            }
+        }
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        lowering.set_provider_plan(Some(plan.clone()));
+        let ir = lowering.lower_program(&ast)?;
+        let mut functions = 0;
+        let mut statics = 0;
+        for declaration in &ir.declarations {
+            match &declaration.kind {
+                IrDeclKind::Function(function) if matches!(function.name.as_str(), "changed" | "changed_same") => {
+                    assert!(function.return_type.is_union(), "{function:?}");
+                    assert!(!matches!(function.return_type, IrType::ExternalUnion { .. }));
+                }
+                IrDeclKind::Function(function)
+                    if function
+                        .params
+                        .last()
+                        .is_some_and(|param| matches!(param.ty, IrType::ExternalUnion { native: Some(_), .. })) =>
+                {
+                    functions += 1;
+                    let expected = &function.params.last().ok_or("native parameter absent")?.ty;
+                    assert_eq!(&function.return_type, expected, "{function:?}");
+                    let signature = ir
+                        .function_registry
+                        .get(&function.name)
+                        .ok_or("native binding missing")?;
+                    assert_eq!(&signature.return_type, expected, "{signature:?}");
+                }
+                IrDeclKind::Static {
+                    ty: IrType::Function { params, ret },
+                    ..
+                } if params
+                    .first()
+                    .is_some_and(|param| matches!(param, IrType::ExternalUnion { native: Some(_), .. })) =>
+                {
+                    if ret.is_union() && !matches!(ret.as_ref(), IrType::ExternalUnion { .. }) {
+                        assert_ne!(ret.as_ref(), &params[0]);
+                    } else {
+                        statics += 1;
+                        assert_eq!(ret.as_ref(), &params[0]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(functions, 8, "five native originals and three preserving wrappers");
+        assert_eq!(
+            statics, 2,
+            "two preserving monomorphic native wrappers use static storage"
+        );
         Ok(())
     }
 

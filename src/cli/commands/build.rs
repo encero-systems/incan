@@ -3289,12 +3289,19 @@ impl<'a> LibraryReexportResolver<'a> {
         let entrypoint_exports = self.module_exports.get(&module_key(&lib_module.path_segments));
 
         if let Some(exports_by_name) = self.module_exports.get(&module_key(&lib_module.path_segments)) {
+            let mut direct_groups = HashSet::new();
             for (export_name, export_span) in Self::direct_public_exports(lib_module) {
+                let exports = exports_by_name.get(&export_name);
+                // The checked map owns one binding group, including all selected overload declarations. Register
+                // that group once; later, distinct import projections still pass through the collision registry.
+                if exports.is_some() && !direct_groups.insert(export_name.clone()) {
+                    continue;
+                }
                 if let Err(error) = exported_names.register(&export_name, export_span) {
                     errors.push(error);
                     continue;
                 }
-                if let Some(exports) = exports_by_name.get(&export_name) {
+                if let Some(exports) = exports {
                     resolved.extend(exports.iter().cloned());
                 }
             }
@@ -19435,6 +19442,50 @@ impl ChildId {
 
         let result = LibraryReexportResolver::new(&module_exports).resolve(&lib_module);
         assert!(result.is_err(), "expected duplicate export to fail");
+        Ok(())
+    }
+
+    /// Direct overload declarations share one checked public binding; an additional import projection still collides.
+    #[test]
+    fn resolve_library_direct_overload_group_once() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub def select(value: int) -> int:\n    return value\npub def select(value: str) -> str:\n    return value\n";
+        let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        checker.set_current_package_identity(Some("producer".into()));
+        checker.set_current_module_path(Some(vec!["lib".into()]));
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        assert_eq!(exports.len(), 2);
+        let mut module_exports = HashMap::from([("lib".to_string(), checked_exports_by_name(exports.clone()))]);
+        let mut module = ParsedModule {
+            name: "lib".into(),
+            path_segments: vec!["lib".into()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.into(),
+            ast,
+        };
+        let resolved = LibraryReexportResolver::new(&module_exports)
+            .resolve(&module)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(resolved.len(), 2, "the complete group must be emitted exactly once");
+        assert_eq!(resolved[0].identity.canonical, exports[0].identity.canonical);
+        assert_eq!(resolved[1].identity.canonical, exports[1].identity.canonical);
+        assert_ne!(resolved[0].identity.canonical, resolved[1].identity.canonical);
+
+        module_exports.insert("other".into(), checked_exports_by_name(exports));
+        module.source.push_str("pub from other import select\n");
+        module.ast = parser::parse(&lexer::lex(&module.source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let errors = LibraryReexportResolver::new(&module_exports)
+            .resolve(&module)
+            .err()
+            .ok_or("distinct public projection did not collide with the checked overload binding")?;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Duplicate library export `select`"))
+        );
         Ok(())
     }
 
