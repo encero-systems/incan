@@ -839,17 +839,23 @@ impl NativeTestProgressReporter {
     /// A rendered case result already carries its root in a column of its own, so only the lines this prints around
     /// it — a test's own output and the unfinished-case list — are prefixed.
     fn observe(&mut self, line: &str) {
+        // Fast path for a test's own output, which is the overwhelming majority of what a root emits: no parse, no
+        // intermediate `Vec`, and no `String` copy of a line that is about to be written unchanged.
+        if !Self::could_be_an_event(line) {
+            self.emit(line);
+            return;
+        }
         for rendered in self.render(line) {
-            match self.renders_its_own_attribution(line) {
-                true => self.sink.line(&rendered),
-                false => self.emit(&rendered),
-            }
+            self.sink.line(&rendered);
         }
     }
 
-    /// Whether a line renders into a form that already names its root.
-    fn renders_its_own_attribution(&self, line: &str) -> bool {
-        line.trim_start().starts_with('{')
+    /// Whether a line could be a libtest event at all.
+    ///
+    /// A single character comparison, deliberately. This runs once per line of a root's entire output, so anything
+    /// more expensive here is paid hundreds of thousands of times on a root that spawns nested commands.
+    fn could_be_an_event(line: &str) -> bool {
+        line.as_bytes().first() == Some(&b'{')
     }
 
     /// Render one transcript line as progress, returning the lines it produces.
@@ -858,6 +864,13 @@ impl NativeTestProgressReporter {
     /// capturing stdout. Returning the lines rather than printing them is also what keeps a suite event, which
     /// prints nothing, distinguishable from a case event that does.
     fn render(&mut self, line: &str) -> Vec<String> {
+        // Cheap rejection before parsing. Every libtest event is a JSON object, so a line that does not open one
+        // cannot be an event — and on a root that spawns hundreds of nested commands, almost no line is. Parsing
+        // each of those into a `serde_json::Value` to discover that costs more than everything else this reporter
+        // does put together.
+        if !Self::could_be_an_event(line) {
+            return vec![line.to_string()];
+        }
         let Some(event) = serde_json::from_str::<serde_json::Value>(line)
             .ok()
             .filter(serde_json::Value::is_object)
