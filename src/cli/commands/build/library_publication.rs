@@ -357,6 +357,7 @@ mod tests {
         let output = temporary.path().join("target/lib");
         let receipt = temporary.path().join(".incan/backend/receipt.json");
         fs::create_dir_all(output.join("src"))?;
+        fs::create_dir_all(output.join("native"))?;
         fs::create_dir_all(output.join("oven/debug"))?;
         fs::create_dir_all(output.join("oven/release"))?;
         fs::create_dir_all(receipt.parent().ok_or("receipt parent missing")?)?;
@@ -365,6 +366,7 @@ mod tests {
             "src/lib.rs",
             "src/old.rs",
             "library.incnlib",
+            "native/source-unit.json",
             "old.incnsem",
             "oven/debug/lib.rlib",
             "oven/release/lib.rlib",
@@ -374,19 +376,26 @@ mod tests {
         fs::write(&receipt, "old receipt")?;
         let publication = LibraryPublication::begin(temporary.path(), &output, vec![receipt.clone()])?;
         fs::create_dir_all(output.join("src"))?;
+        fs::create_dir_all(output.join("native"))?;
         fs::create_dir_all(output.join("oven/debug"))?;
         fs::write(output.join("Cargo.toml"), "new cargo")?;
         fs::write(output.join("src/lib.rs"), "new generated source")?;
         fs::write(output.join("src/new.rs"), "new module")?;
         fs::write(output.join("oven/debug/lib.rlib"), "new debug native")?;
         fs::write(&receipt, "new receipt")?;
-        let result = publication.finish::<()>(Err(CliError::failure("release compilation failed")));
+        super::super::publish_library_file(&output.join("native/source-unit.json"), b"new source definition")?;
+        // Fail the real final file publication after the new source definition has already been written.
+        fs::create_dir(output.join("library.incnlib"))?;
+        let failure = super::super::publish_library_file(&output.join("library.incnlib"), b"new checked manifest");
+        assert!(failure.is_err());
+        let result = publication.finish(failure);
         assert!(result.is_err());
         for relative in [
             "Cargo.toml",
             "src/lib.rs",
             "src/old.rs",
             "library.incnlib",
+            "native/source-unit.json",
             "old.incnsem",
             "oven/debug/lib.rlib",
             "oven/release/lib.rlib",

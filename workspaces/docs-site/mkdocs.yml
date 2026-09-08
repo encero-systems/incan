@@ -300,6 +300,7 @@ nav:
           - Checked contract metadata: tooling/reference/contract_metadata.md
           - Checked API metadata: tooling/reference/checked_api_metadata.md
           - Package executable representation: tooling/reference/package_executable_representation.md
+          - Native source-unit definition: tooling/reference/native_source_unit.md
           - Project configuration: tooling/reference/project_configuration.md
           - SDK components and package features: tooling/reference/sdk_components_and_package_features.md
           - Oven interop deployment plans: tooling/reference/interop_deployment_plans.md

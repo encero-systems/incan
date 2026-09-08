@@ -23,6 +23,7 @@ pub mod format;
 pub mod frontend;
 #[cfg(feature = "cli")]
 pub(crate) mod generated_cache;
+pub(crate) mod generated_source;
 pub mod library_manifest;
 pub mod lockfile;
 #[cfg(feature = "lsp")]

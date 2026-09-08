@@ -5,6 +5,7 @@
 
 mod artifact;
 mod model;
+mod native_source;
 pub mod published_layout;
 #[cfg(test)]
 mod tests;
@@ -24,6 +25,12 @@ pub(crate) use artifact::{
     digest_toolchain_source_tree_with_cache,
 };
 pub use model::*;
+pub use native_source::{
+    NATIVE_SOURCE_UNIT_PATH, NATIVE_SOURCE_UNIT_SCHEMA_VERSION, NativeGitReference, NativePathAnchor,
+    NativeRequirementRole, NativeRequirementSource, NativeSourceCrateKind, NativeSourceDefinitionError,
+    NativeSourceInput, NativeSourcePackage, NativeSourceRequirement, NativeSourceUnitDefinition,
+    NativeUnboundPathReason,
+};
 pub(crate) use type_projection::{
     VisitTypeRefs, with_checked_native_unions, with_checked_type_origins, with_checked_type_routes,
     with_native_nominal_origins,

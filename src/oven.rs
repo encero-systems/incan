@@ -14,7 +14,6 @@ use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::library_manifest::digest_cargo_path_source_tree_with_cache;
 use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
@@ -141,7 +140,8 @@ pub struct OvenGeneratedProjectRequest {
 /// library build derive debug and release receipt identities without walking the same generated tree twice.
 #[derive(Debug, Clone)]
 pub(crate) struct OvenGeneratedProjectSourceEvidence {
-    names: BTreeSet<String>,
+    files: BTreeMap<String, PathBuf>,
+    trees: BTreeMap<String, PathBuf>,
     supplemental_digests: BTreeMap<String, String>,
 }
 
@@ -455,33 +455,62 @@ pub fn receipt_generated_project(request: &OvenGeneratedProjectRequest) -> Resul
 /// Derive one reusable generated-source proof for profile-specific receipts in the current command.
 ///
 /// This reads and verifies every requested source exactly once. The opaque result can be supplied only to a request
-/// with the same normalized source-evidence keys, so a debug or release intent cannot silently borrow unrelated
-/// generated inputs.
+/// with the same normalized source-evidence keys, input kinds and paths, so a debug or release intent cannot silently
+/// borrow unrelated generated inputs.
 pub(crate) fn generated_project_source_evidence(
     request: &OvenGeneratedProjectRequest,
 ) -> Result<OvenGeneratedProjectSourceEvidence, OvenError> {
-    let names = generated_source_evidence_names(request)?;
-    let supplemental_digests = generated_source_evidence(request)?;
+    generated_source_evidence_for_inputs(&request.generated_sources, &request.generated_source_trees).map_err(|error| {
+        match error {
+            OvenError::InvalidGeneratedSource { path, message } if path.as_os_str().is_empty() => {
+                OvenError::InvalidGeneratedSource {
+                    path: request.project_root.clone(),
+                    message,
+                }
+            }
+            other => other,
+        }
+    })
+}
+
+/// Capture explicit generated inputs without requiring a native build intent.
+pub(crate) fn generated_source_evidence_for_inputs(
+    files: &BTreeMap<String, PathBuf>,
+    trees: &BTreeMap<String, PathBuf>,
+) -> Result<OvenGeneratedProjectSourceEvidence, OvenError> {
+    let files = normalized_generated_source_bindings(files)?;
+    let trees = normalized_generated_source_bindings(trees)?;
+    let supplemental_digests = generated_source_evidence(&files, &trees)?;
     Ok(OvenGeneratedProjectSourceEvidence {
-        names,
+        files,
+        trees,
         supplemental_digests,
     })
+}
+
+impl OvenGeneratedProjectSourceEvidence {
+    /// Read a verified named digest without exposing mutable proof records.
+    pub(crate) fn digest(&self, name: &str) -> Option<&str> {
+        self.supplemental_digests.get(name).map(String::as_str)
+    }
 }
 
 /// Receipt a generated project with a previously verified source closure.
 ///
 /// The caller may vary build intent, including debug versus release profile, but the request must retain exactly the
-/// source-evidence keys that produced `source_evidence`. This is an in-process reuse boundary, not a persisted
+/// source-evidence keys, input kinds and paths that produced `source_evidence`. The caller must keep these generated
+/// inputs unchanged until receipt construction finishes. This is an in-process reuse boundary, not a persisted
 /// cache: each returned receipt still carries complete content-derived source evidence and verifies normally.
 pub(crate) fn receipt_generated_project_with_source_evidence(
     request: &OvenGeneratedProjectRequest,
     source_evidence: &OvenGeneratedProjectSourceEvidence,
 ) -> Result<OvenReceipt, OvenError> {
-    let expected_names = generated_source_evidence_names(request)?;
-    if source_evidence.names != expected_names {
+    if source_evidence.files != normalized_generated_source_bindings(&request.generated_sources)?
+        || source_evidence.trees != normalized_generated_source_bindings(&request.generated_source_trees)?
+    {
         return Err(OvenError::InvalidGeneratedSource {
             path: request.project_root.clone(),
-            message: "reused source evidence does not match the request's generated source keys".to_string(),
+            message: "reused source evidence does not match the request's generated source bindings".to_string(),
         });
     }
     let project = OvenProjectIdentity {
@@ -755,9 +784,12 @@ fn normalized_build_unit_inputs(inputs: &BTreeMap<String, String>) -> Result<BTr
 }
 
 /// Digest every generated source input while rejecting symlinks and duplicate evidence keys.
-fn generated_source_evidence(request: &OvenGeneratedProjectRequest) -> Result<BTreeMap<String, String>, OvenError> {
+fn generated_source_evidence(
+    files: &BTreeMap<String, PathBuf>,
+    trees: &BTreeMap<String, PathBuf>,
+) -> Result<BTreeMap<String, String>, OvenError> {
     let mut digests = BTreeMap::new();
-    for (name, path) in &request.generated_sources {
+    for (name, path) in files {
         let name = normalized_generated_source_name(name)?;
         let digest = digest_generated_source_file(path)?;
         if digests.insert(name.clone(), digest).is_some() {
@@ -767,7 +799,7 @@ fn generated_source_evidence(request: &OvenGeneratedProjectRequest) -> Result<BT
             });
         }
     }
-    for (name, path) in &request.generated_source_trees {
+    for (name, path) in trees {
         let name = normalized_generated_source_name(name)?;
         let digest = digest_source_tree(path)?;
         if digests.insert(name.clone(), digest).is_some() {
@@ -779,36 +811,28 @@ fn generated_source_evidence(request: &OvenGeneratedProjectRequest) -> Result<BT
     }
     if digests.is_empty() {
         return Err(OvenError::InvalidGeneratedSource {
-            path: request.project_root.clone(),
+            path: PathBuf::new(),
             message: "must declare at least one generated source file or tree".to_string(),
         });
     }
     Ok(digests)
 }
 
-/// Return the normalized source-evidence key set without reading the requested files.
-fn generated_source_evidence_names(request: &OvenGeneratedProjectRequest) -> Result<BTreeSet<String>, OvenError> {
-    let mut names = BTreeSet::new();
-    for (name, path) in request
-        .generated_sources
-        .iter()
-        .chain(request.generated_source_trees.iter())
-    {
+/// Normalize proof keys while retaining exact command-local paths and input kinds.
+fn normalized_generated_source_bindings(
+    inputs: &BTreeMap<String, PathBuf>,
+) -> Result<BTreeMap<String, PathBuf>, OvenError> {
+    let mut bindings = BTreeMap::new();
+    for (name, path) in inputs {
         let name = normalized_generated_source_name(name)?;
-        if !names.insert(name.clone()) {
+        if bindings.insert(name.clone(), path.clone()).is_some() {
             return Err(OvenError::InvalidGeneratedSource {
                 path: path.clone(),
                 message: format!("duplicate generated source evidence key `{name}`"),
             });
         }
     }
-    if names.is_empty() {
-        return Err(OvenError::InvalidGeneratedSource {
-            path: request.project_root.clone(),
-            message: "must declare at least one generated source file or tree".to_string(),
-        });
-    }
-    Ok(names)
+    Ok(bindings)
 }
 
 /// Normalize a caller-facing source-evidence key without allowing blank identity records.
@@ -822,22 +846,7 @@ fn normalized_generated_source_name(name: &str) -> Result<String, OvenError> {
 
 /// Hash one direct-rustc source file after proving it is a regular, non-symlink input.
 fn digest_generated_source_file(path: &Path) -> Result<String, OvenError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| OvenError::InvalidGeneratedSource {
-        path: path.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(OvenError::InvalidGeneratedSource {
-            path: path.to_path_buf(),
-            message: "must be a regular non-symlink file".to_string(),
-        });
-    }
-    fs::read(path)
-        .map(|bytes| digest_bytes(&bytes))
-        .map_err(|error| OvenError::InvalidGeneratedSource {
-            path: path.to_path_buf(),
-            message: error.to_string(),
-        })
+    crate::generated_source::digest_file(path).map_err(OvenError::from)
 }
 
 /// Hash the workspace source and fixture closure that determines the repository's native test-suite behaviour.
@@ -1028,26 +1037,7 @@ fn collect_compiler_suite_source_tree(
 /// This is shared by generated-source receipt evidence and the compiler/SDK runtime inputs that select reusable Oven
 /// build units across clean worktrees.
 pub fn digest_source_tree(root: &Path) -> Result<String, OvenError> {
-    let metadata = fs::symlink_metadata(root).map_err(|error| OvenError::InvalidGeneratedSource {
-        path: root.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(OvenError::InvalidGeneratedSource {
-            path: root.to_path_buf(),
-            message: "must be a directory without symlink indirection".to_string(),
-        });
-    }
-    let mut records = BTreeMap::new();
-    collect_generated_source_tree(root, root, &mut records)?;
-    if records.is_empty() {
-        return Err(OvenError::InvalidGeneratedSource {
-            path: root.to_path_buf(),
-            message: "must contain at least one regular file".to_string(),
-        });
-    }
-    let payload = serde_json::to_vec(&records).map_err(|error| OvenError::Serialize(error.to_string()))?;
-    Ok(digest_bytes(&payload))
+    crate::generated_source::digest_tree(root).map_err(OvenError::from)
 }
 
 /// Hash authored project inputs while excluding compiler- and tool-owned mutable output trees.
@@ -1155,70 +1145,6 @@ fn collect_project_source_tree(
     Ok(())
 }
 
-/// Recursively collect one generated source tree with sorted portable paths and no link traversal.
-fn collect_generated_source_tree(
-    root: &Path,
-    current: &Path,
-    records: &mut BTreeMap<String, String>,
-) -> Result<(), OvenError> {
-    let mut entries = fs::read_dir(current)
-        .map_err(|error| OvenError::InvalidGeneratedSource {
-            path: current.to_path_buf(),
-            message: error.to_string(),
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| OvenError::InvalidGeneratedSource {
-            path: current.to_path_buf(),
-            message: error.to_string(),
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|error| OvenError::InvalidGeneratedSource {
-            path: path.clone(),
-            message: error.to_string(),
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(OvenError::InvalidGeneratedSource {
-                path,
-                message: "symlinks are not allowed in a generated source closure".to_string(),
-            });
-        }
-        if metadata.is_dir() {
-            collect_generated_source_tree(root, &path, records)?;
-            continue;
-        }
-        if !metadata.is_file() {
-            return Err(OvenError::InvalidGeneratedSource {
-                path,
-                message: "may contain only regular files and directories".to_string(),
-            });
-        }
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| OvenError::InvalidGeneratedSource {
-                path: path.clone(),
-                message: "escaped the declared generated source root".to_string(),
-            })?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let digest =
-            fs::read(&path)
-                .map(|bytes| digest_bytes(&bytes))
-                .map_err(|error| OvenError::InvalidGeneratedSource {
-                    path: path.clone(),
-                    message: error.to_string(),
-                })?;
-        if records.insert(relative.clone(), digest).is_some() {
-            return Err(OvenError::InvalidGeneratedSource {
-                path,
-                message: format!("duplicate portable source path `{relative}`"),
-            });
-        }
-    }
-    Ok(())
-}
-
 /// Normalize a required identity field and reject blank values that collapse distinct build units.
 fn normalized_value(value: &str, field: &'static str) -> Result<String, OvenError> {
     let normalized = value.trim();
@@ -1281,9 +1207,7 @@ fn digest_content(content: &str) -> String {
 
 /// Hash arbitrary canonical identity bytes with Oven's stable `sha256:` rendering.
 pub(crate) fn digest_bytes(content: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    format!("sha256:{}", hex::encode(hasher.finalize()))
+    crate::generated_source::digest_bytes(content)
 }
 
 /// Write, sync, and atomically replace a receipt from a same-directory staged file.
@@ -1317,6 +1241,18 @@ struct BuildUnitIdentityInput<'a> {
     intent: &'a OvenBuildIntent,
     compatibility: &'a OvenCompatibility,
     inputs: &'a BTreeMap<String, String>,
+}
+
+impl From<crate::generated_source::GeneratedSourceError> for OvenError {
+    /// Preserve the original Oven error variants and details at the physical hashing boundary.
+    fn from(error: crate::generated_source::GeneratedSourceError) -> Self {
+        match error {
+            crate::generated_source::GeneratedSourceError::Invalid { path, message } => {
+                Self::InvalidGeneratedSource { path, message }
+            }
+            crate::generated_source::GeneratedSourceError::Serialize(message) => Self::Serialize(message),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1561,6 +1497,14 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("does not match"));
+        let relocated = tempfile::tempdir()?;
+        write_generated_source_closure(relocated.path(), "fn main() { println!(\"oven\"); }\n")?;
+        let same_names_other_paths = generated_request(relocated.path());
+        assert_eq!(receipt_generated_project(&same_names_other_paths)?, reused_release);
+        assert!(
+            receipt_generated_project_with_source_evidence(&same_names_other_paths, &source_evidence).is_err(),
+            "same source names and bytes must not transfer an in-process proof to different paths"
+        );
         Ok(())
     }
 

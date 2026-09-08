@@ -63,10 +63,13 @@ use crate::frontend::{diagnostics, typechecker};
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
 use crate::library_manifest::{
-    CompiledProviderMetadata, LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource,
-    ProviderDependencyKind, ProviderDependencyMetadata, ProviderFactKind, ProviderFactRequirement,
-    ProviderImplementationFacet, ProviderModuleClaim, ProviderOperationMetadata,
-    digest_cargo_path_source_tree_with_cache, digest_provider_artifact, digest_provider_source_inputs,
+    CompiledProviderMetadata, LibraryManifest, NATIVE_SOURCE_UNIT_PATH, NATIVE_SOURCE_UNIT_SCHEMA_VERSION,
+    NativeGitReference, NativeRequirementRole, NativeRequirementSource, NativeSourceCrateKind, NativeSourceInput,
+    NativeSourcePackage, NativeSourceRequirement, NativeSourceUnitDefinition, NativeUnboundPathReason,
+    ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyKind, ProviderDependencyMetadata,
+    ProviderFactKind, ProviderFactRequirement, ProviderImplementationFacet, ProviderModuleClaim,
+    ProviderOperationMetadata, digest_cargo_path_source_tree_with_cache, digest_provider_artifact,
+    digest_provider_source_inputs,
 };
 use crate::lockfile::{
     CargoFeatureSelection, IncanLock, LOCK_FILENAME, provider_semantic_identities, semantic_lock_state,
@@ -108,9 +111,9 @@ use crate::oven::store::{
     OvenStoreLease, PublishedOvenStore,
 };
 use crate::oven::{
-    OvenGeneratedProjectRequest, digest_bytes, digest_dependency_specs, digest_project_source_tree,
-    generated_project_source_evidence, receipt_generated_project, receipt_generated_project_with_source_evidence,
-    write_receipt,
+    OvenGeneratedProjectRequest, OvenGeneratedProjectSourceEvidence, digest_bytes, digest_dependency_specs,
+    digest_project_source_tree, generated_project_source_evidence, generated_source_evidence_for_inputs,
+    receipt_generated_project, receipt_generated_project_with_source_evidence, write_receipt,
 };
 use crate::oven_interop::locked_oven_interop_targets;
 use crate::provider::{
@@ -291,6 +294,8 @@ struct PreparedLibraryProject {
     /// One identity-addressed public executable closure selected from the finalized manifest and the same checked
     /// compilation.
     executable_surface: Vec<u8>,
+    /// Generated physical unit definition; presence does not admit its Rust dependency closure.
+    native_source_definition: NativeSourceUnitDefinition,
     timings_ms: BTreeMap<String, u64>,
     report: BuildReportDraft,
     oven: Option<OvenPreparedLibrary>,
@@ -6465,6 +6470,25 @@ fn library_project_output_sidecars(
     manifest: &LibraryManifest,
     artifact_root: &Path,
 ) -> CliResult<Vec<(PathBuf, String)>> {
+    let definition = NativeSourceUnitDefinition::read_optional(artifact_root)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(definition) = &definition {
+        definition
+            .validate_against_manifest(manifest)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        definition
+            .validate_sources(artifact_root)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+    }
+    library_project_output_sidecars_for_definition(manifest, artifact_root, definition.as_ref())
+}
+
+/// Collect sidecars using a command-owned prepared definition or one already verified at an import boundary.
+fn library_project_output_sidecars_for_definition(
+    manifest: &LibraryManifest,
+    artifact_root: &Path,
+    definition: Option<&NativeSourceUnitDefinition>,
+) -> CliResult<Vec<(PathBuf, String)>> {
     let mut relative_paths = Vec::new();
     if let Some(desugarer) = manifest
         .vocab
@@ -6487,6 +6511,13 @@ fn library_project_output_sidecars(
                 .map_err(|error| CliError::failure(error.to_string()))?
                 .to_path_buf(),
         );
+    }
+    if let Some(definition) = definition {
+        definition
+            .validate_against_manifest(manifest)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        NativeSourceUnitDefinition::path_in(artifact_root).map_err(|error| CliError::failure(error.to_string()))?;
+        relative_paths.push(PathBuf::from(NATIVE_SOURCE_UNIT_PATH));
     }
     relative_paths
         .into_iter()
@@ -6515,12 +6546,18 @@ fn packaged_library_metadata_files(
     manifest: &LibraryManifest,
     artifact_root: &Path,
 ) -> CliResult<Vec<OvenPackagedLibraryMetadataFile>> {
+    let sidecars = library_project_output_sidecars(manifest, artifact_root)?;
+    packaged_library_metadata_files_from_sidecars(manifest_path, artifact_root, &sidecars)
+}
+
+/// Seal an already-collected sidecar inventory without scanning the generated source closure again.
+fn packaged_library_metadata_files_from_sidecars(
+    manifest_path: &Path,
+    artifact_root: &Path,
+    sidecars: &[(PathBuf, String)],
+) -> CliResult<Vec<OvenPackagedLibraryMetadataFile>> {
     let mut paths = vec![manifest_path.to_path_buf()];
-    paths.extend(
-        library_project_output_sidecars(manifest, artifact_root)?
-            .into_iter()
-            .map(|(path, _)| path),
-    );
+    paths.extend(sidecars.iter().map(|(path, _)| path.clone()));
     let canonical_root = fs::canonicalize(artifact_root).map_err(|error| {
         CliError::failure(format!(
             "failed to resolve package artifact root {}: {error}",
@@ -10122,8 +10159,12 @@ fn prepare_library_project(
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(oven_plan_mode == OvenProjectPlanMode::ExplicitBake);
-    let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
-    generator.set_rust_edition(rust_edition.clone());
+    let rust_edition = manifest
+        .build
+        .as_ref()
+        .and_then(|build| build.rust_edition.clone())
+        .unwrap_or_else(|| "2024".to_string());
+    generator.set_rust_edition(Some(rust_edition.clone()));
     #[cfg(feature = "rust_inspect")]
     if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir.as_ref() {
         codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.manifest_dir().to_path_buf());
@@ -10253,6 +10294,28 @@ fn prepare_library_project(
         "library_codegen_sync_provider_dependencies",
         synchronize_provider_dependencies_start,
     );
+    // All generated source writes and provider bridge emission are complete. Native profile receipts reuse this
+    // exact in-process proof. The remaining preparation and publication only write native outputs and sidecars;
+    // imported/completed generations verify their own source bytes at the later read boundary.
+    let source_evidence_start = Instant::now();
+    let generated_source_evidence = generated_source_evidence_for_inputs(
+        &BTreeMap::from([("generated-root".to_string(), generator.crate_root_path())]),
+        &BTreeMap::from([("generated-source-tree".to_string(), generator.output_dir().join("src"))]),
+    )
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    let native_source_definition = capture_native_source_definition(NativeSourceDefinitionInputs {
+        library_manifest: &library_manifest,
+        artifact_root: &out_dir,
+        rust_edition: &rust_edition,
+        normal: &rust_dependencies,
+        dev: &rust_dev_dependencies,
+        source_evidence: &generated_source_evidence,
+    })?;
+    record_timing(
+        &mut timings_ms,
+        "library_generated_source_evidence",
+        source_evidence_start,
+    );
     let oven_profiles_start = Instant::now();
     let oven = if normal_oven {
         let rustc = oven_rustc.ok_or_else(|| CliError::failure("normal Oven library build omitted rustc"))?;
@@ -10263,28 +10326,6 @@ fn prepare_library_project(
             .as_ref()
             .ok_or_else(|| CliError::failure("normal Oven library build omitted its bounded store"))?;
         let mut profiles = BTreeMap::new();
-        let oven_receipt_source_evidence_start = Instant::now();
-        let mut source_evidence_request = OvenGeneratedProjectRequest::new(
-            &project_root,
-            &project_name,
-            &project_version,
-            target.clone(),
-            toolchain.clone(),
-            "debug",
-            Vec::new(),
-        )
-        .with_generated_source("generated-root", generator.crate_root_path())
-        .with_generated_source_tree("generated-source-tree", generator.output_dir().join("src"));
-        for (name, value) in oven_build_inputs.as_ref().into_iter().flat_map(|inputs| inputs.iter()) {
-            source_evidence_request = source_evidence_request.with_build_unit_input(name.clone(), value.clone());
-        }
-        let generated_source_evidence = generated_project_source_evidence(&source_evidence_request)
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        record_timing(
-            &mut timings_ms,
-            "library_oven_receipt_source_evidence",
-            oven_receipt_source_evidence_start,
-        );
         for profile in explicit_bake_profiles() {
             let mut receipt_request = OvenGeneratedProjectRequest::new(
                 &project_root,
@@ -10396,7 +10437,7 @@ fn prepare_library_project(
         Some(OvenPreparedLibrary {
             rustc,
             crate_name: ProjectGenerator::rust_target_name(&project_name),
-            rust_edition: rust_edition.clone().unwrap_or_else(|| "2024".to_string()),
+            rust_edition: rust_edition.clone(),
             profiles,
         })
     } else {
@@ -10470,6 +10511,7 @@ fn prepare_library_project(
 
     Ok(PreparedLibraryProject {
         executable_surface,
+        native_source_definition,
         generator,
         project_root,
         entrypoint: lib_entry,
@@ -10483,6 +10525,151 @@ fn prepare_library_project(
         rust_inspect_manifest_dir: rust_inspect_manifest_dir
             .as_ref()
             .map(|workspace| workspace.manifest_dir().to_path_buf()),
+    })
+}
+
+/// Borrow the existing producer facts after its final generated-source write.
+struct NativeSourceDefinitionInputs<'a> {
+    library_manifest: &'a LibraryManifest,
+    artifact_root: &'a Path,
+    rust_edition: &'a str,
+    normal: &'a [DependencySpec],
+    dev: &'a [DependencySpec],
+    source_evidence: &'a OvenGeneratedProjectSourceEvidence,
+}
+
+/// Capture one physical definition from emitted source evidence and retained requirements, without selecting sources.
+fn capture_native_source_definition(inputs: NativeSourceDefinitionInputs<'_>) -> CliResult<NativeSourceUnitDefinition> {
+    let manifest = inputs.library_manifest;
+    let mut requirements = Vec::new();
+    for (role, dependencies) in [
+        (NativeRequirementRole::Normal, inputs.normal),
+        (NativeRequirementRole::Dev, inputs.dev),
+    ] {
+        for dependency in dependencies {
+            let source = native_source_requirement_origin(dependency, role, manifest, inputs.artifact_root)?;
+            let mut features = dependency.features.clone();
+            features.sort();
+            features.dedup();
+            requirements.push(NativeSourceRequirement {
+                role,
+                alias: dependency.crate_name.clone(),
+                package: dependency.package.clone(),
+                version_requirement: dependency.version.clone(),
+                features,
+                default_features: dependency.default_features,
+                optional: dependency.optional,
+                source,
+            });
+        }
+    }
+    requirements.sort_by(|left, right| (left.role, &left.alias).cmp(&(right.role, &right.alias)));
+    let definition = NativeSourceUnitDefinition {
+        schema_version: NATIVE_SOURCE_UNIT_SCHEMA_VERSION,
+        package: NativeSourcePackage {
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+        },
+        crate_name: ProjectGenerator::rust_target_name(&manifest.name),
+        crate_kind: NativeSourceCrateKind::Rlib,
+        edition: inputs.rust_edition.to_string(),
+        authored_source_digest: manifest
+            .contract_metadata
+            .provider
+            .semantic_source_digest
+            .clone()
+            .ok_or_else(|| {
+                CliError::failure("checked authored-source digest is absent while capturing the native unit definition")
+            })?,
+        entrypoint: NativeSourceInput {
+            path: "src/lib.rs".to_string(),
+            digest: inputs
+                .source_evidence
+                .digest("generated-root")
+                .ok_or_else(|| CliError::failure("generated crate-root evidence is absent"))?
+                .to_string(),
+        },
+        source_tree: NativeSourceInput {
+            path: "src".to_string(),
+            digest: inputs
+                .source_evidence
+                .digest("generated-source-tree")
+                .ok_or_else(|| CliError::failure("generated source-tree evidence is absent"))?
+                .to_string(),
+        },
+        requirements,
+    };
+    definition
+        .validate_against_manifest(manifest)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(definition)
+}
+
+/// Retain an already-checked provider edge or a request; never infer selected identity from a Rust package name.
+fn native_source_requirement_origin(
+    dependency: &DependencySpec,
+    role: NativeRequirementRole,
+    manifest: &LibraryManifest,
+    artifact_root: &Path,
+) -> CliResult<NativeRequirementSource> {
+    let path = match &dependency.source {
+        DependencySource::Registry => return Ok(NativeRequirementSource::RegistryRequest),
+        DependencySource::Git { url, reference } => {
+            return Ok(NativeRequirementSource::GitRequest {
+                url: url.clone(),
+                reference: match reference {
+                    GitReference::Branch(value) => NativeGitReference::Branch(value.clone()),
+                    GitReference::Tag(value) => NativeGitReference::Tag(value.clone()),
+                    GitReference::Rev(value) => NativeGitReference::Rev(value.clone()),
+                },
+            });
+        }
+        DependencySource::Path { path } => path,
+    };
+    let edges: Vec<_> = manifest
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .iter()
+        .filter(|edge| edge.dependency_key == dependency.crate_name)
+        .collect();
+    if !edges.is_empty() {
+        let package = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
+        let resolved_path = fs::canonicalize(path).map_err(|error| {
+            CliError::failure(format!(
+                "failed to validate selected provider coordinate {}: {error}",
+                path.display()
+            ))
+        })?;
+        let mut matching = Vec::new();
+        for edge in edges {
+            let selected_path =
+                fs::canonicalize(artifact_root.join(&edge.relative_artifact_path)).map_err(|error| {
+                    CliError::failure(format!(
+                        "failed to validate checked provider edge `{}`: {error}",
+                        edge.dependency_key
+                    ))
+                })?;
+            if edge.provider_name == package && selected_path == resolved_path {
+                matching.push(edge);
+            }
+        }
+        if matching.len() != 1 {
+            return Err(CliError::failure(format!(
+                "source requirement `{}` does not match one exact checked provider edge",
+                dependency.crate_name
+            )));
+        }
+        return Ok(NativeRequirementSource::ProviderEdge {
+            edge_kind: matching[0].kind,
+            dependency_key: matching[0].dependency_key.clone(),
+        });
+    }
+    // The effective manifest retains an absolute/effective path but not whether its authored spelling was
+    // relative or absolute. Do not reconstruct authored intent from containment inside the project directory.
+    Ok(NativeRequirementSource::UnboundPathRequest {
+        request_key: format!("{}:{}", role.as_str(), dependency.crate_name),
+        reason: NativeUnboundPathReason::PortableSourceBindingUnavailable,
     })
 }
 
@@ -11363,12 +11550,23 @@ fn publish_library_file(path: &Path, bytes: &[u8]) -> CliResult<()> {
     result.map_err(|error| CliError::failure(format!("failed to publish {}: {error}", path.display())))
 }
 
-/// Write the `.incnlib` manifest and build-report artifact paths for a prepared library project.
+/// Publish the physical source definition, semantic sidecars and checked manifest under the library transaction.
 fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
     let manifest = prepared
         .library_manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("failed to encode library manifest: {error}")))?;
+    prepared
+        .native_source_definition
+        .validate_against_manifest(&prepared.library_manifest)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let definition = prepared
+        .native_source_definition
+        .to_json_bytes()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let definition_path =
+        NativeSourceUnitDefinition::path_in(&prepared.out_dir).map_err(|error| CliError::failure(error.to_string()))?;
+    publish_library_file(&definition_path, &definition)?;
     write_library_executable_surfaces(prepared)?;
     publish_library_file(&prepared.manifest_path, manifest.as_bytes())?;
 
@@ -13522,12 +13720,15 @@ pub(crate) fn bake_oven_project_targets(
                     let source_authority_digest = source_authority_digest.as_deref().ok_or_else(|| {
                         CliError::failure("explicit Oven library bake lost its final source authority")
                     })?;
-                    let library_sidecars =
-                        library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
-                    let metadata_files = packaged_library_metadata_files(
-                        &prepared.manifest_path,
+                    let library_sidecars = library_project_output_sidecars_for_definition(
                         &prepared.library_manifest,
                         &prepared.out_dir,
+                        Some(&prepared.native_source_definition),
+                    )?;
+                    let metadata_files = packaged_library_metadata_files_from_sidecars(
+                        &prepared.manifest_path,
+                        &prepared.out_dir,
+                        &library_sidecars,
                     )?;
                     write_packaged_library_loaf_manifest(
                         &prepared.out_dir,
@@ -17541,6 +17742,163 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
+    /// Capture actual generator output while retaining unresolved requests and the producer's explicit edition.
+    #[test]
+    fn native_source_definition_capture_keeps_requests_without_source_discovery()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let project = temporary.path().join("project");
+        let output = project.join("target/lib");
+        fs::create_dir_all(&project)?;
+        let mut manifest_text = r#"
+[project]
+name = "hyphenated-library"
+version = "1.2.3"
+[build]
+rust_edition = "2021"
+[rust-dependencies]
+regex = { version = "1", features = ["unicode", "std"], default-features = false }
+support = { path = "../absent-support" }
+"#
+        .to_string();
+        let inside_path = project.join("inside");
+        manifest_text.push_str(&format!(
+            "inside = {{ path = {} }}\n[rust-dev-dependencies]\nregex = \"1\"\n",
+            serde_json::to_string(&inside_path)?
+        ));
+        let manifest = ProjectManifest::from_str(&manifest_text, &project.join("loaf.toml"))?;
+        let mut generator = ProjectGenerator::new(&output, "hyphenated-library", false);
+        generator.set_rust_edition(Some("2021".to_string()));
+        generator.generate("pub fn answer() -> i64 { 42 }\n")?;
+        let evidence = generated_source_evidence_for_inputs(
+            &BTreeMap::from([("generated-root".to_string(), generator.crate_root_path())]),
+            &BTreeMap::from([("generated-source-tree".to_string(), output.join("src"))]),
+        )?;
+        let mut library = LibraryManifest::new("hyphenated-library", "1.2.3");
+        library.contract_metadata.provider.semantic_source_digest = Some(digest_bytes(b"checked authored source"));
+        let mut normal: Vec<_> = manifest.rust_dependencies().values().cloned().collect();
+        normal.push(DependencySpec {
+            crate_name: "external".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: false,
+            source: DependencySource::Path {
+                path: temporary.path().join("never-opened-external"),
+            },
+            optional: false,
+            package: None,
+        });
+        let dev: Vec<_> = manifest.rust_dev_dependencies().values().cloned().collect();
+        let definition = capture_native_source_definition(NativeSourceDefinitionInputs {
+            library_manifest: &library,
+            artifact_root: &output,
+            rust_edition: "2021",
+            normal: &normal,
+            dev: &dev,
+            source_evidence: &evidence,
+        })?;
+        definition.validate_sources(&output)?;
+        assert_eq!(definition.edition, "2021");
+        assert_eq!(
+            definition.crate_name,
+            ProjectGenerator::rust_target_name("hyphenated-library")
+        );
+        assert_eq!(
+            definition
+                .requirements
+                .iter()
+                .map(|request| (request.role, request.alias.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (NativeRequirementRole::Normal, "external"),
+                (NativeRequirementRole::Normal, "inside"),
+                (NativeRequirementRole::Normal, "regex"),
+                (NativeRequirementRole::Normal, "support"),
+                (NativeRequirementRole::Dev, "regex")
+            ]
+        );
+        assert!(
+            matches!(&definition.requirements[0].source, NativeRequirementSource::UnboundPathRequest { request_key, .. } if request_key == "normal:external")
+        );
+        assert!(
+            matches!(&definition.requirements[3].source, NativeRequirementSource::UnboundPathRequest { request_key, .. } if request_key == "normal:support")
+        );
+        assert!(
+            matches!(&definition.requirements[1].source, NativeRequirementSource::UnboundPathRequest { request_key, .. } if request_key == "normal:inside")
+        );
+        assert_eq!(definition.requirements[2].features, vec!["std", "unicode"]);
+        assert!(
+            matches!(&manifest.rust_dependencies()["inside"].source, DependencySource::Path { path } if path == &inside_path)
+        );
+        assert!(
+            matches!(&manifest.rust_dependencies()["support"].source, DependencySource::Path { path } if path == &project.join("../absent-support"))
+        );
+        let bytes = String::from_utf8(definition.to_json_bytes()?)?;
+        assert!(!bytes.contains(temporary.path().to_string_lossy().as_ref()));
+        assert!(!temporary.path().join("absent-support").exists());
+        assert!(!temporary.path().join("never-opened-external").exists());
+        Ok(())
+    }
+
+    /// Equal dependency spellings do not replace the containing manifest's exact checked artifact coordinate.
+    #[test]
+    fn native_source_provider_reference_requires_exact_coordinate_for_public_and_private_edges()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let output = temporary.path().join("published");
+        let provider = temporary.path().join("provider");
+        let other = temporary.path().join("same-spelling");
+        for path in [&output, &provider, &other] {
+            fs::create_dir(path)?;
+        }
+        let mut manifest = LibraryManifest::new("published", "1.0.0");
+        let mut dependency = DependencySpec {
+            crate_name: "stock".to_string(),
+            version: None,
+            features: vec!["native_feature".to_string()],
+            default_features: false,
+            source: DependencySource::Path { path: provider.clone() },
+            optional: false,
+            package: Some("catalog".to_string()),
+        };
+        for kind in [
+            ProviderDependencyKind::PublicPackage,
+            ProviderDependencyKind::PrivateImplementation,
+        ] {
+            manifest.contract_metadata.provider.provider_dependencies = vec![ProviderDependencyMetadata {
+                kind,
+                dependency_key: "stock".to_string(),
+                provider_name: "catalog".to_string(),
+                provider_version: "1.0.0".to_string(),
+                artifact_digest: digest_provider_artifact(&provider)?,
+                relative_artifact_path: "../provider".to_string(),
+                requested_features: BTreeSet::from(["public_feature".to_string()]),
+                default_features: false,
+                optional: false,
+            }];
+            assert_eq!(
+                native_source_requirement_origin(&dependency, NativeRequirementRole::Normal, &manifest, &output)?,
+                NativeRequirementSource::ProviderEdge {
+                    edge_kind: kind,
+                    dependency_key: "stock".to_string()
+                }
+            );
+            dependency.source = DependencySource::Path { path: other.clone() };
+            assert!(
+                native_source_requirement_origin(&dependency, NativeRequirementRole::Normal, &manifest, &output)
+                    .is_err()
+            );
+            dependency.source = DependencySource::Path { path: provider.clone() };
+            dependency.package = Some("wrong_package".to_string());
+            assert!(
+                native_source_requirement_origin(&dependency, NativeRequirementRole::Normal, &manifest, &output)
+                    .is_err()
+            );
+            dependency.package = Some("catalog".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn rooted_library_removes_selected_project_self_dependency_issue909() -> Result<(), Box<dyn std::error::Error>> {
         let project_root = tempfile::tempdir()?;
@@ -18731,10 +19089,61 @@ pub def answer() -> int:
             "private implementation targets must not leak into public model exports"
         );
         assert!(
-            !std::fs::read_to_string(manifest_path)?.contains("PrivateValue"),
+            !std::fs::read_to_string(&manifest_path)?.contains("PrivateValue"),
             "private implementation targets must not leak into the serialized library manifest"
         );
 
+        let root = manifest_path.parent().ok_or("manifest root missing")?;
+        let definition = NativeSourceUnitDefinition::read_optional(root)?.ok_or("source definition missing")?;
+        assert_eq!(definition.crate_name, "privateimpl");
+        assert_eq!(definition.crate_kind, NativeSourceCrateKind::Rlib);
+        assert_eq!(definition.edition, "2024");
+        definition.validate_against_manifest(&manifest)?;
+        definition.validate_sources(root)?;
+        assert!(
+            prepared.oven.is_none(),
+            "definition publication must not require native selection"
+        );
+        let sidecars = library_project_output_sidecars(&manifest, root)?;
+        assert!(
+            sidecars
+                .iter()
+                .any(|(path, slot)| path == &root.join(NATIVE_SOURCE_UNIT_PATH)
+                    && slot == "generated/provider-sidecars/native/source-unit.json")
+        );
+        let sealed = packaged_library_metadata_files(&manifest_path, &manifest, root)?;
+        let source_record = sealed
+            .iter()
+            .find(|file| file.relative_path == NATIVE_SOURCE_UNIT_PATH)
+            .ok_or("source definition is absent from sealed package metadata")?;
+        let definition_path = root.join(NATIVE_SOURCE_UNIT_PATH);
+        let before = fs::read(&definition_path)?;
+        assert_eq!(
+            source_record.digest,
+            digest_project_output_projection_file(&definition_path)?.1
+        );
+        let mut changed = definition;
+        changed.edition = "2021".to_string();
+        fs::write(&definition_path, changed.to_json_bytes()?)?;
+        assert_ne!(
+            source_record.digest,
+            digest_project_output_projection_file(&definition_path)?.1
+        );
+        fs::write(&definition_path, b"{ malformed")?;
+        assert!(library_project_output_sidecars(&manifest, root).is_err());
+        fs::remove_file(&definition_path)?;
+        assert!(
+            library_project_output_sidecars(&manifest, root)?
+                .iter()
+                .all(|(path, _)| path != &definition_path),
+            "legacy absence remains distinct from malformed present metadata"
+        );
+        fs::write(&definition_path, before)?;
+        fs::write(root.join("src/lib.rs"), "changed generated source")?;
+        assert!(
+            library_project_output_sidecars(&manifest, root).is_err(),
+            "an untrusted later import must refuse source changes after capture"
+        );
         Ok(())
     }
 
