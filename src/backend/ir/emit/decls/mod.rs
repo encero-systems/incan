@@ -362,7 +362,7 @@ impl<'a> IrEmitter<'a> {
 
     // ---- Import emission ----
 
-    /// Return whether an import path refers to the source-authored Incan stdlib namespace.
+    /// Return whether an import targets the Incan stdlib, including module imports from its root.
     pub(super) fn is_incan_source_stdlib_import(
         origin: &IrImportOrigin,
         qualifier: &IrImportQualifier,
@@ -370,7 +370,7 @@ impl<'a> IrEmitter<'a> {
     ) -> bool {
         !matches!(origin, IrImportOrigin::PubLibrary { .. })
             && !matches!(qualifier, IrImportQualifier::None)
-            && stdlib::is_any_stdlib_path(path)
+            && path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
     }
 
     /// Convert an IR import path into Rust path segments using the same qualification rules for imports and aliases.
@@ -852,7 +852,9 @@ impl<'a> IrEmitter<'a> {
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })
-        } else if path.len() == 1 && !is_incan_source_stdlib {
+        } else if path.len() == 1 {
+            // Unaliased root modules are already defined by the project. This also covers `std.prelude`, whose
+            // canonical import path is the SDK facade root; reimporting it would duplicate `__incan_std`.
             Ok(quote! {})
         } else if export_module_import {
             Ok(quote! {
