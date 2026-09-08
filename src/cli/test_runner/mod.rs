@@ -9,7 +9,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::cli::commands::common::{CargoPolicy, CompilationSession};
+use crate::cli::commands::common::CompilationSession;
 use crate::cli::{CliError, CliResult, ExitCode};
 
 mod discovery;
@@ -30,9 +30,10 @@ use discovery::{
     CollectionEvalContext, discover_test_file_candidates, discover_test_files_with_session,
     discover_tests_and_fixtures_with_context, get_autouse_fixtures, parse_duration_literal,
 };
+#[cfg(test)]
+use execution::validate_test_canonical_lock;
 use execution::{
     OvenTestCommandContext, TestExecutionOptions, prepare_oven_test_command_context, run_file_tests_batch,
-    validate_oven_test_lock_policy,
 };
 use reporter::{print_test_result, style};
 
@@ -967,7 +968,6 @@ struct ActiveUnit {
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
     unit: &ExecutionUnit,
-    cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -979,7 +979,6 @@ fn run_execution_unit(
     run_file_tests_batch(
         &unit.tests,
         &unit.conftest_files_by_file,
-        cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1202,7 +1201,6 @@ fn batch_has_failure(results: &[(TestInfo, TestResult)]) -> bool {
 fn run_scheduled_execution_units(
     units: Vec<ExecutionUnit>,
     jobs: usize,
-    cargo_policy: CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -1217,7 +1215,6 @@ fn run_scheduled_execution_units(
         for unit in &units {
             let results = run_execution_unit(
                 unit,
-                &cargo_policy,
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -1258,7 +1255,6 @@ fn run_scheduled_execution_units(
             };
             let sender = sender.clone();
             let cargo_features = cargo_features.to_vec();
-            let cargo_policy = cargo_policy.clone();
             let command_context = Arc::clone(&command_context);
             active.push(ActiveUnit {
                 index: unit.index,
@@ -1271,7 +1267,6 @@ fn run_scheduled_execution_units(
                 let unit_index = unit.index;
                 let results = run_execution_unit(
                     &unit,
-                    &cargo_policy,
                     &cargo_features,
                     cargo_no_default_features,
                     cargo_all_features,
@@ -1327,7 +1322,6 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         sdk_profile,
         timeout,
         no_capture,
-        cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1379,14 +1373,6 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             path.display()
         )));
     }
-    validate_oven_test_lock_policy(
-        session.as_ref(),
-        &test_files[0],
-        &cargo_policy,
-        &package_features,
-        sdk_profile.as_deref(),
-    )?;
-
     let eval_context = CollectionEvalContext::new(test_features.into_iter().collect());
     let mut conftest_cache = ConftestDiscoveryCache::default();
     let inventory = collect_test_inventory(&test_files, path, &eval_context, session.as_ref(), &mut conftest_cache)
@@ -1522,7 +1508,6 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let mut raw_batch_results = run_scheduled_execution_units(
         units,
         jobs,
-        cargo_policy,
         &cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1756,7 +1741,6 @@ mod tests {
             sdk_profile: None,
             timeout: None,
             no_capture: false,
-            cargo_policy: CargoPolicy::default(),
             cargo_features: Vec::new(),
             cargo_no_default_features: false,
             cargo_all_features: false,
@@ -1811,13 +1795,8 @@ mod tests {
         assert_eq!(conftest_cache.entries.len(), 1);
 
         crate::cli::commands::lock::reset_project_lock_collection_metrics();
-        let Err(lock_error) = validate_oven_test_lock_policy(
-            session.as_ref(),
-            representative,
-            &CargoPolicy::explicit(false, false, true, Vec::new()),
-            &package_features,
-            None,
-        ) else {
+        let Err(lock_error) = validate_test_canonical_lock(session.as_ref(), representative, &package_features, None)
+        else {
             return Err("strict test validation accepted a missing oven.lock".into());
         };
         assert!(lock_error.message.contains("oven.lock is missing"));

@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
-use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
+use crate::cli::commands::common::{self, ProjectRequirements};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::lock::{
-    OvenRustInspectSourceAuthorityRequest, PreparedOvenProjectRegistrySourceAuthorities, RustInspectWorkspaceRequest,
+    PreparedOvenProjectRegistrySourceAuthorities, RustInspectWorkspaceRequest,
     prepare_project_registry_source_authorities, prepare_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
@@ -46,7 +46,6 @@ use sha2::{Digest, Sha256};
 use super::infer_test_project_root_without_manifest;
 use super::module_graph::collect_source_modules_for_test;
 use super::types::{FixtureScope, TestInfo, TestResult};
-use crate::cli::commands::lock::{OvenLockValidationRequest, validate_oven_lock_policy_with_session};
 
 /// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
@@ -120,22 +119,17 @@ fn command_session_for_execution_unit<'a>(
     Ok(command_context.session.as_ref())
 }
 
-/// Validate strict Incan lock policy once before Oven schedules any generated native test harnesses.
+/// Exercise strict lock fact validation through the test command's existing compilation session.
 ///
-/// `--locked` and `--frozen` remain compiler-owned lock-consistency promises after normal test execution leaves
-/// Cargo. Validation uses the Oven read-only resolver: a missing or stale lock fails before scheduling, and a
-/// normal test command never publishes SDK/provider or dependency artifacts.
-pub(super) fn validate_oven_test_lock_policy(
+/// This test helper invokes an existing compiler service explicitly. Choosing strict invocation behavior belongs
+/// to the Incan control operation and is not an implicit default of test scheduling.
+#[cfg(test)]
+pub(super) fn validate_test_canonical_lock(
     session: &common::CompilationSession,
     representative_test: &Path,
-    cargo_policy: &CargoPolicy,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
 ) -> crate::cli::CliResult<()> {
-    if !cargo_policy.locked && !cargo_policy.frozen {
-        return Ok(());
-    }
-
     let manifest = session.manifest.clone();
     let inferred_project_root = infer_test_project_root_without_manifest(representative_test);
     let project_root = manifest
@@ -143,18 +137,27 @@ pub(super) fn validate_oven_test_lock_policy(
         .map(|manifest| manifest.project_root().to_path_buf())
         .unwrap_or(inferred_project_root);
     let cargo_features = CargoFeatureSelection::default().normalized();
-    validate_oven_lock_policy_with_session(
-        OvenLockValidationRequest {
+    let resolution =
+        crate::cli::commands::lock::resolve_lock_context(crate::cli::commands::lock::LockResolutionRequest {
             project_root: &project_root,
             manifest: manifest.as_ref(),
-            entry_file: representative_test,
+            entry_file: Some(representative_test),
+            resolved: &ResolvedDependencies {
+                dependencies: Vec::new(),
+                dev_dependencies: Vec::new(),
+            },
+            project_requirements: &ProjectRequirements::default(),
             cargo_features: &cargo_features,
-            cargo_policy,
-            package_features,
+            semantic: None,
+            package_features: Some(package_features),
             sdk_profile_override,
-        },
-        session,
-    )
+            command_session: Some(session),
+        })?;
+    let canonical = resolution
+        .canonical
+        .as_ref()
+        .ok_or_else(|| crate::cli::CliError::failure("strict test validation requires canonical project lock facts"))?;
+    crate::cli::commands::lock::validate_oven_existing_lock(canonical)
 }
 
 /// Collect inline imports required by dependencies of a test source file.
@@ -2125,7 +2128,6 @@ fn map_batch_results(
 pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
-    cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -2135,7 +2137,6 @@ pub(super) fn run_file_tests_batch(
     run_file_tests_batch_oven(
         tests,
         conftest_files_by_file,
-        cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -2152,7 +2153,6 @@ pub(super) fn run_file_tests_batch(
 fn run_file_tests_batch_oven(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
-    cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -2172,13 +2172,9 @@ fn run_file_tests_batch_oven(
             .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), message.clone())))
             .collect::<Vec<_>>()
     };
-    if !cargo_policy.extra_args.is_empty()
-        || cargo_no_default_features
-        || cargo_all_features
-        || !cargo_features.is_empty()
-    {
+    if cargo_no_default_features || cargo_all_features || !cargo_features.is_empty() {
         return failure(
-            "Oven Alpha normal test execution does not accept Cargo passthrough or feature controls; use Incan package features instead"
+            "Oven Alpha normal test execution does not accept Cargo feature controls; use Incan package features instead"
                 .to_string(),
         );
     }
@@ -2374,11 +2370,6 @@ fn run_file_tests_batch_oven(
     ) {
         return failure(error.message);
     }
-    let inspection_registry_dependencies =
-        match merge_test_runner_dependencies(&resolved.dependencies, &resolved.dev_dependencies) {
-            Ok(dependencies) => dependencies,
-            Err(message) => return failure(message),
-        };
     if let Some(authority) = command_context.project_source_authorities.as_ref() {
         build_unit_inputs.insert(
             "project-inspection-authority".to_string(),
@@ -2390,35 +2381,10 @@ fn run_file_tests_batch_oven(
         let metadata_query_paths = common::collect_rust_inspect_query_paths(&dependency_modules);
         match prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
-            project_name: project_name.as_str(),
-            cargo_package_name: project_name.as_str(),
-            rust_edition: None,
-            resolved: &resolved,
-            project_requirements: &requirements,
-            lock_payload: None,
-            cargo_lock_projection_root: None,
-            clear_cargo_lock: false,
-            cargo_policy_flags: Vec::new(),
-            cargo_target_dir: &project_root
-                .join("target/incan_tests")
-                .join(&dir_suffix)
-                .join("oven/rust-inspect"),
             rust_inspect_query_paths: &metadata_query_paths,
             rust_derive_probe_paths: &common::collect_rust_inspect_derive_probe_paths(&dependency_modules),
-            prepare_when_empty: false,
-            direct_oven_inspection: true,
-            force_direct_prewarm: false,
-            oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
-                project_version: &project_version,
-                target: &rustc_target,
-                toolchain: &rustc_toolchain,
-                profile: "debug",
-                features: &feature_selection.cargo_features,
-                build_unit_inputs: &build_unit_inputs,
-                registry_dependencies: &inspection_registry_dependencies,
-            }),
-            prepared_project_source_authorities: command_context.project_source_authorities.clone(),
-            explicit_oven_bake: false,
+            // Existing package receipts do not supply the admitted unit projection required by this ingress.
+            selected: None,
         }) {
             Ok(workspace) => workspace,
             Err(error) => return failure(error.message),
@@ -3036,8 +3002,8 @@ def captured_resource() -> int:
     }
 
     #[test]
-    fn frozen_oven_test_validation_rejects_a_missing_lock_before_scheduling() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn canonical_oven_test_validation_rejects_a_missing_lock_without_publication()
+    -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         let tests = project.path().join("tests");
         fs::create_dir_all(&tests)?;
@@ -3049,18 +3015,13 @@ def captured_resource() -> int:
         fs::write(&test_file, "def test_lock() -> None:\n  assert True\n")?;
         let session = common::CompilationSession::discover_for_oven(&test_file, &FeatureSelection::default(), None)?;
 
-        let error = match validate_oven_test_lock_policy(
-            &session,
-            &test_file,
-            &CargoPolicy::explicit(false, false, true, Vec::new()),
-            &FeatureSelection::default(),
-            None,
-        ) {
-            Ok(()) => return Err("a frozen Oven test created an oven.lock through Cargo".into()),
+        let error = match validate_test_canonical_lock(&session, &test_file, &FeatureSelection::default(), None) {
+            Ok(()) => return Err("strict compiler-service validation accepted a missing oven.lock".into()),
             Err(error) => error,
         };
 
         assert!(error.message.contains("oven.lock is missing; run `incan lock`"));
+        assert!(!project.path().join("oven.lock").exists());
         Ok(())
     }
 

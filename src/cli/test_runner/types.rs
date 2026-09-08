@@ -3,8 +3,6 @@ use std::time::Duration;
 
 use crate::provider::FeatureSelection;
 
-use crate::cli::commands::common::CargoPolicy;
-
 /// Output format for `incan test` results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum TestOutputFormat {
@@ -169,7 +167,6 @@ pub struct TestRunConfig<'a> {
     pub sdk_profile: Option<String>,
     pub timeout: Option<&'a str>,
     pub no_capture: bool,
-    pub cargo_policy: CargoPolicy,
     pub cargo_features: Vec<String>,
     pub cargo_no_default_features: bool,
     pub cargo_all_features: bool,

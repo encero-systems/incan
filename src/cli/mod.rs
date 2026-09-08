@@ -53,9 +53,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::binding_inspect::BindingInspectionFormat;
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
-use commands::common::{
-    CargoPolicy, CargoPolicyCliFlags, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV,
-};
+use commands::common::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
@@ -308,6 +306,138 @@ impl SdkProfileCliFlags {
     }
 }
 
+/// Raw invocation constraints awaiting the Incan-owned invocation-control operation (#991, #1037).
+///
+/// These values remain local to CLI admission. Capturing an environment value does not parse it, apply precedence,
+/// enable defaults or imply another constraint. Compiler services receive no replacement policy object.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct NativeInvocationConstraintInputs {
+    locked: bool,
+    no_locked: bool,
+    offline: bool,
+    no_offline: bool,
+    frozen: bool,
+    no_frozen: bool,
+    env_locked: Option<OsString>,
+    env_offline: Option<OsString>,
+    env_frozen: Option<OsString>,
+}
+
+impl NativeInvocationConstraintInputs {
+    /// Capture environment bytes without interpreting either their value or their relationship to CLI flags.
+    fn capture_environment(mut self, mut lookup: impl FnMut(&str) -> Option<OsString>) -> Self {
+        self.env_locked = lookup("INCAN_LOCKED");
+        self.env_offline = lookup("INCAN_OFFLINE");
+        self.env_frozen = lookup("INCAN_FROZEN");
+        self
+    }
+
+    /// Refuse supplied constraints before effects until the Incan control operation can interpret them.
+    fn require_invocation_control(&self) -> CliResult<()> {
+        let supplied = [
+            ("--locked", self.locked),
+            ("--no-locked", self.no_locked),
+            ("--offline", self.offline),
+            ("--no-offline", self.no_offline),
+            ("--frozen", self.frozen),
+            ("--no-frozen", self.no_frozen),
+            ("INCAN_LOCKED", self.env_locked.is_some()),
+            ("INCAN_OFFLINE", self.env_offline.is_some()),
+            ("INCAN_FROZEN", self.env_frozen.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(name, present)| present.then_some(name))
+        .collect::<Vec<_>>();
+        if supplied.is_empty() {
+            return Ok(());
+        }
+        Err(CliError::failure(format!(
+            "Incan invocation-control operation is unavailable (#991, #1037); supplied input: {}",
+            supplied.join(", "),
+        )))
+    }
+}
+
+/// Reject retired Cargo command inputs independently from unimplemented native invocation constraints.
+fn refuse_retired_cargo_inputs(
+    arguments: &[String],
+    passthrough: &[String],
+    environment: Option<OsString>,
+) -> CliResult<()> {
+    let supplied = [
+        ("--cargo-args", !arguments.is_empty()),
+        ("Cargo passthrough after --", !passthrough.is_empty()),
+        ("INCAN_CARGO_ARGS", environment.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(name, present)| present.then_some(name))
+    .collect::<Vec<_>>();
+    if supplied.is_empty() {
+        return Ok(());
+    }
+    Err(CliError::failure(format!(
+        "retired Cargo input is unsupported by native Oven commands: {}",
+        supplied.join(", "),
+    )))
+}
+
+/// Check raw native-command inputs before discovery, workspace fan-out or debug-file effects.
+fn validate_native_command_inputs(
+    command: Option<&Command>,
+    mut lookup: impl FnMut(&str) -> Option<OsString>,
+) -> CliResult<()> {
+    let Some(
+        Command::Build {
+            locked,
+            no_locked,
+            offline,
+            no_offline,
+            frozen,
+            no_frozen,
+            cargo_args,
+            cargo_passthrough,
+            ..
+        }
+        | Command::Run {
+            locked,
+            no_locked,
+            offline,
+            no_offline,
+            frozen,
+            no_frozen,
+            cargo_args,
+            cargo_passthrough,
+            ..
+        }
+        | Command::Test {
+            locked,
+            no_locked,
+            offline,
+            no_offline,
+            frozen,
+            no_frozen,
+            cargo_args,
+            cargo_passthrough,
+            ..
+        },
+    ) = command
+    else {
+        return Ok(());
+    };
+    NativeInvocationConstraintInputs {
+        locked: *locked,
+        no_locked: *no_locked,
+        offline: *offline,
+        no_offline: *no_offline,
+        frozen: *frozen,
+        no_frozen: *no_frozen,
+        ..NativeInvocationConstraintInputs::default()
+    }
+    .capture_environment(&mut lookup)
+    .require_invocation_control()?;
+    refuse_retired_cargo_inputs(cargo_args, cargo_passthrough, lookup("INCAN_CARGO_ARGS"))
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Compile to Rust and build an executable through Oven Alpha direct-rustc
@@ -327,22 +457,22 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date oven.lock; does not authorize a Cargo command
+        /// Request an up-to-date oven.lock (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         locked: bool,
-        /// Disable INCAN_LOCKED for this invocation
+        /// Request disabling INCAN_LOCKED (invocation control is currently unavailable)
         #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
         no_locked: bool,
-        /// Require offline-compatible locked inputs; does not authorize a Cargo command
+        /// Request offline-compatible native inputs (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         offline: bool,
-        /// Disable INCAN_OFFLINE for this invocation
+        /// Request disabling INCAN_OFFLINE (invocation control is currently unavailable)
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
+        /// Request frozen native inputs (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         frozen: bool,
-        /// Disable INCAN_FROZEN for this invocation
+        /// Request disabling INCAN_FROZEN (invocation control is currently unavailable)
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
         /// Retired Cargo feature surface; normal Oven commands reject it
@@ -442,22 +572,22 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date oven.lock; does not authorize a Cargo command
+        /// Request an up-to-date oven.lock (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         locked: bool,
-        /// Disable INCAN_LOCKED for this invocation
+        /// Request disabling INCAN_LOCKED (invocation control is currently unavailable)
         #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
         no_locked: bool,
-        /// Require offline-compatible locked inputs; does not authorize a Cargo command
+        /// Request offline-compatible native inputs (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         offline: bool,
-        /// Disable INCAN_OFFLINE for this invocation
+        /// Request disabling INCAN_OFFLINE (invocation control is currently unavailable)
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
+        /// Request frozen native inputs (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         frozen: bool,
-        /// Disable INCAN_FROZEN for this invocation
+        /// Request disabling INCAN_FROZEN (invocation control is currently unavailable)
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
         /// Retired Cargo feature surface; normal Oven commands reject it
@@ -628,22 +758,22 @@ pub enum Command {
         /// Run xfail tests as ordinary tests
         #[arg(long = "run-xfail")]
         run_xfail: bool,
-        /// Require up-to-date oven.lock; does not authorize a Cargo command
+        /// Request an up-to-date oven.lock (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         locked: bool,
-        /// Disable INCAN_LOCKED for this invocation
+        /// Request disabling INCAN_LOCKED (invocation control is currently unavailable)
         #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
         no_locked: bool,
-        /// Require offline-compatible locked inputs; does not authorize a Cargo command
+        /// Request offline-compatible native inputs (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         offline: bool,
-        /// Disable INCAN_OFFLINE for this invocation
+        /// Request disabling INCAN_OFFLINE (invocation control is currently unavailable)
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
+        /// Request frozen native inputs (invocation control is currently unavailable)
         #[arg(long, hide = true)]
         frozen: bool,
-        /// Disable INCAN_FROZEN for this invocation
+        /// Request disabling INCAN_FROZEN (invocation control is currently unavailable)
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
         /// Retired Cargo feature surface; normal Oven commands reject it
@@ -1341,6 +1471,7 @@ pub fn run() {
 /// Execute the CLI command and return result.
 /// Execute one already-parsed CLI request without terminating the process.
 fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
+    validate_native_command_inputs(cli.command.as_ref(), |name| env::var_os(name))?;
     // Handle debug flags first
     if let Some(file) = cli.lex_file {
         return commands::lex_file(&file.to_string_lossy());
@@ -1363,13 +1494,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             output_dir,
             package_features,
             sdk_profile,
-            locked,
-            offline,
-            no_offline,
-            frozen,
-            no_frozen,
-            no_locked,
-            cargo_args,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
@@ -1382,25 +1506,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             report_output,
             workspace,
             members,
-            cargo_passthrough,
+            ..
         }) => execute_build(
             BuildCommandRequest {
                 file,
                 lib_mode,
                 output_dir: output_dir.map(|path| path.to_string_lossy().to_string()),
                 options: commands::build::BuildCommandOptions {
-                    cargo_policy: CargoPolicy::from_cli_and_env(
-                        CargoPolicyCliFlags {
-                            offline,
-                            no_offline,
-                            locked,
-                            no_locked,
-                            frozen,
-                            no_frozen,
-                        },
-                        cargo_args,
-                        cargo_passthrough,
-                    ),
                     package_features: package_features.into(),
                     sdk_profile: sdk_profile.sdk_profile,
                     cargo_features,
@@ -1508,35 +1620,16 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             command,
             package_features,
             sdk_profile,
-            locked,
-            offline,
-            no_offline,
-            frozen,
-            no_frozen,
-            no_locked,
-            cargo_args,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
             release,
             workspace,
             members,
-            cargo_passthrough,
+            ..
         }) => execute_workspace_run(
             RunInput { file, code: command },
             RunOptions {
-                cargo_policy: CargoPolicy::from_cli_and_env(
-                    CargoPolicyCliFlags {
-                        offline,
-                        no_offline,
-                        locked,
-                        no_locked,
-                        frozen,
-                        no_frozen,
-                    },
-                    cargo_args,
-                    cargo_passthrough,
-                ),
                 package_features: package_features.into(),
                 sdk_profile: sdk_profile.sdk_profile,
                 cargo_features,
@@ -1576,19 +1669,12 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             shuffle,
             seed,
             run_xfail,
-            locked,
-            offline,
-            no_offline,
-            frozen,
-            no_frozen,
-            no_locked,
-            cargo_args,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
             workspace,
             members,
-            cargo_passthrough,
+            ..
         }) => execute_tests(
             TestCommandOptions {
                 path,
@@ -1613,18 +1699,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 run_xfail,
                 package_features: package_features.into(),
                 sdk_profile: sdk_profile.sdk_profile,
-                cargo_policy: CargoPolicy::from_cli_and_env(
-                    CargoPolicyCliFlags {
-                        offline,
-                        no_offline,
-                        locked,
-                        no_locked,
-                        frozen,
-                        no_frozen,
-                    },
-                    cargo_args,
-                    cargo_passthrough,
-                ),
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -2419,7 +2493,6 @@ struct TestCommandOptions {
     run_xfail: bool,
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
-    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -2456,7 +2529,6 @@ impl TestCommandOptions {
             shuffle: self.shuffle,
             seed: self.seed,
             run_xfail: self.run_xfail,
-            cargo_policy: self.cargo_policy.clone(),
             cargo_features: self.cargo_features.clone(),
             cargo_no_default_features: self.cargo_no_default_features,
             cargo_all_features: self.cargo_all_features,
@@ -2619,7 +2691,6 @@ struct RunInput {
 }
 
 struct RunOptions {
-    cargo_policy: CargoPolicy,
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
     cargo_features: Vec<String>,
@@ -2724,7 +2795,6 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         }
         commands::run_inline_source(
             &code,
-            opts.cargo_policy.clone(),
             opts.package_features.clone(),
             opts.sdk_profile.clone(),
             opts.cargo_features.clone(),
@@ -2737,7 +2807,6 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         let file = resolve_run_entry_file(input.file)?;
         commands::run_file(
             &file.to_string_lossy(),
-            opts.cargo_policy,
             opts.package_features,
             opts.sdk_profile,
             opts.cargo_features,
@@ -2844,6 +2913,118 @@ mod tests {
 
     fn expected_command(name: &str) -> clap::Error {
         clap::Error::raw(ErrorKind::InvalidSubcommand, format!("expected {name} command"))
+    }
+
+    #[test]
+    fn native_invocation_capture_preserves_raw_environment_without_policy() -> Result<(), Box<dyn std::error::Error>> {
+        for name in ["INCAN_LOCKED", "INCAN_OFFLINE", "INCAN_FROZEN"] {
+            for value in ["", "0", "false", "1", "unparsed"] {
+                let inputs = NativeInvocationConstraintInputs::default()
+                    .capture_environment(|key| (key == name).then(|| OsString::from(value)));
+                assert!(!inputs.locked && !inputs.offline && !inputs.frozen);
+                assert!(!inputs.no_locked && !inputs.no_offline && !inputs.no_frozen);
+                let retained = match name {
+                    "INCAN_LOCKED" => &inputs.env_locked,
+                    "INCAN_OFFLINE" => &inputs.env_offline,
+                    _ => &inputs.env_frozen,
+                };
+                assert_eq!(retained.as_deref(), Some(std::ffi::OsStr::new(value)));
+                let Err(error) = inputs.require_invocation_control() else {
+                    return Err(format!("explicit {name}={value:?} bypassed invocation control").into());
+                };
+                assert!(
+                    error
+                        .message
+                        .contains("Incan invocation-control operation is unavailable")
+                );
+                assert!(error.message.contains(name));
+            }
+        }
+        NativeInvocationConstraintInputs::default()
+            .capture_environment(|_| None)
+            .require_invocation_control()?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_invocation_capture_retains_non_utf8_environment() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let value = OsString::from_vec(vec![0xff]);
+        let inputs = NativeInvocationConstraintInputs::default()
+            .capture_environment(|name| (name == "INCAN_LOCKED").then(|| value.clone()));
+        assert_eq!(inputs.env_locked.as_ref(), Some(&value));
+        assert!(inputs.require_invocation_control().is_err());
+    }
+
+    #[test]
+    fn explicit_native_constraints_refuse_before_command_discovery() -> Result<(), Box<dyn std::error::Error>> {
+        for command in ["build", "run", "test"] {
+            for flag in [
+                "--locked",
+                "--no-locked",
+                "--offline",
+                "--no-offline",
+                "--frozen",
+                "--no-frozen",
+            ] {
+                let cli = parse_cli(["incan", command, "missing-invocation-control-fixture.incn", flag])?;
+                let Err(error) = execute(cli, false) else {
+                    return Err(format!("{command} accepted unimplemented {flag}").into());
+                };
+                assert!(
+                    error
+                        .message
+                        .contains("Incan invocation-control operation is unavailable")
+                );
+                assert!(error.message.contains(flag));
+                assert!(!error.message.contains("missing-invocation-control-fixture"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_command_admission_retains_environment_presence_and_empty_defaults()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for command in ["build", "run", "test"] {
+            let cli = parse_cli(["incan", command, "missing-invocation-control-fixture.incn"])?;
+            validate_native_command_inputs(cli.command.as_ref(), |_| None)?;
+            for name in ["INCAN_LOCKED", "INCAN_OFFLINE", "INCAN_FROZEN"] {
+                let Err(error) = validate_native_command_inputs(cli.command.as_ref(), |key| {
+                    (key == name).then(|| OsString::from("false"))
+                }) else {
+                    return Err(format!("{command} ignored explicit {name}").into());
+                };
+                assert!(
+                    error
+                        .message
+                        .contains("Incan invocation-control operation is unavailable")
+                );
+                assert!(error.message.contains(name));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retired_cargo_inputs_refuse_independently_of_native_constraints() -> Result<(), Box<dyn std::error::Error>> {
+        let cases = [
+            (vec!["--timings".to_string()], Vec::new(), None, "--cargo-args"),
+            (Vec::new(), vec!["--timings".to_string()], None, "passthrough"),
+            (Vec::new(), Vec::new(), Some(OsString::new()), "INCAN_CARGO_ARGS"),
+        ];
+        for (arguments, passthrough, environment, name) in cases {
+            let Err(error) = refuse_retired_cargo_inputs(&arguments, &passthrough, environment) else {
+                return Err(format!("retired {name} was accepted").into());
+            };
+            assert!(error.message.contains("retired Cargo input"));
+            assert!(error.message.contains(name));
+            assert!(!error.message.contains("invocation-control"));
+        }
+        refuse_retired_cargo_inputs(&[], &[], None)?;
+        Ok(())
     }
 
     #[test]
@@ -3148,7 +3329,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_build_cargo_policy_and_args() -> Result<(), clap::Error> {
+    fn test_cli_parse_build_native_constraints_and_retired_args() -> Result<(), clap::Error> {
         let cli = parse_cli([
             "incan",
             "build",
@@ -3403,7 +3584,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_test_cargo_policy() -> Result<(), clap::Error> {
+    fn test_cli_parse_test_native_constraints_and_retired_args() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "test", "tests/", "--frozen", "--cargo-args", "--timings"])?;
         let Some(Command::Test { frozen, cargo_args, .. }) = cli.command else {
             return Err(expected_command("test"));
