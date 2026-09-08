@@ -490,3 +490,200 @@ fn source_unavailable_type_facade_signatures_run_natively_and_without_linking() 
     }
     Ok(())
 }
+
+/// A producer's union wrapper and payload order survive foreign nominal routes and a source-free facade.
+#[test]
+fn source_unavailable_native_union_preserves_producer_representation_through_facade() -> Result<(), Box<dyn Error>> {
+    use incan::library_manifest::{NativeUnionOwnerExport, TypeRef};
+
+    let temporary = tempfile::tempdir()?;
+    let catalog = temporary.path().join("catalog");
+    let pricing = temporary.path().join("pricing");
+    let facade = temporary.path().join("facade");
+    project(
+        &catalog,
+        "union_catalog",
+        "lib.incn",
+        "pub model Product:\n    pub value: int\n",
+        "",
+    )?;
+    bake(&catalog)?;
+    project(
+        &pricing,
+        "union_pricing",
+        "lib.incn",
+        "pub from answer import Answer, Surcharge, choose, score\npub from pub::catalog import Product\n",
+        "\n[dependencies]\ncatalog = { path = \"../catalog\" }\n",
+    )?;
+    fs::write(
+        pricing.join("src/answer.incn"),
+        r#"from pub::catalog import Product
+
+pub model Surcharge:
+    pub value: int
+
+pub type Answer = Union[Product, Surcharge, int]
+
+pub def choose(use_product: bool) -> Answer:
+    if use_product:
+        return Product(value=35)
+    return 7
+
+pub def score(value: Answer) -> int:
+    match value:
+        Product(item) => return item.value
+        Surcharge(item) => return item.value
+        int(number) => return number
+"#,
+    )?;
+    bake(&pricing)?;
+    project(
+        &facade,
+        "union_facade",
+        "lib.incn",
+        "pub from pub::pricing import Answer as Value, Product, Surcharge as Fee, choose as pick, score as measure\n",
+        "\n[dependencies]\npricing = { path = \"../pricing\" }\n",
+    )?;
+    bake(&facade)?;
+
+    let pricing_manifest = LibraryManifest::read_from_path(&pricing.join("target/lib/union_pricing.incnlib"))?;
+    let answer = pricing_manifest
+        .exports
+        .type_aliases
+        .iter()
+        .find(|alias| alias.name == "Answer")
+        .map(|alias| &alias.target)
+        .or_else(|| {
+            pricing_manifest
+                .exports
+                .aliases
+                .iter()
+                .find(|alias| alias.name == "Answer")
+                .and_then(|alias| alias.projected_type.as_ref())
+        })
+        .ok_or("pricing Answer type projection absent")?;
+    let TypeRef::NativeUnion(producer_union) = answer else {
+        return Err("producer alias did not retain its emitted union descriptor".into());
+    };
+    assert_eq!(producer_union.owner, NativeUnionOwnerExport::ContainingArtifact);
+    assert_eq!(producer_union.members.len(), 3);
+    assert_eq!(producer_union.local_nominals.len(), 1);
+    assert!(
+        pricing_manifest
+            .contract_metadata
+            .native_unions
+            .contains(producer_union)
+    );
+    let generated_root = fs::read_to_string(pricing.join("target/lib/src/lib.rs"))?;
+    assert!(generated_root.contains(&format!("enum {}", producer_union.rust_name)));
+
+    let facade_manifest = LibraryManifest::read_from_path(&facade.join("target/lib/union_facade.incnlib"))?;
+    let forwarded_type = facade_manifest
+        .exports
+        .type_aliases
+        .iter()
+        .find(|alias| alias.name == "Value")
+        .map(|alias| &alias.target)
+        .or_else(|| {
+            facade_manifest
+                .exports
+                .aliases
+                .iter()
+                .find(|alias| alias.name == "Value")
+                .and_then(|alias| alias.projected_type.as_ref())
+        })
+        .ok_or("facade Value type projection absent")?;
+    let TypeRef::NativeUnion(forwarded_union) = forwarded_type else {
+        return Err("facade discarded the producer's native union descriptor".into());
+    };
+    assert_eq!(forwarded_union.rust_name, producer_union.rust_name);
+    assert_eq!(forwarded_union.local_nominals, producer_union.local_nominals);
+    assert_eq!(forwarded_union.members.len(), producer_union.members.len());
+    let NativeUnionOwnerExport::SelectedArtifact(owner) = &forwarded_union.owner else {
+        return Err("facade reassigned the union to its own artifact".into());
+    };
+    for (original, forwarded) in producer_union.members.iter().zip(&forwarded_union.members) {
+        match original {
+            TypeRef::Named { name, origin: None } if producer_union.local_nominals.contains_key(name) => {
+                let TypeRef::Named {
+                    origin: Some(origin), ..
+                } = forwarded
+                else {
+                    return Err("facade lost the producer-local nominal's selected origin".into());
+                };
+                assert_eq!(&origin.provider, owner);
+                assert_eq!(producer_union.local_nominals.get(name), Some(&origin.canonical));
+            }
+            TypeRef::Named {
+                origin: Some(origin), ..
+            } => {
+                let TypeRef::Named {
+                    origin: Some(forwarded_origin),
+                    ..
+                } = forwarded
+                else {
+                    return Err("facade lost the foreign nominal's selected origin".into());
+                };
+                assert_eq!(forwarded_origin, origin);
+            }
+            _ => assert_eq!(forwarded, original),
+        }
+    }
+    let pricing_edge = facade_manifest
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .iter()
+        .find(|dependency| dependency.dependency_key == "pricing")
+        .ok_or("facade's selected pricing artifact absent")?;
+    assert_eq!(owner.name, pricing_edge.provider_name);
+    assert_eq!(owner.version, pricing_edge.provider_version);
+    assert_eq!(owner.digest, pricing_edge.artifact_digest);
+    assert_eq!(
+        owner.feature_projection,
+        pricing_manifest.contract_metadata.provider.active_features
+    );
+    assert!(facade_manifest.contract_metadata.native_unions.is_empty());
+
+    let artifacts = [&catalog, &pricing, &facade]
+        .into_iter()
+        .map(|root| Ok((root, artifact_snapshot(&root.join("target/lib"))?)))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    for root in [&catalog, &pricing, &facade] {
+        fs::remove_dir_all(root.join("src"))?;
+        fs::remove_file(root.join("loaf.toml"))?;
+    }
+
+    // This consumer has never existed before source removal: its native output cannot be a retained executable.
+    let consumer = temporary.path().join("fresh_consumer");
+    project(
+        &consumer,
+        "union_consumer",
+        "main.incn",
+        r#"from pub::bridge import Value as Reading, Product as Item, Fee as Charge, pick, measure
+
+def read(value: Reading) -> int:
+    match value:
+        Item(item) => return item.value
+        Charge(item) => return item.value
+        int(number) => return number
+
+def main() -> None:
+    println(measure(pick(true)) + measure(pick(false)))
+    println(read(pick(true)) + read(pick(false)))
+    println(measure(Item(value=20)) + measure(22))
+    println(measure(Charge(value=20)) + read(Charge(value=22)))
+"#,
+        "\n[dependencies]\nbridge = { path = \"../facade\" }\n",
+    )?;
+    bake(&consumer)?;
+    let run = success(
+        command(&consumer).args(["run", "src/main.incn", "--locked"]).output()?,
+        "fresh native union consumer after all producer source removal",
+    )?;
+    assert_eq!(run.stdout, b"42\n42\n42\n42\n");
+    for (root, before) in artifacts {
+        assert_eq!(artifact_snapshot(&root.join("target/lib"))?, before);
+    }
+    Ok(())
+}
