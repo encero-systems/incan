@@ -1630,6 +1630,19 @@ pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<V
             let crate::frontend::ast::Declaration::Import(import) = &declaration.node else {
                 continue;
             };
+            // Root imports name their provider module in each imported item, not in the `std` path itself.
+            if let ImportKind::From { module: path, items } = &import.kind
+                && path.parent_levels == 0
+                && !path.is_absolute
+                && path.segments.as_slice() == [stdlib::STDLIB_ROOT]
+            {
+                used.extend(
+                    items
+                        .iter()
+                        .map(|item| vec![stdlib::STDLIB_ROOT.to_string(), item.name.clone()]),
+                );
+                continue;
+            }
             let path = match &import.kind {
                 ImportKind::Module(path) | ImportKind::From { module: path, .. }
                     if path.parent_levels == 0
@@ -6260,6 +6273,32 @@ source-root = "lib"
     }
 
     #[test]
+    fn root_std_imports_select_the_same_provider_modules_as_qualified_imports() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = parsed_module_for_test("from std import math as arithmetic, serde\n")?;
+        let qualified = parsed_module_for_test("import std.math\nimport std.serde\n")?;
+        let root_paths = provider_used_module_paths(&[root]);
+        assert_eq!(root_paths, provider_used_module_paths(&[qualified]));
+        assert!(root_paths.contains(&vec!["std".to_string(), "math".to_string()]));
+        assert!(root_paths.contains(&vec!["std".to_string(), "serde".to_string()]));
+        assert!(!root_paths.contains(&vec!["std".to_string()]));
+        Ok(())
+    }
+
+    #[test]
+    fn root_std_provider_discovery_excludes_external_and_relative_imports() -> Result<(), Box<dyn std::error::Error>> {
+        let external = parsed_module_for_test(
+            "from rust::std import cmp\nfrom pub::std import math\nfrom ..std import serde\nfrom crate.std import json\n",
+        )?;
+        let empty = parsed_module_for_test("def main() -> None:\n    pass\n")?;
+        assert_eq!(
+            provider_used_module_paths(&[external]),
+            provider_used_module_paths(&[empty])
+        );
+        Ok(())
+    }
+
+    #[test]
     fn collect_project_requirements_defers_sdk_namespace_features_to_provider_facts()
     -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
@@ -7661,7 +7700,7 @@ checksum = "fixture-checksum"
         let used_plan = ProviderPlan::new(
             crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
             vec![record],
-            [vec!["std".to_string(), "issue911_unused".to_string()]],
+            provider_used_module_paths(&[parsed_module_for_test("from std import issue911_unused as selected\n")?]),
         )?;
         let mut used_requirements = ProjectRequirements::default();
         extend_requirements_with_provider_plan(&mut used_requirements, &used_plan)?;
