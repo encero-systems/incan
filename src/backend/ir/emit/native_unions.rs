@@ -1102,7 +1102,7 @@ mod tests {
     /// Alias-expanded root overloads take their representation from the exact checked declaration, not type spelling.
     #[test]
     fn function_alias_overloads_keep_exact_native_union_projection() -> TestResult {
-        let source = "pub type Answer = int | str\npub def select(value: int) -> Answer:\n    return value\npub def select(value: str) -> bool:\n    return true\npub pick = alias select\n";
+        let source = "pub type Answer = int | str\npub model Surcharge:\n    pub value: int\npub type Charges = Surcharge | int\npub def select(value: int) -> Answer:\n    return value\npub def select(value: str) -> bool:\n    return true\npub pick = alias select\n";
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
         let module_path = vec!["lib".to_string()];
@@ -1202,6 +1202,7 @@ mod tests {
             [],
         )?);
         assert_private_signature_bridge_projection(&plan)?;
+        assert_local_native_callable_projection(&plan)?;
         let source = "pub from pub::admitted import select as forwarded\n";
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
@@ -1311,6 +1312,83 @@ mod tests {
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// Checked local registration and the actual lowered call retain the same imported nominal union carrier.
+    fn assert_local_native_callable_projection(plan: &std::sync::Arc<crate::provider::ProviderPlan>) -> TestResult {
+        use crate::backend::ir::expr::IrExprKind;
+        use crate::backend::ir::stmt::IrStmtKind;
+        let source = "from pub::admitted import Charges as Reading, Surcharge as Charge, Answer\ndef read(value: Reading) -> int:\n    match value:\n        Charge(item) => return item.value\n        int(number) => return number\ndef read(value: Answer) -> int:\n    return 7\npub def answer() -> int:\n    return read(Charge(value=42))\npub def other() -> int:\n    return read(\"selected\")\n";
+        let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("consumer".into()));
+        checker.set_current_module_path(Some(vec!["lib".into()]));
+        checker.set_provider_plan(plan.clone());
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        lowering.set_provider_plan(Some(plan.clone()));
+        let ir = lowering.lower_program(&ast)?;
+        let mut declared = Vec::new();
+        for declaration in &ast.declarations {
+            if let crate::frontend::ast::Declaration::Function(function) = &declaration.node
+                && function.name == "read"
+            {
+                let selected = checker
+                    .type_info()
+                    .function_emitted_name(declaration.span)
+                    .ok_or("checked overload projection missing")?;
+                let signature = ir
+                    .function_registry
+                    .get(selected)
+                    .ok_or("selected read binding missing")?;
+                assert!(
+                    matches!(signature.params[0].ty, IrType::ExternalUnion { native: Some(_), .. }),
+                    "{signature:?}"
+                );
+                declared.push(signature.params[0].ty.clone());
+            }
+        }
+        assert_eq!(declared.len(), 2);
+        assert_ne!(declared[0].union_type_name(), declared[1].union_type_name());
+        for (name, expected) in ["answer", "other"].into_iter().zip(&declared) {
+            let function = ir
+                .declarations
+                .iter()
+                .find_map(|declaration| {
+                    if let IrDeclKind::Function(function) = &declaration.kind
+                        && function.name == name
+                    {
+                        Some(function)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or("caller body missing")?;
+            let IrStmtKind::Return(Some(call)) = &function.body.first().ok_or("caller return missing")?.kind else {
+                return Err("caller does not return the actual local call".into());
+            };
+            let IrExprKind::Call {
+                callable_signature: Some(call),
+                ..
+            } = &call.kind
+            else {
+                return Err("local call lost its callable signature".into());
+            };
+            assert_eq!(
+                &call.params[0].ty, expected,
+                "{name} selected the wrong native overload"
+            );
+        }
+        let mut codegen = crate::backend::ir::IrCodegen::new();
+        codegen.set_provider_plan(plan.clone());
+        codegen.set_preserve_dependency_public_items(true);
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        let rust = codegen.try_generate(&ast)?;
+        let wrapper = declared[0].union_type_name().ok_or("native wrapper absent")?;
+        let compact = rust.split_whitespace().collect::<String>();
+        assert!(compact.contains(&format!("{wrapper}::V0(Charge{{value:42}}")), "{rust}");
         Ok(())
     }
 
