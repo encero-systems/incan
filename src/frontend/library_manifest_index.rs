@@ -10,7 +10,6 @@ use crate::library_manifest::{LibraryManifest, LibraryManifestError};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use incan_core::interop::RustItemMetadata;
 use incan_vocab::{CargoDependency, CargoDependencySource, KeywordActivation, KeywordRegistration, KeywordSpec};
-use serde::Deserialize;
 
 const LIBRARY_ARTIFACT_DIR: &str = "target/lib";
 const LIBRARY_CRATE_LIB_RS: &str = "src/lib.rs";
@@ -577,7 +576,7 @@ fn load_library_manifest_entry_from_crate_root(dependency_key: &str, crate_root:
         }
     };
 
-    let metadata = match validate_artifact_contract(dependency_key, &manifest, &manifest_path, &crate_root) {
+    let metadata = match validate_materialized_artifact(dependency_key, &manifest, &manifest_path, &crate_root) {
         Ok(metadata) => metadata,
         Err(failure) => return LibraryManifestIndexEntry::Failed(failure),
     };
@@ -681,6 +680,58 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
     Ok(candidates.remove(0))
 }
 
+/// Check the required generated files and declared identity of an already-validated Incan manifest.
+///
+/// The manifest, rather than a generated Cargo file, owns the producer name. This index checks the materialized
+/// layout; physical integrity and executable admission remain separate provider-plan responsibilities.
+fn validate_materialized_artifact(
+    dependency_key: &str,
+    manifest: &LibraryManifest,
+    manifest_path: &Path,
+    crate_root: &Path,
+) -> Result<LibraryArtifactMetadata, LibraryManifestLoadFailure> {
+    let crate_lib_path = crate_root.join(LIBRARY_CRATE_LIB_RS);
+    if !crate_lib_path.is_file() {
+        return Err(LibraryManifestLoadFailure {
+            path: crate_lib_path,
+            kind: LibraryManifestFailureKind::ArtifactMissing,
+            message: format!("missing generated `{LIBRARY_CRATE_LIB_RS}`"),
+        });
+    }
+    if let Some(vocab) = &manifest.vocab
+        && let Some(desugarer) = &vocab.desugarer_artifact
+    {
+        let artifact_path = crate_root.join(&desugarer.relative_path);
+        if !artifact_path.is_file() {
+            return Err(LibraryManifestLoadFailure {
+                path: artifact_path,
+                kind: LibraryManifestFailureKind::ArtifactMissing,
+                message: "missing packaged vocab desugarer artifact".to_string(),
+            });
+        }
+    }
+
+    let expected_file = format!("{}.incnlib", manifest.name);
+    if manifest_path.file_name() != Some(std::ffi::OsStr::new(&expected_file)) {
+        return Err(LibraryManifestLoadFailure {
+            path: manifest_path.to_path_buf(),
+            kind: LibraryManifestFailureKind::ArtifactMismatch,
+            message: format!(
+                "manifest filename `{}` does not match manifest name `{}`",
+                manifest_path.display(),
+                manifest.name
+            ),
+        });
+    }
+
+    Ok(LibraryArtifactMetadata::from_manifest_path(
+        dependency_key,
+        manifest.name.clone(),
+        manifest_path.to_path_buf(),
+        crate_root.to_path_buf(),
+    ))
+}
+
 impl LibraryArtifactMetadata {
     /// Build artifact metadata when both the resolved `.incnlib` path and crate root are known.
     pub fn from_manifest_path(
@@ -732,7 +783,7 @@ impl LibraryArtifactMetadata {
         Self::from_manifest_path(dependency_key, manifest_name, manifest_path, crate_root)
     }
 
-    /// Convert this verified artifact location into the Cargo dependency used by generated consumers.
+    /// Project this artifact location into dependency coordinates while preserving the consumer's alias.
     pub(crate) fn to_dependency_spec(&self) -> DependencySpec {
         DependencySpec {
             crate_name: self.dependency_key.clone(),
@@ -776,6 +827,7 @@ impl LibraryManifestLoadFailure {
 mod tests {
     use super::*;
 
+    /// Load the Incan manifest and generated entrypoint without any generated Cargo metadata.
     #[test]
     fn loads_dependency_manifest_into_index() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -787,10 +839,6 @@ mod tests {
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
         let manifest = LibraryManifest::new("mylib", "0.1.0");
         manifest.write_to_path(&dep_manifest_path)?;
-        std::fs::write(
-            dep_artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"mylib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
         std::fs::write(dep_artifact_root.join("src/lib.rs"), "pub fn ready() {}\n")?;
 
         let manifest_content = r#"
@@ -821,6 +869,7 @@ mylib = { path = "deps/mylib" }
         assert_eq!(specs[0].crate_name, "mylib");
         assert!(matches!(specs[0].source, DependencySource::Path { .. }));
         assert_eq!(specs[0].package, None);
+        assert!(!dep_artifact_root.join("Cargo.toml").exists());
 
         Ok(())
     }
@@ -876,6 +925,7 @@ missinglib = { path = "deps/missinglib" }
         Ok(())
     }
 
+    /// A consumer alias uses the producer's Incan identity even when unrelated Cargo metadata is invalid.
     #[test]
     fn supports_dependency_key_alias_to_manifest_name() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -886,10 +936,8 @@ missinglib = { path = "deps/missinglib" }
 
         let manifest = LibraryManifest::new("widgets_core", "0.1.0");
         manifest.write_to_path(&dep_artifact_root.join("widgets_core.incnlib"))?;
-        std::fs::write(
-            dep_artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"widgets_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
+        let cargo_sentinel = "unrelated caller file; deliberately invalid TOML\n";
+        std::fs::write(dep_artifact_root.join("Cargo.toml"), cargo_sentinel)?;
         std::fs::write(dep_artifact_root.join("src/lib.rs"), "pub fn widgets() {}\n")?;
 
         let manifest_content = r#"
@@ -915,12 +963,17 @@ widgets = { path = "deps/widgets-lib" }
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].crate_name, "widgets");
         assert_eq!(specs[0].package.as_deref(), Some("widgets_core"));
+        assert_eq!(
+            std::fs::read_to_string(dep_artifact_root.join("Cargo.toml"))?,
+            cargo_sentinel
+        );
 
         Ok(())
     }
 
+    /// A dependency alias cannot hide disagreement between the manifest filename and its declared producer name.
     #[test]
-    fn records_failure_for_manifest_and_cargo_name_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+    fn records_failure_for_manifest_filename_and_name_mismatch() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("broken");
@@ -928,11 +981,7 @@ widgets = { path = "deps/widgets-lib" }
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
 
         let manifest = LibraryManifest::new("widgets_core", "0.1.0");
-        manifest.write_to_path(&dep_artifact_root.join("widgets_core.incnlib"))?;
-        std::fs::write(
-            dep_artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"totally_different\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
+        manifest.write_to_path(&dep_artifact_root.join("widgets.incnlib"))?;
         std::fs::write(dep_artifact_root.join("src/lib.rs"), "pub fn broken() {}\n")?;
 
         let manifest_content = r#"
@@ -950,10 +999,29 @@ widgets = { path = "deps/broken" }
             }
             LibraryManifestIndexEntry::Failed(failure) => {
                 assert_eq!(failure.kind, LibraryManifestFailureKind::ArtifactMismatch);
-                assert!(failure.message.contains("does not match Cargo package"));
+                assert!(failure.message.contains("does not match manifest name"));
             }
         }
 
+        Ok(())
+    }
+
+    /// A manifest alone, or a directory in place of the Rust entrypoint, is not a materialized provider.
+    #[test]
+    fn rejects_missing_or_non_file_generated_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        LibraryManifest::new("widgets", "0.1.0").write_to_path(&root.join("widgets.incnlib"))?;
+        for entrypoint_is_directory in [false, true] {
+            if entrypoint_is_directory {
+                std::fs::create_dir_all(root.join(LIBRARY_CRATE_LIB_RS))?;
+            }
+            let LibraryManifestIndexEntry::Failed(failure) = load_provider_dependency_artifact("widgets", root) else {
+                return Err("provider was accepted without a generated Rust entrypoint file".into());
+            };
+            assert_eq!(failure.kind, LibraryManifestFailureKind::ArtifactMissing);
+            assert_eq!(failure.path, std::fs::canonicalize(root)?.join(LIBRARY_CRATE_LIB_RS));
+        }
         Ok(())
     }
 
@@ -1030,6 +1098,7 @@ widgets = { path = "deps/widgets-lib" }
         Ok(())
     }
 
+    /// Required desugarer artifacts are checked independently of any generated Cargo metadata.
     #[test]
     fn characterization_records_failure_for_missing_packaged_vocab_desugarer_artifact()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1057,10 +1126,6 @@ widgets = { path = "deps/widgets-lib" }
             }),
         });
         manifest.write_to_path(&dep_artifact_root.join("routes_core.incnlib"))?;
-        std::fs::write(
-            dep_artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"routes_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
         std::fs::write(dep_artifact_root.join("src/lib.rs"), "pub fn routes() {}\n")?;
 
         let manifest_content = r#"
