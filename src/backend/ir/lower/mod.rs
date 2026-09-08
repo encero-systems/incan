@@ -44,7 +44,7 @@ use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
 use super::{
     FunctionReexport, FunctionRegistry, FunctionSignature, IrCheckedCFunction, IrCheckedCResource, IrCheckedCType,
-    IrProgram, IrSpan, Mutability,
+    IrProgram, Mutability,
 };
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
