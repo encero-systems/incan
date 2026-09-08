@@ -60,7 +60,6 @@ use crate::frontend::registry_metadata::{
 };
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{diagnostics, typechecker};
-use crate::generated_cache::resolve_generated_cargo_target;
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
 use crate::library_manifest::{
@@ -126,30 +125,27 @@ use crate::version::INCAN_VERSION;
 
 use super::build_report::{
     BUILD_REPORT_SCHEMA_VERSION, BuildOvenReport, BuildReport, BuildReportDraft, BuildReportMode, BuildReportOptions,
-    BuildReportProject, RustInspectionFormat, SourceFileReport, artifact_report, cargo_report, dependencies_report,
+    BuildReportProject, RustInspectionFormat, SourceFileReport, artifact_report, dependencies_report,
     emit_build_report, emit_rust_inspection_report, emit_workspace_build_report, generated_project_report,
     incan_dependencies_report, interop_report, oven_generated_project_report, rust_inspection_report, semantic_report,
 };
 #[cfg(test)]
 use super::common::dependency_specs_match;
 use super::common::{
-    CargoPolicy, CompilationSession, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map,
-    cargo_command_flags, collect_incan_source_files, collect_modules_detailed_with_session,
-    collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
-    effective_project_manifest_for_exact_root, enforce_project_toolchain_constraint,
-    extend_requirements_with_provider_plan, format_dependency_error, imported_module_deps_for_with_provider_plan,
-    merge_project_requirement_dependencies, module_key_index, register_module_path_segments, render_module_warnings,
-    resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
+    CompilationSession, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map,
+    collect_incan_source_files, collect_modules_detailed_with_session, collect_project_requirements,
+    collect_rust_dependency_uses, discover_effective_project_manifest, effective_project_manifest_for_exact_root,
+    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
+    imported_module_deps_for_with_provider_plan, merge_project_requirement_dependencies, module_key_index,
+    register_module_path_segments, render_module_warnings, resolve_project_root, resolve_source_root,
+    semantic_sdk_path_dependencies, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{
     collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths,
     collect_rust_inspect_query_paths_from_programs, mark_oven_direct_rust_inspection,
 };
-use super::lock::{
-    LockResolution, LockResolutionRequest, PublishedOvenProjectLock, publish_oven_project_lock, resolve_lock_context,
-    validate_oven_lock_policy,
-};
+use super::lock::{LockResolutionRequest, PublishedOvenProjectLock, publish_oven_project_lock, resolve_lock_context};
 #[cfg(feature = "rust_inspect")]
 use super::lock::{
     OvenRustInspectSourceAuthorityRequest, RustInspectWorkspaceRequest, prepare_project_registry_source_authorities,
@@ -263,7 +259,6 @@ impl BackendSelectionOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct BuildCommandOptions {
-    pub cargo_policy: CargoPolicy,
     pub package_features: FeatureSelection,
     pub sdk_profile: Option<String>,
     pub cargo_features: Vec<String>,
@@ -278,8 +273,6 @@ pub struct BuildCommandOptions {
 struct PrepareProjectOptions<'a> {
     output_dir: Option<&'a str>,
     project_name_override: Option<&'a str>,
-    generated_cargo_target_dir: Option<&'a Path>,
-    cargo_profile: &'a str,
     sdk_profile_override: Option<&'a str>,
 }
 
@@ -292,8 +285,8 @@ struct InlineCommandProject {
 
 /// A prepared library project after Incan validation and Rust source generation.
 ///
-/// The legacy publisher may still retain Cargo-only preparation state. Normal `incan build --lib`, however, always
-/// carries an Oven selection and compiles through direct `rustc` without entering that state.
+/// Source-only publication retains checked API and executable metadata. Native compilation additionally requires
+/// an admitted Oven selection; generating source does not provide that authority.
 struct PreparedLibraryProject {
     generator: ProjectGenerator,
     project_root: PathBuf,
@@ -2682,7 +2675,7 @@ fn build_replacement_file_report(
             "replacement execution keeps stdout and stderr for the program; use --report-output <file> with --report json",
         ));
     }
-    reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
+    reject_normal_cargo_controls(options.generated_cargo_target_dir.as_deref())?;
     let start = Instant::now();
     let entrypoint = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
@@ -3465,24 +3458,19 @@ impl<'a> LibraryReexportResolver<'a> {
 fn prepare_project(
     file_path: &str,
     output_dir: Option<&str>,
-    cargo_policy: &CargoPolicy,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
-    cargo_profile: &str,
 ) -> CliResult<()> {
     prepare_project_with_options(
         file_path,
         PrepareProjectOptions {
             output_dir,
             project_name_override: None,
-            generated_cargo_target_dir: None,
-            cargo_profile,
             sdk_profile_override,
         },
-        cargo_policy,
         package_features,
         cargo_features,
         cargo_no_default_features,
@@ -3495,7 +3483,6 @@ fn prepare_project(
 fn prepare_project_with_options(
     file_path: &str,
     options: PrepareProjectOptions<'_>,
-    cargo_policy: &CargoPolicy,
     package_features: &FeatureSelection,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
@@ -3612,7 +3599,6 @@ fn prepare_project_with_options(
     }
     generator.set_provider_plan(&provider_plan);
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
-    generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(
@@ -3652,7 +3638,7 @@ fn prepare_project_with_options(
     #[cfg(not(feature = "rust_inspect"))]
     let metadata_query_paths: Vec<String> = Vec::new();
 
-    // Resolve lock payload before moving deps into generator (borrows resolved)
+    // Observe canonical checked facts while keeping caller emission requirements separate.
     let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root: &project_root,
         entry_file: Some(&normalized_file_path),
@@ -3665,46 +3651,15 @@ fn prepare_project_with_options(
         sdk_profile_override: options.sdk_profile_override,
         command_session: Some(&compilation_session),
     })?;
-    let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
-    let lock_payload = cargo_lock_inputs.payload;
-    let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
-    let clear_cargo_lock = cargo_lock_inputs.clear_existing;
-    let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
-    let cargo_package_name = lock_resolution.cargo_package_name;
-    let managed_target = resolve_generated_cargo_target(
-        options.generated_cargo_target_dir,
-        &project_root,
-        Path::new(&out_dir),
-        &cargo_package_name,
-        options.cargo_profile,
-        lock_payload.as_deref(),
-        &cargo_features,
-        &cargo_flags,
-    )
-    .map_err(|error| CliError::failure(format!("failed to prepare generated Cargo cache: {error}")))?;
-    let (managed_target_path, managed_target_lease, managed_target_identity) = managed_target.into_parts();
-    #[cfg(feature = "rust_inspect")]
-    let rust_inspect_target = resolve_generated_cargo_target(
-        options.generated_cargo_target_dir,
-        &project_root,
-        &project_root,
-        &cargo_package_name,
-        "rust-inspect",
-        lock_payload.as_deref(),
-        &cargo_features,
-        &cargo_flags,
-    )
-    .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))?;
-    #[cfg(feature = "rust_inspect")]
-    let (rust_inspect_target_path, _rust_inspect_cache_lease, _rust_inspect_cache_identity) =
-        rust_inspect_target.into_parts();
-    generator.set_cargo_target_dir_override(Some(managed_target_path.clone()));
-    generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
-    generator.set_package_name(Some(cargo_package_name.clone()));
+    generator.set_package_name(
+        manifest
+            .as_ref()
+            .and_then(|manifest| manifest.project.as_ref())
+            .and_then(|project| project.name.clone()),
+    );
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-    generator.set_include_dev_dependencies(lock_payload.is_some());
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
@@ -3752,12 +3707,6 @@ fn prepare_project_with_options(
     }
     codegen.set_stdlib_cache(compilation_analysis.stdlib_cache().clone());
     codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
-    generator.set_cargo_lock_payload(lock_payload);
-    generator.set_cargo_lock_projection_root(cargo_lock_projection_root);
-    generator.set_clear_cargo_lock(clear_cargo_lock);
-
-    generator.set_cargo_policy_flags(cargo_flags);
-
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -5345,7 +5294,6 @@ fn explicit_bake_profiles() -> Vec<&'static str> {
 fn prepare_oven_project(
     file_path: &str,
     output_dir: Option<&str>,
-    cargo_policy: &CargoPolicy,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
     cargo_features: Vec<String>,
@@ -5516,17 +5464,6 @@ fn prepare_oven_project(
         })?;
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let inline_path_dependencies = oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?;
-    // Strict flags are Incan lock promises, not authorization to re-enter the Cargo projection path. The Oven
-    // validator recomputes the canonical fingerprint from read-only metadata and fails on a missing or stale lock.
-    validate_oven_lock_policy(
-        &project_root,
-        manifest.as_ref(),
-        &normalized_file_path,
-        &cargo_features,
-        cargo_policy,
-        package_features,
-        sdk_profile_override,
-    )?;
     let mut oven_build_inputs = oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved)?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let rustc_target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
@@ -8895,9 +8832,8 @@ fn write_project_output_projection(project_root: &Path, output: &OvenStoredProje
     })
 }
 
-/// Normal-command policy that must be satisfied before a completed project output may be selected.
+/// Retained source and feature inputs that bound completed-output reuse.
 struct CompletedOutputPolicy<'a> {
-    cargo_policy: &'a CargoPolicy,
     package_features: &'a FeatureSelection,
     sdk_profile: Option<&'a str>,
     cargo_features: &'a [String],
@@ -8914,16 +8850,6 @@ impl CompletedOutputPolicy<'_> {
             )));
         }
         Ok(())
-    }
-
-    /// Return the normalized Cargo feature evidence used by canonical lock validation.
-    fn cargo_feature_selection(&self) -> CargoFeatureSelection {
-        CargoFeatureSelection {
-            cargo_features: self.cargo_features.to_vec(),
-            cargo_no_default_features: self.cargo_no_default_features,
-            cargo_all_features: self.cargo_all_features,
-        }
-        .normalized()
     }
 }
 
@@ -8944,9 +8870,6 @@ fn select_default_project_output(
     let Some(project_root) = project_root_for_completed_output(&entrypoint)? else {
         return Ok(None);
     };
-    let manifest = ProjectManifest::load(&project_root.join(LOAF_MANIFEST_FILENAME))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    validate_completed_output_lock_policy(&project_root, &manifest, &entrypoint, policy)?;
     let store = open_default_oven_store()?;
     let source_authority_digest = digest_baked_project_source_authority(&project_root)?;
     if let Some(selected) = select_baked_project_output_with_source_authority(
@@ -8966,32 +8889,6 @@ fn select_default_project_output(
         ));
     }
     Ok(None)
-}
-
-/// Validate strict lock promises before a completed-output fast path can return a stale-output diagnostic.
-///
-/// `--locked` and `--frozen` are user-visible assertions about canonical `oven.lock`. They remain read-only and
-/// Cargo-free here, but must retain their canonical diagnostic precedence even when a project has a previous completed
-/// Loaf.
-fn validate_completed_output_lock_policy(
-    project_root: &Path,
-    manifest: &ProjectManifest,
-    entrypoint: &Path,
-    policy: &CompletedOutputPolicy<'_>,
-) -> CliResult<()> {
-    if !policy.cargo_policy.locked && !policy.cargo_policy.frozen {
-        return Ok(());
-    }
-    let cargo_features = policy.cargo_feature_selection();
-    validate_oven_lock_policy(
-        project_root,
-        Some(manifest),
-        entrypoint,
-        &cargo_features,
-        policy.cargo_policy,
-        policy.package_features,
-        policy.sdk_profile,
-    )
 }
 
 /// Preserve the normal non-strict stale-lock warning when only the lock's derived fingerprint differs.
@@ -9056,7 +8953,6 @@ fn select_default_library_project_outputs(
         return Ok(None);
     };
     let entrypoint = validate_library_entrypoint(&manifest)?;
-    validate_completed_output_lock_policy(&project_root, &manifest, &entrypoint, policy)?;
     let store = open_default_oven_store()?;
     let source_authority_digest = digest_baked_project_source_authority(&project_root)?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
@@ -9562,7 +9458,6 @@ fn select_default_executable_project_output(
         return Ok(None);
     }
     let completed_output_policy = CompletedOutputPolicy {
-        cargo_policy: &options.cargo_policy,
         package_features: &options.package_features,
         sdk_profile: options.sdk_profile.as_deref(),
         cargo_features: &options.cargo_features,
@@ -9594,7 +9489,7 @@ pub fn build_file(
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
-    reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
+    reject_normal_cargo_controls(options.generated_cargo_target_dir.as_deref())?;
     ensure_backend_request_available(&options.backend)?;
     super::common::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
     if options.backend.requested == BackendKind::Replacement {
@@ -9625,7 +9520,7 @@ pub(crate) fn build_file_report(
     options: BuildCommandOptions,
     report_options: &BuildReportOptions,
 ) -> CliResult<serde_json::Value> {
-    reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
+    reject_normal_cargo_controls(options.generated_cargo_target_dir.as_deref())?;
     ensure_backend_request_available(&options.backend)?;
     if options.backend.requested == BackendKind::Replacement {
         return build_replacement_file_report(file_path, options, report_options);
@@ -9648,7 +9543,6 @@ pub(crate) fn build_file_report(
     let prepared = prepare_oven_project(
         file_path,
         output_dir.map(|path| path.as_str()),
-        &options.cargo_policy,
         &options.package_features,
         options.sdk_profile.as_deref(),
         options.cargo_features,
@@ -9689,26 +9583,6 @@ pub(crate) fn build_file_report(
     ]));
     serde_json::to_value(report)
         .map_err(|error| CliError::failure(format!("failed to serialize Oven build report: {error}")))
-}
-
-/// Return whether an internal library artifact build must avoid canonical workspace lock resolution.
-///
-/// Ordinary dependency artifacts are prepared before their parent can finish the canonical workspace lock, so they
-/// must retain producer-local resolution. SDK artifacts are different: their publisher supplies an exact lock
-/// override that remains part of preparation.
-fn dependency_artifact_skips_canonical_lock(artifact_only: bool, sdk_provider_build: bool) -> bool {
-    artifact_only && !sdk_provider_build
-}
-
-/// Return whether this library compilation needs a rust-inspect workspace to preserve Rust-call signatures.
-///
-/// An ordinary library build retains its complete ABI inspection contract. An artifact-only SDK provider may skip an
-/// empty inspection workspace, but it must prepare one when its source imports Rust items: those signatures can carry
-/// ownership facts such as `&impl AsFd` that code generation must preserve. This remains inside the explicit provider
-/// publisher; normal Oven consumers never invoke this preparation path.
-#[cfg(feature = "rust_inspect")]
-fn library_rust_inspection_required(artifact_only: bool, metadata_query_paths: &[String]) -> bool {
-    !artifact_only || !metadata_query_paths.is_empty()
 }
 
 /// Remove path dependencies that point back to the selected project's generated library crate.
@@ -9771,7 +9645,6 @@ fn library_publication_receipts(project_root: &Path) -> CliResult<Vec<PathBuf>> 
 fn prepare_library_project(
     file_path: Option<&str>,
     output_dir: Option<&str>,
-    cargo_policy: CargoPolicy,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
     cargo_features: Vec<String>,
@@ -9784,6 +9657,7 @@ fn prepare_library_project(
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
     backend_options: &BackendSelectionOptions,
 ) -> CliResult<PreparedLibraryProject> {
+    reject_normal_cargo_controls(generated_cargo_target_dir)?;
     let prepare_start = Instant::now();
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
@@ -9914,100 +9788,31 @@ fn prepare_library_project(
 
     let lock_start = Instant::now();
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
-    if normal_oven {
-        if cargo_no_default_features || cargo_all_features || !cargo_features.cargo_features.is_empty() {
-            return Err(CliError::failure(
-                "Oven Alpha normal library builds do not accept Cargo feature controls; use Incan package features instead",
-            ));
-        }
-        validate_oven_lock_policy(
-            &project_root,
-            Some(&manifest),
-            &lib_entry,
-            &cargo_features,
-            &cargo_policy,
-            package_features,
-            sdk_profile_override,
-        )?;
+    if normal_oven && (cargo_no_default_features || cargo_all_features || !cargo_features.cargo_features.is_empty()) {
+        return Err(CliError::failure(
+            "Oven Alpha normal library builds do not accept Cargo feature controls; use Incan package features instead",
+        ));
     }
-    let (
-        lock_payload_for_typecheck,
-        cargo_lock_projection_root,
-        clear_cargo_lock,
-        cargo_flags,
-        lock_cargo_package_name,
-        managed_target_path,
-        managed_target_lease,
-        managed_target_identity,
-    ) = if normal_oven {
-        // A generated Cargo project is retained only as an inspectable source projection. Normal library execution
-        // must neither acquire a generated Cargo cache nor derive an authority-bearing Cargo.lock from it.
-        (
-            None,
-            None,
-            false,
-            Vec::new(),
-            project_name.clone(),
-            out_dir.join(".cargo-projection"),
-            None,
-            None,
-        )
-    } else {
-        let dependency_artifact_only =
-            dependency_artifact_skips_canonical_lock(artifact_only, env::var_os(SDK_PROVIDER_BUILD_ENV).is_some());
-        let lock_resolution = if dependency_artifact_only {
-            // Dependency artifact preparation has no Cargo build to constrain with a lock payload. Resolving the
-            // canonical workspace lock here would traverse the consumer that requested this still-missing root artifact
-            // and recursively launch the same artifact-only child. Keep the already-resolved producer context intact;
-            // the parent command remains the sole owner of canonical lock generation and publication. SDK provider
-            // artifact builds are excluded because their parent supplies an exact Cargo.lock payload override.
-            LockResolution {
-                cargo_lock_authority: super::lock::CargoLockAuthority::None,
-                cargo_package_name: project_name.clone(),
-                resolved,
-                project_requirements,
-            }
-        } else {
-            resolve_lock_context(LockResolutionRequest {
-                project_root: &project_root,
-                entry_file: Some(&lib_entry),
-                manifest: Some(&manifest),
-                resolved: &resolved,
-                project_requirements: &project_requirements,
-                cargo_features: &cargo_features,
-                semantic: Some(&semantic),
-                package_features: Some(package_features),
-                sdk_profile_override,
-                command_session: Some(&compilation_session),
-            })?
-        };
-        let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
+    if !normal_oven && !artifact_only {
+        let lock_resolution = resolve_lock_context(LockResolutionRequest {
+            project_root: &project_root,
+            entry_file: Some(&lib_entry),
+            manifest: Some(&manifest),
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            cargo_features: &cargo_features,
+            semantic: Some(&semantic),
+            package_features: Some(package_features),
+            sdk_profile_override,
+            command_session: Some(&compilation_session),
+        })?;
         resolved = lock_resolution.resolved;
         project_requirements = lock_resolution.project_requirements;
-        let managed_target = resolve_generated_cargo_target(
-            generated_cargo_target_dir,
-            &project_root,
-            &out_dir,
-            &lock_resolution.cargo_package_name,
-            "release",
-            cargo_lock_inputs.payload.as_deref(),
-            &cargo_features,
-            &cargo_command_flags(&cargo_policy, &cargo_features),
-        )
-        .map_err(|error| CliError::failure(format!("failed to prepare generated Cargo cache: {error}")))?;
-        let (managed_target_path, managed_target_lease, managed_target_identity) = managed_target.into_parts();
-        (
-            cargo_lock_inputs.payload,
-            cargo_lock_inputs.projection_root,
-            cargo_lock_inputs.clear_existing,
-            cargo_command_flags(&cargo_policy, &cargo_features),
-            lock_resolution.cargo_package_name,
-            managed_target_path,
-            managed_target_lease,
-            managed_target_identity,
-        )
-    };
-    record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
+    }
+    // Artifact-only children retain the producer-local facts collected above. Re-entering their parent's canonical
+    // lock collection would request this still-unpublished artifact recursively. The command owning the full project
+    // remains responsible for canonical lock observation and publication, including SDK publisher invocations.
+    record_timing(&mut timings_ms, "library_observe_lock_facts", lock_start);
     let mut oven_build_inputs = normal_oven
         .then(|| oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved))
         .transpose()?;
@@ -10360,34 +10165,19 @@ fn prepare_library_project(
         CliError::failure("checked API metadata is unavailable while generating public namespace facades")
     })?;
     generator.set_public_namespace_facades(checked_api);
-    // Canonical workspace locking uses a synthetic package name so every member resolves one shared Cargo graph.
-    // A published library artifact instead has an identity contract across Cargo.toml, `[lib]`, and `.incnlib`, so
-    // its generated Cargo package must retain the selected producer project's name.
+    // Published native package coordinates belong to the selected producer.
     generator.set_package_name(Some(project_name.clone()));
     generator.set_package_metadata(Some(project_version.clone()), project_license);
     generator.set_provider_plan(&provider_plan);
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
-    if normal_oven {
-        generator.set_cargo_target_dir_override(None);
-        generator.set_generated_cache_context(None, None);
-    } else {
-        generator.set_cargo_target_dir_override(Some(managed_target_path.clone()));
-        generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
-    }
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-    generator.set_include_dev_dependencies(
-        lock_payload_for_typecheck.is_some() || oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
-    );
+    generator.set_include_dev_dependencies(oven_plan_mode == OvenProjectPlanMode::ExplicitBake);
     let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
     generator.set_rust_edition(rust_edition.clone());
     #[cfg(feature = "rust_inspect")]
     if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir.as_ref() {
         codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.manifest_dir().to_path_buf());
     }
-    generator.set_cargo_lock_payload(lock_payload_for_typecheck);
-    generator.set_cargo_lock_projection_root(cargo_lock_projection_root.clone());
-    generator.set_clear_cargo_lock(clear_cargo_lock);
-    generator.set_cargo_policy_flags(cargo_flags);
     remove_generated_library_self_dependencies(&mut resolved, &project_root);
     let oven_inline_rust_dependencies = normal_oven
         .then(|| oven_source_inline_dependency_specs(&resolved, &source_inline_crates))
@@ -10425,11 +10215,7 @@ fn prepare_library_project(
         entrypoint: Some(lib_entry.to_string_lossy().to_string()),
         library_root: Some(project_root.to_string_lossy().to_string()),
         source_files: source_file_report(&modules),
-        generated: generated_project_report(
-            generator.output_dir(),
-            &generator.crate_root_path(),
-            &generator.cargo_target_dir(),
-        ),
+        generated: generated_project_report(generator.output_dir(), &generator.crate_root_path()),
         artifacts: Vec::new(),
         dependencies: dependencies_report(
             &rust_dependencies,
@@ -10443,12 +10229,7 @@ fn prepare_library_project(
             Some(&package_feature_plan),
             &provider_plan,
         ),
-        cargo: Some(cargo_report(
-            &cargo_policy,
-            cargo_features.cargo_features.clone(),
-            cargo_features.cargo_no_default_features,
-            cargo_features.cargo_all_features,
-        )),
+        cargo: None,
         oven: None,
         interop: interop_report(
             &inline_imports,
@@ -10738,12 +10519,9 @@ fn prepare_library_project(
     );
     let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
     let vocab_start = Instant::now();
-    if let Some(vocab_extraction) = collect_library_vocab_metadata(
-        &manifest,
-        &project_root,
-        (!normal_oven).then_some(managed_target_path.as_path()),
-        normal_oven_vocab_context.as_ref(),
-    )? {
+    if let Some(vocab_extraction) =
+        collect_library_vocab_metadata(&manifest, &project_root, None, normal_oven_vocab_context.as_ref())?
+    {
         pending_desugarer_artifact = vocab_extraction.pending_desugarer_artifact;
         library_manifest.vocab = Some(vocab_extraction.payload);
         library_manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
@@ -13452,9 +13230,8 @@ pub fn build_library(
         super::common::warn_once_about_ignored_cargo_manifest(&library_root);
     }
     if !artifact_only {
-        reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
+        reject_normal_cargo_controls(options.generated_cargo_target_dir.as_deref())?;
         let completed_output_policy = CompletedOutputPolicy {
-            cargo_policy: &options.cargo_policy,
             package_features: &options.package_features,
             sdk_profile: options.sdk_profile.as_deref(),
             cargo_features: &options.cargo_features,
@@ -13701,7 +13478,6 @@ pub(crate) fn bake_oven_project_targets(
                     let mut prepared = prepare_library_project(
                         Some(project),
                         None,
-                        CargoPolicy::default(),
                         package_features,
                         None,
                         Vec::new(),
@@ -13921,7 +13697,6 @@ pub(crate) fn bake_oven_project_targets(
                         let prepared = prepare_oven_project(
                             entrypoint,
                             target_output_dir,
-                            &CargoPolicy::default(),
                             package_features,
                             None,
                             Vec::new(),
@@ -14077,10 +13852,9 @@ pub(crate) fn build_library_report(
     }
     let total_start = Instant::now();
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
+    reject_normal_cargo_controls(options.generated_cargo_target_dir.as_deref())?;
     if !artifact_only {
-        reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
         let completed_output_policy = CompletedOutputPolicy {
-            cargo_policy: &options.cargo_policy,
             package_features: &options.package_features,
             sdk_profile: options.sdk_profile.as_deref(),
             cargo_features: &options.cargo_features,
@@ -14114,17 +13888,15 @@ pub(crate) fn build_library_report(
         library_publication_receipts(&project_root)?,
     )?;
     let result = (|| {
-        let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
         let mut prepared = prepare_library_project(
             file_path,
             output_dir.map(String::as_str),
-            options.cargo_policy,
             &options.package_features,
             options.sdk_profile.as_deref(),
             options.cargo_features,
             options.cargo_no_default_features,
             options.cargo_all_features,
-            generated_cargo_target_dir.as_deref(),
+            options.generated_cargo_target_dir.as_deref(),
             !artifact_only,
             !artifact_only,
             OvenProjectPlanMode::ConsumeOnly,
@@ -14250,7 +14022,6 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
         let prepared = prepare_library_project(
             Some(path_arg.as_ref()),
             None,
-            CargoPolicy::default(),
             &FeatureSelection::default(),
             None,
             Vec::new(),
@@ -14273,7 +14044,6 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
         let prepared = prepare_oven_project(
             path_arg.as_ref(),
             None,
-            &CargoPolicy::default(),
             &FeatureSelection::default(),
             None,
             Vec::new(),
@@ -14330,7 +14100,6 @@ fn package_desugarer_artifact(out_dir: &Path, artifact: Option<&PendingDesugarer
 #[allow(clippy::too_many_arguments)] // Public CLI dispatch keeps the parsed command axes explicit at this boundary.
 pub fn run_file(
     file_path: &str,
-    cargo_policy: CargoPolicy,
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
     cargo_features: Vec<String>,
@@ -14338,11 +14107,9 @@ pub fn run_file(
     cargo_all_features: bool,
     release: bool,
 ) -> CliResult<ExitCode> {
-    reject_normal_cargo_controls(&cargo_policy, None)?;
     super::common::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
     let profile = if release { "release" } else { "debug" };
     let completed_output_policy = CompletedOutputPolicy {
-        cargo_policy: &cargo_policy,
         package_features: &package_features,
         sdk_profile: sdk_profile.as_deref(),
         cargo_features: &cargo_features,
@@ -14375,7 +14142,6 @@ pub fn run_file(
     let prepared = prepare_oven_project(
         file_path,
         None,
-        &cargo_policy,
         &package_features,
         sdk_profile.as_deref(),
         cargo_features,
@@ -14393,7 +14159,6 @@ pub fn run_file(
 #[allow(clippy::too_many_arguments)] // Inline and file execution intentionally share the explicit CLI contract.
 pub fn run_inline_source(
     source: &str,
-    cargo_policy: CargoPolicy,
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
     cargo_features: Vec<String>,
@@ -14401,7 +14166,6 @@ pub fn run_inline_source(
     cargo_all_features: bool,
     release: bool,
 ) -> CliResult<ExitCode> {
-    reject_normal_cargo_controls(&cargo_policy, None)?;
     let wrapped_source = wrap_inline_command_source(source);
     let inline_project = inline_command_project(&wrapped_source)?;
     let source_path = inline_project.source_path;
@@ -14434,7 +14198,6 @@ pub fn run_inline_source(
     let result = prepare_oven_project(
         &source_arg,
         Some(inline_project.output_dir.as_str()),
-        &cargo_policy,
         &package_features,
         sdk_profile.as_deref(),
         cargo_features,
@@ -14450,15 +14213,13 @@ pub fn run_inline_source(
     result
 }
 
-/// Reject controls that only have meaning for the retired Cargo execution backend.
+/// Reject a retained legacy target-directory input before normal source or output preparation.
 ///
-/// Lock strictness is deliberately not rejected: it validates compiler-owned `oven.lock` consistency before Oven
-/// selection without launching Cargo. Offline is already satisfied because this normal path starts neither Cargo nor
-/// a networked dependency resolver.
-fn reject_normal_cargo_controls(cargo_policy: &CargoPolicy, target_dir: Option<&PathBuf>) -> CliResult<()> {
-    if !cargo_policy.extra_args.is_empty() || target_dir.is_some() {
+/// Invocation restrictions are separate raw inputs at CLI dispatch; this does not decide their meaning.
+fn reject_normal_cargo_controls(target_dir: Option<&Path>) -> CliResult<()> {
+    if target_dir.is_some() {
         return Err(CliError::failure(
-            "Oven Alpha normal build and run do not accept Cargo passthrough or target-directory controls; use the supported Oven-native provider/dependency envelope instead",
+            "Oven normal build and run do not accept Cargo target-directory controls; use the selected native output binding",
         ));
     }
     Ok(())
@@ -16877,13 +16638,6 @@ headers = ["interop/include/bridge.h"]
     }
 
     #[test]
-    fn dependency_artifact_only_build_skips_canonical_lock_issue908() {
-        assert!(dependency_artifact_skips_canonical_lock(true, false));
-        assert!(!dependency_artifact_skips_canonical_lock(true, true));
-        assert!(!dependency_artifact_skips_canonical_lock(false, false));
-    }
-
-    #[test]
     fn loaf_enables_the_complete_stdlib_runtime_envelope() {
         let mut seeded = vec!["json".to_string()];
         ensure_loaf_stdlib_features(&mut seeded, true);
@@ -17035,33 +16789,37 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
-    fn artifact_only_provider_preserves_required_rust_call_metadata() {
-        assert!(library_rust_inspection_required(
-            true,
-            &["rustix::fs::flock".to_string()]
-        ));
-        assert!(!library_rust_inspection_required(true, &[]));
-        assert!(library_rust_inspection_required(false, &[]));
-    }
-
-    #[test]
-    fn oven_normal_commands_keep_lock_strictness_but_reject_cargo_backend_controls() {
-        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(true, false, false, Vec::new()), None).is_ok());
-        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(false, true, false, Vec::new()), None).is_ok());
-        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(false, false, true, Vec::new()), None).is_ok());
-        assert!(
-            reject_normal_cargo_controls(
-                &CargoPolicy::explicit(false, false, false, vec!["--timings".to_string()]),
-                None,
-            )
-            .is_err()
+    fn library_report_refuses_retired_target_before_publication() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let output = project.path().join("published");
+        fs::create_dir(&output)?;
+        let sentinel = output.join("accepted-output");
+        fs::write(&sentinel, "retain this published artifact")?;
+        let project_arg = project.path().to_str().ok_or("project path is not UTF-8")?;
+        let output_arg = output.to_str().ok_or("output path is not UTF-8")?.to_string();
+        let options = BuildCommandOptions {
+            generated_cargo_target_dir: Some(project.path().join("retired-target")),
+            ..BuildCommandOptions::default()
+        };
+        let error = match build_library_report(
+            Some(project_arg),
+            Some(&output_arg),
+            options,
+            &BuildReportOptions::default(),
+        ) {
+            Ok(_) => return Err("a retired target must refuse before library discovery or publication".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("Cargo target-directory controls"));
+        assert_eq!(fs::read_to_string(&sentinel)?, "retain this published artifact");
+        assert_eq!(
+            fs::read_dir(project.path())?.count(),
+            1,
+            "the refused command must not create state"
         );
-        assert!(
-            reject_normal_cargo_controls(&CargoPolicy::default(), Some(&PathBuf::from("target/generated-cargo")),)
-                .is_err()
-        );
+        assert!(reject_normal_cargo_controls(None).is_ok());
+        Ok(())
     }
 
     #[test]
@@ -17897,13 +17655,11 @@ headers = ["interop/include/bridge.h"]
         prepare_project(
             entry_arg,
             Some(output_arg),
-            &CargoPolicy::default(),
             &FeatureSelection::default(),
             None,
             Vec::new(),
             false,
             false,
-            "release",
         )?;
 
         let generated_manifest = std::fs::read_to_string(output_dir.join("Cargo.toml"))?;
@@ -18884,7 +18640,6 @@ pub def answer() -> int:
         let mut prepared = prepare_library_project(
             Some(lib_path_str),
             None,
-            CargoPolicy::default(),
             &FeatureSelection::default(),
             None,
             Vec::new(),

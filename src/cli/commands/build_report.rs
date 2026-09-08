@@ -21,8 +21,6 @@ use crate::provider::{
 };
 use crate::version::INCAN_VERSION;
 
-use super::common::CargoPolicy;
-
 /// Schema version for build and generated Rust inspection reports.
 pub(crate) const BUILD_REPORT_SCHEMA_VERSION: u32 = 1;
 
@@ -80,11 +78,11 @@ pub struct BuildReportProject {
 #[derive(Debug, Clone, Serialize)]
 pub struct GeneratedRustProjectReport {
     pub project_path: String,
-    /// Generated Cargo manifest used by the explicit legacy backend only.
+    /// Legacy wire field; current source reports do not claim a generated Cargo manifest.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manifest_path: Option<String>,
     pub crate_root: String,
-    /// Legacy generated-Cargo target location, present only for the explicit legacy backend.
+    /// Legacy wire field; current source and native reports omit Cargo target locations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cargo_target_dir: Option<String>,
     /// Caller-owned direct-rustc output location for Oven Alpha normal commands.
@@ -519,17 +517,13 @@ pub(crate) fn emit_rust_inspection_report(
     Ok(())
 }
 
-/// Build the generated Rust project location block shared by build and inspection reports.
-pub(crate) fn generated_project_report(
-    project_path: &Path,
-    crate_root: &Path,
-    cargo_target_dir: &Path,
-) -> GeneratedRustProjectReport {
+/// Report emitted source locations without claiming a generated manifest or a native output selection.
+pub(crate) fn generated_project_report(project_path: &Path, crate_root: &Path) -> GeneratedRustProjectReport {
     GeneratedRustProjectReport {
         project_path: path_string(project_path),
-        manifest_path: Some(path_string(&project_path.join("Cargo.toml"))),
+        manifest_path: None,
         crate_root: path_string(crate_root),
-        cargo_target_dir: Some(path_string(cargo_target_dir)),
+        cargo_target_dir: None,
         oven_output_dir: None,
     }
 }
@@ -588,24 +582,6 @@ pub(crate) fn incan_dependencies_report(
         .collect::<Vec<_>>();
     report.sort_by(|left, right| left.library_name.cmp(&right.library_name));
     report
-}
-
-/// Capture Cargo policy flags and feature selections exactly as the CLI forwarded them to Cargo.
-pub(crate) fn cargo_report(
-    policy: &CargoPolicy,
-    features: Vec<String>,
-    no_default_features: bool,
-    all_features: bool,
-) -> BuildCargoReport {
-    BuildCargoReport {
-        offline: policy.offline,
-        locked: policy.locked,
-        frozen: policy.frozen,
-        extra_args: policy.extra_args.clone(),
-        features,
-        no_default_features,
-        all_features,
-    }
 }
 
 /// Summarize Rust interop surfaces referenced by source code and inferred ABI query paths.

@@ -5476,25 +5476,6 @@ mod tests {
         assert_eq!(root, PathBuf::from("/home/user/project"));
     }
 
-    #[test]
-    fn cargo_policy_resolves_env_defaults_and_frozen_implication() {
-        let policy = CargoPolicy::from_sources(
-            CargoPolicyCliFlags::default(),
-            Vec::new(),
-            Vec::new(),
-            |name| match name {
-                "INCAN_FROZEN" => Some("1".to_string()),
-                "INCAN_CARGO_ARGS" => Some("--timings --verbose".to_string()),
-                _ => None,
-            },
-        );
-
-        assert!(policy.frozen);
-        assert!(policy.offline);
-        assert!(policy.locked);
-        assert_eq!(policy.extra_args, vec!["--timings", "--verbose"]);
-    }
-
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_prewarm_env_defaults_to_disabled() {
@@ -5704,75 +5685,6 @@ model RightValue:
         assert!(!source.contains("private_sdk::Component"));
         assert!(!source.contains("__IncanDeriveProbe"));
         Ok(())
-    }
-
-    #[test]
-    fn cargo_policy_uses_cli_extra_args_before_env_extra_args() {
-        let policy = CargoPolicy::from_sources(
-            CargoPolicyCliFlags {
-                offline: true,
-                ..CargoPolicyCliFlags::default()
-            },
-            vec!["--features".to_string(), "cli".to_string()],
-            vec!["--no-default-features".to_string()],
-            |name| match name {
-                "INCAN_CARGO_ARGS" => Some("--features env".to_string()),
-                _ => None,
-            },
-        );
-
-        assert!(policy.offline);
-        assert_eq!(policy.extra_args, vec!["--features", "cli", "--no-default-features"]);
-    }
-
-    #[test]
-    fn cargo_policy_cli_disable_flags_override_env_defaults() {
-        let policy = CargoPolicy::from_sources(
-            CargoPolicyCliFlags {
-                no_offline: true,
-                no_locked: true,
-                no_frozen: true,
-                ..CargoPolicyCliFlags::default()
-            },
-            Vec::new(),
-            Vec::new(),
-            |name| match name {
-                "INCAN_OFFLINE" | "INCAN_LOCKED" | "INCAN_FROZEN" => Some("1".to_string()),
-                _ => None,
-            },
-        );
-
-        assert!(!policy.offline);
-        assert!(!policy.locked);
-        assert!(!policy.frozen);
-    }
-
-    #[test]
-    fn cargo_command_flags_order_policy_features_then_extra_args() {
-        let policy = CargoPolicy::explicit(
-            true,
-            true,
-            false,
-            vec!["--timings".to_string(), "--color=always".to_string()],
-        );
-        let features = CargoFeatureSelection {
-            cargo_features: vec!["json".to_string(), "web".to_string()],
-            cargo_no_default_features: true,
-            cargo_all_features: false,
-        };
-
-        assert_eq!(
-            cargo_command_flags(&policy, &features),
-            vec![
-                "--offline",
-                "--locked",
-                "--no-default-features",
-                "--features",
-                "json,web",
-                "--timings",
-                "--color=always"
-            ]
-        );
     }
 
     #[test]
