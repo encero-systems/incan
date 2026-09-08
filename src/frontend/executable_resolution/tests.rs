@@ -990,6 +990,51 @@ fn two_foreign_products_keep_distinct_signature_origins() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// A public primitive-union facade retains its admitted provider route without exposing private imports.
+#[test]
+fn public_type_alias_facades_retain_only_checked_native_bridge_roots() -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let manifest = artifact(temporary.path(), "provider", "pub type Answer = int | str\n")?;
+    let plan = std::sync::Arc::new(crate::provider::ProviderPlan::from_resolved_inputs(
+        index(temporary.path(), "selected", &manifest),
+        None,
+        None,
+        None,
+        [],
+    )?);
+    for (source, public) in [
+        ("pub from pub::selected import Answer as Reading\n", true),
+        ("from pub::selected import Answer as Reading\n", false),
+    ] {
+        let program = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.set_current_package_identity(Some("facade".into()));
+        checker.set_provider_plan(plan.clone());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(
+            checker.type_info().declarations.public_type_bridge_roots,
+            if public {
+                BTreeSet::from(["selected".to_string()])
+            } else {
+                BTreeSet::new()
+            }
+        );
+        let mut codegen = crate::backend::ir::IrCodegen::new();
+        codegen.set_provider_plan(plan.clone());
+        codegen.set_preserve_dependency_public_items(true);
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        let rust = codegen.try_generate(&program)?;
+        assert_eq!(rust.contains("pub mod __incan_provider_rust"), public, "{rust}");
+        assert_eq!(rust.contains("pub use ::selected;"), public, "{rust}");
+    }
+    Ok(())
+}
+
 /// Union coverage follows admitted nominal identities through aliases, optional subjects, groups and guards.
 #[test]
 fn package_union_patterns_cover_exact_selected_nominals() -> Result<(), Box<dyn Error>> {
