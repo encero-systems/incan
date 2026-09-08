@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "cli")]
 use std::sync::RwLock;
 
 use crate::compiled_sdk::CompiledSdkModules;
@@ -217,11 +218,11 @@ pub struct ProjectGenerator {
     pub(super) output_dir: PathBuf,
     /// Project name
     pub(super) name: String,
-    /// Optional Cargo package name when it should differ from the generated target name.
+    /// Authored package name when it differs from the generated Rust target name.
     pub(super) package_name: Option<String>,
-    /// Optional project version to use for the generated Cargo package.
+    /// Authored package version exposed to generated native code.
     pub(super) package_version: Option<String>,
-    /// Optional SPDX license identifier or expression for the generated Cargo package.
+    /// Optional authored SPDX license identifier or expression.
     pub(super) package_license: Option<String>,
     /// Whether this is a binary (true) or library (false)
     pub(super) is_binary: bool,
@@ -235,8 +236,6 @@ pub struct ProjectGenerator {
     pub(super) dev_dependencies: Vec<DependencySpec>,
     /// Whether dev dependencies should be emitted.
     pub(super) include_dev_dependencies: bool,
-    /// Stable digest of the generated root crate source used to bound shared-target root artifacts.
-    pub(super) generated_source_identity: RwLock<Option<String>>,
     /// Active-use lease for the generated native output domain.
     #[cfg(feature = "cli")]
     pub(super) generated_cache_lease: RwLock<Option<GeneratedCacheLease>>,
@@ -271,12 +270,12 @@ pub struct ProjectGenerator {
 /// facade unless the project explicitly requires it.
 const GENERATED_PROJECT_RUNTIME_FEATURES: &[&str] = &["async", "json", "ordinal"];
 
-/// Cargo profile used for `incan run`.
+/// Native optimization profile used for `incan run`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunProfile {
-    /// `cargo build` (debug profile).
+    /// Development output with debug information.
     Debug,
-    /// `cargo build --release` (optimized profile).
+    /// Optimized release output.
     Release,
 }
 
@@ -298,7 +297,6 @@ impl ProjectGenerator {
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
             include_dev_dependencies: false,
-            generated_source_identity: RwLock::new(None),
             #[cfg(feature = "cli")]
             generated_cache_lease: RwLock::new(None),
             #[cfg(feature = "cli")]
@@ -370,15 +368,37 @@ impl ProjectGenerator {
         self.stdlib_features = normalized;
     }
 
-    /// Override the Cargo package name while preserving the generated Rust target name.
+    /// Set the authored package name while preserving the generated Rust target name.
     pub fn set_package_name(&mut self, package_name: Option<String>) {
         self.package_name = package_name;
     }
 
-    /// Set optional authored project metadata for the generated Cargo package.
+    /// Set authored package metadata used by native emission.
     pub fn set_package_metadata(&mut self, version: Option<String>, license: Option<String>) {
         self.package_version = version;
         self.package_license = license;
+    }
+
+    /// Project retained package metadata into the existing native compile-time environment (#1037).
+    ///
+    /// Package coordinates come from this generator's caller, without reading a generated Cargo manifest. The
+    /// executor resolves the portable source token against this generator's `src/main.rs` or `src/lib.rs` root and
+    /// removes inherited Cargo environment first. These are Rust compatibility values, not a dependency selection.
+    pub(crate) fn native_compile_environment(&self) -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("CARGO_MANIFEST_DIR".to_string(), "@oven-source-ancestor:2".to_string()),
+            (
+                "CARGO_PKG_NAME".to_string(),
+                self.package_name.as_ref().unwrap_or(&self.name).clone(),
+            ),
+            (
+                "CARGO_PKG_VERSION".to_string(),
+                self.package_version
+                    .as_deref()
+                    .unwrap_or(crate::version::INCAN_VERSION)
+                    .to_string(),
+            ),
+        ])
     }
 
     /// Set resolved Rust dependencies.
@@ -405,7 +425,7 @@ impl ProjectGenerator {
         self.companion_library_target = true;
     }
 
-    /// Retain the managed-cache lease for as long as this generator can invoke Cargo.
+    /// Retain the active-use lease for this generator's selected output domain.
     #[cfg(feature = "cli")]
     pub(crate) fn set_generated_cache_context(&mut self, lease: Option<GeneratedCacheLease>, identity: Option<String>) {
         *self
@@ -415,7 +435,7 @@ impl ProjectGenerator {
         self.generated_cache_identity = identity;
     }
 
-    /// Release a managed target lease once compiler-owned Cargo work and local publication are complete.
+    /// Release a managed output lease once native work and local publication are complete.
     #[cfg(feature = "cli")]
     pub(super) fn finish_generated_cache_lease(&self) -> io::Result<()> {
         let lease = self
@@ -750,7 +770,6 @@ impl ProjectGenerator {
     pub fn generate(&self, rust_code: &str) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
         let mut changed = false;
-        self.remember_generated_source_identity(vec![("main.rs".to_string(), rust_code)]);
 
         // Single-file consumers need the same artifact-backed compatibility namespace as nested projects. Compiler
         // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
@@ -795,13 +814,6 @@ impl ProjectGenerator {
     pub fn generate_multi(&self, main_code: &str, modules: &HashMap<String, String>) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
         let mut changed = false;
-        let mut identity_sources = vec![("main.rs".to_string(), main_code)];
-        identity_sources.extend(
-            modules
-                .iter()
-                .map(|(name, source)| (format!("{name}.rs"), source.as_str())),
-        );
-        self.remember_generated_source_identity(identity_sources);
 
         for module_name in modules.keys() {
             changed |= Self::remove_conflicting_module_artifact(&src_dir.join(module_name))?;
@@ -881,13 +893,6 @@ impl ProjectGenerator {
     pub fn generate_nested(&self, main_code: &str, modules: &HashMap<Vec<String>, String>) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
         let mut changed = false;
-        let mut identity_sources = vec![("main.rs".to_string(), main_code)];
-        identity_sources.extend(
-            modules
-                .iter()
-                .map(|(path, source)| (format!("{}.rs", path.join("/")), source.as_str())),
-        );
-        self.remember_generated_source_identity(identity_sources);
 
         // ---- RFC 023: Transform stdlib paths to __incan_std ----
         let mut transformed_modules: HashMap<Vec<String>, String> = HashMap::new();
@@ -1135,9 +1140,6 @@ impl ProjectGenerator {
 
         Ok(changed)
     }
-
-    /// Name of the sidecar recording which generated manifest a Cargo-owned lock was resolved against.
-    const LOCK_MANIFEST_WITNESS: &'static str = ".incan-cargo-lock-manifest";
 }
 
 #[cfg(test)]
@@ -1150,37 +1152,62 @@ mod tests {
     use std::collections::HashMap;
     use std::process::Command;
 
-    /// A Cargo-owned lock must not survive the manifest it was resolved against.
-    ///
-    /// The publisher runs Cargo with `--locked`, so a lock describing a manifest that no longer exists fails the
-    /// build outright. The stale state is decided from the on-disk witness rather than from whether this run happened
-    /// to rewrite the manifest: a run that rewrote it and then failed leaves manifest and lock permanently
-    /// disagreeing, and a change-keyed check would never fire again for that project.
     #[test]
-    fn generated_lock_is_discarded_when_its_manifest_no_longer_matches() -> Result<(), Box<dyn std::error::Error>> {
-        let output = tempfile::tempdir()?;
-        let generator = ProjectGenerator::new(output.path(), "witness_probe", false);
-        let lock_path = output.path().join("Cargo.lock");
-        let witness_path = output.path().join(ProjectGenerator::LOCK_MANIFEST_WITNESS);
-
-        // An already-broken root: a lock with no witness at all is unattributable and must be discarded.
-        fs::write(&lock_path, "stale lock\n")?;
-        assert!(generator.write_cargo_lock_if_needed("[package]\nname = \"a\"\n")?);
-        assert!(!lock_path.exists(), "an unattributable lock must be discarded");
-        assert!(
-            witness_path.is_file(),
-            "discarding must record the manifest it healed to"
+    fn native_package_metadata_survives_relocation_without_cargo_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let poison = project.path().join("Cargo.toml");
+        fs::write(&poison, "not a manifest; must remain irrelevant\n")?;
+        let mut environments = Vec::new();
+        for binary in [true, false] {
+            let output = project.path().join(if binary { "first" } else { "relocated" });
+            let mut generator = ProjectGenerator::new(&output, "rust_target", binary);
+            generator.set_package_name(Some("authored-package".to_string()));
+            generator.set_package_metadata(Some("0.1.2".to_string()), None);
+            environments.push(generator.native_compile_environment());
+            assert!(
+                !output.exists(),
+                "reading retained metadata must not create a projection"
+            );
+            assert_eq!(
+                generator.crate_root_path().parent().and_then(Path::parent),
+                Some(output.as_path()),
+                "the portable token must resolve from either generated crate root",
+            );
+        }
+        assert_eq!(environments[0], environments[1]);
+        assert_eq!(
+            environments[0].get("CARGO_PKG_NAME").map(String::as_str),
+            Some("authored-package")
         );
-
-        // Cargo then resolves and writes its lock; an unchanged manifest must leave it alone.
-        fs::write(&lock_path, "cargo resolved lock\n")?;
-        assert!(!generator.write_cargo_lock_if_needed("[package]\nname = \"a\"\n")?);
-        assert!(lock_path.is_file(), "a lock matching its witness must survive");
-
-        // A rewritten manifest supersedes that lock, even though this run did not create it.
-        assert!(generator.write_cargo_lock_if_needed("[package]\nname = \"a\"\nedition = \"2024\"\n")?);
-        assert!(!lock_path.exists(), "a superseded lock must be discarded");
+        assert_eq!(
+            environments[0].get("CARGO_PKG_VERSION").map(String::as_str),
+            Some("0.1.2")
+        );
+        assert_eq!(fs::read_to_string(&poison)?, "not a manifest; must remain irrelevant\n");
         Ok(())
+    }
+
+    #[test]
+    fn native_package_metadata_preserves_default_and_explicit_version_inputs() {
+        let mut generator = ProjectGenerator::new("absent-native-metadata-output", "target_name", true);
+        let defaults = generator.native_compile_environment();
+        assert_eq!(defaults.get("CARGO_PKG_NAME").map(String::as_str), Some("target_name"));
+        assert_eq!(
+            defaults.get("CARGO_PKG_VERSION").map(String::as_str),
+            Some(crate::version::INCAN_VERSION)
+        );
+        assert_eq!(
+            defaults.get("CARGO_MANIFEST_DIR").map(String::as_str),
+            Some("@oven-source-ancestor:2")
+        );
+        generator.set_package_metadata(Some("9.8.7".to_string()), None);
+        let explicit = generator.native_compile_environment();
+        assert_ne!(
+            defaults, explicit,
+            "an embedded version remains an effective native input"
+        );
+        assert_eq!(explicit.get("CARGO_PKG_VERSION").map(String::as_str), Some("9.8.7"));
+        assert_eq!(explicit.len(), 3);
     }
 
     /// Compile one small rebinding fixture with direct Rustc rather than making the generated Cargo graph the test
