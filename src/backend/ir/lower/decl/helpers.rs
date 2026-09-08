@@ -469,12 +469,12 @@ impl AstLowering {
         {
             return true;
         }
-        if self.type_info.as_ref().is_some_and(|info| {
+        if let Some(paths) = self.type_info.as_ref().and_then(|info| {
             info.derivations
                 .trait_rust_derive_paths
-                .contains_key(&format!("{module_key}.{trait_name}"))
+                .get(&format!("{module_key}.{trait_name}"))
         }) {
-            return true;
+            return !paths.is_empty();
         }
         self.stdlib_cache.lookup_trait_meta(module_path, trait_name).is_some()
     }

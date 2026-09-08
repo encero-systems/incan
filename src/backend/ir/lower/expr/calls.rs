@@ -4265,6 +4265,7 @@ mod tests {
             package: None,
             modules: vec![CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["std".to_string(), "io".to_string()],
                 declarations: vec![ApiDeclaration::Model(ApiModel {
                     name: "IoError".to_string(),
@@ -4316,6 +4317,7 @@ mod tests {
             package: None,
             modules: vec![CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["helpers".to_string()],
                 declarations: vec![ApiDeclaration::Function(ApiFunction {
                     name: "cast".to_string(),
@@ -4384,6 +4386,7 @@ mod tests {
             package: None,
             modules: vec![CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["hyperquant".to_string(), "index".to_string()],
                 declarations: vec![ApiDeclaration::Function(ApiFunction {
                     name: "default_index".to_string(),
@@ -4457,6 +4460,7 @@ mod tests {
             package: None,
             modules: vec![CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["artifact_only".to_string()],
                 declarations: vec![ApiDeclaration::Function(ApiFunction {
                     name: "consume".to_string(),
