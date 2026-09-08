@@ -39,6 +39,7 @@ Duckborrowing lives in the backend IR path:
 ```text
 typed AST
   -> lowering records value shapes and VarAccess
+  -> closed helper and cursor analysis refines proven shared bindings
   -> ownership planner chooses a use-site conversion
   -> emitters apply the selected conversion
   -> trait-bound inference mirrors backend-inserted clones for generics
@@ -49,6 +50,7 @@ The main files are:
 
 | File                                                            | Responsibility                                                                                   |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `src/backend/ir/borrow_inference.rs` | Proves shared helper parameters and local cursors before updating declaration and call signatures. |
 | `src/backend/ir/ownership.rs`                                   | Public ownership-planning facade. Defines `ValueUseSite` and use-site helpers.                   |
 | `src/backend/ir/conversions.rs`                                 | Core conversion policy. Returns `None`, `ToString`, `Into`, `Borrow`, `MutBorrow`, or `Clone`.   |
 | `src/backend/ir/emit/expressions/mod.rs`                        | Applies `emit_expr_for_use` recursively for expressions, literals, tuples, and match scrutinees. |
@@ -106,7 +108,17 @@ Incan function arguments, struct fields, collection elements, assignments, retur
 
 A binding or reassignment destination carries its storage type into `ValueUseSite::Assignment`. When that destination is an explicit Rust reference, an owned place is borrowed and an existing reference keeps its shape. At an owned destination, a known borrowed non-`Copy` value is materialized and generic bound inference records any compiler-inserted `Clone` requirement. Lowering merges binding and expression reference metadata once; two descriptions of `&T` do not imply an additional reference layer.
 
-Opaque Rust results are a remaining boundary: when their source type is unknown, assignment planning preserves their native shape rather than inventing a borrow or an unsupported `Clone` requirement. This does not establish that a Rust method returns a borrowed descendant. Inferring a traversal cursor or a read-only helper parameter still requires ownership and lifetime evidence; reference-aware assignment alone does not infer those borrows or eliminate subtree copies.
+Opaque Rust results are a remaining boundary: when their source type is unknown, assignment planning preserves their native shape rather than inventing a borrow or an unsupported `Clone` requirement. This does not establish that a Rust method returns a borrowed descendant. The separate helper analysis below supplies that evidence for supported closed uses; reference-aware assignment alone does not establish it.
+
+### Read-only helpers and tree cursors
+
+An immutable nominal helper parameter can become a shared reference in generated Rust when every use is a proven observation. Matching an enum without consuming its payloads is one such use. Calls to another proven shared helper propagate that decision through the local call graph. Foreign method calls require checked receiver metadata from the original Rust signature; a familiar method name provides no ownership evidence.
+
+Unannotated aliases of the parameter keep the same shared shape. A traversal may reassign its cursor to a matched child when the inspected Rust method returns a shared reference, directly or inside `Option`, with a lifetime tied to the receiver. A top-level local initialized from a variable or a direct field can also borrow when its owner is never accessed again in that function and all cursor uses satisfy the same proof. An explicit copy of a selected result remains an owned result.
+
+The analysis rejects consuming or mutating uses, escaping aliases, ambiguous shadowing, unresolved receiver contracts, and unrelated output lifetimes. Later access to a local cursor's owner retains the existing owned behavior. Calls with overlapping argument storage or effectful sibling argument evaluation keep their owned entry point. Async functions, generators, and arbitrary borrowed-result containers are outside this inference. Helper parameter refinement also excludes trait implementations and variadic or keyword-only parameters. Local cursor analysis does not change a trait method signature.
+
+Private functions whose values do not escape can refine their local signature and direct calls together. Crate-visible helpers and inherent methods retain their existing callable ABI and delegate to a private borrowed implementation; proven local direct calls select that implementation. Public free functions, callbacks, reexports, and compiled-provider consumers retain their original callable signatures. All argument and assignment conversions still go through the shared ownership planner.
 
 ### Rust interop sinks
 

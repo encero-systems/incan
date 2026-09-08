@@ -20,10 +20,12 @@
 //! 3. The IR can be validated independently
 //! 4. Potential future backends (LLVM, WASM, etc.) can target IR instead of AST
 
+mod borrow_inference;
 pub mod conversions;
 pub mod ownership;
 pub mod prelude;
 pub(crate) mod reference_shape;
+mod visit;
 
 pub mod codegen;
 pub mod decl;

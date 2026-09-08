@@ -2932,6 +2932,14 @@ impl AstLowering {
         ir_program.member_projections = self.emitted_member_projections.clone();
 
         if errors.is_empty() {
+            super::borrow_inference::infer_shared_helpers(
+                &mut ir_program,
+                &self
+                    .type_info
+                    .as_ref()
+                    .map(|info| info.rust.receiver_contracts.clone())
+                    .unwrap_or_default(),
+            );
             Ok(ir_program)
         } else {
             // Return all collected errors
