@@ -142,6 +142,14 @@ pub enum SemanticFactKind {
     Type,
     SymbolTarget,
     SymbolIdentity,
+    /// Identity of a checked declaring context, including fields, methods and properties.
+    DeclarationIdentity,
+    /// Unique nearest checked declaration owning one reference site.
+    ReferenceOwner,
+    /// Source anchor for a checked reference without parsing an opaque compiler node id.
+    ReferenceSpan,
+    /// Declaring type that requires a field or variant layout and its checked defaults.
+    RequiredMemberOwner,
     Registry,
     RuntimeRequirement,
     Diagnostic,
@@ -156,6 +164,10 @@ impl SemanticFactKind {
             Self::Type => "type",
             Self::SymbolTarget => "symbol_target",
             Self::SymbolIdentity => "symbol_identity",
+            Self::DeclarationIdentity => "declaration_identity",
+            Self::ReferenceOwner => "reference_owner",
+            Self::ReferenceSpan => "reference_span",
+            Self::RequiredMemberOwner => "required_member_owner",
             Self::Registry => "registry",
             Self::RuntimeRequirement => "runtime_requirement",
             Self::Diagnostic => "diagnostic",
@@ -176,6 +188,8 @@ pub enum SemanticFactValue {
     Type(IncanType),
     SourceTarget(SemanticSourceTarget),
     CanonicalIdentity(CanonicalSymbolId),
+    /// Original checked reference anchor used by inspection projections.
+    SourceSpan(crate::HirSourceSpan),
     RegistryEntry(SemanticRegistryEntry),
     AuthorityDecision(Box<AuthorityDecision>),
     Flag(bool),
@@ -222,6 +236,7 @@ impl SemanticFactValue {
             Self::RegistryEntry(value) => value.to_string(),
             Self::AuthorityDecision(value) => value.to_string(),
             Self::Flag(value) => value.to_string(),
+            Self::SourceSpan(span) => format!("{}..{}", span.start, span.end),
         }
     }
 }

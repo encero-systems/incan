@@ -3,6 +3,8 @@
 //! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
 //! resolution, project generation, and receipt-bound direct-`rustc` Oven execution.
 
+mod library_publication;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -2569,6 +2571,10 @@ fn resolve_available_replacement_execution(selection: &BackendSelection) -> CliR
 /// typecheck the source again. `TypeCheckInfo` is retained only as Body IR's transitional lowering bridge; semantic
 /// provenance comes from the sibling portable snapshot produced by that same analysis pass.
 struct ReplacementSessionInputs {
+    /// Checked relationships shared with CodeGraph, projected from this analysis's semantic snapshots.
+    dependencies: incan_semantics_core::dependencies::CheckedDependencyGraph,
+    /// The cached provider projection used by the same analysis.
+    provider_plan: Arc<ProviderPlan>,
     program: crate::frontend::ast::Program,
     module_path: Vec<String>,
     type_info: typechecker::TypeCheckInfo,
@@ -2650,6 +2656,10 @@ fn replacement_session_inputs(
         .collect();
 
     Ok(ReplacementSessionInputs {
+        dependencies: incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(
+            analysis.semantic_snapshots().values().map(|snapshot| &snapshot.facts),
+        ),
+        provider_plan: compilation_session.provider_plan_for_modules(&modules)?,
         program: entry_module.ast.clone(),
         module_path: entry_module.path_segments.clone(),
         type_info: entry_analysis.type_info().clone(),
@@ -2728,7 +2738,7 @@ fn build_replacement_file_report(
     }
     let required_packages = replacement_package_requirements(&session_inputs);
     let published = crate::frontend::executable_resolution::resolve_executable_requirements(
-        &compilation_session.library_manifest_index,
+        &session_inputs.provider_plan,
         &required_packages,
     )
     .map_err(|error| CliError::failure(error.to_string()))?;
@@ -2843,64 +2853,27 @@ fn build_replacement_file_report(
     }))
 }
 
-/// Collect the package requirements reachable from the checked entrypoint, including defaults and deferred frames.
+/// Select package dependencies through the same checked declaration relationships used by CodeGraph.
 ///
-/// The worklist follows local calls by their existing canonical identity or exact owner-local physical identity.
-/// Package targets are retained for artifact resolution; no dependency source is parsed or lowered here.
+/// Alias and facade spellings have already been resolved by the one session analysis. Layout fields, variants and
+/// defaults participate through the shared semantic graph; Body IR is lowered once after selecting imported context.
 fn replacement_package_requirements(
     inputs: &ReplacementSessionInputs,
 ) -> BTreeSet<incan_semantics_core::CanonicalSymbolId> {
     use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
-    let mut declarations = BTreeMap::new();
-    for type_info in
-        std::iter::once(&inputs.type_info).chain(inputs.reachable_modules.iter().map(|module| &module.type_info))
-    {
-        for identity in type_info
-            .declarations
-            .declaration_identities
-            .values()
-            .chain(type_info.declarations.member_declaration_identities.values())
-        {
-            if matches!(
-                identity.kind,
-                SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
-            ) {
-                declarations.insert(identity.clone(), type_info);
-            }
-        }
-    }
-    let mut pending = inputs
+    let roots = inputs
         .type_info
         .declarations
         .declaration_identities
         .values()
         .filter(|identity| identity.kind == SemanticSourceTargetKind::Function && identity.declaration_name == "main")
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut visited = BTreeSet::new();
-    let mut packages = BTreeSet::new();
-    while let Some(identity) = pending.pop() {
-        if !visited.insert(identity.clone()) {
-            continue;
-        }
-        let Some(type_info) = declarations.get(&identity) else {
-            continue;
-        };
-        for (&(start, end), target) in &type_info.references.resolved_identities {
-            if start < identity.declaration_span.start || end > identity.declaration_span.end {
-                continue;
-            }
-            if matches!(target.origin, SymbolOrigin::Package { .. }) {
-                packages.insert(target.clone());
-            } else if matches!(
-                target.kind,
-                SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
-            ) {
-                pending.push(target.clone());
-            }
-        }
-    }
-    packages
+        .cloned();
+    inputs
+        .dependencies
+        .reachable_from(roots)
+        .into_iter()
+        .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
+        .collect()
 }
 
 /// Render a package preflight refusal before program effects or receipt publication.
@@ -10531,6 +10504,35 @@ fn remove_generated_library_self_dependencies(resolved: &mut ResolvedDependencie
         .retain(|spec| !points_to_generated_crate(spec));
 }
 
+/// Resolve the generated artifact root before a publication transaction or generator can mutate it.
+fn library_output_path(project_root: &Path, output_dir: Option<&str>) -> CliResult<PathBuf> {
+    match output_dir {
+        Some(output) => {
+            validate_output_dir(output)?;
+            let output = PathBuf::from(output);
+            Ok(if output.is_absolute() {
+                output
+            } else {
+                project_root.join(output)
+            })
+        }
+        None => Ok(project_root.join("target/lib")),
+    }
+}
+
+/// Receipt pointers and portable lock state that a failed library build must restore alongside its artifact.
+fn library_publication_receipts(project_root: &Path) -> CliResult<Vec<PathBuf>> {
+    let receipt = crate::oven::default_receipt_path(project_root);
+    Ok(vec![
+        receipt.clone(),
+        receipt.with_file_name("library-debug-receipt.json"),
+        receipt.with_file_name("library-release-receipt.json"),
+        default_backend_receipt_path(project_root),
+        project_root.join("oven.lock"),
+        canonical_baked_project_lock_path(project_root)?,
+    ])
+}
+
 /// Validate a library project and generate its Rust project without running Cargo.
 ///
 /// Normal consumers include their already selected interop execution receipt in the runtime identity. Explicit Oven
@@ -10558,18 +10560,7 @@ fn prepare_library_project(
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
     let project_root = resolve_library_project_root(file_path)?;
-    let out_dir = match output_dir {
-        Some(output_dir) => {
-            validate_output_dir(output_dir)?;
-            let output_dir = PathBuf::from(output_dir);
-            if output_dir.is_absolute() {
-                output_dir
-            } else {
-                project_root.join(output_dir)
-            }
-        }
-        None => project_root.join("target").join("lib"),
-    };
+    let out_dir = library_output_path(&project_root, output_dir)?;
     let Some(manifest) = discover_effective_project_manifest(&project_root)? else {
         return Err(CliError::failure(
             "No loaf.toml found for `incan build --lib` (run `incan init` first)",
@@ -14435,234 +14426,34 @@ pub(crate) fn bake_oven_project_targets(
     #[cfg(feature = "rust_inspect")]
     let mut rust_inspect_manifest_dirs = BTreeSet::new();
 
-    for (target, entrypoint) in targets {
-        match target {
-            OvenBakeProjectTarget::Library => {
-                let mut prepared = prepare_library_project(
-                    Some(project),
-                    None,
-                    CargoPolicy::default(),
-                    package_features,
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    None,
-                    true,
-                    false,
-                    OvenProjectPlanMode::ExplicitBake,
-                    Some(&mut authority_context),
-                    &BackendSelectionOptions::default(),
-                )?;
-                #[cfg(feature = "rust_inspect")]
-                if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {
-                    rust_inspect_manifest_dirs.insert(manifest_dir.clone());
-                }
-                let selected = prepared.oven.as_ref().ok_or_else(|| {
-                    CliError::failure("explicit Oven library preparation did not produce a direct-rustc selection")
-                })?;
-                let backend_receipt = prepared.report.backend.clone().ok_or_else(|| {
-                    CliError::failure("explicit Oven library preparation did not produce backend provenance")
-                })?;
-                generated_sources.insert(
-                    oven_bake_project_target_identity(&project_root, target, &prepared.entrypoint)?,
-                    prepared.generator.crate_root_path(),
-                );
-                let package_store_root = packaged_library_loaf_store_root(&prepared.out_dir);
-                let mut package_profiles = BTreeMap::new();
-                let mut completed_outputs = Vec::new();
-                for (profile, selected_profile) in &selected.profiles {
-                    if profile == "debug" {
-                        debug_target_receipts.push(selected_profile.receipt.clone());
-                    }
-                    if profile == "debug" {
-                        // The library's debug plan is the constituent that lets a test unit inspect the library's
-                        // dependencies. A direct-rustc bake stores it whole, and its rust-inspect workspace holds
-                        // the Cargo bootstrap's generated Rust. When the closure is not loadable as independently
-                        // compiled parts, the bounded compatibility baker publishes the library as a store-owned
-                        // extension of a compiler Loaf instead; the composed manifest under the extension's
-                        // identity is the same constituent, and the generated project's own Cargo target holds
-                        // the generated Rust.
-                        let constituent = match &selected_profile.plan_selection {
-                            OvenDirectRustcPlanSelection::Stored(plan) => Some((
-                                plan.identity.clone(),
-                                plan.artifacts.clone(),
-                                OvenArtifactKind::DirectRustcPlan,
-                                None,
-                            )),
-                            OvenDirectRustcPlanSelection::ProjectExtension(extension) => Some((
-                                extension.extension.identity.clone(),
-                                extension.artifacts.clone(),
-                                OvenArtifactKind::ProjectPayload,
-                                Some(extension.base.loaf_identity.clone()),
-                            )),
-                            OvenDirectRustcPlanSelection::ToolchainLoaf(_)
-                            | OvenDirectRustcPlanSelection::PackagedProvider(_) => None,
-                        };
-                        if let Some((identity, artifacts, artifact_kind, base_loaf_identity)) = constituent {
-                            library_inspection_constituent = Some(LibraryInspectionConstituent {
-                                identity,
-                                artifact_kind,
-                                base_loaf_identity,
-                                receipt: selected_profile.receipt.clone(),
-                                artifacts,
-                                rust_inspect_manifest_dir: prepared.rust_inspect_manifest_dir.clone(),
-                                cargo_target_dir: Some(prepared.generator.cargo_target_dir()),
-                                generated_project_dir: Some(prepared.generator.output_dir().to_path_buf()),
-                            });
-                        }
-                    }
-                    let bake = bake_oven_library(&prepared, selected, profile, Some(&mut authority_context))?;
-                    let library_relative_path = bake
-                        .output
-                        .strip_prefix(&prepared.out_dir)
-                        .map_err(|_| {
-                            CliError::failure(format!(
-                                "baked public library output {} escaped its artifact root {}",
-                                bake.output.display(),
-                                prepared.out_dir.display()
-                            ))
-                        })?
-                        .to_string_lossy()
-                        .replace('\\', "/");
-                    let entries = export_selected_package_loaf(
-                        &store,
-                        &package_store_root,
-                        &selected_profile.receipt,
-                        &selected_profile.plan_selection,
-                    )?;
-                    completed_outputs.push((
-                        profile.clone(),
-                        selected_profile.receipt.clone(),
-                        selected_profile.plan_selection.report_identity(),
-                        bake.output.clone(),
-                        entries.clone(),
-                    ));
-                    package_profiles.insert(
-                        profile.clone(),
-                        OvenPackagedLibraryLoafProfile {
-                            receipt: selected_profile.receipt.clone(),
-                            entries,
-                            library_relative_path,
-                            library_digest: bake.output_digest,
-                        },
-                    );
-                    let receipt = project_bake_receipt_path(&project_root, target, &prepared.entrypoint, profile)?;
-                    write_receipt(&selected_profile.receipt, &receipt)
-                        .map_err(|error| CliError::failure(error.to_string()))?;
-                    profiles.push(OvenProjectBakeProfileReport {
-                        project_target: oven_bake_project_target_identity(&project_root, target, &prepared.entrypoint)?,
-                        profile: profile.clone(),
-                        target: selected_profile.receipt.intent.target.clone(),
-                        toolchain: selected_profile.receipt.intent.toolchain.clone(),
-                        receipt,
-                        receipt_identity: selected_profile.receipt.identity.clone(),
-                        build_unit_identity: selected_profile.receipt.build_unit_identity.clone(),
-                        plan_identity: selected_profile.plan_selection.report_identity(),
-                        action: selected_profile.materialization.as_str(),
-                    });
-                }
-                write_library_manifest_artifacts(&mut prepared)?;
-                published_project_lock = Some(publish_project_lock_after_provider_bake(
-                    &project_root,
-                    &dependency_surface_entrypoint,
-                    package_features,
-                )?);
-                source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
-                let source_authority_digest = source_authority_digest
-                    .as_deref()
-                    .ok_or_else(|| CliError::failure("explicit Oven library bake lost its final source authority"))?;
-                let library_sidecars = library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
-                let metadata_files = packaged_library_metadata_files(
-                    &prepared.manifest_path,
-                    &prepared.library_manifest,
-                    &prepared.out_dir,
-                )?;
-                write_packaged_library_loaf_manifest(
-                    &prepared.out_dir,
-                    &OvenPackagedLibraryLoafManifest {
-                        schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
-                        source_authority_digest: source_authority_digest.to_string(),
-                        compiler_version: INCAN_VERSION.to_string(),
-                        metadata_files,
-                        profiles: package_profiles,
-                    },
-                )?;
-                let package_loaf_manifest = packaged_library_loaf_manifest_path(&prepared.out_dir);
-                let package_loaf_store_relative_path = package_store_root
-                    .strip_prefix(&prepared.project_root)
-                    .map_err(|_| {
-                        CliError::failure(format!(
-                            "baked package Loaf store {} escaped project root {}",
-                            package_store_root.display(),
-                            prepared.project_root.display()
-                        ))
-                    })?
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                for (profile, receipt, plan_identity, native_output, required_project_loafs) in completed_outputs {
-                    let files = project_output_bake_files(
-                        &prepared.project_root,
-                        &prepared.generator,
-                        &native_output,
-                        Some(&prepared.manifest_path),
-                        Some(&package_loaf_manifest),
-                        &library_sidecars,
-                    )?;
-                    pending_outputs.push(PendingOvenProjectOutput {
-                        entrypoint: prepared.entrypoint.clone(),
-                        target,
-                        receipt,
-                        plan_identity,
-                        profile,
-                        files,
-                        required_project_loafs,
-                        package_loaf_store_relative_path: Some(package_loaf_store_relative_path.clone()),
-                        backend_receipt: backend_receipt.clone(),
-                        build_report: None,
-                    });
-                }
-                remove_completed_generated_cargo_lock(prepared.generator.output_dir())?;
-                retained_preparations.push(prepared);
-            }
-            OvenBakeProjectTarget::Executable => {
-                if published_project_lock.is_none() {
-                    published_project_lock = Some(publish_project_lock_after_provider_bake(
-                        &project_root,
-                        &dependency_surface_entrypoint,
-                        package_features,
-                    )?);
-                    source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
-                }
-                source_authority_digest.as_deref().ok_or_else(|| {
-                    CliError::failure("explicit Oven executable bake lost its final source authority")
-                })?;
-                let entrypoint = entrypoint.to_str().ok_or_else(|| {
-                    CliError::failure(format!("Oven entrypoint is not valid UTF-8: {}", entrypoint.display()))
-                })?;
-                let target_output_dir = oven_bake_executable_output_dir(&project_root, Path::new(entrypoint))?;
-                let target_output_dir = target_output_dir
-                    .as_deref()
-                    .map(|path| {
-                        path.to_str().ok_or_else(|| {
-                            CliError::failure(format!(
-                                "Oven target output path is not valid UTF-8: {}",
-                                path.display()
-                            ))
-                        })
-                    })
-                    .transpose()?;
-                for profile in explicit_bake_profiles() {
-                    let prepared = prepare_oven_project(
-                        entrypoint,
-                        target_output_dir,
-                        &CargoPolicy::default(),
+    let publication = if targets
+        .iter()
+        .any(|(target, _)| *target == OvenBakeProjectTarget::Library)
+    {
+        Some(library_publication::LibraryPublication::begin(
+            &project_root,
+            &project_root.join("target/lib"),
+            library_publication_receipts(&project_root)?,
+        )?)
+    } else {
+        None
+    };
+    let result = (|| {
+        for (target, entrypoint) in targets {
+            match target {
+                OvenBakeProjectTarget::Library => {
+                    let mut prepared = prepare_library_project(
+                        Some(project),
+                        None,
+                        CargoPolicy::default(),
                         package_features,
                         None,
                         Vec::new(),
                         false,
                         false,
-                        profile,
+                        None,
+                        true,
+                        false,
                         OvenProjectPlanMode::ExplicitBake,
                         Some(&mut authority_context),
                         &BackendSelectionOptions::default(),
@@ -14671,123 +14462,348 @@ pub(crate) fn bake_oven_project_targets(
                     if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {
                         rust_inspect_manifest_dirs.insert(manifest_dir.clone());
                     }
-                    if profile == "debug" {
-                        debug_target_receipts.push(prepared.receipt.clone());
-                    }
-                    let receipt = project_bake_receipt_path(&project_root, target, &prepared.entrypoint, profile)?;
-                    write_receipt(&prepared.receipt, &receipt).map_err(|error| CliError::failure(error.to_string()))?;
-                    let bake = bake_oven_project(&prepared, profile, Some(&mut authority_context))?;
-                    let backend_receipt = prepared.report.backend.clone().ok_or_else(|| {
-                        CliError::failure("explicit Oven executable preparation did not produce backend provenance")
+                    let selected = prepared.oven.as_ref().ok_or_else(|| {
+                        CliError::failure("explicit Oven library preparation did not produce a direct-rustc selection")
                     })?;
-                    let mut report = prepared.report.clone();
-                    report.artifacts.push(artifact_report("binary", &bake.output));
-                    let build_report = project_output_report_snapshot(&project_root, &report.finish(BTreeMap::new()))?;
-                    let files = project_output_bake_files(
-                        &prepared.project_root,
-                        &prepared.generator,
-                        &bake.output,
-                        None,
-                        None,
-                        &[],
+                    let backend_receipt = prepared.report.backend.clone().ok_or_else(|| {
+                        CliError::failure("explicit Oven library preparation did not produce backend provenance")
+                    })?;
+                    generated_sources.insert(
+                        oven_bake_project_target_identity(&project_root, target, &prepared.entrypoint)?,
+                        prepared.generator.crate_root_path(),
+                    );
+                    let package_store_root = packaged_library_loaf_store_root(&prepared.out_dir);
+                    let mut package_profiles = BTreeMap::new();
+                    let mut completed_outputs = Vec::new();
+                    for (profile, selected_profile) in &selected.profiles {
+                        if profile == "debug" {
+                            debug_target_receipts.push(selected_profile.receipt.clone());
+                        }
+                        if profile == "debug" {
+                            // The library's debug plan is the constituent that lets a test unit inspect the library's
+                            // dependencies. A direct-rustc bake stores it whole, and its rust-inspect workspace holds
+                            // the Cargo bootstrap's generated Rust. When the closure is not loadable as independently
+                            // compiled parts, the bounded compatibility baker publishes the library as a store-owned
+                            // extension of a compiler Loaf instead; the composed manifest under the extension's
+                            // identity is the same constituent, and the generated project's own Cargo target holds
+                            // the generated Rust.
+                            let constituent = match &selected_profile.plan_selection {
+                                OvenDirectRustcPlanSelection::Stored(plan) => Some((
+                                    plan.identity.clone(),
+                                    plan.artifacts.clone(),
+                                    OvenArtifactKind::DirectRustcPlan,
+                                    None,
+                                )),
+                                OvenDirectRustcPlanSelection::ProjectExtension(extension) => Some((
+                                    extension.extension.identity.clone(),
+                                    extension.artifacts.clone(),
+                                    OvenArtifactKind::ProjectPayload,
+                                    Some(extension.base.loaf_identity.clone()),
+                                )),
+                                OvenDirectRustcPlanSelection::ToolchainLoaf(_)
+                                | OvenDirectRustcPlanSelection::PackagedProvider(_) => None,
+                            };
+                            if let Some((identity, artifacts, artifact_kind, base_loaf_identity)) = constituent {
+                                library_inspection_constituent = Some(LibraryInspectionConstituent {
+                                    identity,
+                                    artifact_kind,
+                                    base_loaf_identity,
+                                    receipt: selected_profile.receipt.clone(),
+                                    artifacts,
+                                    rust_inspect_manifest_dir: prepared.rust_inspect_manifest_dir.clone(),
+                                    cargo_target_dir: Some(prepared.generator.cargo_target_dir()),
+                                    generated_project_dir: Some(prepared.generator.output_dir().to_path_buf()),
+                                });
+                            }
+                        }
+                        let bake = bake_oven_library(&prepared, selected, profile, Some(&mut authority_context))?;
+                        let library_relative_path = bake
+                            .output
+                            .strip_prefix(&prepared.out_dir)
+                            .map_err(|_| {
+                                CliError::failure(format!(
+                                    "baked public library output {} escaped its artifact root {}",
+                                    bake.output.display(),
+                                    prepared.out_dir.display()
+                                ))
+                            })?
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        let entries = export_selected_package_loaf(
+                            &store,
+                            &package_store_root,
+                            &selected_profile.receipt,
+                            &selected_profile.plan_selection,
+                        )?;
+                        completed_outputs.push((
+                            profile.clone(),
+                            selected_profile.receipt.clone(),
+                            selected_profile.plan_selection.report_identity(),
+                            bake.output.clone(),
+                            entries.clone(),
+                        ));
+                        package_profiles.insert(
+                            profile.clone(),
+                            OvenPackagedLibraryLoafProfile {
+                                receipt: selected_profile.receipt.clone(),
+                                entries,
+                                library_relative_path,
+                                library_digest: bake.output_digest,
+                            },
+                        );
+                        let receipt = project_bake_receipt_path(&project_root, target, &prepared.entrypoint, profile)?;
+                        write_receipt(&selected_profile.receipt, &receipt)
+                            .map_err(|error| CliError::failure(error.to_string()))?;
+                        profiles.push(OvenProjectBakeProfileReport {
+                            project_target: oven_bake_project_target_identity(
+                                &project_root,
+                                target,
+                                &prepared.entrypoint,
+                            )?,
+                            profile: profile.clone(),
+                            target: selected_profile.receipt.intent.target.clone(),
+                            toolchain: selected_profile.receipt.intent.toolchain.clone(),
+                            receipt,
+                            receipt_identity: selected_profile.receipt.identity.clone(),
+                            build_unit_identity: selected_profile.receipt.build_unit_identity.clone(),
+                            plan_identity: selected_profile.plan_selection.report_identity(),
+                            action: selected_profile.materialization.as_str(),
+                        });
+                    }
+                    write_library_manifest_artifacts(&mut prepared)?;
+                    published_project_lock = Some(publish_project_lock_after_provider_bake(
+                        &project_root,
+                        &dependency_surface_entrypoint,
+                        package_features,
+                    )?);
+                    source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
+                    let source_authority_digest = source_authority_digest.as_deref().ok_or_else(|| {
+                        CliError::failure("explicit Oven library bake lost its final source authority")
+                    })?;
+                    let library_sidecars =
+                        library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
+                    let metadata_files = packaged_library_metadata_files(
+                        &prepared.manifest_path,
+                        &prepared.library_manifest,
+                        &prepared.out_dir,
                     )?;
-                    pending_outputs.push(PendingOvenProjectOutput {
-                        entrypoint: prepared.entrypoint.clone(),
-                        target,
-                        receipt: prepared.receipt.clone(),
-                        plan_identity: prepared.plan_selection.report_identity(),
-                        profile: profile.to_string(),
-                        files,
-                        required_project_loafs: Vec::new(),
-                        package_loaf_store_relative_path: None,
-                        backend_receipt,
-                        build_report: Some(build_report),
-                    });
+                    write_packaged_library_loaf_manifest(
+                        &prepared.out_dir,
+                        &OvenPackagedLibraryLoafManifest {
+                            schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
+                            source_authority_digest: source_authority_digest.to_string(),
+                            compiler_version: INCAN_VERSION.to_string(),
+                            metadata_files,
+                            profiles: package_profiles,
+                        },
+                    )?;
+                    let package_loaf_manifest = packaged_library_loaf_manifest_path(&prepared.out_dir);
+                    let package_loaf_store_relative_path = package_store_root
+                        .strip_prefix(&prepared.project_root)
+                        .map_err(|_| {
+                            CliError::failure(format!(
+                                "baked package Loaf store {} escaped project root {}",
+                                package_store_root.display(),
+                                prepared.project_root.display()
+                            ))
+                        })?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    for (profile, receipt, plan_identity, native_output, required_project_loafs) in completed_outputs {
+                        let files = project_output_bake_files(
+                            &prepared.project_root,
+                            &prepared.generator,
+                            &native_output,
+                            Some(&prepared.manifest_path),
+                            Some(&package_loaf_manifest),
+                            &library_sidecars,
+                        )?;
+                        pending_outputs.push(PendingOvenProjectOutput {
+                            entrypoint: prepared.entrypoint.clone(),
+                            target,
+                            receipt,
+                            plan_identity,
+                            profile,
+                            files,
+                            required_project_loafs,
+                            package_loaf_store_relative_path: Some(package_loaf_store_relative_path.clone()),
+                            backend_receipt: backend_receipt.clone(),
+                            build_report: None,
+                        });
+                    }
                     remove_completed_generated_cargo_lock(prepared.generator.output_dir())?;
-                    let target_identity =
-                        oven_bake_project_target_identity(&project_root, target, &prepared.entrypoint)?;
-                    generated_sources
-                        .entry(target_identity.clone())
-                        .or_insert_with(|| prepared.generator.crate_root_path());
-                    profiles.push(OvenProjectBakeProfileReport {
-                        project_target: target_identity,
-                        profile: profile.to_string(),
-                        target: prepared.receipt.intent.target.clone(),
-                        toolchain: prepared.receipt.intent.toolchain.clone(),
-                        receipt,
-                        receipt_identity: prepared.receipt.identity.clone(),
-                        build_unit_identity: prepared.receipt.build_unit_identity.clone(),
-                        plan_identity: prepared.plan_selection.report_identity(),
-                        action: prepared.materialization.as_str(),
-                    });
+                    retained_preparations.push(prepared);
+                }
+                OvenBakeProjectTarget::Executable => {
+                    if published_project_lock.is_none() {
+                        published_project_lock = Some(publish_project_lock_after_provider_bake(
+                            &project_root,
+                            &dependency_surface_entrypoint,
+                            package_features,
+                        )?);
+                        source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
+                    }
+                    source_authority_digest.as_deref().ok_or_else(|| {
+                        CliError::failure("explicit Oven executable bake lost its final source authority")
+                    })?;
+                    let entrypoint = entrypoint.to_str().ok_or_else(|| {
+                        CliError::failure(format!("Oven entrypoint is not valid UTF-8: {}", entrypoint.display()))
+                    })?;
+                    let target_output_dir = oven_bake_executable_output_dir(&project_root, Path::new(entrypoint))?;
+                    let target_output_dir = target_output_dir
+                        .as_deref()
+                        .map(|path| {
+                            path.to_str().ok_or_else(|| {
+                                CliError::failure(format!(
+                                    "Oven target output path is not valid UTF-8: {}",
+                                    path.display()
+                                ))
+                            })
+                        })
+                        .transpose()?;
+                    for profile in explicit_bake_profiles() {
+                        let prepared = prepare_oven_project(
+                            entrypoint,
+                            target_output_dir,
+                            &CargoPolicy::default(),
+                            package_features,
+                            None,
+                            Vec::new(),
+                            false,
+                            false,
+                            profile,
+                            OvenProjectPlanMode::ExplicitBake,
+                            Some(&mut authority_context),
+                            &BackendSelectionOptions::default(),
+                        )?;
+                        #[cfg(feature = "rust_inspect")]
+                        if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {
+                            rust_inspect_manifest_dirs.insert(manifest_dir.clone());
+                        }
+                        if profile == "debug" {
+                            debug_target_receipts.push(prepared.receipt.clone());
+                        }
+                        let receipt = project_bake_receipt_path(&project_root, target, &prepared.entrypoint, profile)?;
+                        write_receipt(&prepared.receipt, &receipt)
+                            .map_err(|error| CliError::failure(error.to_string()))?;
+                        let bake = bake_oven_project(&prepared, profile, Some(&mut authority_context))?;
+                        let backend_receipt = prepared.report.backend.clone().ok_or_else(|| {
+                            CliError::failure("explicit Oven executable preparation did not produce backend provenance")
+                        })?;
+                        let mut report = prepared.report.clone();
+                        report.artifacts.push(artifact_report("binary", &bake.output));
+                        let build_report =
+                            project_output_report_snapshot(&project_root, &report.finish(BTreeMap::new()))?;
+                        let files = project_output_bake_files(
+                            &prepared.project_root,
+                            &prepared.generator,
+                            &bake.output,
+                            None,
+                            None,
+                            &[],
+                        )?;
+                        pending_outputs.push(PendingOvenProjectOutput {
+                            entrypoint: prepared.entrypoint.clone(),
+                            target,
+                            receipt: prepared.receipt.clone(),
+                            plan_identity: prepared.plan_selection.report_identity(),
+                            profile: profile.to_string(),
+                            files,
+                            required_project_loafs: Vec::new(),
+                            package_loaf_store_relative_path: None,
+                            backend_receipt,
+                            build_report: Some(build_report),
+                        });
+                        remove_completed_generated_cargo_lock(prepared.generator.output_dir())?;
+                        let target_identity =
+                            oven_bake_project_target_identity(&project_root, target, &prepared.entrypoint)?;
+                        generated_sources
+                            .entry(target_identity.clone())
+                            .or_insert_with(|| prepared.generator.crate_root_path());
+                        profiles.push(OvenProjectBakeProfileReport {
+                            project_target: target_identity,
+                            profile: profile.to_string(),
+                            target: prepared.receipt.intent.target.clone(),
+                            toolchain: prepared.receipt.intent.toolchain.clone(),
+                            receipt,
+                            receipt_identity: prepared.receipt.identity.clone(),
+                            build_unit_identity: prepared.receipt.build_unit_identity.clone(),
+                            plan_identity: prepared.plan_selection.report_identity(),
+                            action: prepared.materialization.as_str(),
+                        });
+                    }
                 }
             }
         }
+        source_authority_digest
+            .as_deref()
+            .ok_or_else(|| CliError::failure("explicit Oven bake did not finalize its project source authority"))?;
+        let dependency_surface = published_project_lock
+            .as_ref()
+            .ok_or_else(|| CliError::failure("explicit Oven bake did not retain its canonical project lock"))?
+            .dependency_surface();
+        let test_dependency_envelope = prepare_oven_test_dependency_envelope(
+            &store,
+            &project_root,
+            dependency_surface,
+            &debug_target_receipts,
+            Some(&mut authority_context),
+        )?;
+        let (registry_dependencies, dev_registry_dependencies) =
+            canonical_project_inspection_dependencies(dependency_surface)?;
+        let source_authority_digest = authority_context.final_project_source_authority(&project_root)?;
+        let inspection_authority = publish_project_inspection_authority(
+            &store,
+            &project_root,
+            &source_authority_digest,
+            &registry_dependencies,
+            &dev_registry_dependencies,
+            &test_dependency_envelope,
+            library_inspection_constituent.as_ref(),
+        )?;
+        let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(&project_root)?;
+        let mut published_outputs = Vec::with_capacity(pending_outputs.len());
+        for pending in pending_outputs {
+            let files = pending.files;
+            let payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
+                project_root: &project_root,
+                entrypoint: &pending.entrypoint,
+                target: pending.target,
+                receipt: &pending.receipt,
+                plan_identity: pending.plan_identity,
+                profile: &pending.profile,
+                source_authority_digest: &source_authority_digest,
+                lock_dependencies_fingerprint: lock_dependencies_fingerprint.clone(),
+                files: files.clone(),
+                inspection_authority: inspection_authority.reference.clone(),
+                required_project_loafs: pending.required_project_loafs,
+                package_loaf_store_relative_path: pending.package_loaf_store_relative_path,
+                backend_receipt: pending.backend_receipt,
+                build_report: pending.build_report,
+            })?;
+            published_outputs.push(publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?);
+        }
+        // Keep every sibling output and the authority leased through completion. A tight policy must fail this bake
+        // rather than prune an earlier target/profile and then report a partial project as successfully prepared.
+        // The inspection authority names the debug test dependency envelope's exact plan. Retain that selection until
+        // every output Loaf is visible: otherwise a later output admission can prune the now-unleased constituent and
+        // leave a source-current authority that points at a missing closure.
+        let _complete_publication_set = (test_dependency_envelope, inspection_authority, published_outputs);
+        #[cfg(feature = "rust_inspect")]
+        for manifest_dir in rust_inspect_manifest_dirs {
+            mark_oven_direct_rust_inspection(&manifest_dir)?;
+        }
+        Ok(OvenProjectBakeReport {
+            project: project_root,
+            generated_sources,
+            store: store.root().to_path_buf(),
+            profiles,
+        })
+    })();
+    match publication {
+        Some(publication) => publication.finish(result),
+        None => result,
     }
-    source_authority_digest
-        .as_deref()
-        .ok_or_else(|| CliError::failure("explicit Oven bake did not finalize its project source authority"))?;
-    let dependency_surface = published_project_lock
-        .as_ref()
-        .ok_or_else(|| CliError::failure("explicit Oven bake did not retain its canonical project lock"))?
-        .dependency_surface();
-    let test_dependency_envelope = prepare_oven_test_dependency_envelope(
-        &store,
-        &project_root,
-        dependency_surface,
-        &debug_target_receipts,
-        Some(&mut authority_context),
-    )?;
-    let (registry_dependencies, dev_registry_dependencies) =
-        canonical_project_inspection_dependencies(dependency_surface)?;
-    let source_authority_digest = authority_context.final_project_source_authority(&project_root)?;
-    let inspection_authority = publish_project_inspection_authority(
-        &store,
-        &project_root,
-        &source_authority_digest,
-        &registry_dependencies,
-        &dev_registry_dependencies,
-        &test_dependency_envelope,
-        library_inspection_constituent.as_ref(),
-    )?;
-    let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(&project_root)?;
-    let mut published_outputs = Vec::with_capacity(pending_outputs.len());
-    for pending in pending_outputs {
-        let files = pending.files;
-        let payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
-            project_root: &project_root,
-            entrypoint: &pending.entrypoint,
-            target: pending.target,
-            receipt: &pending.receipt,
-            plan_identity: pending.plan_identity,
-            profile: &pending.profile,
-            source_authority_digest: &source_authority_digest,
-            lock_dependencies_fingerprint: lock_dependencies_fingerprint.clone(),
-            files: files.clone(),
-            inspection_authority: inspection_authority.reference.clone(),
-            required_project_loafs: pending.required_project_loafs,
-            package_loaf_store_relative_path: pending.package_loaf_store_relative_path,
-            backend_receipt: pending.backend_receipt,
-            build_report: pending.build_report,
-        })?;
-        published_outputs.push(publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?);
-    }
-    // Keep every sibling output and the authority leased through completion. A tight policy must fail this bake
-    // rather than prune an earlier target/profile and then report a partial project as successfully prepared.
-    // The inspection authority names the debug test dependency envelope's exact plan. Retain that selection until
-    // every output Loaf is visible: otherwise a later output admission can prune the now-unleased constituent and
-    // leave a source-current authority that points at a missing closure.
-    let _complete_publication_set = (test_dependency_envelope, inspection_authority, published_outputs);
-    #[cfg(feature = "rust_inspect")]
-    for manifest_dir in rust_inspect_manifest_dirs {
-        mark_oven_direct_rust_inspection(&manifest_dir)?;
-    }
-    Ok(OvenProjectBakeReport {
-        project: project_root,
-        generated_sources,
-        store: store.root().to_path_buf(),
-        profiles,
-    })
 }
 
 /// Build one library project and retain its completed report for workspace-level aggregation.
@@ -14837,79 +14853,87 @@ pub(crate) fn build_library_report(
             return completed_library_output_report(&project_root, &outputs, total_start);
         }
     }
-    let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
-    let mut prepared = prepare_library_project(
-        file_path,
-        output_dir.map(String::as_str),
-        options.cargo_policy,
-        &options.package_features,
-        options.sdk_profile.as_deref(),
-        options.cargo_features,
-        options.cargo_no_default_features,
-        options.cargo_all_features,
-        generated_cargo_target_dir.as_deref(),
-        !artifact_only,
-        !artifact_only,
-        OvenProjectPlanMode::ConsumeOnly,
-        None,
-        &options.backend,
+    let project_root = resolve_library_project_root(file_path)?;
+    let publication = library_publication::LibraryPublication::begin(
+        &project_root,
+        &library_output_path(&project_root, output_dir.map(String::as_str))?,
+        library_publication_receipts(&project_root)?,
     )?;
+    let result = (|| {
+        let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
+        let mut prepared = prepare_library_project(
+            file_path,
+            output_dir.map(String::as_str),
+            options.cargo_policy,
+            &options.package_features,
+            options.sdk_profile.as_deref(),
+            options.cargo_features,
+            options.cargo_no_default_features,
+            options.cargo_all_features,
+            generated_cargo_target_dir.as_deref(),
+            !artifact_only,
+            !artifact_only,
+            OvenProjectPlanMode::ConsumeOnly,
+            None,
+            &options.backend,
+        )?;
 
-    if artifact_only {
-        write_library_manifest_artifacts(&mut prepared)?;
-        print_build_progress(report_options, "✓ Library dependency artifact prepared!");
-        print_build_progress(
-            report_options,
-            format!("Generated manifest: {}", prepared.manifest_path.display()),
-        );
-        let mut timings_ms = prepared.timings_ms.clone();
-        timings_ms.insert("total".to_string(), elapsed_ms(total_start));
-        let report = prepared.report.finish(timings_ms);
-        return Ok(report);
-    }
+        if artifact_only {
+            write_library_manifest_artifacts(&mut prepared)?;
+            print_build_progress(report_options, "✓ Library dependency artifact prepared!");
+            print_build_progress(
+                report_options,
+                format!("Generated manifest: {}", prepared.manifest_path.display()),
+            );
+            let mut timings_ms = prepared.timings_ms.clone();
+            timings_ms.insert("total".to_string(), elapsed_ms(total_start));
+            let report = prepared.report.finish(timings_ms);
+            return Ok(report);
+        }
 
-    if prepared.oven.is_some() {
-        let oven_build_start = Instant::now();
-        let oven = prepared
-            .oven
-            .as_ref()
-            .ok_or_else(|| CliError::failure("normal Oven library build lost its prepared direct-rustc selection"))?;
-        let mut bakes = Vec::new();
-        for profile in explicit_bake_profiles() {
-            bakes.push((profile, bake_oven_library(&prepared, oven, profile, None)?));
+        if prepared.oven.is_some() {
+            let oven_build_start = Instant::now();
+            let oven = prepared.oven.as_ref().ok_or_else(|| {
+                CliError::failure("normal Oven library build lost its prepared direct-rustc selection")
+            })?;
+            let mut bakes = Vec::new();
+            for profile in explicit_bake_profiles() {
+                bakes.push((profile, bake_oven_library(&prepared, oven, profile, None)?));
+            }
+            // The manifest selects this build's immutable semantic content only after every native profile succeeds.
+            write_library_manifest_artifacts(&mut prepared)?;
+            let oven_build_ms = elapsed_ms(oven_build_start);
+            print_build_progress(report_options, "✓ Oven library build successful!");
+            for (profile, bake) in &bakes {
+                print_build_progress(report_options, format!("{profile} library: {}", bake.output.display()));
+            }
+            print_build_progress(
+                report_options,
+                format!("Generated manifest: {}", prepared.manifest_path.display()),
+            );
+            let mut report_draft = prepared.report.clone();
+            for (profile, bake) in &bakes {
+                report_draft
+                    .artifacts
+                    .push(artifact_report(format!("rust_library_{profile}"), &bake.output));
+            }
+            // Published only now that the whole build — codegen, Oven plan selection, and both
+            // debug/release rustc bakes above — has actually succeeded (#986); `prepare_library_project`
+            // itself never persists this (see the matching comment there).
+            if let Some(backend_receipt) = report_draft.backend.as_ref() {
+                write_backend_receipt(backend_receipt, &default_backend_receipt_path(&prepared.project_root))?;
+            }
+            let mut timings_ms = prepared.timings_ms.clone();
+            timings_ms.insert("oven_build".to_string(), oven_build_ms);
+            timings_ms.insert("total".to_string(), elapsed_ms(total_start));
+            return Ok(report_draft.finish(timings_ms));
         }
-        // The manifest selects this build's immutable semantic content only after every native profile succeeds.
-        write_library_manifest_artifacts(&mut prepared)?;
-        let oven_build_ms = elapsed_ms(oven_build_start);
-        print_build_progress(report_options, "✓ Oven library build successful!");
-        for (profile, bake) in &bakes {
-            print_build_progress(report_options, format!("{profile} library: {}", bake.output.display()));
-        }
-        print_build_progress(
-            report_options,
-            format!("Generated manifest: {}", prepared.manifest_path.display()),
-        );
-        let mut report_draft = prepared.report.clone();
-        for (profile, bake) in &bakes {
-            report_draft
-                .artifacts
-                .push(artifact_report(format!("rust_library_{profile}"), &bake.output));
-        }
-        // Published only now that the whole build — codegen, Oven plan selection, and both
-        // debug/release rustc bakes above — has actually succeeded (#986); `prepare_library_project`
-        // itself never persists this (see the matching comment there).
-        if let Some(backend_receipt) = report_draft.backend.as_ref() {
-            write_backend_receipt(backend_receipt, &default_backend_receipt_path(&prepared.project_root))?;
-        }
-        let mut timings_ms = prepared.timings_ms.clone();
-        timings_ms.insert("oven_build".to_string(), oven_build_ms);
-        timings_ms.insert("total".to_string(), elapsed_ms(total_start));
-        return Ok(report_draft.finish(timings_ms));
-    }
 
-    Err(CliError::failure(
-        "normal `incan build --lib` requires a prepared Oven direct-rustc selection; Cargo library execution is not an available fallback",
-    ))
+        Err(CliError::failure(
+            "normal `incan build --lib` requires a prepared Oven direct-rustc selection; Cargo library execution is not an available fallback",
+        ))
+    })();
+    publication.finish(result)
 }
 
 /// Output format for `incan inspect backend-selection`.

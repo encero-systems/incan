@@ -1706,12 +1706,78 @@ impl TypeCheckInfo {
             ));
         }
 
-        for (&span, identity) in &self.references.resolved_identities {
+        // Relationship ownership is projected once beside the existing identity facts. Execution and inspection
+        // consume this shared product; neither reconstructs owners from its own syntax traversal.
+        let declarations = self
+            .declarations
+            .declaration_identities
+            .values()
+            .chain(self.declarations.member_declaration_identities.values())
+            .filter(|identity| !self.is_compiler_generated_member_identity(identity))
+            .filter(|identity| {
+                !matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Local
+                        | SemanticSourceTargetKind::Parameter
+                        | SemanticSourceTargetKind::Receiver
+                        | SemanticSourceTargetKind::GenericBinder
+                        | SemanticSourceTargetKind::Module
+                        | SemanticSourceTargetKind::Builtin
+                        | SemanticSourceTargetKind::RustItem
+                        | SemanticSourceTargetKind::Other(_)
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for identity in &declarations {
             facts.push(SemanticFact::new(
-                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                CompilerNodeId::declaration_span(
+                    &module_identity,
+                    identity.declaration_span.start,
+                    identity.declaration_span.end,
+                ),
+                SemanticFactKind::DeclarationIdentity,
+                SemanticFactValue::canonical_identity((*identity).clone()),
+            ));
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Field | SemanticSourceTargetKind::Variant
+            ) && let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
+                declarations.iter().copied().filter(|candidate| *candidate != *identity),
+                identity.declaration_span,
+            ) {
+                facts.push(SemanticFact::new(
+                    CompilerNodeId::declaration_span(
+                        &module_identity,
+                        identity.declaration_span.start,
+                        identity.declaration_span.end,
+                    ),
+                    SemanticFactKind::RequiredMemberOwner,
+                    SemanticFactValue::canonical_identity(owner.clone()),
+                ));
+            }
+        }
+        for (&span, identity) in &self.references.resolved_identities {
+            let subject = CompilerNodeId::expression_span(&module_identity, span.0, span.1);
+            facts.push(SemanticFact::new(
+                subject.clone(),
+                SemanticFactKind::ReferenceSpan,
+                SemanticFactValue::SourceSpan(incan_semantics_core::HirSourceSpan::new(span.0, span.1)),
+            ));
+            facts.push(SemanticFact::new(
+                subject.clone(),
                 SemanticFactKind::SymbolIdentity,
                 SemanticFactValue::canonical_identity(identity.clone()),
             ));
+            if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
+                declarations.iter().copied(),
+                incan_semantics_core::HirSourceSpan::new(span.0, span.1),
+            ) {
+                facts.push(SemanticFact::new(
+                    subject,
+                    SemanticFactKind::ReferenceOwner,
+                    SemanticFactValue::canonical_identity(owner.clone()),
+                ));
+            }
         }
 
         for (name, binding) in &self.declarations.function_bindings {

@@ -55,6 +55,29 @@ fn project(root: &Path, name: &str, source_name: &str, source: &str, dependencie
     Ok(())
 }
 
+/// Capture complete artifact bytes and inventory without following symbolic links into external stores.
+fn artifact_snapshot(root: &Path) -> Result<std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>, Box<dyn Error>> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = std::collections::BTreeMap::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                pending.push(path);
+            } else {
+                let bytes = if entry.file_type()?.is_symlink() {
+                    fs::read_link(&path)?.to_string_lossy().as_bytes().to_vec()
+                } else {
+                    fs::read(&path)?
+                };
+                files.insert(path.strip_prefix(root)?.to_path_buf(), bytes);
+            }
+        }
+    }
+    Ok(files)
+}
+
 /// Native and non-linking consumers select the same alias target after the producer source has been removed.
 #[test]
 fn source_unavailable_package_executes_alias_defaults_and_public_closure() -> Result<(), Box<dyn Error>> {
@@ -119,8 +142,36 @@ def private_secret() -> int:
         "native consumer",
     )?;
     assert_eq!(String::from_utf8_lossy(&native.stdout).trim(), "42");
+
+    // A native derive deliberately fails at rustc after preparation has generated a different public function.
+    // Both the prior linked artifact and its executable publication must survive that ordinary rebuild failure.
+    let artifact_before = artifact_snapshot(&producer.join("target/lib"))?;
+    let authored = fs::read_to_string(producer.join("src/lib.incn"))?;
+    fs::write(
+        producer.join("src/lib.incn"),
+        format!(
+            "{}\n@rust.derive(Eq, Hash)\nmodel InvalidNativeDerive:\n    value: float\n",
+            authored.replace("return 20", "return 99")
+        ),
+    )?;
+    let mut rebuild = command(&producer);
+    rebuild.args(["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut rebuild)?;
+    let failure = rebuild.output()?;
+    assert!(!failure.status.success(), "invalid native derive unexpectedly compiled");
+    let diagnostic = String::from_utf8_lossy(&failure.stderr);
+    assert!(
+        diagnostic.contains("f64") && (diagnostic.contains("Eq") || diagnostic.contains("Hash")),
+        "expected native derive failure, got {diagnostic}"
+    );
+    assert_eq!(artifact_snapshot(&producer.join("target/lib"))?, artifact_before);
     fs::remove_dir_all(producer.join("src"))?;
     fs::remove_file(producer.join("loaf.toml"))?;
+    let retained_native = success(
+        command(&consumer).args(["run", "--locked", "src/main.incn"]).output()?,
+        "native consumer after failed rebuild and source removal",
+    )?;
+    assert_eq!(retained_native.stdout, native.stdout);
     let report_path = consumer.join("execution.json");
     let replacement = success(
         command(&consumer)
@@ -138,6 +189,23 @@ def private_secret() -> int:
         "source-unavailable replacement",
     )?;
     assert_eq!(replacement.stdout, native.stdout);
+    let local = temporary.path().join("local");
+    let local_main = source
+        .lines()
+        .skip(1)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("Item(value=", "Pair(value=")
+        .replace("State.Ready", "Mode.Ready")
+        .replace("answer()", "doubled()");
+    project(&local, "local", "main.incn", &format!("{authored}\n{local_main}\n"), "")?;
+    let local_execution = success(
+        command(&local)
+            .args(["build", "src/main.incn", "--backend", "replacement"])
+            .output()?,
+        "equivalent local source",
+    )?;
+    assert_eq!(local_execution.stdout, replacement.stdout);
     let report: serde_json::Value = serde_json::from_slice(&fs::read(report_path)?)?;
     assert_eq!(report["replacement_execution"]["package_declarations_decoded"], 4);
     assert_eq!(
