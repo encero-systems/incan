@@ -383,14 +383,9 @@ mod tests {
     #[test]
     fn prewarm_reports_disk_reuse_for_synthetic_metadata_fixture() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        fs::create_dir_all(tmp.path().join("src"))?;
-        fs::write(
-            tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"rust-inspect-heavy-synthetic\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        fs::write(
-            tmp.path().join("src/lib.rs"),
-            r#"pub mod bridge {
+        let fixture = crate::selection_test_support::InspectionFixture::new(
+            r#"#![no_std]
+pub mod bridge {
     pub struct Model0;
     pub struct Model1;
     pub struct Model2;
@@ -399,11 +394,13 @@ mod tests {
 "#,
         )?;
         let queries = (0..4)
-            .map(|idx| format!("rust_inspect_heavy_synthetic::bridge::Model{idx}"))
+            .map(|idx| format!("demo::bridge::Model{idx}"))
             .collect::<Vec<_>>();
 
         let cold_messages = Mutex::new(Vec::new());
-        Inspector::new(InspectorConfig::new(tmp.path())).prewarm(queries.clone(), &|message| {
+        let cold = Inspector::new(InspectorConfig::new(tmp.path()));
+        fixture.bind(cold.cache(), tmp.path())?;
+        cold.prewarm(queries.clone(), &|message| {
             if let Ok(mut messages) = cold_messages.lock() {
                 messages.push(message);
             }
@@ -422,7 +419,9 @@ mod tests {
         );
 
         let warm_messages = Mutex::new(Vec::new());
-        Inspector::new(InspectorConfig::new(tmp.path())).prewarm(queries, &|message| {
+        let warm = Inspector::new(InspectorConfig::new(tmp.path()));
+        fixture.bind(warm.cache(), tmp.path())?;
+        warm.prewarm(queries, &|message| {
             if let Ok(mut messages) = warm_messages.lock() {
                 messages.push(message);
             }

@@ -154,6 +154,23 @@ fn raw_identifier_alias_uses_the_selected_cache() -> Result<(), Box<dyn std::err
     fixture.bind(&cache, context.path())?;
     cache.get_or_extract_complete(context.path(), "demo::r#type", &|_| {})?;
     assert!(cache.get_cached(context.path(), "demo::type")?.is_some());
+    cache.persist_manifest_dir(context.path())?;
+    let reopened = RustMetadataCache::new();
+    fixture.bind(&reopened, context.path())?;
+    for query in ["demo::type", "demo::r#type"] {
+        let hit = reopened
+            .get_cached(context.path(), query)?
+            .ok_or("raw item spelling absent")?;
+        assert_eq!(hit.metadata.canonical_path, query);
+    }
+    assert!(
+        reopened
+            .inner
+            .lock()
+            .map_err(|error| error.to_string())?
+            .workspaces
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -169,6 +186,7 @@ fn selected_aliases_do_not_reinterpret_std_as_hashbrown_or_core() {
         ["std::option::Option"]
     );
     assert_eq!(canonical_path_candidates("left-crate::Item"), ["left-crate::Item"]);
+    assert_eq!(canonical_path_candidates("r#left::Item"), ["r#left::Item"]);
 }
 
 /// A database from another selected binding cannot replace the context or satisfy its metadata.

@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use incan_core::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeMetadataCompleteness};
+use incan_core::interop::{RustItemKind, RustItemMetadata};
 use serde::{Deserialize, Serialize};
 
 use crate::ValidatedInspectionProject;
@@ -394,7 +394,14 @@ pub(crate) struct CacheAccess {
 fn canonical_path_aliases(canonical_path: &str) -> Vec<String> {
     let normalized = canonical_path
         .split("::")
-        .map(|segment| segment.strip_prefix("r#").unwrap_or(segment))
+        .enumerate()
+        .map(|(index, segment)| {
+            if index == 0 {
+                segment
+            } else {
+                segment.strip_prefix("r#").unwrap_or(segment)
+            }
+        })
         .collect::<Vec<_>>()
         .join("::");
     if normalized != canonical_path {
@@ -411,21 +418,31 @@ fn canonical_path_candidates(canonical_path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Insert or replace metadata only under the exact selected query that produced it.
+/// Insert metadata under its selected query and equivalent raw item spelling, preserving the exact root binding.
 fn insert_cached_item(inner: &mut CacheInner, root: &Path, metadata: Arc<RustItemMetadata>) {
-    inner
-        .complete_items
-        .remove(&(root.to_path_buf(), metadata.canonical_path.clone()));
-    inner
-        .items
-        .insert((root.to_path_buf(), metadata.canonical_path.clone()), metadata);
+    for canonical_path in canonical_path_candidates(&metadata.canonical_path) {
+        let key = (root.to_path_buf(), canonical_path.clone());
+        let item = if canonical_path == metadata.canonical_path {
+            Arc::clone(&metadata)
+        } else {
+            let mut item = metadata.as_ref().clone();
+            item.canonical_path = canonical_path;
+            Arc::new(item)
+        };
+        inner.complete_items.remove(&key);
+        inner.failed_items.remove(&key);
+        inner.fast_failed_items.remove(&key);
+        inner.items.insert(key, item);
+    }
 }
 
-/// Insert a record produced by complete semantic extraction.
+/// Insert a record produced by complete semantic extraction, including equivalent raw item spellings.
 fn insert_complete_cached_item(inner: &mut CacheInner, root: &Path, metadata: Arc<RustItemMetadata>) {
-    let key = (root.to_path_buf(), metadata.canonical_path.clone());
+    let paths = canonical_path_candidates(&metadata.canonical_path);
     insert_cached_item(inner, root, metadata);
-    inner.complete_items.insert(key);
+    inner
+        .complete_items
+        .extend(paths.into_iter().map(|path| (root.to_path_buf(), path)));
 }
 
 /// Return whether cached metadata can satisfy a caller that requires a complete Rust type surface.
@@ -480,7 +497,11 @@ fn insert_aliased_item(
     inner.failed_items.remove(&key_item);
     insert_cached_item(inner, root, Arc::clone(&arc));
     if source_was_complete {
-        inner.complete_items.insert(key_item);
+        inner.complete_items.extend(
+            canonical_path_candidates(canonical_path)
+                .into_iter()
+                .map(|path| (root.to_path_buf(), path)),
+        );
     }
     arc
 }
@@ -832,8 +853,9 @@ impl RustMetadataCache {
 
     /// Query a concrete Rust obligation only while the owning preparation phase still retains its workspace.
     ///
-    /// Semantic consumers must use persisted [`RustTypeInfo::implemented_traits`] instead of reopening source
-    /// inspection. This method remains available to preparation/tests that already own the loaded workspace.
+    /// Semantic consumers must use persisted [`incan_core::interop::RustTypeInfo::implemented_traits`] instead of
+    /// reopening source inspection. This method remains available to preparation/tests that already own the loaded
+    /// workspace.
     pub fn type_implements_trait(
         &self,
         manifest_dir: &Path,

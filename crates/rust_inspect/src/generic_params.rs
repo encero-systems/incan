@@ -1,6 +1,5 @@
 //! Canonical projection of Rust source generic declarations into interop metadata.
 
-use incan_core::interop::RustMutableReferenceTypeParam;
 use ra_ap_syntax::ast::{self, HasName};
 
 /// Generic facts retained for an associated-function receiver.
@@ -10,11 +9,6 @@ pub(crate) struct SourceOwnerGenerics {
     pub(crate) type_params: Vec<String>,
     /// Written default type arguments aligned with `type_params`.
     pub(crate) type_param_defaults: Vec<Option<String>>,
-    /// Type parameters whose ownership lowering requires complete HIR inspection.
-    ///
-    /// Syntax-only metadata intentionally leaves this empty. It cannot establish whether a bound trait has a
-    /// generic mutable-reference implementation in another module or crate.
-    pub(crate) mutable_reference_type_params: Vec<RustMutableReferenceTypeParam>,
     /// Whether the declaration contains a const parameter that Incan cannot specialize yet.
     pub(crate) has_const_params: bool,
 }

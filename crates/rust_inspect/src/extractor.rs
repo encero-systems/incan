@@ -1940,7 +1940,6 @@ mod tests {
 
     use super::{RustWorkspace, exact_numeric_boundary_display, extract_rust_item};
     use crate::cache::RustMetadataCache;
-    use crate::loader::{OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER, OVEN_DIRECT_INSPECTION_MARKER};
 
     #[test]
     fn exact_numeric_boundary_display_preserves_widths() {
@@ -2280,10 +2279,6 @@ struct __IncanDeriveProbe3;
             [Some("tuple_provider_probe::Mutable".to_string())],
             "HIR metadata must retain canonical declared default type arguments"
         );
-        fs::write(
-            tmp.path().join(OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER),
-            b"test Cargo semantic bootstrap\n",
-        )?;
 
         let assert_contract = |metadata: &incan_core::interop::RustItemMetadata| -> Result<(), std::io::Error> {
             let RustItemKind::Type(info) = &metadata.kind else {
@@ -2398,11 +2393,6 @@ struct __IncanDeriveProbe3;
         );
 
         drop(expanded_workspace);
-        fs::remove_file(tmp.path().join(OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER))?;
-        fs::write(
-            tmp.path().join(OVEN_DIRECT_INSPECTION_MARKER),
-            b"test completed direct inspection\n",
-        )?;
         let fresh_cache = RustMetadataCache::new();
         let reloaded = fresh_cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::FooBar", &|_| ())?;
         assert_contract(reloaded.as_ref())?;

@@ -221,7 +221,8 @@ fn selected_source_files_contain_include_and_path_attribute_resolution() -> Resu
     let selected_root = fixture.source.path().canonicalize()?;
     for (_, path) in workspace.vfs.iter() {
         let path = path.as_path().ok_or("unexpected virtual input")?;
-        assert!(path.starts_with(&selected_root), "unselected VFS input: {path}");
+        let file_path: &std::path::Path = path.as_ref();
+        assert!(file_path.starts_with(&selected_root), "unselected VFS input: {path}");
     }
     assert_eq!(
         fs::read_to_string(&outside)?,
