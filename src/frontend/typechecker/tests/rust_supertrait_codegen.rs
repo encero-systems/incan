@@ -32,13 +32,13 @@ pub trait Number with Convert[int]:
 #[test]
 fn rust_supertrait_codegen_does_not_implement_foreign_parent() -> TestResult {
     let source = r#"
-from rust::serde import Deserialize as RustDeserialize
+from std.serde import json
 from rust::serde::de import DeserializeOwned
 
 pub trait DecodeReady with DeserializeOwned:
     pass
 
-@rust.derive(RustDeserialize)
+@derive(json)
 pub model Config with DecodeReady:
     value: int
 "#;
@@ -58,6 +58,14 @@ pub model Config with DecodeReady:
         "{rust}"
     );
     assert!(rust.contains("impl DecodeReady for Config"), "{rust}");
+    assert!(
+        rust.contains("serde::Serialize"),
+        "Incan derive must supply serialization: {rust}"
+    );
+    assert!(
+        rust.contains("serde::Deserialize"),
+        "Incan derive must supply deserialization: {rust}"
+    );
     assert!(
         !rust.contains("impl ::serde::de::DeserializeOwned for Config"),
         "{rust}"
