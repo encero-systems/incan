@@ -278,6 +278,13 @@ jobs:
           --bundle target/ci-tools-restored
           --cargo-log target/ci-tool-private/compiler.jsonl
           --cargo-log target/ci-tool-private/reference.jsonl
+      - name: Collect ineligible cold tool facts
+        if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible != 'true'
+        run: >-
+          python3 scripts/ci_tool_outputs.py collect --state target/ci-tool-evidence
+          --bundle target/ci-tools-restored
+          --cargo-log target/ci-tool-private/compiler.jsonl
+          --cargo-log target/ci-tool-private/reference.jsonl
       - name: Save admitted Linux tool outputs
         continue-on-error: true
         if: steps.tool-admission.outputs.admitted == 'true'

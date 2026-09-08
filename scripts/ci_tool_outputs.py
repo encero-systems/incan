@@ -270,24 +270,72 @@ class ConsumedInputs:
             raise ValueError("registry source path has no package owner")
         root = self.registry / relative.parts[0] / relative.parts[1]
         if root not in self.registry_packages:
-            checksums = json.loads((root / ".cargo-checksum.json").read_text())
             package = self.toml(root / "Cargo.toml")["package"]
+            if root.name != package["name"] + "-" + package["version"]:
+                raise ValueError("extracted registry directory differs from its package identity")
             if self.locked is None:
                 self.locked = {}
                 for entry in self.toml(self.workspace / "Cargo.lock")["package"]:
                     if entry.get("source", "").startswith("registry+"):
-                        key = (entry["name"], entry["version"], entry.get("checksum"))
+                        key = (entry["name"], entry["version"])
                         self.locked.setdefault(key, []).append(entry)
-            matches = self.locked.get((package["name"], package["version"], checksums.get("package")), [])
-            if len(matches) != 1 or not checksums.get("package"):
+            matches = self.locked.get((package["name"], package["version"]), [])
+            if len(matches) != 1 or not matches[0].get("checksum"):
                 raise ValueError("registry input lacks one exact locked checksum owner")
-            self.registry_packages[root] = (checksums, matches[0])
-        checksums, owner = self.registry_packages[root]
+            owner = matches[0]
+            archive = self.registry.parent / "cache" / relative.parts[0] / (root.name + ".crate")
+            files = authenticated_archive_files(archive, owner["checksum"], root.name)
+            if files.get("Cargo.toml") != digest(root / "Cargo.toml"):
+                raise ValueError("extracted package manifest differs from the locked archive")
+            self.registry_packages[root] = (files, owner)
+        files, owner = self.registry_packages[root]
         value = digest(path)
-        if checksums["files"].get(path.relative_to(root).as_posix()) != value:
-            raise ValueError("registry file differs from Cargo's checksum inventory")
+        if files.get(path.relative_to(root).as_posix()) != value:
+            raise ValueError("registry file differs from the locked archive")
         return {"path": str(path), "sha256": value, "source": owner["source"],
-                "package_checksum": checksums["package"]}
+                "package_checksum": owner["checksum"]}
+
+
+def authenticated_archive_files(archive, checksum, package_directory):
+    """Hash regular archive members after authenticating the same open archive against Cargo.lock.
+
+No files are extracted. Duplicate, escaping or linked entries refuse the entire owner, including
+unused entries, so later consumed-path lookups cannot select an ambiguous archive interpretation.
+    """
+    import tarfile
+    if archive.is_symlink() or archive.resolve() != archive.absolute() or not archive.is_file():
+        raise ValueError("locked registry archive is absent or linked")
+    files = {}
+    seen = set()
+    try:
+        with archive.open("rb") as source:
+            if hashlib.file_digest(source, "sha256").hexdigest() != checksum:
+                raise ValueError("registry archive checksum differs from Cargo.lock")
+            source.seek(0)
+            with tarfile.open(fileobj=source, mode="r:gz") as package:
+                for member in package:
+                    parts = member.name.rstrip("/").split("/")
+                    if (not parts or parts[0] != package_directory or "\\" in member.name
+                            or any(part in ("", ".", "..") for part in parts)):
+                        raise ValueError("registry archive contains an escaping or ambiguous path")
+                    relative = "/".join(parts[1:])
+                    if relative in seen:
+                        raise ValueError("registry archive contains duplicate paths")
+                    seen.add(relative)
+                    if member.isdir():
+                        continue
+                    if not member.isfile() or not relative:
+                        raise ValueError("registry archive contains a linked or unsupported entry")
+                    stream = package.extractfile(member)
+                    if stream is None:
+                        raise ValueError("registry archive member is unreadable")
+                    with stream:
+                        files[relative] = hashlib.file_digest(stream, "sha256").hexdigest()
+    except tarfile.TarError as error:
+        raise ValueError("locked registry archive cannot be decoded") from error
+    if "Cargo.toml" not in files:
+        raise ValueError("registry archive omits its package manifest")
+    return files
 
 
 def collect_evidence(workspace, candidate, logs, environment):
@@ -297,11 +345,11 @@ Build scripts and proc macros can read arbitrary files or environment without in
 Until each concrete extension has an independently reviewed input contract, this collector emits
 its identity as an admission refusal. Rerun directives are evidence, not a hermeticity assertion.
     """
-    verifier = ConsumedInputs(candidate)
+    verifier = ConsumedInputs(candidate) if candidate is not None else None
     paths = set()
     env_facts = {}
     artifacts = []
-    refusals = []
+    refusals = [] if candidate is not None else [{"kind": "identity-ineligible-evidence-only"}]
     finished = 0
     tools = set()
     for log in logs:
@@ -346,6 +394,8 @@ its identity as an admission refusal. Rerun directives are evidence, not a herme
                             # Cargo supplies per-package coordinates; they are not ambient process variables.
                             if name.startswith("CARGO_PKG_") or name == "CARGO_MANIFEST_DIR":
                                 try:
+                                    if verifier is None:
+                                        raise ValueError("package environment is unadmitted without an eligible identity")
                                     verify_cargo_environment(message, name, value, verifier)
                                 except (ValueError, OSError, KeyError) as error:
                                     refusals.append({"kind": "cargo-environment-projection-needs-audit", "name": name,
@@ -363,13 +413,23 @@ its identity as an admission refusal. Rerun directives are evidence, not a herme
         path = Path(name)
         path = path if path.is_absolute() else workspace / path
         try:
-            records.append(verifier.record(path))
+            if verifier is None:
+                # This is an observation, never a reusable-input assertion. Refuse following linked inputs.
+                import os
+                registry = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo"))) / "registry/src"
+                if (path.is_relative_to(workspace) or path.is_relative_to(registry)) and path.resolve() == path.absolute():
+                    records.append({"path": str(path), "sha256": digest(path), "source": "unadmitted-observation"})
+                else:
+                    refusals.append({"kind": "unadmitted-external-input", "path": str(path)})
+            else:
+                records.append(verifier.record(path))
         except (ValueError, OSError) as error:
             refusals.append({"kind": "input-coverage-unavailable", "path": str(path), "detail": str(error)})
     if not records:
         refusals.append({"kind": "no-covered-local-inputs"})
     return {"admitted": not refusals, "refusals": refusals, "files": records,
-            "environment": env_facts, "artifacts": artifacts}
+            "environment": env_facts, "artifacts": artifacts,
+            "observed_tool_outputs": {name: digest(workspace / "target/release" / name) for name in TOOLS}}
 
 
 def verify_bundle(bundle, candidate, environment):
@@ -400,7 +460,7 @@ def main():
     import shutil
     import time
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("identity", "restore", "admit"))
+    parser.add_argument("operation", choices=("identity", "restore", "admit", "collect"))
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--bundle", type=Path, required=True)
@@ -435,6 +495,13 @@ def main():
         (state / "inputs.json").write_text(json.dumps(candidate, indent=2) + "\n")
         outputs["key"] = "incan-linux-tools-v1-" + candidate["identity"]
         outputs["eligible"] = "true"
+    elif options.operation == "collect":
+        if len(options.cargo_log) != 2:
+            raise ValueError("two completed Cargo JSON logs are required")
+        evidence = collect_evidence(workspace, None, options.cargo_log, os.environ)
+        (state / "coverage.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        outputs["admitted"] = "false"
+        report.update(status="evidence-only", refusal_count=len(evidence["refusals"]))
     else:
         candidate = json.loads((state / "inputs.json").read_text())
         for name, value in candidate["inputs"]["coordinates"]["environment"].items():
