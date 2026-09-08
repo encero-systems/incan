@@ -39,8 +39,8 @@ use crate::oven::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
     OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
     acquire_committed_loaf_generation, digest_runtime_crate_source, loaf_directory_byte_counts,
-    loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes,
-    retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
+    loaf_envelope_specifications, loaf_raw_disk_bytes, retire_unreferenced_loaf_generations,
+    validate_stored_loaf_for_reuse,
 };
 use crate::oven::native_contract::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
@@ -622,7 +622,6 @@ fn loaf_envelope_evidence(
             })
         })
         .collect::<Vec<_>>();
-    let inspection_packages = loaf_envelope_inspection_packages(envelope).map_err(CliError::failure)?;
     Ok(OvenLoafEnvelopeEvidence {
         incan_release_version: INCAN_VERSION.to_string(),
         compiler_executable_digest: read_digest(compiler_executable, "compiler executable")?,
@@ -631,7 +630,7 @@ fn loaf_envelope_evidence(
         lock_digest: read_digest(&lock_path, "lock input")?,
         runtime_source_digest: loaf_runtime_source_digest(compiler_root)?,
         fixture_digest: digest_bytes(
-            &serde_json::to_vec(&(fixture_evidence, inspection_packages))
+            &serde_json::to_vec(&fixture_evidence)
                 .map_err(|error| CliError::failure(format!("could not encode Loaf fixture evidence: {error}")))?,
         ),
     })
@@ -2146,13 +2145,7 @@ fn restrict_compiler_suite_target_environment(
     target: &crate::oven::native_contract::OvenCompilerTestSuiteTarget,
     environment: &mut BTreeMap<String, String>,
 ) {
-    if !OvenCompilerSuiteTargetCapabilities::for_target(
-        &target.package_name,
-        &target.target_kind,
-        &target.source_relative_path,
-    )
-    .generated_rust_closure
-    {
+    if !OvenCompilerSuiteTargetCapabilities::for_target(&target.source_relative_path).generated_rust_closure {
         compiler_suite_remove_generated_rust_closure(environment);
     }
 }
@@ -6404,21 +6397,14 @@ mod tests {
 
     #[test]
     fn compiler_suite_limits_generated_rust_closure_to_its_consumers() {
-        assert!(OvenCompilerSuiteTargetCapabilities::for_target("incan", "lib", "src/lib.rs").generated_rust_closure);
+        assert!(OvenCompilerSuiteTargetCapabilities::for_target("src/lib.rs").generated_rust_closure);
         assert!(
-            OvenCompilerSuiteTargetCapabilities::for_target(
-                "incan",
-                "test",
-                "tests/generated_rust_native_consumer_tests.rs"
-            )
-            .generated_rust_closure
-        );
-        assert!(
-            OvenCompilerSuiteTargetCapabilities::for_target("incan", "test", "tests/integration_tests.rs")
+            OvenCompilerSuiteTargetCapabilities::for_target("tests/generated_rust_native_consumer_tests.rs")
                 .generated_rust_closure
         );
+        assert!(OvenCompilerSuiteTargetCapabilities::for_target("tests/integration_tests.rs").generated_rust_closure);
         assert!(
-            !OvenCompilerSuiteTargetCapabilities::for_target("incan", "test", "tests/toolchain_installer_tests.rs")
+            !OvenCompilerSuiteTargetCapabilities::for_target("tests/toolchain_installer_tests.rs")
                 .generated_rust_closure
         );
         let mut environment = BTreeMap::from([

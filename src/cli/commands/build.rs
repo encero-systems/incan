@@ -76,11 +76,7 @@ use crate::oven::interop::{
     OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, default_interop_execution_receipt_path, interop_execution_build_unit_inputs,
     load_interop_execution_receipt, validate_interop_execution_receipt,
 };
-use crate::oven::legacy_cargo::{
-    OvenLegacyCargoBaseLoaf, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoPrepareRequest,
-    OvenLegacyCargoPublicationKind, digest_local_cargo_workspace_authority,
-    direct_rustc_reusable_project_plan_environment, prepare_direct_rustc_plan, stage_locked_loaf_fixture,
-};
+use crate::oven::legacy_cargo::digest_local_cargo_workspace_authority;
 use crate::oven::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
     OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, resolve_compiler_owned_loaf_by_identity,
@@ -6084,8 +6080,8 @@ fn debug_target_receipt_covers_test_publisher_dependencies(
 ///
 /// The generated root is intentionally stable and contains no authored test code. Package-provider roots remain in
 /// the singular authority but are supplied by their separately validated Loafs. A compiler-shipped release Loaf is
-/// returned directly when it covers the remaining selected surface; only a genuine third-party/path delta crosses
-/// the explicit Cargo baker, and it does so with `build --locked --offline` through the executable publisher.
+/// returned directly when it covers the remaining selected surface. A remaining dependency delta requires its own
+/// already-selected plan; this command does not produce or acquire that closure.
 fn prepare_oven_test_dependency_envelope(
     store: &OvenStore,
     project_root: &Path,
@@ -6159,7 +6155,6 @@ fn prepare_oven_test_dependency_envelope(
     generator
         .generate("fn main() {}\n")
         .map_err(|error| CliError::failure(format!("failed to generate Oven test dependency envelope: {error}")))?;
-    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let mut receipt_request = OvenGeneratedProjectRequest::new(
         project_root,
         "incan-test-dependency-envelope",
@@ -6176,32 +6171,7 @@ fn prepare_oven_test_dependency_envelope(
     }
     receipt_request = receipt_request.with_build_unit_input("rust-dependencies", publisher_dependency_surface_digest);
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
-    let plan_selection = if publisher_dependencies
-        .iter()
-        .all(|dependency| matches!(dependency.source, DependencySource::Registry))
-        && let Some(loaf) = resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &publisher_dependencies)
-            .map_err(|error| CliError::failure(error.to_string()))?
-    {
-        OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(loaf))
-    } else {
-        let base_loaf = project_extension_base_loaf(&receipt)?;
-        let materialization = bake_generated_project_test_dependency_plan(
-            store,
-            &receipt,
-            generator.output_dir(),
-            &generator.crate_root_path(),
-            &rustc,
-            base_loaf.as_ref(),
-        )?;
-        select_published_project_plan(store, &receipt, materialization)?
-            .ok_or_else(|| {
-                CliError::failure(
-                    "the explicit Oven project bake completed without its checked test dependency envelope",
-                )
-            })?
-            .plan_selection
-    };
-    remove_completed_generated_cargo_lock(generator.output_dir())?;
+    let plan_selection = require_oven_direct_rustc_plan(store, &receipt, &publisher_dependencies)?.plan_selection;
     Ok(PreparedOvenTestDependencyEnvelope {
         receipt,
         dependency_surface_digest,
@@ -6640,12 +6610,6 @@ fn project_output_bake_files(
     library_sidecars: &[(PathBuf, String)],
 ) -> CliResult<Vec<OvenProjectOutputBakeFile>> {
     let mut files = Vec::new();
-    append_project_output_bake_file(
-        project_root,
-        &generator.cargo_manifest_path(),
-        "generated/Cargo.toml".to_string(),
-        &mut files,
-    )?;
     append_project_output_tree(
         project_root,
         &generator.output_dir().join("src"),
@@ -10283,13 +10247,7 @@ fn prepare_library_project(
     // receipt is published once by `build_library_report` after the whole build succeeds (#986).
     report_draft.backend = Some(backend_receipt);
     let synchronize_provider_dependencies_start = Instant::now();
-    synchronize_projected_provider_dependencies(
-        &mut library_manifest,
-        &out_dir,
-        &generator.effective_dependencies().map_err(|error| {
-            CliError::failure(format!("failed to resolve projected provider dependencies: {error}"))
-        })?,
-    )?;
+    synchronize_published_provider_dependencies(&mut library_manifest, &out_dir, &rust_dependencies)?;
     record_timing(
         &mut timings_ms,
         "library_codegen_sync_provider_dependencies",
@@ -10528,8 +10486,8 @@ fn prepare_library_project(
     })
 }
 
-/// Synchronize newly published public dependency metadata with the exact projected paths rendered into Cargo.toml.
-fn synchronize_projected_provider_dependencies(
+/// Bind published public dependency metadata to the command's already-resolved package coordinates and final bytes.
+fn synchronize_published_provider_dependencies(
     library_manifest: &mut LibraryManifest,
     artifact_root: &Path,
     dependencies: &[DependencySpec],
@@ -10547,10 +10505,10 @@ fn synchronize_projected_provider_dependencies(
         else {
             continue;
         };
-        let cargo_package = dependency.package.as_deref().unwrap_or(dependency.crate_name.as_str());
-        if cargo_package != descriptor.provider_name {
+        let package = dependency.package.as_deref().unwrap_or(dependency.crate_name.as_str());
+        if package != descriptor.provider_name {
             return Err(CliError::failure(format!(
-                "projected Cargo dependency `{}` names package `{cargo_package}`, but its checked provider edge names `{}`",
+                "resolved dependency `{}` names package `{package}`, but its checked provider edge names `{}`",
                 descriptor.dependency_key, descriptor.provider_name
             )));
         }
@@ -11418,10 +11376,6 @@ fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> Cl
         .report
         .artifacts
         .push(artifact_report("incan_library_manifest", &prepared.manifest_path));
-    prepared.report.artifacts.push(artifact_report(
-        "generated_cargo_manifest",
-        &prepared.generator.cargo_manifest_path(),
-    ));
     Ok(())
 }
 
@@ -13619,7 +13573,6 @@ pub(crate) fn bake_oven_project_targets(
                             build_report: None,
                         });
                     }
-                    remove_completed_generated_cargo_lock(prepared.generator.output_dir())?;
                     retained_preparations.push(prepared);
                 }
                 OvenBakeProjectTarget::Executable => {
@@ -13701,7 +13654,6 @@ pub(crate) fn bake_oven_project_targets(
                             backend_receipt,
                             build_report: Some(build_report),
                         });
-                        remove_completed_generated_cargo_lock(prepared.generator.output_dir())?;
                         let target_identity =
                             oven_bake_project_target_identity(&project_root, target, &prepared.entrypoint)?;
                         generated_sources
@@ -14499,6 +14451,7 @@ mod tests {
         Ok(())
     }
 
+    /// Dependency-envelope reuse requires the selected generated-project domain, profile and dependency digest.
     #[test]
     fn prepared_debug_target_reuse_requires_exact_generated_dependency_surface()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -14546,7 +14499,7 @@ mod tests {
         ));
 
         let mut wrong_kind = debug.clone();
-        wrong_kind.compatibility.kind = crate::oven::OvenCompatibilityKind::FrozenCargoPackage;
+        wrong_kind.compatibility.kind = crate::oven::OvenCompatibilityKind::NativeCompilerTestSuite;
         assert!(!debug_target_receipt_covers_test_publisher_dependencies(
             &wrong_kind,
             &exact_digest
@@ -14944,6 +14897,162 @@ headers = ["interop/include/bridge.h"]
             digest_baked_project_source_authority(project.path())?,
             "a declared interop header mutation must invalidate a completed output after reselection"
         );
+        Ok(())
+    }
+
+    /// Reuse an actual stored envelope and reject a new dependency delta without publishing completed results.
+    #[test]
+    fn test_dependency_envelope_retains_selected_plan_and_refuses_unpublished_delta()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // The compiler suite lends its own closure to nested commands. This fixture instead exercises an ordinary
+        // command's private selected store, so isolate it without mutating the parallel test process's environment.
+        if std::env::var_os("INCAN_INTERNAL_OVEN_LOAF_EXECUTION").is_some_and(|value| value == "1") {
+            let output = Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "cli::commands::build::tests::test_dependency_envelope_retains_selected_plan_and_refuses_unpublished_delta",
+                    "--nocapture",
+                ])
+                .env_remove("INCAN_INTERNAL_OVEN_LOAF_EXECUTION")
+                .env_remove("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT")
+                .env_remove(OVEN_LOAF_ENV)
+                .output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{stdout}\n{stderr}");
+            assert!(
+                stdout.contains("1 passed"),
+                "the isolated fixture did not execute: {stdout}"
+            );
+            return Ok(());
+        }
+
+        let project = tempfile::tempdir()?;
+        let generated = project.path().join("generated/src/main.rs");
+        fs::create_dir_all(generated.parent().ok_or("generated source parent missing")?)?;
+        fs::write(&generated, "fn main() {}\n")?;
+        let empty = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+        };
+        let surface_digest = digest_dependency_specs(&empty.dependencies)?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project.path(),
+                "selected_test_dependencies",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "unavailable-native-plan-test-toolchain",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &generated)
+            .with_build_unit_input("rust-dependencies", &surface_digest),
+        )?;
+        let store = OvenStore::new(
+            project.path().join("oven-store"),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "selected-test-dependencies".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&OvenRustcArtifactManifest {
+                schema_version: crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                intent: receipt.intent.clone(),
+                dependency_search_paths: Vec::new(),
+                native_search_paths: Vec::new(),
+                externs: Vec::new(),
+                entrypoint_externs: BTreeMap::new(),
+                registry_leaves: Vec::new(),
+                registry_sources: Vec::new(),
+                compile_environment: BTreeMap::new(),
+                vocab_auxiliary_targets: Vec::new(),
+                supporting_artifacts: Vec::new(),
+            })?,
+            materialized_files: Vec::new(),
+        })?;
+        let selected = prepare_oven_test_dependency_envelope(
+            &store,
+            project.path(),
+            &empty,
+            std::slice::from_ref(&receipt),
+            None,
+        )?;
+        let repeated = prepare_oven_test_dependency_envelope(
+            &store,
+            project.path(),
+            &empty,
+            std::slice::from_ref(&receipt),
+            None,
+        )?;
+        assert_eq!(selected.receipt, receipt);
+        assert_eq!(selected.dependency_surface_digest, surface_digest);
+        assert_eq!(
+            selected.plan_selection.report_identity(),
+            repeated.plan_selection.report_identity()
+        );
+        assert!(matches!(
+            selected.plan_selection,
+            OvenDirectRustcPlanSelection::Stored(_)
+        ));
+        assert!(
+            !project.path().join("target").exists(),
+            "a selected envelope needs no generated staging root"
+        );
+
+        let prior_manifests = store
+            .inspect()?
+            .entries
+            .into_iter()
+            .map(|entry| entry.manifest)
+            .collect::<Vec<_>>();
+        let cargo_sentinel = "unrelated caller Cargo input\n";
+        fs::write(project.path().join("Cargo.toml"), cargo_sentinel)?;
+        let changed = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: vec![DependencySpec {
+                crate_name: "unpublished_delta".to_string(),
+                version: Some("1".to_string()),
+                features: Vec::new(),
+                default_features: false,
+                source: DependencySource::Registry,
+                optional: false,
+                package: None,
+            }],
+        };
+        let Err(error) = prepare_oven_test_dependency_envelope(
+            &store,
+            project.path(),
+            &changed,
+            std::slice::from_ref(&receipt),
+            None,
+        ) else {
+            return Err("an unpublished test dependency delta must not become a selected plan".into());
+        };
+        assert!(
+            error.to_string().contains("selected native plan unavailable"),
+            "{error}"
+        );
+        assert_eq!(
+            store
+                .inspect()?
+                .entries
+                .into_iter()
+                .map(|entry| entry.manifest)
+                .collect::<Vec<_>>(),
+            prior_manifests
+        );
+        assert_eq!(fs::read_to_string(project.path().join("Cargo.toml"))?, cargo_sentinel);
+        assert!(!crate::oven::default_receipt_path(project.path()).exists());
+        assert!(!packaged_library_loaf_manifest_path(&project.path().join("target/lib")).exists());
+        let staging = project.path().join("target/incan/oven/test-dependency-envelope");
+        assert!(
+            staging.join("src/main.rs").is_file(),
+            "only caller-owned generated source may remain after the miss"
+        );
+        assert!(!staging.join("Cargo.toml").exists());
+        assert!(!staging.join("Cargo.lock").exists());
         Ok(())
     }
 
@@ -16439,6 +16548,8 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
+    /// Keep generated source, sidecars and native output while leaving unrelated Cargo inputs and caches outside
+    /// publication.
     #[test]
     fn project_output_loaf_retains_durable_generated_files_but_not_inspection_cache()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -16446,6 +16557,8 @@ headers = ["interop/include/bridge.h"]
         let output_root = project.path().join("target/incan/fixture");
         let generator = ProjectGenerator::new(&output_root, "fixture", false);
         generator.generate("pub fn answer() -> i64 { 42 }\n")?;
+        let cargo_sentinel = "caller-owned Cargo input must remain untouched\n";
+        fs::write(output_root.join("Cargo.toml"), cargo_sentinel)?;
         fs::write(output_root.join("Cargo.lock"), "version = 4\n")?;
         let inspection_cache = output_root.join("oven/rust-inspect/metadata.json");
         fs::create_dir_all(inspection_cache.parent().ok_or("inspection cache has no parent")?)?;
@@ -16472,15 +16585,17 @@ headers = ["interop/include/bridge.h"]
             .iter()
             .map(|file| file.output_relative_path.as_str())
             .collect::<BTreeSet<_>>();
-        assert!(output_paths.contains("generated/Cargo.toml"));
+        assert!(!output_paths.contains("generated/Cargo.toml"));
         assert!(
             !output_paths.contains("generated/Cargo.lock"),
-            "the explicit publisher lock must not become a caller-visible completed-output artifact"
+            "an unrelated Cargo lock must not become a completed-output artifact"
         );
         assert!(output_paths.contains("generated/src/lib.rs"));
         assert!(output_paths.contains("generated/provider-sidecars/desugarers/fixture.wasm"));
         assert!(output_paths.contains(OVEN_PROJECT_OUTPUT_ARTIFACT_PATH));
         assert!(output_paths.iter().all(|path| !path.contains("rust-inspect")));
+        assert_eq!(fs::read_to_string(output_root.join("Cargo.toml"))?, cargo_sentinel);
+        assert_eq!(fs::read_to_string(output_root.join("Cargo.lock"))?, "version = 4\n");
         Ok(())
     }
 
@@ -17366,6 +17481,8 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
+    /// Retain the resolved provider alias, features and final artifact bytes without reading a generated Cargo
+    /// manifest.
     #[test]
     fn emitted_library_metadata_tracks_projected_dependency_issue911() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
@@ -17373,10 +17490,6 @@ headers = ["interop/include/bridge.h"]
         let projected_root = workspace.path().join("projected");
         fs::create_dir_all(&artifact_root)?;
         fs::create_dir_all(projected_root.join("src"))?;
-        fs::write(
-            projected_root.join("Cargo.toml"),
-            "[package]\nname = \"projected_provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-        )?;
         fs::write(projected_root.join("src/lib.rs"), "pub fn marker() {}\n")?;
         let mut manifest = LibraryManifest::new("published", "0.1.0");
         manifest
@@ -17390,11 +17503,11 @@ headers = ["interop/include/bridge.h"]
                 provider_version: "0.1.0".to_string(),
                 artifact_digest: "sha256:stale".to_string(),
                 relative_artifact_path: "../stale".to_string(),
-                requested_features: BTreeSet::new(),
+                requested_features: BTreeSet::from(["custom".to_string()]),
                 default_features: false,
                 optional: false,
             });
-        let dependencies = vec![DependencySpec {
+        let mut dependencies = vec![DependencySpec {
             crate_name: "provider_alias".to_string(),
             version: None,
             features: Vec::new(),
@@ -17406,7 +17519,7 @@ headers = ["interop/include/bridge.h"]
             package: Some("projected_provider".to_string()),
         }];
 
-        synchronize_projected_provider_dependencies(&mut manifest, &artifact_root, &dependencies)?;
+        synchronize_published_provider_dependencies(&mut manifest, &artifact_root, &dependencies)?;
 
         let descriptor = &manifest.contract_metadata.provider.provider_dependencies[0];
         assert_eq!(descriptor.artifact_digest, digest_provider_artifact(&projected_root)?);
@@ -17414,6 +17527,17 @@ headers = ["interop/include/bridge.h"]
             fs::canonicalize(artifact_root.join(&descriptor.relative_artifact_path))?,
             fs::canonicalize(projected_root)?
         );
+        assert_eq!(descriptor.dependency_key, "provider_alias");
+        assert_eq!(descriptor.requested_features, BTreeSet::from(["custom".to_string()]));
+        assert!(!descriptor.default_features);
+        let accepted = manifest.clone();
+        dependencies[0].package = Some("different_provider".to_string());
+        let Err(error) = synchronize_published_provider_dependencies(&mut manifest, &artifact_root, &dependencies)
+        else {
+            return Err("a resolved package must match the checked provider edge".into());
+        };
+        assert!(error.to_string().contains("different_provider"));
+        assert_eq!(manifest, accepted);
         Ok(())
     }
 

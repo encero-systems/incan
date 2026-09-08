@@ -24,8 +24,8 @@ pub(crate) struct OvenCompilerSuiteTargetCapabilities {
 }
 
 impl OvenCompilerSuiteTargetCapabilities {
-    /// Resolve the narrow, package-qualified capability registry for one receipt-bound root.
-    pub(crate) fn for_target(package_name: &str, target_kind: &str, source_relative_path: &str) -> Self {
+    /// Resolve the generated-code capability for one receipt-bound root's source path.
+    pub(crate) fn for_target(source_relative_path: &str) -> Self {
         let generated_rust_closure = source_relative_path != "tests/toolchain_installer_tests.rs";
         Self { generated_rust_closure }
     }
