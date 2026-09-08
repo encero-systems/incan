@@ -119,7 +119,7 @@ pub type TomlValue = newtype RawValue with TomlSerialize, TomlDeserialize:
     """
     A typed TOML value with checked table and array access.
 
-    `kind` returns `string`, `integer`, `float`, `boolean`, `datetime`, `array`, or `table`. TOML has no null value:
+    `kind` returns a `TomlKind` enum variant. TOML has no null value:
     `None` from an accessor means a missing key, an out-of-range index, or a different runtime kind.
     Lookups return owned snapshots: retrieving a table or array member copies its entire selected subtree. Array
     and table conversions likewise copy their member payloads; retain the result when traversing it repeatedly.

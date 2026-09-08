@@ -1039,13 +1039,10 @@ impl TypeChecker {
 
     /// Look up a module's RFC 024 `__derives__` trait list from stdlib or imported dependency metadata.
     pub(crate) fn lookup_derivable_traits(&mut self, module_path: &[String]) -> Option<Vec<String>> {
-        if let Some(traits) = self.stdlib_cache.lookup_derivable_traits(module_path) {
-            return Some(traits);
+        if let Some(traits) = self.dependency_derivable_modules.get(&module_path.join(".")) {
+            return (!traits.is_empty()).then(|| traits.clone());
         }
-        self.dependency_derivable_modules
-            .get(&module_path.join("."))
-            .cloned()
-            .filter(|traits| !traits.is_empty())
+        self.stdlib_cache.lookup_derivable_traits(module_path)
     }
 
     /// Look up a trait declared by an imported module, falling back to the current scope for direct imports.
@@ -1054,20 +1051,38 @@ impl TypeChecker {
         module_path: &[String],
         trait_name: &str,
     ) -> Option<TraitInfo> {
-        if let Some(info) = self.stdlib_cache.lookup_trait(module_path, trait_name) {
-            return Some(info);
-        }
-        if let Some(info) = self
-            .dependency_module_traits
-            .get(&format!("{}.{}", module_path.join("."), trait_name))
-        {
+        let module_key = module_path.join(".");
+        if let Some(info) = self.dependency_module_traits.get(&format!("{module_key}.{trait_name}")) {
             return Some(info.clone());
         }
-        self.lookup_trait_info(trait_name).cloned()
+        if self
+            .provider_plan
+            .active_sdk_provider_for_module(module_path)
+            .is_some_and(|provider| provider.manifest.is_some())
+        {
+            return None;
+        }
+        self.stdlib_cache
+            .lookup_trait(module_path, trait_name)
+            .or_else(|| self.lookup_trait_info(trait_name).cloned())
     }
 
     /// Return whether a module-qualified trait may be adopted through `@derive(...)`.
     pub(crate) fn imported_trait_is_derivable(&mut self, module_path: &[String], trait_name: &str) -> bool {
+        if self
+            .provider_plan
+            .active_sdk_provider_for_module(module_path)
+            .is_some_and(|provider| provider.manifest.is_some())
+        {
+            return self.lookup_imported_module_trait(module_path, trait_name).is_some()
+                && (self
+                    .lookup_derivable_traits(module_path)
+                    .is_some_and(|traits| traits.iter().any(|name| name == trait_name))
+                    || self
+                        .dependency_trait_rust_derive_paths
+                        .get(&format!("{}.{}", module_path.join("."), trait_name))
+                        .is_some_and(|paths| !paths.is_empty()));
+        }
         if self
             .stdlib_cache
             .lookup_trait_meta(module_path, trait_name)
