@@ -543,13 +543,17 @@ fn imported_nominal_result_payload_uses_declaring_type_context() -> Result<(), B
     let manifest = artifact(
         temporary.path(),
         "types",
-        "pub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n",
+        "pub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n\npub def make_pair() -> Pair:\n    return Pair(value=42)\n",
     )?;
     let index = index(temporary.path(), "renamed", &manifest);
     let sources = [
         "from pub::renamed import Pair as Item\n\ndef carry(item: Item) -> Result[Item, str]:\n    return Ok(item)\n\ndef main() -> int:\n    carry(Item(value=42))\n    return 42\n",
         "from pub::renamed import Mode as State\n\ndef carry(state: State) -> Result[int, State]:\n    return Err(state)\n\ndef main() -> int:\n    match carry(State.Ready):\n        case Ok(value):\n            return value\n        case Err(_):\n            return 42\n    return 0\n",
         "from pub::renamed import Mode as State\n\ndef carry() -> Result[list[tuple[int, int]], State]:\n    return Ok([(20, 22)])\n\ndef main() -> int:\n    carry()\n    return 42\n",
+        "from pub::renamed import Pair as Item\n\ndef carry(item: Item, Item: int = 0) -> Result[Item, str]:\n    return Ok(item)\n\ndef main() -> int:\n    carry(Item(value=42))\n    return 42\n",
+        "from pub::renamed import Pair as Item\n\ndef carry(item: Item = Item(value=42)) -> Result[Item, str]:\n    return Ok(item)\n\ndef main() -> int:\n    carry()\n    return 42\n",
+        "from pub::renamed import make_pair\n\ndef main() -> int:\n    item = make_pair()\n    return item.value\n",
+        "model Pair:\n    value: int\n\ndef carry(item: Pair, Pair: int = 0) -> Result[Pair, str]:\n    return Ok(item)\n\ndef main() -> int:\n    carry(Pair(value=42))\n    return 42\n",
     ];
     for source in sources {
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
@@ -562,6 +566,18 @@ fn imported_nominal_result_payload_uses_declaring_type_context() -> Result<(), B
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
         let facts = checker.type_info().semantic_fact_store(&path);
+        // Check the inferred provider-only return type without relying on any lexical import of Pair.
+        if source.contains("from pub::renamed import make_pair") {
+            let start = source.find("make_pair()").ok_or("factory call span absent")?;
+            let identities = checker
+                .type_info()
+                .expressions
+                .expression_type_identities
+                .get(&(start, start + "make_pair()".len()))
+                .ok_or("inferred provider type identity absent")?;
+            assert!(identities.values().any(|identity| identity.declaration_name == "Pair"
+                && matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == "types")));
+        }
         let main = checker
             .type_info()
             .declarations

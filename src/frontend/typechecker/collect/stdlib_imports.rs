@@ -1654,8 +1654,17 @@ impl TypeChecker {
             let mut source_path = module_path.clone();
             source_path.push(type_name.clone());
             let canonical = canonical_public_library_type_name(library, &source_path.join("::"));
-            self.public_library_type_identities
-                .insert(canonical.clone(), PublicLibraryTypeIdentity::new(library, &source_path));
+            let public_path = std::iter::once(manifest.name.clone())
+                .chain(source_path.iter().cloned())
+                .collect::<Vec<_>>();
+            let declaration_identity = manifest
+                .contract_metadata
+                .identity_graph
+                .canonical_for_public_path(&public_path);
+            self.public_library_type_identities.insert(
+                canonical.clone(),
+                PublicLibraryTypeIdentity::new(library, &source_path).with_canonical(declaration_identity),
+            );
             candidates
                 .entry(type_name.clone())
                 .or_default()
@@ -1957,8 +1966,16 @@ impl TypeChecker {
         ) {
             let mut source_path = source_module_path;
             source_path.push(source_name);
-            self.public_library_type_identities
-                .insert(local_name, PublicLibraryTypeIdentity::new(library, &source_path));
+            let declaration_identity = self
+                .type_info
+                .declarations
+                .resolved_import_identities
+                .get(&local_name)
+                .cloned();
+            self.public_library_type_identities.insert(
+                local_name,
+                PublicLibraryTypeIdentity::new(library, &source_path).with_canonical(declaration_identity),
+            );
         }
     }
 
@@ -2088,7 +2105,10 @@ impl TypeChecker {
             .identity_graph
             .entry_for_public_name(public_name)?;
         let source_path = entry.target_path().unwrap_or(entry.source_path.as_slice());
-        Some(PublicLibraryTypeIdentity::new(library, source_path))
+        Some(
+            PublicLibraryTypeIdentity::new(library, source_path)
+                .with_canonical(entry.canonical.as_ref().and_then(|identity| identity.hydrate())),
+        )
     }
 
     /// Return the missing public features for one known provider export that is inactive in this artifact projection.
