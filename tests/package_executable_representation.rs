@@ -243,7 +243,7 @@ fn missing_package_representation_refuses_before_output_and_receipt() -> Result<
     bake(&producer)?;
     let manifest_path = producer.join("target/lib/conditional_provider.incnlib");
     let mut manifest = LibraryManifest::read_from_path(&manifest_path)?;
-    // Absence is an explicitly valid linking-only package, not corrupt semantic payload bytes.
+    // Omit the descriptor to test replacement refusal; native sealed-artifact validity is checked separately.
     manifest.contract_metadata.executable_representation = None;
     manifest.write_to_path(&manifest_path)?;
     fs::remove_dir_all(producer.join("src"))?;
