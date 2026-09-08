@@ -55,6 +55,7 @@ impl OvenCompilerSuiteTargetCapabilities {
                 | ("incan", "test", "tests/integration_tests.rs")
                 | ("incan", "test", "tests/canonical_item_imports.rs")
                 | ("incan", "test", "tests/package_executable_representation.rs")
+                | ("incan", "test", "tests/parity_corpus_tests.rs")
         );
         Self {
             generated_rust_closure,

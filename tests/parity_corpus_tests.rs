@@ -11,9 +11,9 @@
 //! ## Why these cases
 //!
 //! The original source-only seed has grown with the RFC 120 cutover matrix. Package/import rows execute the checked
-//! graph and both compiler consumers, while direct replacement package execution stays explicitly unavailable under
-//! #989. The release-artifact row compiles and inspects its pinned native fixture; neither form is mislabeled as a
-//! two-route source-observable execution.
+//! graph and both compiler consumers. Materialized-package rows also observe native and non-linking execution of
+//! the same source after provider source removal. Their behavior observations remain distinct from the corpus
+//! receipt-aware comparison axis. The release-artifact row compiles and inspects its pinned native fixture.
 //!
 //! Each case's `evaluate` function probes the *current* compiler directly (not a fixture snapshot of past output),
 //! so a behavior change shows up as [`parity_corpus::ComparisonOutcome::Mismatch`] the next time this test runs.
@@ -49,6 +49,12 @@ mod emitted_symbol_artifact;
 mod parity_corpus;
 #[path = "support/shadow_capability.rs"]
 mod shadow_capability;
+
+#[path = "support/package_boundary_probe.rs"]
+mod package_boundary_probe;
+#[path = "support/package_project.rs"]
+mod package_project;
+mod support;
 
 /// The original scalar case that exercises the reusable paired-comparison route.
 const SHADOW_COMPARED_CASE_ID: &str = "replacement-body-v0-001";
@@ -224,41 +230,6 @@ fn body_ir_snapshot(src: &str, expect_desc: &str) -> Result<String, ComparisonOu
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()).render_snapshot())
 }
 
-/// Run one module through the direct route's source-profile gate and classify the refusal it produces.
-///
-/// This observes admission, not execution: the profile decides which source modules the direct route will run at
-/// all, and a boundary it declines never reaches Body IR. `None` means the module was admitted.
-fn outcome_from_source_profile(
-    src: &str,
-    expect: impl FnOnce(Option<&str>) -> bool,
-    expect_desc: &str,
-) -> ComparisonOutcome {
-    let tokens = match lexer::lex(src) {
-        Ok(tokens) => tokens,
-        Err(errors) => {
-            return ComparisonOutcome::Incompatible {
-                reason: format!("lex failed before the profile could run: {errors:?}"),
-            };
-        }
-    };
-    let program = match parser::parse(&tokens) {
-        Ok(program) => program,
-        Err(errors) => {
-            return ComparisonOutcome::Incompatible {
-                reason: format!("parse failed before the profile could run: {errors:?}"),
-            };
-        }
-    };
-    let refusal = incan::backend::replacement::source_profile::source_profile_refusal(&program).map(|e| e.to_string());
-    if expect(refusal.as_deref()) {
-        ComparisonOutcome::Match
-    } else {
-        ComparisonOutcome::Mismatch {
-            detail: format!("expected {expect_desc}, got profile refusal: {refusal:?}"),
-        }
-    }
-}
-
 fn outcome_from_typecheck(src: &str, expect: impl FnOnce(&[String]) -> bool, expect_desc: &str) -> ComparisonOutcome {
     match typecheck_err_messages(src) {
         Err(errs) => ComparisonOutcome::Incompatible {
@@ -319,39 +290,52 @@ def main() -> None:
         println("chained")
 "#;
 
-/// One package consumer: a call into a dependency through the public `pub::` surface.
+/// One unchanged consumer program observed through native and non-linking package execution.
 const PACKAGE_CONSUMER_SRC: &str = r#"
 from pub::widgets import build
 
-def f() -> int:
-    return build()
+def main() -> None:
+    println(build())
 "#;
 
-/// Confirm that a package consumer is still refused before the direct route reaches execution.
-///
-/// This row exists to keep the #989 package boundary counted rather than absent. It confirms current behavior, so
-/// it flips the day #1339 ships an executable representation -- at which point the row must be promoted to a real
-/// execution rather than quietly left recording a refusal that no longer happens.
-fn case_package_consumer_call_is_refused() -> ComparisonOutcome {
-    outcome_from_source_profile(
-        PACKAGE_CONSUMER_SRC,
-        |refusal| refusal.is_some(),
-        "the direct route refuses a `pub::` package consumer",
-    )
+/// Share one real package publication across the two rows and repeated corpus summary queries.
+fn package_boundary_observation() -> &'static Result<package_boundary_probe::PackageBoundaryObservation, String> {
+    static OBSERVATION: OnceLock<Result<package_boundary_probe::PackageBoundaryObservation, String>> = OnceLock::new();
+    OBSERVATION.get_or_init(|| {
+        package_boundary_probe::observe_package_boundary(PACKAGE_CONSUMER_SRC).map_err(|error| error.to_string())
+    })
 }
 
-/// Confirm that the refusal is still reported as an unreached construct rather than in packaging terms.
-///
-/// RFC 123 requires a consumer that cannot obtain a usable representation to name the package, the version and the
-/// unmet requirement, and never to report the condition as an unsupported language construct. Today it reports
-/// `import declaration` -- the same misdiagnosis #1262 fixed for `rust::`. Pinning the current wording keeps the gap
-/// visible and makes the row fail when #1339 corrects it.
-fn case_package_representation_refusal_is_not_a_language_refusal() -> ComparisonOutcome {
-    outcome_from_source_profile(
-        PACKAGE_CONSUMER_SRC,
-        |refusal| refusal.is_some_and(|text| text.contains("import declaration")),
-        "the package boundary still refuses as an unreached construct rather than in packaging terms",
-    )
+/// Verify actual native/non-linking output agreement for the bounded source-unavailable materialized package.
+fn case_package_consumer_call_executes() -> ComparisonOutcome {
+    match package_boundary_observation() {
+        Ok(observed) if observed.native_stdout == b"42\n" && observed.replacement_stdout == observed.native_stdout => {
+            ComparisonOutcome::Match
+        }
+        observed => ComparisonOutcome::Mismatch {
+            detail: format!("expected the same package consumer to print 42 on both routes: {observed:?}"),
+        },
+    }
+}
+
+/// Verify that a missing representation refuses in packaging terms before output or a completed receipt.
+fn case_package_representation_refusal_is_packaging_error() -> ComparisonOutcome {
+    match package_boundary_observation() {
+        Ok(observed)
+            if !observed.refusal_success
+                && observed.refusal_stdout.is_empty()
+                && !observed.refusal_receipt_exists
+                && observed.refusal_stderr.contains("widgets")
+                && observed.refusal_stderr.contains("1.2.3")
+                && observed.refusal_stderr.contains("executable representation")
+                && !observed.refusal_stderr.contains("INCAN-R988-UNSUPPORTED") =>
+        {
+            ComparisonOutcome::Match
+        }
+        observed => ComparisonOutcome::Mismatch {
+            detail: format!("expected a package-specific refusal without output or receipt: {observed:?}"),
+        },
+    }
 }
 
 fn case_diagnostic_chained_comparison_rejected() -> ComparisonOutcome {
@@ -4003,50 +3987,29 @@ fn seed_corpus() -> Vec<ParityCase> {
             identity_conformance: None,
             replacement_execution: None,
         },
-        // ---- #989 public-boundary rows the replacement route cannot yet reach ----
-        //
-        // These are declared rather than evaluated on purpose. A package consumer needs a baked dependency and an
-        // executable representation of its public surface, and neither exists yet; declaring the rows keeps the
-        // boundary counted and owned instead of absent, which is what #989's disposition model asks for. Each names
-        // the issue that makes it executable, so the row fails review the day that issue closes and nothing here
-        // changes.
+        // Materialized package behavior is executable. Signed archive delivery remains owned by #1339/RFC034;
+        // these callback observations do not promote the corpus's separate receipt-aware comparison axis.
         ParityCase {
             id: "parity-987-989-package-consumer-call",
-            title: "A call into a package dependency executes on a route that does not link Rust",
+            title: "A materialized package dependency executes natively and without linking Rust",
             category: BehaviorCategory::SupportedLanguageContract,
             lane: EvidenceLane::PackageImportBoundary,
-            evidence: "#989; RFC 123; #1339 owns the executable representation this row needs",
-            disposition: Disposition::Unsupported {
-                owning_issue: 1339,
-                migration_note: "A package publishes signatures, checked API and canonical identities -- enough to \
-                                  typecheck a call into it, and nothing a non-linking route can execute. The direct \
-                                  route therefore refuses every `pub::` import, so moving a declaration into a \
-                                  package removes execution routes it had as a local module. RFC 123 is Planned and \
-                                  #1339 implements the representation that closes this. Until then the boundary is \
-                                  unavailable rather than passing, and no result may claim package parity.",
-            },
+            evidence: "#989; #1339; tests/support/package_boundary_probe.rs::observe_package_boundary",
+            disposition: Disposition::Preserved,
             source: PACKAGE_CONSUMER_SRC,
-            evaluate: Some(case_package_consumer_call_is_refused),
+            evaluate: Some(case_package_consumer_call_executes),
             identity_conformance: None,
             replacement_execution: None,
         },
         ParityCase {
             id: "parity-987-989-package-representation-refusal",
-            title: "A missing or uninterpretable package representation refuses in packaging terms, before any result",
+            title: "A missing package representation refuses in packaging terms before output or receipt",
             category: BehaviorCategory::DiagnosticBehavior,
             lane: EvidenceLane::PackageImportBoundary,
-            evidence: "#989; RFC 123 reference-level rules; #1339",
-            disposition: Disposition::Unsupported {
-                owning_issue: 1339,
-                migration_note: "RFC 123 requires a consumer that cannot obtain a usable representation to refuse \
-                                  before producing any result, naming the package, the version and the requirement \
-                                  it did not meet -- and never to report the condition as an unsupported language \
-                                  construct. Today a `pub::` import reports `import declaration`, which is the same \
-                                  misdiagnosis #1262 fixed for `rust::`: it sends a reader to the language when the \
-                                  problem is packaging. Owned by #1339.",
-            },
+            evidence: "#989; RFC 123; tests/support/package_boundary_probe.rs::observe_package_boundary",
+            disposition: Disposition::Preserved,
             source: PACKAGE_CONSUMER_SRC,
-            evaluate: Some(case_package_representation_refusal_is_not_a_language_refusal),
+            evaluate: Some(case_package_representation_refusal_is_packaging_error),
             identity_conformance: None,
             replacement_execution: None,
         },
