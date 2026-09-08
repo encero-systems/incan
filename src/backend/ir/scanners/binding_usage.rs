@@ -331,7 +331,7 @@ fn stmt_binding_use_scan(stmt: &IrStmt, binding_name: &str) -> BindingUseScan {
 /// Check whether an assignment target references one local binding.
 fn assign_target_uses_binding_name(assign_target: &AssignTarget, binding_name: &str) -> bool {
     match assign_target {
-        AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => name == binding_name,
+        AssignTarget::Var { name, .. } | AssignTarget::StaticBinding(name) => name == binding_name,
         AssignTarget::Static { .. } => false,
         AssignTarget::Field { object, .. } => expr_uses_binding_name(object, binding_name),
         AssignTarget::Index { object, index } => {

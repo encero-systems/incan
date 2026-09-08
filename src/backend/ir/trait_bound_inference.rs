@@ -853,6 +853,26 @@ fn collect_backend_clone_bounds_in_stmt(
                 clone_params,
             );
         }
+        IrStmtKind::Assign {
+            target: AssignTarget::Var { ty, .. },
+            value,
+        } => {
+            collect_backend_clone_bounds_for_value_use(
+                value,
+                ValueUseSite::Assignment { target_ty: Some(ty) },
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
         IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
             collect_backend_clone_bounds_in_expr(
                 value,

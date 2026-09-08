@@ -822,7 +822,7 @@ impl<'a> IrEmitter<'a> {
         match target {
             AssignTarget::Field { object, .. } => Self::expr_contains_try(object),
             AssignTarget::Index { object, index } => Self::expr_contains_try(object) || Self::expr_contains_try(index),
-            AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => false,
+            AssignTarget::Var { .. } | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => false,
         }
     }
 }
