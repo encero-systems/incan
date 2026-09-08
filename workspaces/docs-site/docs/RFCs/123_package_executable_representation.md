@@ -200,7 +200,7 @@ Keep each selected semantic sidecar coherent with its manifest through publicati
 - [x] Load only selected fragments and their required public context; prove selective loading with a three-of-four-hundred case.
 - [x] Execute a real source-unavailable package consumer on the non-linking route with native observable-behavior parity.
 - [x] Refuse missing, incompatible, malformed and uncovered requirements before program output or a successful receipt.
-- [ ] Preserve Rust-linking use of packages without executable representations.
+- [x] Preserve Rust-linking use of packages without executable representations.
 
 ### Distribution and verification
 
