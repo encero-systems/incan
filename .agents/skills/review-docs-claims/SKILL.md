@@ -12,6 +12,7 @@ description: Review user-facing docs, CLI reference text, examples, and scaffold
 Own:
 
 - docs/CLI/examples/scaffolds claiming unimplemented behavior
+- Divio page intent and public-reference completeness
 - user-facing RFC leakage outside explicit inventories
 - touched markdown prose quality
 - release-note inventory consistency when applicable
@@ -34,9 +35,12 @@ Do not write to the canonical `.agents/state/review-report.md`.
 ## Workflow
 
 1. Review the touched user-facing `.md` files, CLI help surfaces, examples, and scaffolds assigned by the orchestrator.
+   Identify each page's Divio intent using the repository's `AGENTS.md` docs rules: tutorial, how-to, reference, or explanation. Check the content against that intent, not just its directory. For a reference, compare its inventory against the relevant public source surface and verify signatures, parameters, returns, defaults, errors, constraints, and lookup structure. A walkthrough or overview under `reference/` is a finding even when every sentence is true and MkDocs passes. Small illustrative examples are allowed; do not require four separate pages for every feature.
 2. Check actual implementation against the docs. Prefer the current code and current tests over optimistic prose, stale assumptions, or superseded branch history.
 3. RFC text is still canonical, but if the current branch deliberately diverges and the divergence is explicitly documented with a coherent reason, report that as a documented deviation rather than blindly calling it fiction.
 4. Flag:
+   - mixed or incorrect Divio intent, including task recipes or implementation narratives replacing API reference material
+   - incomplete reference contracts or missing public APIs within the page's stated scope
    - docs-generated fiction
    - user-facing RFC references outside explicit inventory contexts
    - short-prosed or mechanically chopped markdown

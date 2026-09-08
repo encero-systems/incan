@@ -1,0 +1,23 @@
+"""Imported Rust bounds accept lowered Incan scalars and collections; rustc checks their implementations."""
+
+from rust::serde::de import DeserializeOwned as Owned
+
+
+pub def identity[T with Owned](value: T) -> T:
+    """Return a value while retaining its foreign trait obligation in the public signature."""
+    return value
+
+
+pub class Reader:
+    """Exercise the same foreign bound on a generic method."""
+
+    def identity[T with Owned](self, value: T) -> T:
+        """Retain the bound through a method call and its forwarding call."""
+        return identity(value)
+
+
+def main() -> None:
+    """Require native scalar and collection instantiations to work."""
+    assert identity("demo") == "demo"
+    assert Reader().identity(["linux", "macos"]) == ["linux", "macos"]
+    println("foreign generic bounds passed")

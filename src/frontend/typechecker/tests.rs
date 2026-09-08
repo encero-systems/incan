@@ -3367,6 +3367,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
                 package: None,
                 modules: vec![CheckedApiMetadata {
                     schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                    derivable_traits: Vec::new(),
                     module_path: vec!["helpers".to_string()],
                     declarations: vec![ApiDeclaration::Function(helper_cast)],
                 }],
@@ -25066,3 +25067,7 @@ def f() -> None:
 
 mod rust_supertrait_codegen;
 mod rust_supertraits;
+
+mod borrowed_rust_enum;
+
+mod sdk_module_derives;

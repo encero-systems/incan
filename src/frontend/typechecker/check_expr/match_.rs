@@ -28,6 +28,43 @@ fn sorted_binding_names(bindings: &HashMap<String, PatternBinding>) -> Vec<Strin
     names
 }
 
+/// Default payload binding mode after matching through explicit Rust references.
+#[derive(Clone, Copy)]
+enum PatternBorrow {
+    Shared,
+    Mutable,
+}
+
+/// Peel reference layers for constructor lookup while preserving Rust match ergonomics for payload bindings.
+/// A shared reference fixes shared binding mode even when another reference layer is mutable.
+fn borrowed_pattern_subject(mut subject: &ResolvedType) -> (&ResolvedType, Option<PatternBorrow>) {
+    let mut borrow = None;
+    loop {
+        match subject {
+            ResolvedType::Ref(inner) => {
+                borrow = Some(PatternBorrow::Shared);
+                subject = inner;
+            }
+            ResolvedType::RefMut(inner) => {
+                if borrow.is_none() {
+                    borrow = Some(PatternBorrow::Mutable);
+                }
+                subject = inner;
+            }
+            _ => return (subject, borrow),
+        }
+    }
+}
+
+/// Apply the inherited match binding mode to a payload before checking its nested pattern.
+fn borrowed_pattern_payload(field: ResolvedType, borrow: Option<PatternBorrow>) -> ResolvedType {
+    match borrow {
+        Some(PatternBorrow::Shared) => ResolvedType::Ref(Box::new(field)),
+        Some(PatternBorrow::Mutable) => ResolvedType::RefMut(Box::new(field)),
+        None => field,
+    }
+}
+
 impl TypeChecker {
     /// Split a constructor pattern name into its optional enum qualifier and variant segment.
     ///
@@ -261,6 +298,7 @@ impl TypeChecker {
             }
             Pattern::Literal(_) => {}
             Pattern::Constructor(name, sub_patterns) => {
+                let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
                     && let Some(member_ty) = self.union_pattern_target_type(expected_ty, ctor_name)
@@ -286,12 +324,12 @@ impl TypeChecker {
                 }
 
                 let qualifier_matches_expected = enum_qualifier_opt
-                    .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(expected_ty, qualifier));
+                    .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(subject_ty, qualifier));
 
                 if qualifier_matches_expected && let Some(cid) = constructors::from_str(ctor_name) {
                     match cid {
                         ConstructorId::Ok => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                            if let ResolvedType::Generic(type_name, args) = subject_ty
                                 && type_name == collections::as_str(CollectionTypeId::Result)
                                 && !args.is_empty()
                             {
@@ -310,13 +348,13 @@ impl TypeChecker {
                                     }
                                 }
                                 if let Some(pat) = positional {
-                                    self.check_pattern(pat, &args[0]);
+                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
                                 }
                                 return;
                             }
                         }
                         ConstructorId::Err => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                            if let ResolvedType::Generic(type_name, args) = subject_ty
                                 && type_name == collections::as_str(CollectionTypeId::Result)
                                 && args.len() >= 2
                             {
@@ -335,13 +373,13 @@ impl TypeChecker {
                                     }
                                 }
                                 if let Some(pat) = positional {
-                                    self.check_pattern(pat, &args[1]);
+                                    self.check_pattern(pat, &borrowed_pattern_payload(args[1].clone(), borrow));
                                 }
                                 return;
                             }
                         }
                         ConstructorId::Some => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                            if let ResolvedType::Generic(type_name, args) = subject_ty
                                 && type_name == collections::as_str(CollectionTypeId::Option)
                                 && !args.is_empty()
                             {
@@ -360,7 +398,7 @@ impl TypeChecker {
                                     }
                                 }
                                 if let Some(pat) = positional {
-                                    self.check_pattern(pat, &args[0]);
+                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
                                 }
                                 return;
                             }
@@ -489,9 +527,10 @@ impl TypeChecker {
                 }
             }
             Pattern::Tuple(sub_patterns) => {
-                if let ResolvedType::Tuple(elem_types) = expected_ty {
+                let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
+                if let ResolvedType::Tuple(elem_types) = subject_ty {
                     for (pat, elem_ty) in sub_patterns.iter().zip(elem_types.iter()) {
-                        self.check_pattern(pat, elem_ty);
+                        self.check_pattern(pat, &borrowed_pattern_payload(elem_ty.clone(), borrow));
                     }
                 }
             }
@@ -639,6 +678,7 @@ impl TypeChecker {
         pattern_full_name: &str,
         rust_resolution: Option<&RustEnumPatternResolution>,
     ) -> bool {
+        let (expected_ty, _) = borrowed_pattern_subject(expected_ty);
         let is_rust_backed = match expected_ty {
             ResolvedType::RustPath(_) => true,
             ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
@@ -720,6 +760,8 @@ impl TypeChecker {
         pattern_full_name: &str,
         positional_count: usize,
     ) -> Option<RustEnumPatternResolution> {
+        let (expected_ty, borrow) = borrowed_pattern_subject(expected_ty);
+        let bind_payload = |field| borrowed_pattern_payload(field, borrow);
         let (enum_qualifier_opt, variant_segment) = match pattern_full_name.rsplit_once("::") {
             Some((e, v)) => (Some(e), v),
             None => (None, pattern_full_name),
@@ -746,23 +788,26 @@ impl TypeChecker {
         };
 
         let (metadata_rust_path, _) = self.rust_path_base_and_args(base_rust_path.as_str());
-        if let Some(meta) = self.rust_item_metadata_for_path(metadata_rust_path.as_str())
+        if let Some(meta) = self.known_rust_metadata_for_path(metadata_rust_path.as_str())
             && let RustItemKind::Type(info) = meta.kind
             && let Some(variant) = info.variants.iter().find(|variant| variant.name == variant_segment)
         {
             let fields: Vec<ResolvedType> = variant
                 .fields
                 .iter()
-                .map(|field| self.resolved_type_from_rust_shape(field))
+                .map(|field| bind_payload(self.resolved_type_from_rust_shape(field)))
                 .collect();
             return Some(RustEnumPatternResolution::payloads(fields));
         }
 
-        Some(RustEnumPatternResolution::payloads(match positional_count {
+        let fields = match positional_count {
             0 => vec![],
             1 => vec![ResolvedType::RustPath(format!("{base_rust_path}::{variant_segment}"))],
             n => (0..n).map(|_| ResolvedType::Unknown).collect(),
-        }))
+        };
+        Some(RustEnumPatternResolution::payloads(
+            fields.into_iter().map(bind_payload).collect(),
+        ))
     }
 
     /// Check that a match expression covers all possible cases.

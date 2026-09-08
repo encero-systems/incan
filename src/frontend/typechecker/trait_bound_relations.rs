@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
-use crate::frontend::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
+use crate::frontend::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
 use incan_core::interop::is_rust_capability_bound;
 use incan_core::lang::callables;
@@ -42,6 +42,9 @@ impl TypeChecker {
         bound: &TypeBoundInfo,
         bindings: &HashMap<String, ResolvedType>,
     ) -> bool {
+        if let Some(defer) = self.foreign_trait_bound_requires_native_check(&bound.name) {
+            return defer;
+        }
         if let Some(placeholder_name) = self.active_type_param_name(ty)
             && self.active_type_param_satisfies_bound_info(placeholder_name, bound, bindings)
         {
@@ -132,6 +135,9 @@ impl TypeChecker {
         ty: &ResolvedType,
         bound: &str,
     ) -> bool {
+        if let Some(defer) = self.foreign_trait_bound_requires_native_check(bound) {
+            return defer;
+        }
         if bound == builtin_traits::as_str(TraitId::Awaitable) {
             return self.type_satisfies_awaitable_bound(ty, None);
         }
@@ -193,6 +199,28 @@ impl TypeChecker {
             ResolvedType::Function(_, _) => bound == derives::as_str(DeriveId::Clone),
             ResolvedType::SelfType => false,
         }
+    }
+
+    /// Keep imported Rust bounds at the native validation boundary rather than requiring an Incan trait adoption.
+    ///
+    /// Rust decides whether the lowered scalar, container, or model implements the foreign trait. This does not
+    /// prove an implementation: lowering must retain the bound, and native compilation remains required. Positive
+    /// non-trait metadata rejects the bound; local Incan traits never enter this path, even when names coincide.
+    fn foreign_trait_bound_requires_native_check(&self, bound: &str) -> Option<bool> {
+        // Absolute Rust paths are produced from resolved imports and retained in checked provider signatures.
+        // Native Incan module paths use dot notation, so this does not bypass nominal source-trait validation.
+        if bound.starts_with("::") {
+            return Some(true);
+        }
+        let symbol = self.lookup_symbol(bound)?;
+        let SymbolKind::RustItem(info) = &symbol.kind else {
+            return None;
+        };
+        Some(
+            info.metadata
+                .as_ref()
+                .is_none_or(|metadata| matches!(metadata.kind, incan_core::interop::RustItemKind::Trait(_))),
+        )
     }
 
     /// Return the active generic placeholder name represented by `ty`.

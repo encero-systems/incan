@@ -107,7 +107,11 @@ Classify the root cause before editing: lifetime/borrow across boundary, trait b
 
 When making changes under `workspaces/docs-site/`:
 
+- **Apply Divio intent before writing**: choose the reader's task and the matching page type. Tutorials teach through a guided learning exercise; how-to guides solve a concrete task; references provide factual lookup; explanations develop understanding and rationale. Content must match its type, not merely live in the matching directory.
+- **References document the public contract**: inventory the relevant public surface and include exact signatures, parameter and return types, defaults, errors, constraints, and observable behavior. Organize by API or concept so a reader can look up one item independently. Small syntax examples are welcome, but a walkthrough, feature overview, or implementation narrative is not a substitute for a reference.
+- **Separate mixed intents with links**: move task procedures to how-to guides and design rationale to explanations when those need their own treatment. Do not create all four page types mechanically for every feature. Check the actual source and same-kind precedents; an existing page is not proof that its organization is correct.
 - **Build docs locally**: run `mkdocs build --strict` from `workspaces/docs-site` to catch broken links/anchors early.
+- **Review intent separately from the build**: a successful MkDocs build checks rendering and links, not Divio placement or reference completeness. Verify both before checking off documentation in a PR.
 - **Line length: no hard wrap** for docs-site `.md` files. Write prose as natural paragraphs — let the renderer handle wrapping. This applies to all markdown under `workspaces/docs-site/` and other non-code markdown files.
 
 ## Code Style

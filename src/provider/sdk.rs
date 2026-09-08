@@ -1177,7 +1177,7 @@ mod tests {
         let inventory = SdkInventory::from_json(INVENTORY, Path::new("/sdk"))?;
 
         let error = inventory
-            .validate_compiler_compatibility("0.5.0-dev.5", 6)
+            .validate_compiler_compatibility("0.5.0-dev.5", crate::version::SDK_PROVIDER_CODEGEN_REVISION)
             .err()
             .ok_or("expected incompatible provider codegen revision")?;
         assert!(error.to_string().contains("provider codegen revision 5"));
