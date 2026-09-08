@@ -1502,7 +1502,7 @@ pub enum ParamDefaultExport {
         path: Vec<String>,
         args: Vec<ParamDefaultCallArgExport>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        signature: Option<ParamDefaultCallSignatureExport>,
+        signature: Option<Box<ParamDefaultCallSignatureExport>>,
     },
     Unsupported,
 }
@@ -2276,7 +2276,10 @@ pub(crate) fn param_default_from_checked(value: &CheckedParamDefault) -> Option<
             .map(|args| ParamDefaultExport::Call {
                 path: path.clone(),
                 args,
-                signature: signature.as_ref().map(param_default_call_signature_from_checked),
+                signature: signature
+                    .as_ref()
+                    .map(param_default_call_signature_from_checked)
+                    .map(Box::new),
             }),
         CheckedParamDefault::Unsupported => None,
     }

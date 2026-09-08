@@ -2786,21 +2786,20 @@ fn build_replacement_file_report(
     let execution_plan = match prepare_free_function_execution_in_graph(execution_graph, "main", &[], None) {
         Ok(plan) => plan,
         Err(error) => {
-            if let Some(owner) = error.measured_module() {
-                if let Some(module) = reachable_body_ir.iter().find(|module| module.module_id.path() == owner) {
-                    if let Some(body) = module.bodies.first().filter(|body| {
-                        matches!(
-                            body.canonical.as_ref().map(|identity| &identity.origin),
-                            Some(incan_semantics_core::SymbolOrigin::Package { .. })
-                        )
-                    }) {
-                        return Err(package_execution_requirement_error(
-                            body,
-                            &package_versions,
-                            error.to_string(),
-                        ));
-                    }
-                }
+            if let Some(owner) = error.measured_module()
+                && let Some(module) = reachable_body_ir.iter().find(|module| module.module_id.path() == owner)
+                && let Some(body) = module.bodies.first().filter(|body| {
+                    matches!(
+                        body.canonical.as_ref().map(|identity| &identity.origin),
+                        Some(incan_semantics_core::SymbolOrigin::Package { .. })
+                    )
+                })
+            {
+                return Err(package_execution_requirement_error(
+                    body,
+                    &package_versions,
+                    error.to_string(),
+                ));
             }
             let source =
                 replacement_refusal_source(&error, &entrypoint, &session_inputs.reachable_modules).to_path_buf();

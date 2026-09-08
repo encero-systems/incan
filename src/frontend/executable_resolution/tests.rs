@@ -33,7 +33,7 @@ fn resolve_executable_requirements(
                 reason: error.to_string(),
             }
         })?;
-    Ok(super::resolve_executable_requirements(&plan, required)?)
+    super::resolve_executable_requirements(&plan, required)
 }
 
 /// Produce a manifest and semantic surface from one checked source input, using the real identity exporter.

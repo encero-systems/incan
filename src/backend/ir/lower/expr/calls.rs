@@ -779,7 +779,7 @@ impl AstLowering {
             }
             ParamDefaultExport::ConstRef(path) => self.lower_pub_default_const_ref(library, path),
             ParamDefaultExport::Call { path, args, signature } => {
-                self.lower_pub_default_call(library, path, args, signature.as_ref())
+                self.lower_pub_default_call(library, path, args, signature.as_deref())
             }
             ParamDefaultExport::Unsupported => None,
         }
@@ -1499,7 +1499,7 @@ impl AstLowering {
             )),
             ParamDefaultExport::ConstRef(path) => self.compiled_provider_path_expr(provider_crate, path),
             ParamDefaultExport::Call { path, args, signature } => {
-                self.lower_compiled_provider_default_call(provider_crate, path, args, signature.as_ref())
+                self.lower_compiled_provider_default_call(provider_crate, path, args, signature.as_deref())
             }
             ParamDefaultExport::Unsupported => None,
         }

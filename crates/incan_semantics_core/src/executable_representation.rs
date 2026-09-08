@@ -398,8 +398,8 @@ impl SurfaceIndex {
             {
                 return Err(malformed("index identity does not belong to the declaring package"));
             }
-            if let DeclarationCoverage::TypeContext { owner } = coverage {
-                if !matches!(
+            if let DeclarationCoverage::TypeContext { owner } = coverage
+                && (!matches!(
                     identity.kind,
                     crate::SemanticSourceTargetKind::Field | crate::SemanticSourceTargetKind::Variant
                 ) || owner.origin != identity.origin
@@ -407,12 +407,11 @@ impl SurfaceIndex {
                         owner.kind,
                         crate::SemanticSourceTargetKind::Model | crate::SemanticSourceTargetKind::Enum
                     )
-                    || !matches!(self.declarations.get(owner), Some(DeclarationCoverage::Covered { .. }))
-                {
-                    return Err(malformed(
-                        "public member context does not select a covered declaring type",
-                    ));
-                }
+                    || !matches!(self.declarations.get(owner), Some(DeclarationCoverage::Covered { .. })))
+            {
+                return Err(malformed(
+                    "public member context does not select a covered declaring type",
+                ));
             }
             if let DeclarationCoverage::Covered {
                 offset,

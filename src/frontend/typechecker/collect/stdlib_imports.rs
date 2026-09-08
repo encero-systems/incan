@@ -1539,10 +1539,10 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
         let mut type_alias = declarations.iter().find_map(|declaration| {
-            if let ApiDeclaration::Alias(alias) = declaration {
-                if let Some(target) = alias.projected_type.as_ref().filter(|ty| ty.has_native_union()) {
-                    return Some((Vec::new(), resolved_type_from_manifest_type_ref(target)));
-                }
+            if let ApiDeclaration::Alias(alias) = declaration
+                && let Some(target) = alias.projected_type.as_ref().filter(|ty| ty.has_native_union())
+            {
+                return Some((Vec::new(), resolved_type_from_manifest_type_ref(target)));
             }
             let declaration = match declaration {
                 ApiDeclaration::Alias(alias) => Self::api_declaration_for_target_path(manifest, &alias.target_path)?,
@@ -2157,9 +2157,9 @@ impl TypeChecker {
                 .insert(key.clone(), identity.clone());
             self.public_library_type_identities.insert(qualified.clone(), identity);
             remapping.insert(key, qualified);
-            if !artifacts.contains_key(&artifact.identity.stable_key()) {
+            if let std::collections::btree_map::Entry::Vacant(entry) = artifacts.entry(artifact.identity.stable_key()) {
                 pending.extend(collect_origins(&artifact.manifest).into_values());
-                artifacts.insert(artifact.identity.stable_key(), (artifact, owner_route));
+                entry.insert((artifact, owner_route));
             }
         }
         // Complete every type mapping before reconstructing layouts. This preserves mutually referenced nominal
