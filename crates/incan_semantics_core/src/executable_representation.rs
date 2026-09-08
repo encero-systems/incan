@@ -873,6 +873,77 @@ mod tests {
         Ok(())
     }
 
+    /// Every retained Result type identity is public-audited and rebased to the declaring package.
+    #[test]
+    fn result_type_identities_are_rebased_and_private_identity_payloads_are_not_published()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::body_ir::{Constant, LocalId, Operand, Place, ResultVariant, ResultVariantKind, Rvalue};
+        let mut published_type = identity("Record", 2);
+        published_type.kind = SemanticSourceTargetKind::Model;
+        let mut source_type = published_type.clone();
+        source_type.origin = SymbolOrigin::Module(vec!["lib".into()]);
+        let mut exported = body("exported", 1);
+        exported.block.stmts.push(Statement {
+            span: exported.span,
+            kind: StatementKind::Assign {
+                place: Place::from_local(LocalId(0)),
+                rvalue: Rvalue::ResultVariant(ResultVariant {
+                    kind: ResultVariantKind::Ok,
+                    payload: Operand::Constant(Constant::Unit),
+                    ok_type: IncanType::Named("Record".into()),
+                    error_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+                    canonical_types: std::collections::BTreeMap::from([(vec![0], source_type.clone())]),
+                }),
+            },
+        });
+        let mut input = module(vec![exported]);
+        input.nominal_declarations.push(crate::body_ir::NominalDeclaration {
+            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
+            canonical: published_type.clone(),
+            name: "Record".into(),
+            fields: vec![],
+            field_identities: vec![],
+            type_parameter_count: 0,
+        });
+        let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);
+        let bytes = publish(&input, &public)?;
+        let decoded = SurfaceReader::open(&bytes)?.declaration(&identity("exported", 1))?;
+        let Some(Statement {
+            kind:
+                StatementKind::Assign {
+                    rvalue: Rvalue::ResultVariant(variant),
+                    ..
+                },
+            ..
+        }) = decoded.block.stmts.first()
+        else {
+            return Err("Result type context disappeared".into());
+        };
+        assert_eq!(variant.canonical_types.get(&vec![0]), Some(&published_type));
+        let Some(Statement {
+            kind:
+                StatementKind::Assign {
+                    rvalue: Rvalue::ResultVariant(variant),
+                    ..
+                },
+            ..
+        }) = input.bodies.first_mut().and_then(|body| body.block.stmts.first_mut())
+        else {
+            return Err("source Result disappeared".into());
+        };
+        let mut private = identity("private_type_secret", 3);
+        private.kind = SemanticSourceTargetKind::Model;
+        variant.canonical_types.insert(vec![0], private);
+        let bytes = publish(&input, &public)?;
+        assert!(!SurfaceReader::open(&bytes)?.covers(&identity("exported", 1)));
+        assert!(
+            !bytes
+                .windows(b"private_type_secret".len())
+                .any(|bytes| bytes == b"private_type_secret")
+        );
+        Ok(())
+    }
+
     /// Local binding identity is checker-session metadata; fragment-local slots retain execution identity instead.
     #[test]
     fn publication_removes_session_local_binding_discriminants() -> Result<(), Box<dyn std::error::Error>> {

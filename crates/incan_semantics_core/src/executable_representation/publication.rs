@@ -294,6 +294,9 @@ impl PublicationAudit<'_> {
             Rvalue::FieldlessEnumVariant(target) => self.fieldless_variant(target)?,
             Rvalue::ResultVariant(value) => {
                 self.operand(&mut value.payload)?;
+                for identity in value.canonical_types.values_mut() {
+                    self.identity(identity, true)?;
+                }
                 self.ty(&value.ok_type)?;
                 self.ty(&value.error_type)?;
             }

@@ -24,7 +24,7 @@ use super::{
 /// worklist breaks recursive call cycles without omitting the rest of a body.
 pub(super) fn validate(
     module: &BodyIrModule,
-    reachable: &[BodyIrModule],
+    reachable: &[&BodyIrModule],
     entry: &Body,
     providers: Option<&ProviderRuntime>,
 ) -> Result<(), ReplacementExecutionError> {
@@ -65,7 +65,7 @@ struct ExecutionPreflight<'module, 'runtime> {
     /// Preflight has to follow a call across a module edge for the same reason it follows one inside a module: an
     /// admitted profile is proved before any program effect runs, and a body left unvisited is a body whose refusals
     /// would surface part-way through execution instead.
-    reachable: &'module [BodyIrModule],
+    reachable: &'module [&'module BodyIrModule],
     providers: Option<&'runtime ProviderRuntime>,
     pending: Vec<(&'module BodyIrModule, &'module Body)>,
     visited: BTreeSet<&'module CompilerNodeId>,
@@ -100,7 +100,7 @@ impl<'module> ExecutionPreflight<'module, '_> {
             )
         })?;
         let mut resolved = std::iter::once(self.module)
-            .chain(self.reachable.iter())
+            .chain(self.reachable.iter().copied())
             .filter_map(|module| module.body_for_canonical_target(canonical).map(|body| (module, body)));
         let resolved_body = resolved.next().ok_or_else(|| {
             unsupported(

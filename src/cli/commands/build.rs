@@ -42,6 +42,7 @@ use crate::frontend::api_metadata::{
     materialize_checked_api_public_namespaces, validate_checked_api_docstrings,
 };
 use crate::frontend::ast::{Declaration, Decorator, Expr, ImportKind, Literal, Span, Spanned, Statement, Visibility};
+#[cfg(test)]
 use crate::frontend::body_ir::build_body_ir_module_v0;
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
 use crate::frontend::library_exports::{

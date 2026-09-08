@@ -101,6 +101,15 @@ impl CompilerNodeId {
         )
     }
 
+    /// Address one named leaf of an expression's checked type by structural child indices, independent of aliases.
+    pub fn expression_type_component(module_identity: &str, start: usize, end: usize, indices: &[usize]) -> Self {
+        let path = indices.iter().map(usize::to_string).collect::<Vec<_>>().join(".");
+        Self::new(
+            CompilerNodeKind::Type,
+            format!("{module_identity}#expr.{start}..{end}/type.{path}"),
+        )
+    }
+
     /// Build a statement identity from its module and source byte span.
     pub fn statement_span(module_identity: &str, start: usize, end: usize) -> Self {
         Self::new(

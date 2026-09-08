@@ -1417,12 +1417,7 @@ pub fn prepare_free_function_execution_in_graph<'module, 'args>(
     validate_scalar_arguments(args, body.span)?;
     validate_selected_parameter_arguments(&body.params, args)?;
     validate_reachable_typed_numeric_profile(&graph, module, body)?;
-    let preflight_reachable: Vec<BodyIrModule> = graph
-        .modules()
-        .filter(|candidate| candidate.module_id != module.module_id)
-        .cloned()
-        .collect();
-    execution_preflight::validate(module, &preflight_reachable, body, providers.map(Rc::as_ref))?;
+    execution_preflight::validate(module, &graph.reachable, body, providers.map(Rc::as_ref))?;
     Ok(ValidatedFreeFunctionExecution {
         graph,
         name: name.to_string(),
@@ -3560,6 +3555,12 @@ fn validate_result_variant_profile(
     span: HirSourceSpan,
     tuple_iteration_locals: &BTreeSet<LocalId>,
 ) -> Result<(), ReplacementExecutionError> {
+    if !variant.has_complete_canonical_types() {
+        return Err(unsupported(
+            "Result construction without complete canonical payload type identities",
+            span,
+        ));
+    }
     if !is_direct_result_payload_type(&variant.ok_type) || !is_direct_result_payload_type(&variant.error_type) {
         return Err(unsupported(
             "Result construction with an unsupported payload type",
@@ -3958,13 +3959,12 @@ fn validate_write_place(
 
 /// Mutable interpreter state for one Body-IR execution.
 struct BodyExecutor<'run, 'writer> {
-    module: BodyIrModule,
-    /// Modules other than this frame's own that a resolved call may execute against.
+    module: Rc<BodyIrModule>,
+    /// The complete validated graph, including the entry module, shared by every execution frame.
     ///
-    /// Shared rather than cloned per frame: a nested frame inherits the same set, and the graph is immutable for the
-    /// life of one execution. `module` stays owned because a frame executes against exactly one module and every
-    /// existing lookup reads it directly.
-    reachable: Rc<Vec<BodyIrModule>>,
+    /// Each module is retained once. Changing a frame owner clones an Rc handle; canonical calls and type context
+    /// lookup always see the same graph, including calls back into the entry module.
+    modules: Rc<Vec<Rc<BodyIrModule>>>,
     locals: BTreeMap<LocalId, ReplacementValue>,
     /// Checked local types for the currently selected declaration or its nested source-local frame.
     local_types: BTreeMap<LocalId, IncanType>,
@@ -4002,17 +4002,15 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         providers: Option<Rc<ProviderRuntime>>,
         io: &'run mut ProgramIo<'writer>,
     ) -> Result<Self, ReplacementExecutionError> {
-        let module = graph.primary();
-        let reachable = Rc::new(
-            graph
-                .modules()
-                .filter(|candidate| candidate.module_id != module.module_id)
-                .cloned()
-                .collect::<Vec<_>>(),
+        let module = Rc::new(graph.primary().clone());
+        let modules = Rc::new(
+            std::iter::once(Rc::clone(&module))
+                .chain(graph.reachable.iter().map(|module| Rc::new((*module).clone())))
+                .collect(),
         );
         let mut executor = Self {
-            module: module.clone(),
-            reachable,
+            module: Rc::clone(&module),
+            modules,
             locals: BTreeMap::new(),
             local_types: BTreeMap::new(),
             ownership_reads: Vec::new(),
@@ -4033,16 +4031,16 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
 
     /// Build an isolated executor for a nested callable, default computation, or suspended generator frame.
     fn with_locals(
-        module: &BodyIrModule,
-        reachable: Rc<Vec<BodyIrModule>>,
+        module: &Rc<BodyIrModule>,
+        modules: Rc<Vec<Rc<BodyIrModule>>>,
         locals: BTreeMap<LocalId, ReplacementValue>,
         local_types: BTreeMap<LocalId, IncanType>,
         steps: usize,
         io: &'run mut ProgramIo<'writer>,
     ) -> Self {
         Self {
-            module: module.clone(),
-            reachable,
+            module: Rc::clone(module),
+            modules,
             locals,
             local_types,
             ownership_reads: Vec::new(),
@@ -4129,14 +4127,14 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// than to whichever module a frame happened to run in, so they merge upward the same way across a module edge.
     fn execute_child_in_module<T>(
         &mut self,
-        module: &BodyIrModule,
+        module: &Rc<BodyIrModule>,
         locals: BTreeMap<LocalId, ReplacementValue>,
         local_types: BTreeMap<LocalId, IncanType>,
         steps: usize,
         execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
     ) -> Result<T, ReplacementExecutionError> {
         let mut child =
-            BodyExecutor::with_locals(module, Rc::clone(&self.reachable), locals, local_types, steps, self.io);
+            BodyExecutor::with_locals(module, Rc::clone(&self.modules), locals, local_types, steps, self.io);
         child.next_task_id = self.next_task_id;
         child.providers = self.providers.clone();
         // A frame running in another module raises refusals measured in that module's source, so record it here
@@ -4988,7 +4986,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         &self,
         target: &NamedCallableTarget,
         span: HirSourceSpan,
-    ) -> Result<(Option<BodyIrModule>, Body), ReplacementExecutionError> {
+    ) -> Result<(Option<Rc<BodyIrModule>>, Body), ReplacementExecutionError> {
         if target.direct_call_id.is_some() {
             return Ok((None, named_callable_body(&self.module, target, span)?.clone()));
         }
@@ -5002,7 +5000,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             )
         })?;
         let mut resolved = self
-            .reachable
+            .modules
             .iter()
             .filter_map(|module| module.body_for_canonical_target(canonical).map(|body| (module, body)));
         let (module, body) = resolved.next().ok_or_else(|| {
@@ -5889,11 +5887,13 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             ));
         }
         let payload = self.evaluate_operand(&variant.payload, span)?;
-        let payload_type = match variant.kind {
-            ResultVariantKind::Ok => &variant.ok_type,
-            ResultVariantKind::Err => &variant.error_type,
+        let (payload_type, mut path) = match variant.kind {
+            ResultVariantKind::Ok => (&variant.ok_type, vec![0]),
+            ResultVariantKind::Err => (&variant.error_type, vec![1]),
         };
-        if !payload.is_direct_result_payload() || !self.value_matches_direct_result_type(&payload, payload_type) {
+        if !payload.is_direct_result_payload()
+            || !self.value_matches_direct_result_type(&payload, payload_type, &mut path, &variant.canonical_types)
+        {
             return Err(unsupported(
                 format!(
                     "Result construction with {} payload incompatible with retained type `{payload_type}`",
@@ -6008,36 +6008,39 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         Ok(())
     }
 
-    /// Check a Result payload against the checked type retained by its construction rvalue.
+    /// Validate a Result carrier against checked structural type paths and exact declaring identities.
     ///
-    /// Named values are accepted only after their runtime identity re-resolves to a declaration of the same source
-    /// name in this module. This prevents malformed Body IR from placing an arbitrary enum/model carrier in a
-    /// Result solely because both happen to be `Named` types.
-    fn value_matches_direct_result_type(&self, value: &ReplacementValue, ty: &IncanType) -> bool {
+    /// Diagnostic type spellings may be aliases. Nominal/enum identity comes from the declaring compilation and is
+    /// resolved in the same complete graph as calls; equal names from different packages cannot satisfy this check.
+    fn value_matches_direct_result_type(
+        &self,
+        value: &ReplacementValue,
+        ty: &IncanType,
+        path: &mut Vec<usize>,
+        identities: &BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) -> bool {
         match (value, ty) {
             (ReplacementValue::Int(_), IncanType::Primitive(IncanPrimitiveType::Int))
             | (ReplacementValue::Bool(_), IncanType::Primitive(IncanPrimitiveType::Bool))
             | (ReplacementValue::Str(_), IncanType::Primitive(IncanPrimitiveType::Str))
             | (ReplacementValue::Unit, IncanType::Primitive(IncanPrimitiveType::Unit)) => true,
-            (ReplacementValue::Tuple(values), IncanType::Tuple(types)) => {
-                if values.len() != types.len() {
-                    return false;
-                }
-                values
-                    .iter()
-                    .zip(types)
-                    .all(|(value, ty)| self.value_matches_direct_result_type(value, ty))
-            }
-            (ReplacementValue::Tuple(values), IncanType::Generic { base, args })
-                if collections::from_str(base) == Some(CollectionTypeId::Tuple) =>
-            {
-                if values.len() != args.len() {
-                    return false;
-                }
-                values
-                    .iter()
-                    .zip(args)
-                    .all(|(value, ty)| self.value_matches_direct_result_type(value, ty))
+            (ReplacementValue::Tuple(values), ty) => {
+                let types = match ty {
+                    IncanType::Tuple(types) => types,
+                    IncanType::Generic { base, args }
+                        if collections::from_str(base) == Some(CollectionTypeId::Tuple) =>
+                    {
+                        args
+                    }
+                    _ => return false,
+                };
+                values.len() == types.len()
+                    && values.iter().zip(types).enumerate().all(|(index, (value, ty))| {
+                        path.push(index);
+                        let matches = self.value_matches_direct_result_type(value, ty, path, identities);
+                        path.pop();
+                        matches
+                    })
             }
             (ReplacementValue::List { elements, .. }, IncanType::Generic { base, args })
                 if collections::from_str(base) == Some(CollectionTypeId::List) =>
@@ -6045,34 +6048,52 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 let [element_type] = args.as_slice() else {
                     return false;
                 };
-                elements
+                path.push(0);
+                let matches = elements
                     .iter()
-                    .all(|element| self.value_matches_direct_result_type(element, element_type))
+                    .all(|element| self.value_matches_direct_result_type(element, element_type, path, identities));
+                path.pop();
+                matches
             }
             (
                 ReplacementValue::Nominal {
                     direct_declaration_id, ..
                 },
-                IncanType::Named(expected),
-            ) => self.module.nominal_declarations.iter().any(|declaration| {
-                declaration.direct_declaration_id == *direct_declaration_id && declaration.name == *expected
-            }),
+                IncanType::Named(_),
+            ) => self
+                .modules
+                .iter()
+                .flat_map(|module| &module.nominal_declarations)
+                .any(|declaration| {
+                    declaration.direct_declaration_id == *direct_declaration_id
+                        && identities.get(path) == Some(&declaration.canonical)
+                }),
             (
                 ReplacementValue::FieldlessEnum {
                     enum_declaration_id, ..
                 },
-                IncanType::Named(expected),
-            ) => self.module.fieldless_enum_declarations.iter().any(|declaration| {
-                declaration.direct_declaration_id == *enum_declaration_id && declaration.name == *expected
-            }),
+                IncanType::Named(_),
+            ) => self
+                .modules
+                .iter()
+                .flat_map(|module| &module.fieldless_enum_declarations)
+                .any(|declaration| {
+                    declaration.direct_declaration_id == *enum_declaration_id
+                        && identities.get(path) == Some(&declaration.canonical)
+                }),
             (
                 ReplacementValue::ValueEnum {
                     enum_declaration_id, ..
                 },
-                IncanType::Named(expected),
-            ) => self.module.value_enum_declarations.iter().any(|declaration| {
-                declaration.direct_declaration_id == *enum_declaration_id && declaration.name == *expected
-            }),
+                IncanType::Named(_),
+            ) => self
+                .modules
+                .iter()
+                .flat_map(|module| &module.value_enum_declarations)
+                .any(|declaration| {
+                    declaration.direct_declaration_id == *enum_declaration_id
+                        && identities.get(path) == Some(&declaration.canonical)
+                }),
             _ => false,
         }
     }
@@ -6313,9 +6334,10 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         identity: &CompilerNodeId,
         span: HirSourceSpan,
     ) -> Result<&BodyIrModule, ReplacementExecutionError> {
-        std::iter::once(&self.module)
-            .chain(self.reachable.iter())
+        self.modules
+            .iter()
             .find(|module| is_module_span_declaration_id(module, identity))
+            .map(Rc::as_ref)
             .ok_or_else(|| unsupported("declaration context is absent from the execution graph", span))
     }
 
@@ -7989,7 +8011,7 @@ mod tests {
         let mut stderr = std::io::sink();
         let mut io = ProgramIo::new(&mut stdout, &mut stderr);
         let mut executor = BodyExecutor::with_locals(
-            &module,
+            &Rc::new(module),
             Rc::new(Vec::new()),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -8081,7 +8103,14 @@ mod tests {
         let mut stdout = std::io::sink();
         let mut stderr = std::io::sink();
         let mut io = ProgramIo::new(&mut stdout, &mut stderr);
-        let mut executor = BodyExecutor::with_locals(&module, Rc::new(Vec::new()), locals, BTreeMap::new(), 0, &mut io);
+        let mut executor = BodyExecutor::with_locals(
+            &Rc::new(module),
+            Rc::new(Vec::new()),
+            locals,
+            BTreeMap::new(),
+            0,
+            &mut io,
+        );
         let arms = [
             RaceArm {
                 awaitable: Operand::place(Place::from_local(winner_local), OwnershipFact::Borrow, false),

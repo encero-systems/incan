@@ -946,13 +946,14 @@ impl CodegraphBuilder {
     /// The snapshot supplies both anchors and identities. These records do not infer a dependency from type spelling
     /// or reconstruct a source owner; they project the same relationship query used by executable requirements.
     fn collect_remaining_checked_references(&mut self, module: &ParsedModule, module_id: &str) {
-        let existing = self
+        let mut existing = self
             .records
             .iter()
             .filter_map(|record| match record {
-                CodegraphRecord::Reference(reference) if reference.module_id == module_id => {
-                    reference.span.as_ref().map(|span| (span.start, span.end))
-                }
+                CodegraphRecord::Reference(reference) if reference.module_id == module_id => reference
+                    .span
+                    .as_ref()
+                    .map(|span| (span.start, span.end, reference.canonical_identity.clone())),
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
@@ -961,11 +962,14 @@ impl CodegraphBuilder {
             .get(&module.file_path)
             .into_iter()
             .flat_map(|snapshot| snapshot.facts.checked_reference_sites())
-            .filter(|(span, _)| !existing.contains(&(span.start, span.end)))
-            .map(|(span, reference)| (span, reference.target.declaration_name.clone()))
+            .map(|(span, reference)| (span, reference.target.clone(), reference.owner.cloned()))
             .collect::<Vec<_>>();
-        for (span, name) in sites {
-            self.push_reference(
+        for (span, target, owner) in sites {
+            if !existing.insert((span.start, span.end, Some(codegraph_canonical_identity(&target)))) {
+                continue;
+            }
+            let name = target.declaration_name.clone();
+            self.push_reference_with_checked(
                 module,
                 module_id,
                 None,
@@ -973,6 +977,7 @@ impl CodegraphBuilder {
                 "checked",
                 Span::new(span.start, span.end),
                 false,
+                Some((target, owner)),
             );
         }
     }
@@ -1886,16 +1891,37 @@ impl CodegraphBuilder {
         span: Span,
         degraded: bool,
     ) {
+        let checked = self
+            .source_checked_reference(module, span)
+            .map(|reference| (reference.target.clone(), reference.owner.cloned()));
+        self.push_reference_with_checked(module, module_id, owner_id, name, kind, span, degraded, checked);
+    }
+
+    /// Emit one checked reference projection, including a type component sharing an expression's source span.
+    #[allow(clippy::too_many_arguments)]
+    fn push_reference_with_checked(
+        &mut self,
+        module: &ParsedModule,
+        module_id: &str,
+        owner_id: Option<&str>,
+        name: &str,
+        kind: &str,
+        span: Span,
+        degraded: bool,
+        checked: Option<(CanonicalSymbolId, Option<CanonicalSymbolId>)>,
+    ) {
         let id = self.next_body_fact_id("reference", module, span, name);
-        let checked = self.source_checked_reference(module, span);
-        let canonical_identity = checked.map(|reference| reference.target.clone());
-        let canonical_owner = checked.and_then(|reference| reference.owner.cloned());
+        let has_checked_target = checked.is_some();
+        let (canonical_identity, canonical_owner) = match checked {
+            Some((target, owner)) => (Some(target), owner),
+            None => (None, None),
+        };
         let checked_owner_id = canonical_owner
             .as_ref()
             .and_then(|identity| self.canonical_target_ids.get(identity))
             .cloned();
         // Syntax ownership remains a navigation fallback only when no checked target was available.
-        let owner_id = if checked.is_some() {
+        let owner_id = if has_checked_target {
             checked_owner_id.as_deref()
         } else {
             owner_id
@@ -3265,10 +3291,14 @@ model Local:
     property read -> int:
         return self.value
 
+def carry(item: Item) -> Result[Item, State]:
+    return Ok(item)
+
 def main() -> int:
     callback: (int) -> int = (value) => value + starting()
     local = Local()
     item = Item(value=callback(with_default()))
+    carry(item)
     if State.Ready == State.Ready:
         return item.value + local.read
     return 0
@@ -3333,6 +3363,7 @@ def main() -> int:
                         .span
                         .as_ref()
                         .is_some_and(|source| source.start == span.start && source.end == span.end)
+                        && reference.canonical_identity == Some(codegraph_canonical_identity(checked.target))
                 })
                 .ok_or("checked site missing from CodeGraph")?;
             assert_eq!(
