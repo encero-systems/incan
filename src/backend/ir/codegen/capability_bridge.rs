@@ -69,7 +69,7 @@ fn type_bound_matches_capability(bound: &TypeBoundExport, capability: &TraitCapa
             .iter()
             .zip(capability.required_type_args)
             .all(|(actual, required)| {
-                matches!((actual, required), (TypeRef::Named { name }, TraitCapabilityTypeArg::Str) if name == "str")
+                matches!((actual, required), (TypeRef::Named { name, .. }, TraitCapabilityTypeArg::Str) if name == "str")
             })
 }
 
@@ -115,7 +115,8 @@ fn trait_bound_extends_capability(
 fn substitute_type_ref_params(ty: &TypeRef, substitutions: &HashMap<String, TypeRef>) -> TypeRef {
     match ty {
         TypeRef::TypeParam { name } => substitutions.get(name).cloned().unwrap_or_else(|| ty.clone()),
-        TypeRef::Applied { name, args } => TypeRef::Applied {
+        TypeRef::Applied { name, args, origin } => TypeRef::Applied {
+            origin: origin.clone(),
             name: name.clone(),
             args: args
                 .iter()
@@ -141,6 +142,15 @@ fn substitute_type_ref_params(ty: &TypeRef, substitutions: &HashMap<String, Type
         TypeRef::Ref { inner } => TypeRef::Ref {
             inner: Box::new(substitute_type_ref_params(inner, substitutions)),
         },
+        TypeRef::NativeUnion(native) => {
+            let mut projected = native.clone();
+            projected.members = native
+                .members
+                .iter()
+                .map(|member| substitute_type_ref_params(member, substitutions))
+                .collect();
+            TypeRef::NativeUnion(projected)
+        }
         TypeRef::Named { .. } | TypeRef::SelfType | TypeRef::RustPath { .. } | TypeRef::Unknown => ty.clone(),
     }
 }

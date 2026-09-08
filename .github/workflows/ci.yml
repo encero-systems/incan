@@ -18,9 +18,15 @@ on:
         description: Run the expensive Oven and platform suite regardless of branch
         type: boolean
         default: true
+      reference:
+        description: Include compiler, SDK, docs and reference checks when heavy is disabled
+        type: boolean
+        default: false
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Irrelevant label events skip the scope job, but still enter workflow concurrency. Give them a separate group so
+  # auto-labelling cannot cancel the substantive PR run before its tests finish.
+  group: ci-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && format('label-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -50,6 +56,8 @@ jobs:
           BASE_BRANCH: ${{ github.base_ref }}
         run: |
           python3 scripts/test_release_version_consistency.py
+          python3 scripts/test_ci_scope.py
+          python3 scripts/test_ci_sdk_handoff.py
           python3 scripts/check_release_version_consistency.py \
             --release-branch "$RELEASE_BRANCH" --base-branch "$BASE_BRANCH"
       - name: Classify the pull request
@@ -60,89 +68,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           REF_NAME: ${{ github.ref_name }}
           DISPATCH_HEAVY: ${{ inputs.heavy }}
+          DISPATCH_REFERENCE: ${{ inputs.reference }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: |
-          set -euo pipefail
-
-          docs_only=false
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            git fetch origin "$BASE_REF" --depth=1
-            base_ref="origin/$BASE_REF"
-            changed=false
-            docs_only=true
-
-            while IFS= read -r -d '' file; do
-              changed=true
-              # The two generated reference pages are derived from the compiler,
-              # so they must retain the full generated-reference check.
-              case "$file" in
-                workspaces/docs-site/docs/language/reference/language.md|workspaces/docs-site/docs/language/reference/feature_inventory.md|workspaces/docs-site/docs/_snippets/language/examples/verified_*.incn)
-                  docs_only=false
-                  break
-                  ;;
-                workspaces/docs-site/*)
-                  ;;
-                *)
-                  docs_only=false
-                  break
-                  ;;
-              esac
-            done < <(git diff --name-only -z "$base_ref" HEAD)
-
-            if [ "$changed" = false ]; then
-              docs_only=false
-            fi
-          fi
-
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-
-          # The expensive half of this workflow -- four Oven replay shards, the prewarm that feeds them, the platform
-          # ABI matrix, the release-Loaf guard and the shadow-comparison evidence -- costs more than everything else
-          # combined. Spending it on every push to a development line pays release-gate prices for work that is not a
-          # release candidate yet. Run it where it decides something: an integration branch, a slice someone declares
-          # ready, or an explicit request.
-          heavy=false
-          case "$EVENT_NAME" in
-            workflow_dispatch)
-              [ "$DISPATCH_HEAVY" = "true" ] && heavy=true
-              ;;
-            pull_request)
-              # A pull request into `main` or a release branch is a release candidate. One into a development line
-              # is not, until it is labelled `full-ci`.
-              case "$BASE_REF" in
-                main|release/*) heavy=true ;;
-              esac
-              case ",$PR_LABELS," in
-                *,full-ci,*) heavy=true ;;
-              esac
-              ;;
-            *)
-              case "$REF_NAME" in
-                main|release/*) heavy=true ;;
-              esac
-              ;;
-          esac
-
-          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
-
-          # `Linux compiler and reference handoff` is a cold workspace build plus an SDK prewarm, and it typechecks the
-          # committed documentation examples. Once the expensive suite is gated off, its only remaining consumer is
-          # `Generated Reference Up-to-date`. Paying half an hour on every development pull request to re-derive a
-          # reference that can only change when the language registries, the generators, the committed reference pages
-          # or the verified examples change is the wrong trade -- so run the pair when one of those actually moved.
-          reference="$heavy"
-          if [ "$reference" != "true" ] && [ "$EVENT_NAME" = "pull_request" ]; then
-            while IFS= read -r -d '' file; do
-              case "$file" in
-                crates/incan_core/*) reference=true; break ;;
-                workspaces/docs-site/docs/language/reference/language.md) reference=true; break ;;
-                workspaces/docs-site/docs/language/reference/feature_inventory.md) reference=true; break ;;
-                workspaces/docs-site/docs/_snippets/language/examples/*) reference=true; break ;;
-              esac
-            done < <(git diff --name-only -z "$base_ref" HEAD)
-          fi
-
-          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ci_scope.sh
 
   fmt:
     name: Format Check
@@ -205,6 +133,11 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+      # These source-free checks run independently of SDK publication so its consumers never wait for test linking.
+      - name: Compile and run SDK transport and CI contract regressions
+        run: |
+          CARGO_BUILD_JOBS=2 cargo test --locked --all-features --lib sdk_build_reports_
+          CARGO_BUILD_JOBS=2 cargo test --locked --all-features --test toolchain_installer_tests compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence -- --exact
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -247,11 +180,6 @@ jobs:
             runner: macos-latest
             toolchain: 1.98.0
             c_abi_test: check_verifies_c_bindings_against_a_declared_ios_interop_target
-          - id: linux-rust-1-98
-            name: ubuntu-latest, Rust 1.98.0
-            runner: ubuntu-latest
-            toolchain: 1.98.0
-            c_abi_test: check_verifies_c_bindings_against_a_declared_android_interop_target
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -276,8 +204,7 @@ jobs:
       - name: Build the compiler
         run: CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
       - uses: ./.github/actions/restore-sdk-provider-store
-      # The Linux handoff below is the one complete Oven-suite authority. These jobs retain C-ABI coverage specific
-      # to macOS and Android without adding another Rust-version lane or independently baking the complete Loaf family.
+      # macOS retains its own compiler and SDK because the Linux handoff cannot supply a macOS toolchain.
       - name: Prewarm platform SDK providers
         run: >-
           CARGO_NET_OFFLINE=true
@@ -290,7 +217,7 @@ jobs:
           cargo test --locked --test cli_integration ${{ matrix.c_abi_test }} -- --exact
 
   linux-tool-handoff:
-    name: Linux compiler and reference handoff
+    name: Linux compiler and SDK handoff
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.reference == 'true' }}
@@ -321,19 +248,36 @@ jobs:
         run: |
           CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
           CARGO_BUILD_JOBS=2 cargo build --locked -p incan_core --bin generate_lang_reference
-      # `check-docs-examples` depends on `test-prewarm-sdk`, so this job builds the SDK provider store whether or not
-      # it is asked to. Without this restore it built one cold every run and discarded it with the runner, and
-      # `linux-oven-prewarm` then built the same store again. The action restores and saves under a key content-
-      # addressed on the provider closure and rustc identity, so the store is now built once per identity rather than
-      # twice per run: a hit here skips the build, and a miss here saves the store for the prewarm to restore.
-      #
-      # It must follow the compiler build, because deriving the cache key runs `incan oven sdk-provider-store-identity`.
+      # Only this Linux job restores/saves the cross-run SDK cache. Same-run consumers receive an artifact even
+      # when another workflow wins the immutable-cache reservation or saving the cache is unavailable.
       - uses: ./.github/actions/restore-sdk-provider-store
-      - name: Check verified documentation examples
+      - name: Prepare the selected Linux SDK
+        env:
+          INCAN_INTERNAL_SDK_BUILD_REPORT_DIR: ${{ runner.temp }}/sdk-build-reports
+        run: |
+          mkdir -p "$INCAN_INTERNAL_SDK_BUILD_REPORT_DIR"
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1 INCAN_TEST_PREWARM_TOOLCHAIN=1.98.0 make -s test-prewarm-sdk
+      - name: Stage the exact SDK handoff
         run: >-
-          INCAN_TEST_COMPILER_ALREADY_BUILT=1
-          INCAN_TEST_PREWARM_TOOLCHAIN=1.98.0
-          make -s check-docs-examples
+          python3 scripts/ci_sdk_handoff.py stage
+          --store target/incan_test_sdk_provider_store
+          --artifact target/ci-sdk-handoff
+      - name: Upload SDK preparation evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-linux-sdk-preparation-reports
+          path: ${{ runner.temp }}/sdk-build-reports
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload selected SDK provider store
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-linux-sdk-provider-store
+          path: target/ci-sdk-handoff
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload compiler and reference generators
         uses: actions/upload-artifact@v6
         with:
@@ -345,13 +289,89 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  verified-docs:
+    name: Verified documentation examples
+    runs-on: ubuntu-latest
+    needs: [changes, linux-tool-handoff]
+    if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.reference == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.INCAN_RUST_TOOLCHAIN }}
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          restore-keys: |
+            incan-oven-pr-sources-v1-1.98.0-Linux-X64-
+      - name: Fetch locked compiler sources
+        run: make fetch-locked-cargo-sources
+      - name: Download matching compiler and reference generators
+        uses: actions/download-artifact@v7
+        with:
+          name: test-linux-tools
+          path: target/debug
+      - name: Restore executable permissions
+        run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
+      - uses: ./.github/actions/consume-sdk-provider-store
+      - name: Check verified documentation examples
+        run: >-
+          INCAN_TEST_COMPILER_ALREADY_BUILT=1
+          INCAN_TEST_PREWARM_TOOLCHAIN=1.98.0
+          make -s check-docs-examples
+
+  oven-linux-platform-smoke:
+    name: Platform C ABI gate (ubuntu-latest, Rust 1.98.0)
+    runs-on: ubuntu-latest
+    needs: [changes, linux-tool-handoff]
+    if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.heavy == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.INCAN_RUST_TOOLCHAIN }}
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1 --toolchain "${{ env.INCAN_RUST_TOOLCHAIN }}"
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          restore-keys: |
+            incan-oven-pr-sources-v1-1.98.0-Linux-X64-
+      - name: Fetch locked compiler and Loaf publisher sources
+        run: |
+          make fetch-locked-cargo-sources
+          make fetch-oven-loaf-sources
+          make fetch-release-support-workspace-sources
+      - name: Download matching compiler and reference generators
+        uses: actions/download-artifact@v7
+        with:
+          name: test-linux-tools
+          path: target/debug
+      - name: Restore executable permissions
+        run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
+      - uses: ./.github/actions/consume-sdk-provider-store
+      # Cargo still compiles this test executable; downloading the CLI does not transfer its Cargo target graph.
+      - name: Run platform C ABI verification
+        run: >-
+          CARGO_NET_OFFLINE=true
+          cargo test --locked --test cli_integration
+          check_verifies_c_bindings_against_a_declared_android_interop_target -- --exact
+
   linux-oven-prewarm:
     name: Linux Oven prewarm
     runs-on: ubuntu-latest
     needs:
       - changes
       - linux-tool-handoff
-    if: ${{ needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.heavy == 'true' || needs.changes.outputs.reference == 'true') }}
+    if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.heavy == 'true' }}
     outputs:
       oven_suite_cache_key: ${{ steps.oven-suite-cache-key.outputs.key }}
     steps:
@@ -382,11 +402,7 @@ jobs:
           path: target/debug
       - name: Restore executable permissions
         run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
-      # This source/toolchain-keyed input cache survives across compatible
-      # commits. The exact-SHA prepared-suite cache below is separately
-      # retained because the replay partitions must restore a self-contained
-      # immutable closure.
-      - uses: ./.github/actions/restore-sdk-provider-store
+      - uses: ./.github/actions/consume-sdk-provider-store
       - uses: ./.github/actions/install-nightly-toolchain
         with:
           toolchain: nightly-2026-03-24
@@ -414,13 +430,6 @@ jobs:
             target/oven-compiler-suite-store
             target/incan_test_sdk_provider_store
             target/incan_test_sdk_provider_path
-      - name: Upload SDK provider store
-        uses: actions/upload-artifact@v6
-        with:
-          name: test-linux-sdk-provider-store
-          path: target/incan_test_sdk_provider_store
-          if-no-files-found: error
-          retention-days: 1
 
   oven-process-containment:
     name: Oven process-containment regressions
@@ -490,7 +499,7 @@ jobs:
           path: target/debug
       - name: Restore executable permissions
         run: chmod +x target/debug/incan
-      - uses: ./.github/actions/restore-sdk-provider-store
+      - uses: ./.github/actions/consume-sdk-provider-store
       - name: Prove the source-observable comparison ran and agreed
         run: >-
           CARGO_NET_OFFLINE=true
@@ -579,8 +588,7 @@ jobs:
           test -s target/incan_test_sdk_provider_path
       - name: Run receipt-bound Oven partition
         env:
-          INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
-          INCAN_TEST_COMMAND_TIMINGS: ${{ matrix.partition == 0 && '1' || '' }}
+          INCAN_TEST_COMMAND_TIMINGS: '1'
           INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: target/oven-pr-linux-partition-${{ matrix.partition }}.json
         run: >-
           CARGO_NET_OFFLINE=true
@@ -591,9 +599,8 @@ jobs:
           make -s test-oven-partition
           INCAN_TEST_OVEN_PARTITION_INDEX=${{ matrix.partition }}
           INCAN_TEST_OVEN_PARTITION_COUNT=4
-      # The JSON report is only written on success. A failing partition instead retains the complete libtest
-      # transcript beside its caller output, and that transcript is the only place every failing case is named:
-      # the terminal summary is deliberately bounded, so a few large panics can crowd the rest out of the log.
+      # Every partition retains measured root/case durations for future replay weighting (#1065). Consumption is
+      # separate work; publishing these records does not mean this run's partitioner already uses them.
       - name: Upload Oven partition report
         if: always()
         uses: actions/upload-artifact@v6
@@ -601,9 +608,26 @@ jobs:
           name: oven-pr-linux-partition-${{ matrix.partition }}
           path: |
             target/oven-pr-linux-partition-${{ matrix.partition }}.json
-            target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
+            target/oven-pr-linux-partition-${{ matrix.partition }}.json.wall-time.json
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: 30
+      # Successful diagnostic output stays out of live progress but remains available with failed-case diagnostics.
+      - name: Upload Oven partition transcripts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-partition-${{ matrix.partition }}-transcripts
+          path: target/oven-pr-linux-partition-${{ matrix.partition }}.json.transcripts.tar.gz
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload retained caller transcripts after a failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-partition-${{ matrix.partition }}-raw-transcripts
+          path: target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
+          if-no-files-found: warn
+          retention-days: 7
 
   oven-release-smoke:
     name: Oven release Loaf guard
@@ -645,7 +669,7 @@ jobs:
           path: target/debug
       - name: Restore executable permissions
         run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
-      - uses: ./.github/actions/restore-sdk-provider-store
+      - uses: ./.github/actions/consume-sdk-provider-store
       - name: Bake the release Loafs and guard normal build, run, and test
         run: >-
           CARGO_NET_OFFLINE=true
@@ -828,13 +852,10 @@ jobs:
   generated-reference:
     name: Generated Reference Up-to-date
     runs-on: ubuntu-latest
-    # Depends on the two jobs whose artifacts it downloads: `test-linux-tools` from the handoff, and
-    # `test-linux-sdk-provider-store` from the prewarm, which it seeds from whenever its provider cache misses. It no
-    # longer waits on the Oven replay or the platform matrix, which it never consumed.
+    # Reference generation consumes the compiler/SDK handoff directly; no Loaf baking is needed.
     needs:
       - changes
       - linux-tool-handoff
-      - linux-oven-prewarm
     if: ${{ needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.reference == 'true' }}
     steps:
       - uses: actions/checkout@v5
@@ -859,29 +880,9 @@ jobs:
           path: target/debug
       - name: Restore executable permissions
         run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
-      - name: Fingerprint checked feature inventory
-        id: inventory-identity
-        run: |
-          {
-            echo "compiler=$(shasum -a 256 target/debug/incan | awk '{print $1}')"
-            echo "lock=$(shasum -a 256 Cargo.lock | awk '{print $1}')"
-            echo "stdlib=$(git rev-parse HEAD:crates/incan_stdlib/stdlib)"
-          } >> "$GITHUB_OUTPUT"
-      - name: Restore checked feature inventory providers
-        id: inventory-provider-cache
-        uses: actions/cache@v5
+      - uses: ./.github/actions/consume-sdk-provider-store
         with:
-          path: target/incan_reference_sdk_provider_store
-          key: >-
-            incan-feature-inventory-provider-v1-${{ runner.os }}-${{ runner.arch }}-${{
-            steps.inventory-identity.outputs.compiler }}-${{ steps.inventory-identity.outputs.lock }}-${{
-            steps.inventory-identity.outputs.stdlib }}
-      - name: Seed checked feature inventory providers
-        if: steps.inventory-provider-cache.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v7
-        with:
-          name: test-linux-sdk-provider-store
-          path: target/incan_reference_sdk_provider_store
+          store: target/incan_reference_sdk_provider_store
       - name: Regenerate checked language references
         run: ./target/debug/generate_lang_reference
       - name: Regenerate checked capability inventory

@@ -314,6 +314,9 @@ pub struct AliasExport {
     pub target_path: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projected_function: Option<FunctionExport>,
+    /// Checked nominal target retained by a public type re-export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_type: Option<TypeRef>,
 }
 
 /// Exported partial callable preset metadata.
@@ -398,9 +401,31 @@ pub struct LibraryContractMetadata {
     /// Stable semantic identities for public exports.
     #[serde(default = "legacy_library_identity_graph")]
     pub identity_graph: LibraryIdentityGraph,
+    /// Optional executable publication selected by this exact manifest; linking-only packages may omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable_representation: Option<ExecutableRepresentationExport>,
+    /// Publicly referenced union definitions captured from this artifact's final native emission.
+    ///
+    /// Entries are owned by this containing artifact and retain the exact emitted name and payload order. Typed
+    /// references forwarded from another artifact retain that selected owner and do not add a local definition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_unions: Vec<NativeUnionExport>,
     /// Generic compiled-provider facts used by SDK and ordinary package consumers.
     #[serde(default, skip_serializing_if = "CompiledProviderMetadata::is_empty")]
     pub provider: CompiledProviderMetadata,
+}
+
+/// Immutable binary executable sidecar published before the manifest that selects it.
+///
+/// The manifest selects immutable semantic content from its checked build, so stale files cannot be selected by
+/// a rebuilt manifest. The surrounding library publication restores ordinary failures; it does not promise atomic
+/// availability to concurrent readers or across a process crash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutableRepresentationExport {
+    /// Encoding version, separate from the manifest and package versions.
+    pub representation_version: u32,
+    /// SHA-256 content identity, encoded as lowercase hexadecimal and used as the semantic sidecar filename.
+    pub content_digest: String,
 }
 
 /// Generic backend-neutral provider facts embedded in one checked library artifact.
@@ -1227,13 +1252,110 @@ pub enum ImplementationTraitBoundOriginExport {
     SourceCallable,
 }
 
+/// Checked identity of a foreign nominal type referenced by a public API type leaf.
+///
+/// The artifact selection and canonical declaration authorize semantics. Consumer dependency aliases and generated
+/// Rust bridge routes are separate projections. Own-package types omit this record to avoid self-digest cycles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NominalTypeOriginExport {
+    /// Exact selected version, digest and active public feature projection of the declaring artifact.
+    pub provider: crate::provider::ProviderIdentity,
+    /// Declaring public type identity retained from that artifact's checked identity graph.
+    pub canonical: CanonicalIdentityExport,
+}
+
+impl NominalTypeOriginExport {
+    /// Return an opaque checker binding key; this is never emitted as a Rust path or resolved by source spelling.
+    pub(crate) fn binding_key(&self) -> String {
+        format!("__incan_nominal::{}::{:?}", self.provider.stable_key(), self.canonical)
+    }
+}
+
+impl TypeRef {
+    /// Return whether this typed position contains an explicit emitted-union carrier at any nesting depth.
+    pub(crate) fn has_native_union(&self) -> bool {
+        let mut found = false;
+        super::type_projection::VisitTypeRefs::visit_type_refs(&mut self.clone(), &mut |ty| {
+            found |= matches!(ty, TypeRef::NativeUnion(_));
+        });
+        found
+    }
+}
+
+/// Artifact ownership of an emitted anonymous-union wrapper.
+///
+/// A producer cannot include its own final artifact digest in that artifact. Admission binds `ContainingArtifact`
+/// to the selected containing provider; forwarding retains that exact selection as `SelectedArtifact`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NativeUnionOwnerExport {
+    ContainingArtifact,
+    SelectedArtifact(crate::provider::ProviderIdentity),
+}
+
+/// Native representation captured from the producer's final emitted union definition.
+///
+/// `members` retain producer payload order: their indices are the emitted `V0`, `V1`, ... variants. A consumer may
+/// project their nominal leaves to different physical Rust routes, but may neither reorder them nor recompute the
+/// wrapper name from those routes. The containing selected artifact authenticates this representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeUnionExport {
+    pub owner: NativeUnionOwnerExport,
+    pub rust_name: String,
+    pub members: Vec<TypeRef>,
+    /// Producer-local nominal bindings captured from checked declarations, without a self artifact digest.
+    ///
+    /// Keys are the producer's actual lowered spellings. Admission validates every canonical declaration against
+    /// the selected owner's public surface before binding these leaves to that exact artifact.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub local_nominals: BTreeMap<String, CanonicalIdentityExport>,
+    /// Checked consumer-only physical projection; never accepted from or written to the manifest wire.
+    #[serde(skip)]
+    pub(crate) checked_projection: Option<Box<NativeUnionProjection>>,
+}
+
+/// Physical projection of an admitted union, separate from its immutable producer representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeUnionProjection {
+    /// Direct admitted dependency through which this exact native owner was selected.
+    pub dependency_root: String,
+    pub rust_owner: String,
+    pub members: Vec<TypeRef>,
+    /// Exact accepted nominal bindings under the Rust spellings selected by the consumer's lowering pass.
+    pub nominal_origins: BTreeMap<String, NominalTypeOriginExport>,
+}
+
+impl NativeUnionExport {
+    /// Remove consumer-only physical projections while preserving the admitted producer's wire representation.
+    pub(crate) fn for_publication(&self) -> Self {
+        let mut native = self.clone();
+        native.checked_projection = None;
+        super::type_projection::VisitTypeRefs::visit_type_refs(&mut native.members, &mut |ty| {
+            if let TypeRef::NativeUnion(nested) = ty {
+                nested.checked_projection = None;
+            }
+        });
+        native
+    }
+}
+
 /// Stable manifest-level type reference used by library exports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeRef {
     /// A named non-generic type such as `User` or `int`.
-    Named { name: String },
+    Named {
+        name: String,
+        /// Checked foreign nominal origin. Absence retains the legacy local-name contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<NominalTypeOriginExport>,
+    },
     /// A generic application such as `List[str]`.
-    Applied { name: String, args: Vec<TypeRef> },
+    Applied {
+        name: String,
+        args: Vec<TypeRef>,
+        /// Identity of a foreign generic nominal head, independent of its argument identities.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<NominalTypeOriginExport>,
+    },
     /// A function type with positional parameter and return types.
     Function {
         params: Vec<TypeRef>,
@@ -1253,6 +1375,12 @@ pub enum TypeRef {
     RustPath { path: String },
     /// A placeholder used when the manifest intentionally preserves unknown type information.
     Unknown,
+    /// An ordinary union with its producer-owned native wrapper and ordered semantic payloads.
+    ///
+    /// Legacy manifests retain `Applied { name: "Union", .. }`; this explicit carrier is emitted only when the
+    /// producer supplied actual native representation evidence. Appending the variant preserves earlier positional
+    /// discriminants; readers still need the containing payload's version to accept new representation evidence.
+    NativeUnion(NativeUnionExport),
 }
 
 /// Exported field metadata for models and classes.
@@ -1376,7 +1504,7 @@ pub enum ParamDefaultExport {
         path: Vec<String>,
         args: Vec<ParamDefaultCallArgExport>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        signature: Option<ParamDefaultCallSignatureExport>,
+        signature: Option<Box<ParamDefaultCallSignatureExport>>,
     },
     Unsupported,
 }
@@ -1724,15 +1852,20 @@ impl LibraryManifest {
     /// Validation happens before serialization so producer mistakes fail early instead of emitting an invalid
     /// `.incnlib` file.
     pub fn write_to_path(&self, path: &Path) -> Result<(), LibraryManifestError> {
-        let raw = RawLibraryManifest::from_semantic(self);
-        validate_raw_manifest(&raw)?;
-        let content =
-            serde_json::to_string_pretty(&raw).map_err(|err| LibraryManifestError::Serialize(err.to_string()))?;
-        fs::write(path, format!("{content}\n")).map_err(|source| LibraryManifestError::Write {
+        fs::write(path, self.to_json_string()?).map_err(|source| LibraryManifestError::Write {
             path: path.to_path_buf(),
             source,
         })?;
         Ok(())
+    }
+
+    /// Validate and encode this manifest before a caller atomically publishes it beside immutable sidecars.
+    pub fn to_json_string(&self) -> Result<String, LibraryManifestError> {
+        let raw = RawLibraryManifest::from_semantic(self);
+        validate_raw_manifest(&raw)?;
+        let content =
+            serde_json::to_string_pretty(&raw).map_err(|error| LibraryManifestError::Serialize(error.to_string()))?;
+        Ok(format!("{content}\n"))
     }
 
     /// Read, decode, validate, and convert a manifest from disk.
@@ -1761,43 +1894,70 @@ impl LibraryExports {
         for export in exports {
             match &export.kind {
                 CheckedExportKind::Function(function_export) => {
-                    model.functions.push(function_export_from_checked(function_export));
+                    model.functions.push(super::with_checked_type_origins(
+                        function_export_from_checked(function_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Partial(partial_export) => {
-                    model.partials.push(partial_export_from_checked(partial_export));
+                    model.partials.push(super::with_checked_type_origins(
+                        partial_export_from_checked(partial_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Alias(alias_export) => {
-                    model.aliases.push(alias_export_from_checked(alias_export));
+                    model.aliases.push(super::with_checked_type_origins(
+                        alias_export_from_checked(alias_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::TypeAlias(type_alias_export) => {
-                    model
-                        .type_aliases
-                        .push(type_alias_export_from_checked(type_alias_export));
+                    model.type_aliases.push(super::with_checked_type_origins(
+                        type_alias_export_from_checked(type_alias_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Model(model_export) => {
-                    model.models.push(model_export_from_checked(package_name, model_export));
+                    model.models.push(super::with_checked_type_origins(
+                        model_export_from_checked(package_name, model_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Class(class_export) => {
-                    model
-                        .classes
-                        .push(class_export_from_checked(package_name, class_export));
+                    model.classes.push(super::with_checked_type_origins(
+                        class_export_from_checked(package_name, class_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Trait(trait_export) => {
-                    model.traits.push(trait_export_from_checked(package_name, trait_export));
+                    model.traits.push(super::with_checked_type_origins(
+                        trait_export_from_checked(package_name, trait_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Enum(enum_export) => {
-                    model.enums.push(enum_export_from_checked(package_name, enum_export));
+                    model.enums.push(super::with_checked_type_origins(
+                        enum_export_from_checked(package_name, enum_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Newtype(newtype_export) => {
-                    model
-                        .newtypes
-                        .push(newtype_export_from_checked(package_name, newtype_export));
+                    model.newtypes.push(super::with_checked_type_origins(
+                        newtype_export_from_checked(package_name, newtype_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Const(const_export) => {
-                    model.consts.push(const_export_from_checked(const_export));
+                    model.consts.push(super::with_checked_type_origins(
+                        const_export_from_checked(const_export),
+                        &export.identity.type_origins,
+                    ));
                 }
                 CheckedExportKind::Static(static_export) => {
-                    model.statics.push(static_export_from_checked(static_export));
+                    model.statics.push(super::with_checked_type_origins(
+                        static_export_from_checked(static_export),
+                        &export.identity.type_origins,
+                    ));
                 }
             }
         }
@@ -1911,12 +2071,12 @@ fn rewrite_type_ref_names(
         })
     };
     match ty {
-        TypeRef::Named { name } => {
+        TypeRef::Named { name, .. } => {
             if let Some(public_name) = public_name_for(name) {
                 *name = public_name.clone();
             }
         }
-        TypeRef::Applied { name, args } => {
+        TypeRef::Applied { name, args, .. } => {
             if let Some(public_name) = public_name_for(name) {
                 *name = public_name.clone();
             }
@@ -1936,6 +2096,11 @@ fn rewrite_type_ref_names(
         TypeRef::Tuple { elements } => {
             for element in elements {
                 rewrite_type_ref_names(element, owner_module_path, public_names, source_paths_by_leaf);
+            }
+        }
+        TypeRef::NativeUnion(native) => {
+            for member in &mut native.members {
+                rewrite_type_ref_names(member, owner_module_path, public_names, source_paths_by_leaf);
             }
         }
         TypeRef::TypeParam { .. } | TypeRef::SelfType | TypeRef::RustPath { .. } | TypeRef::Unknown => {}
@@ -2000,6 +2165,7 @@ fn alias_export_from_checked(export: &CheckedAliasExport) -> AliasExport {
     AliasExport {
         name: export.name.clone(),
         target_path: export.target_path.clone(),
+        projected_type: export.projected_type.as_ref().map(type_ref_from_resolved),
         projected_function: export.projected_function.as_ref().map(function_export_from_checked),
     }
 }
@@ -2112,7 +2278,10 @@ pub(crate) fn param_default_from_checked(value: &CheckedParamDefault) -> Option<
             .map(|args| ParamDefaultExport::Call {
                 path: path.clone(),
                 args,
-                signature: signature.as_ref().map(param_default_call_signature_from_checked),
+                signature: signature
+                    .as_ref()
+                    .map(param_default_call_signature_from_checked)
+                    .map(Box::new),
             }),
         CheckedParamDefault::Unsupported => None,
     }

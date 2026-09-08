@@ -11,8 +11,9 @@
 //! entrypoint must produce a scalar observable, although an admitted sibling may return a structural intermediate to
 //! its direct caller. The executor also consumes the retained callable vocabulary directly: captured local closures,
 //! partial presets, source-evaluable defaults, identity-selected local or same-module named calls, generator
-//! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Packages, Rust interop,
-//! unsupported callable/default forms, general destructuring, and other projections remain visible refusals. Its
+//! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Published package bodies enter
+//! the same graph after their public executable requirements are resolved. Rust interop, unsupported callable/default
+//! forms, general destructuring, and other projections remain visible refusals. Its
 //! enclosing declaration snapshot retains a deferred generator's shape, but the frame executes and adds execution-frame
 //! evidence only when collection polls it; no path falls back to generated Rust.
 //!
@@ -60,7 +61,7 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{
     AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, HirSourceSpan, IncanPrimitiveType,
-    IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, module_identity_for_path,
+    IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
 
 use crate::backend::selection::digest_output;
@@ -699,13 +700,11 @@ fn direct_declaration_id_for_canonical(
     expected_namespace: SymbolNamespace,
     expected_kind: SemanticSourceTargetKind,
 ) -> Option<CompilerNodeId> {
-    let SymbolOrigin::Module(module_path) = &identity.origin else {
-        return None;
-    };
+    let owner = incan_semantics_core::canonical_module_identity(identity)?;
     (identity.namespace == expected_namespace
         && identity.kind == expected_kind
         && identity.scope_discriminant.is_none()
-        && module_identity_for_path(module_path) == module.module_id.path())
+        && owner == module.module_id.path())
     .then(|| {
         CompilerNodeId::declaration_span(
             module.module_id.path(),
@@ -1418,12 +1417,7 @@ pub fn prepare_free_function_execution_in_graph<'module, 'args>(
     validate_scalar_arguments(args, body.span)?;
     validate_selected_parameter_arguments(&body.params, args)?;
     validate_reachable_typed_numeric_profile(&graph, module, body)?;
-    let preflight_reachable: Vec<BodyIrModule> = graph
-        .modules()
-        .filter(|candidate| candidate.module_id != module.module_id)
-        .cloned()
-        .collect();
-    execution_preflight::validate(module, &preflight_reachable, body, providers.map(Rc::as_ref))?;
+    execution_preflight::validate(module, &graph.reachable, body, providers.map(Rc::as_ref))?;
     Ok(ValidatedFreeFunctionExecution {
         graph,
         name: name.to_string(),
@@ -1462,6 +1456,13 @@ fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionE
     } else {
         validate_block_profile(&body.block, &tuple_iteration_locals, &scalar_tuple_collection_locals)
     }
+}
+
+/// Check the executable structural profile used by the producer before declaring published body coverage.
+///
+/// This invokes the runtime's existing structural gate without executing defaults, providers, or program effects.
+pub(crate) fn validate_published_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
+    validate_direct_body_profile(body)
 }
 
 /// Resolve one named call by its retained same-module identity for both preflight and runtime dispatch.
@@ -2925,7 +2926,8 @@ fn replacement_method_operation(
             _ => None,
         };
     }
-    (matches!(identity.origin, SymbolOrigin::Module(_)) && identity.declaration_name == "value")
+    (matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+        && identity.declaration_name == "value")
         .then_some(ReplacementMethodOperation::ValueEnumValue)
 }
 
@@ -3553,6 +3555,12 @@ fn validate_result_variant_profile(
     span: HirSourceSpan,
     tuple_iteration_locals: &BTreeSet<LocalId>,
 ) -> Result<(), ReplacementExecutionError> {
+    if !variant.has_complete_canonical_types() {
+        return Err(unsupported(
+            "Result construction without complete canonical payload type identities",
+            span,
+        ));
+    }
     if !is_direct_result_payload_type(&variant.ok_type) || !is_direct_result_payload_type(&variant.error_type) {
         return Err(unsupported(
             "Result construction with an unsupported payload type",
@@ -3650,7 +3658,10 @@ fn validate_nominal_pattern_target(
 ) -> Result<(), ReplacementExecutionError> {
     if target.canonical.namespace != SymbolNamespace::OrdinaryLexical
         || target.canonical.kind != SemanticSourceTargetKind::Model
-        || !matches!(&target.canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            &target.canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || target.canonical.scope_discriminant.is_some()
     {
         return Err(unsupported(
@@ -3674,7 +3685,10 @@ fn validate_fieldless_enum_variant_target(
         || target.enum_canonical.namespace != SymbolNamespace::OrdinaryLexical
         || target.enum_canonical.kind != SemanticSourceTargetKind::Enum
         || target.enum_canonical.scope_discriminant.is_some()
-        || !matches!(target.enum_canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            target.enum_canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || target.enum_canonical.declaration_name != target.enum_name
         || target.variant_canonical.namespace != SymbolNamespace::Member
         || target.variant_canonical.kind != SemanticSourceTargetKind::Variant
@@ -3704,7 +3718,10 @@ fn validate_value_enum_variant_target(
         || target.enum_canonical.namespace != SymbolNamespace::OrdinaryLexical
         || target.enum_canonical.kind != SemanticSourceTargetKind::Enum
         || target.enum_canonical.scope_discriminant.is_some()
-        || !matches!(target.enum_canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            target.enum_canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || target.enum_canonical.declaration_name != target.enum_name
         || target.variant_canonical.namespace != SymbolNamespace::Member
         || target.variant_canonical.kind != SemanticSourceTargetKind::Variant
@@ -3843,7 +3860,10 @@ fn validate_nominal_constructor_target(
     };
     if canonical.namespace != SymbolNamespace::OrdinaryLexical
         || canonical.kind != SemanticSourceTargetKind::Model
-        || !matches!(&canonical.origin, SymbolOrigin::Module(_))
+        || !matches!(
+            &canonical.origin,
+            SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+        )
         || canonical.scope_discriminant.is_some()
     {
         return Err(unsupported(
@@ -3914,7 +3934,19 @@ fn validate_read_place(
     validate_local_place_root(place, span)?;
     match place.projection.as_slice() {
         [] => Ok(()),
-        [PlaceElem::Field { .. }] => Ok(()),
+        [
+            PlaceElem::Field {
+                canonical: Some(_),
+                structural: false,
+                ..
+            }
+            | PlaceElem::Field {
+                canonical: None,
+                structural: true,
+                ..
+            },
+        ] => Ok(()),
+        [PlaceElem::Field { .. }] => Err(unsupported("unresolved source field projection", span)),
         [PlaceElem::Index(index)] => validate_operand_profile(index, span, tuple_iteration_locals),
         [PlaceElem::Slice { .. }] => Err(unsupported("slice projection", span)),
         _ => Err(unsupported("nested place projection", span)),
@@ -3939,13 +3971,12 @@ fn validate_write_place(
 
 /// Mutable interpreter state for one Body-IR execution.
 struct BodyExecutor<'run, 'writer> {
-    module: BodyIrModule,
-    /// Modules other than this frame's own that a resolved call may execute against.
+    module: Rc<BodyIrModule>,
+    /// The complete validated graph, including the entry module, shared by every execution frame.
     ///
-    /// Shared rather than cloned per frame: a nested frame inherits the same set, and the graph is immutable for the
-    /// life of one execution. `module` stays owned because a frame executes against exactly one module and every
-    /// existing lookup reads it directly.
-    reachable: Rc<Vec<BodyIrModule>>,
+    /// Each module is retained once. Changing a frame owner clones an Rc handle; canonical calls and type context
+    /// lookup always see the same graph, including calls back into the entry module.
+    modules: Rc<Vec<Rc<BodyIrModule>>>,
     locals: BTreeMap<LocalId, ReplacementValue>,
     /// Checked local types for the currently selected declaration or its nested source-local frame.
     local_types: BTreeMap<LocalId, IncanType>,
@@ -3983,17 +4014,15 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         providers: Option<Rc<ProviderRuntime>>,
         io: &'run mut ProgramIo<'writer>,
     ) -> Result<Self, ReplacementExecutionError> {
-        let module = graph.primary();
-        let reachable = Rc::new(
-            graph
-                .modules()
-                .filter(|candidate| candidate.module_id != module.module_id)
-                .cloned()
-                .collect::<Vec<_>>(),
+        let module = Rc::new(graph.primary().clone());
+        let modules = Rc::new(
+            std::iter::once(Rc::clone(&module))
+                .chain(graph.reachable.iter().map(|module| Rc::new((*module).clone())))
+                .collect(),
         );
         let mut executor = Self {
-            module: module.clone(),
-            reachable,
+            module: Rc::clone(&module),
+            modules,
             locals: BTreeMap::new(),
             local_types: BTreeMap::new(),
             ownership_reads: Vec::new(),
@@ -4014,16 +4043,16 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
 
     /// Build an isolated executor for a nested callable, default computation, or suspended generator frame.
     fn with_locals(
-        module: &BodyIrModule,
-        reachable: Rc<Vec<BodyIrModule>>,
+        module: &Rc<BodyIrModule>,
+        modules: Rc<Vec<Rc<BodyIrModule>>>,
         locals: BTreeMap<LocalId, ReplacementValue>,
         local_types: BTreeMap<LocalId, IncanType>,
         steps: usize,
         io: &'run mut ProgramIo<'writer>,
     ) -> Self {
         Self {
-            module: module.clone(),
-            reachable,
+            module: Rc::clone(module),
+            modules,
             locals,
             local_types,
             ownership_reads: Vec::new(),
@@ -4110,14 +4139,14 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// than to whichever module a frame happened to run in, so they merge upward the same way across a module edge.
     fn execute_child_in_module<T>(
         &mut self,
-        module: &BodyIrModule,
+        module: &Rc<BodyIrModule>,
         locals: BTreeMap<LocalId, ReplacementValue>,
         local_types: BTreeMap<LocalId, IncanType>,
         steps: usize,
         execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
     ) -> Result<T, ReplacementExecutionError> {
         let mut child =
-            BodyExecutor::with_locals(module, Rc::clone(&self.reachable), locals, local_types, steps, self.io);
+            BodyExecutor::with_locals(module, Rc::clone(&self.modules), locals, local_types, steps, self.io);
         child.next_task_id = self.next_task_id;
         child.providers = self.providers.clone();
         // A frame running in another module raises refusals measured in that module's source, so record it here
@@ -4969,7 +4998,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         &self,
         target: &NamedCallableTarget,
         span: HirSourceSpan,
-    ) -> Result<(Option<BodyIrModule>, Body), ReplacementExecutionError> {
+    ) -> Result<(Option<Rc<BodyIrModule>>, Body), ReplacementExecutionError> {
         if target.direct_call_id.is_some() {
             return Ok((None, named_callable_body(&self.module, target, span)?.clone()));
         }
@@ -4983,7 +5012,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             )
         })?;
         let mut resolved = self
-            .reachable
+            .modules
             .iter()
             .filter_map(|module| module.body_for_canonical_target(canonical).map(|body| (module, body)));
         let (module, body) = resolved.next().ok_or_else(|| {
@@ -5870,11 +5899,13 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             ));
         }
         let payload = self.evaluate_operand(&variant.payload, span)?;
-        let payload_type = match variant.kind {
-            ResultVariantKind::Ok => &variant.ok_type,
-            ResultVariantKind::Err => &variant.error_type,
+        let (payload_type, mut path) = match variant.kind {
+            ResultVariantKind::Ok => (&variant.ok_type, vec![0]),
+            ResultVariantKind::Err => (&variant.error_type, vec![1]),
         };
-        if !payload.is_direct_result_payload() || !self.value_matches_direct_result_type(&payload, payload_type) {
+        if !payload.is_direct_result_payload()
+            || !self.value_matches_direct_result_type(&payload, payload_type, &mut path, &variant.canonical_types)
+        {
             return Err(unsupported(
                 format!(
                     "Result construction with {} payload incompatible with retained type `{payload_type}`",
@@ -5989,36 +6020,39 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         Ok(())
     }
 
-    /// Check a Result payload against the checked type retained by its construction rvalue.
+    /// Validate a Result carrier against checked structural type paths and exact declaring identities.
     ///
-    /// Named values are accepted only after their runtime identity re-resolves to a declaration of the same source
-    /// name in this module. This prevents malformed Body IR from placing an arbitrary enum/model carrier in a
-    /// Result solely because both happen to be `Named` types.
-    fn value_matches_direct_result_type(&self, value: &ReplacementValue, ty: &IncanType) -> bool {
+    /// Diagnostic type spellings may be aliases. Nominal/enum identity comes from the declaring compilation and is
+    /// resolved in the same complete graph as calls; equal names from different packages cannot satisfy this check.
+    fn value_matches_direct_result_type(
+        &self,
+        value: &ReplacementValue,
+        ty: &IncanType,
+        path: &mut Vec<usize>,
+        identities: &BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) -> bool {
         match (value, ty) {
             (ReplacementValue::Int(_), IncanType::Primitive(IncanPrimitiveType::Int))
             | (ReplacementValue::Bool(_), IncanType::Primitive(IncanPrimitiveType::Bool))
             | (ReplacementValue::Str(_), IncanType::Primitive(IncanPrimitiveType::Str))
             | (ReplacementValue::Unit, IncanType::Primitive(IncanPrimitiveType::Unit)) => true,
-            (ReplacementValue::Tuple(values), IncanType::Tuple(types)) => {
-                if values.len() != types.len() {
-                    return false;
-                }
-                values
-                    .iter()
-                    .zip(types)
-                    .all(|(value, ty)| self.value_matches_direct_result_type(value, ty))
-            }
-            (ReplacementValue::Tuple(values), IncanType::Generic { base, args })
-                if collections::from_str(base) == Some(CollectionTypeId::Tuple) =>
-            {
-                if values.len() != args.len() {
-                    return false;
-                }
-                values
-                    .iter()
-                    .zip(args)
-                    .all(|(value, ty)| self.value_matches_direct_result_type(value, ty))
+            (ReplacementValue::Tuple(values), ty) => {
+                let types = match ty {
+                    IncanType::Tuple(types) => types,
+                    IncanType::Generic { base, args }
+                        if collections::from_str(base) == Some(CollectionTypeId::Tuple) =>
+                    {
+                        args
+                    }
+                    _ => return false,
+                };
+                values.len() == types.len()
+                    && values.iter().zip(types).enumerate().all(|(index, (value, ty))| {
+                        path.push(index);
+                        let matches = self.value_matches_direct_result_type(value, ty, path, identities);
+                        path.pop();
+                        matches
+                    })
             }
             (ReplacementValue::List { elements, .. }, IncanType::Generic { base, args })
                 if collections::from_str(base) == Some(CollectionTypeId::List) =>
@@ -6026,34 +6060,52 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 let [element_type] = args.as_slice() else {
                     return false;
                 };
-                elements
+                path.push(0);
+                let matches = elements
                     .iter()
-                    .all(|element| self.value_matches_direct_result_type(element, element_type))
+                    .all(|element| self.value_matches_direct_result_type(element, element_type, path, identities));
+                path.pop();
+                matches
             }
             (
                 ReplacementValue::Nominal {
                     direct_declaration_id, ..
                 },
-                IncanType::Named(expected),
-            ) => self.module.nominal_declarations.iter().any(|declaration| {
-                declaration.direct_declaration_id == *direct_declaration_id && declaration.name == *expected
-            }),
+                IncanType::Named(_),
+            ) => self
+                .modules
+                .iter()
+                .flat_map(|module| &module.nominal_declarations)
+                .any(|declaration| {
+                    declaration.direct_declaration_id == *direct_declaration_id
+                        && identities.get(path) == Some(&declaration.canonical)
+                }),
             (
                 ReplacementValue::FieldlessEnum {
                     enum_declaration_id, ..
                 },
-                IncanType::Named(expected),
-            ) => self.module.fieldless_enum_declarations.iter().any(|declaration| {
-                declaration.direct_declaration_id == *enum_declaration_id && declaration.name == *expected
-            }),
+                IncanType::Named(_),
+            ) => self
+                .modules
+                .iter()
+                .flat_map(|module| &module.fieldless_enum_declarations)
+                .any(|declaration| {
+                    declaration.direct_declaration_id == *enum_declaration_id
+                        && identities.get(path) == Some(&declaration.canonical)
+                }),
             (
                 ReplacementValue::ValueEnum {
                     enum_declaration_id, ..
                 },
-                IncanType::Named(expected),
-            ) => self.module.value_enum_declarations.iter().any(|declaration| {
-                declaration.direct_declaration_id == *enum_declaration_id && declaration.name == *expected
-            }),
+                IncanType::Named(_),
+            ) => self
+                .modules
+                .iter()
+                .flat_map(|module| &module.value_enum_declarations)
+                .any(|declaration| {
+                    declaration.direct_declaration_id == *enum_declaration_id
+                        && identities.get(path) == Some(&declaration.canonical)
+                }),
             _ => false,
         }
     }
@@ -6288,6 +6340,19 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         })
     }
 
+    /// Find the declaring module in the validated graph, independently of the currently executing frame.
+    fn module_for_declaration_id(
+        &self,
+        identity: &CompilerNodeId,
+        span: HirSourceSpan,
+    ) -> Result<&BodyIrModule, ReplacementExecutionError> {
+        self.modules
+            .iter()
+            .find(|module| is_module_span_declaration_id(module, identity))
+            .map(Rc::as_ref)
+            .ok_or_else(|| unsupported("declaration context is absent from the execution graph", span))
+    }
+
     /// Materialize one exact source-local fieldless normal-enum member without reducing it to a source spelling.
     ///
     /// The resulting carrier stores only validated declaration identities. It has no payload and can reach a scalar
@@ -6332,16 +6397,16 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         variant_declaration_id: &CompilerNodeId,
         span: HirSourceSpan,
     ) -> Result<(FieldlessEnumDeclaration, FieldlessEnumVariantDeclaration), ReplacementExecutionError> {
-        if !is_module_span_declaration_id(&self.module, enum_declaration_id)
-            || !is_module_span_declaration_id(&self.module, variant_declaration_id)
+        let module = self.module_for_declaration_id(enum_declaration_id, span)?;
+        if !is_module_span_declaration_id(module, enum_declaration_id)
+            || !is_module_span_declaration_id(module, variant_declaration_id)
         {
             return Err(unsupported(
                 "fieldless-enum member declaration identity is not scoped to this Body-IR module",
                 span,
             ));
         }
-        let declarations = self
-            .module
+        let declarations = module
             .fieldless_enum_declarations
             .iter()
             .filter(|declaration| declaration.direct_declaration_id == *enum_declaration_id)
@@ -6352,7 +6417,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         };
-        if !valid_local_fieldless_enum_declaration(&self.module, declaration) {
+        if !valid_local_fieldless_enum_declaration(module, declaration) {
             return Err(unsupported(
                 "fieldless-enum registry lacks exact canonical owner/member identities",
                 span,
@@ -6480,8 +6545,9 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             .canonical
             .as_ref()
             .ok_or_else(|| unsupported("value-enum `.value()` without a canonical method target", span))?;
+        let module = self.module_for_declaration_id(&enum_declaration_id, span)?;
         let canonical_owner = direct_declaration_id_for_canonical(
-            &self.module,
+            module,
             canonical,
             SymbolNamespace::Member,
             SemanticSourceTargetKind::Method,
@@ -6510,16 +6576,16 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         variant_declaration_id: &CompilerNodeId,
         span: HirSourceSpan,
     ) -> Result<(ValueEnumDeclaration, ValueEnumVariantDeclaration), ReplacementExecutionError> {
-        if !is_module_span_declaration_id(&self.module, enum_declaration_id)
-            || !is_module_span_declaration_id(&self.module, variant_declaration_id)
+        let module = self.module_for_declaration_id(enum_declaration_id, span)?;
+        if !is_module_span_declaration_id(module, enum_declaration_id)
+            || !is_module_span_declaration_id(module, variant_declaration_id)
         {
             return Err(unsupported(
                 "value-enum member declaration identity is not scoped to this Body-IR module",
                 span,
             ));
         }
-        let declarations = self
-            .module
+        let declarations = module
             .value_enum_declarations
             .iter()
             .filter(|declaration| declaration.direct_declaration_id == *enum_declaration_id)
@@ -6530,7 +6596,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         };
-        if !valid_local_value_enum_declaration(&self.module, declaration) {
+        if !valid_local_value_enum_declaration(module, declaration) {
             return Err(unsupported(
                 "value-enum registry lacks exact canonical owner/member identities",
                 span,
@@ -6582,6 +6648,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             )
         })?;
+        let module = self.module_for_declaration_id(direct_declaration_id, span)?;
         let canonical = target.canonical.as_ref().ok_or_else(|| {
             unsupported(
                 format!("constructor `{}` without a canonical declaration target", target.name),
@@ -6589,7 +6656,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             )
         })?;
         let canonical_declaration_id = direct_declaration_id_for_canonical(
-            &self.module,
+            module,
             canonical,
             SymbolNamespace::OrdinaryLexical,
             SemanticSourceTargetKind::Model,
@@ -6601,8 +6668,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         }
-        let declaration = self
-            .module
+        let declaration = module
             .nominal_declarations
             .iter()
             .find(|declaration| declaration.direct_declaration_id == *direct_declaration_id)
@@ -6616,7 +6682,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                     span,
                 )
             })?;
-        if declaration.canonical != *canonical || !valid_local_nominal_declaration(&self.module, &declaration) {
+        if declaration.canonical != *canonical || !valid_local_nominal_declaration(module, &declaration) {
             return Err(unsupported(
                 "constructor canonical target disagrees with the retained declaration identity",
                 span,
@@ -6659,14 +6725,14 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         target: &NominalPatternTarget,
         span: HirSourceSpan,
     ) -> Result<NominalDeclaration, ReplacementExecutionError> {
-        if !is_module_span_declaration_id(&self.module, &target.direct_declaration_id) {
+        let module = self.module_for_declaration_id(&target.direct_declaration_id, span)?;
+        if !is_module_span_declaration_id(module, &target.direct_declaration_id) {
             return Err(unsupported(
                 "nominal match pattern declaration identity is not scoped to this Body-IR module",
                 span,
             ));
         }
-        let declarations = self
-            .module
+        let declarations = module
             .nominal_declarations
             .iter()
             .filter(|declaration| declaration.direct_declaration_id == target.direct_declaration_id)
@@ -6678,7 +6744,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             ));
         };
         if declaration.canonical != target.canonical
-            || !valid_local_nominal_declaration(&self.module, declaration)
+            || !valid_local_nominal_declaration(module, declaration)
             || declaration.type_parameter_count != 0
         {
             return Err(unsupported(
@@ -7058,13 +7124,18 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
         match place.projection.as_slice() {
             [] => Ok(value),
-            [PlaceElem::Field { name, canonical: None }] if name.parse::<usize>().is_ok() => {
-                project_tuple_field(value, place, span)
-            }
+            [
+                PlaceElem::Field {
+                    name,
+                    canonical: None,
+                    structural: true,
+                },
+            ] if name.parse::<usize>().is_ok() => project_tuple_field(value, place, span),
             [
                 PlaceElem::Field {
                     name,
                     canonical: Some(canonical),
+                    structural: false,
                 },
             ] => self.project_nominal_field(value, name, canonical, span),
             [PlaceElem::Index(index)] => {
@@ -7112,8 +7183,8 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 span,
             ));
         };
-        let declaration = self
-            .module
+        let module = self.module_for_declaration_id(&direct_declaration_id, span)?;
+        let declaration = module
             .nominal_declarations
             .iter()
             .find(|declaration| declaration.direct_declaration_id == direct_declaration_id)
@@ -7123,7 +7194,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                     span,
                 )
             })?;
-        if !valid_local_nominal_declaration(&self.module, declaration)
+        if !valid_local_nominal_declaration(module, declaration)
             || declaration.fields.len() != fields.len()
             || declaration
                 .fields
@@ -7318,6 +7389,7 @@ fn project_tuple_field(
         PlaceElem::Field {
             name: field,
             canonical: None,
+            structural: true,
         },
     ] = place.projection.as_slice()
     else {
@@ -7957,7 +8029,7 @@ mod tests {
         let mut stderr = std::io::sink();
         let mut io = ProgramIo::new(&mut stdout, &mut stderr);
         let mut executor = BodyExecutor::with_locals(
-            &module,
+            &Rc::new(module),
             Rc::new(Vec::new()),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -8004,6 +8076,7 @@ mod tests {
             name: "child".to_string(),
             span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            named_type_identities: Default::default(),
             locals: Vec::new(),
             params: Vec::new(),
             param_locals: Vec::new(),
@@ -8049,7 +8122,14 @@ mod tests {
         let mut stdout = std::io::sink();
         let mut stderr = std::io::sink();
         let mut io = ProgramIo::new(&mut stdout, &mut stderr);
-        let mut executor = BodyExecutor::with_locals(&module, Rc::new(Vec::new()), locals, BTreeMap::new(), 0, &mut io);
+        let mut executor = BodyExecutor::with_locals(
+            &Rc::new(module),
+            Rc::new(Vec::new()),
+            locals,
+            BTreeMap::new(),
+            0,
+            &mut io,
+        );
         let arms = [
             RaceArm {
                 awaitable: Operand::place(Place::from_local(winner_local), OwnershipFact::Borrow, false),

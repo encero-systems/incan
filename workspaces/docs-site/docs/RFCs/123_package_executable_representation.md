@@ -1,10 +1,11 @@
 # RFC 123: Package executable representation
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-09-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 034 (`incan.pub` package registry and the `.incanpkg` format)
+    - RFC 106 (compiler-backed agent context graph)
     - RFC 118 (Oven API and operational core)
     - RFC 120 (canonical source symbol identity)
     - RFC 097 (Rust-hosted Incan caller)
@@ -143,6 +144,16 @@ A representation is a second thing to keep correct as the language grows. A cons
 
 The natural producer is the same library build that emits the manifest, because it already holds the checked public surface and the identities the representation must use. The natural consumer boundary is wherever a route resolves an imported declaration, so that a missing or unusable representation is discovered at resolution rather than part-way through execution.
 
+### Shared semantic facts with RFC 106
+
+RFC 106's codegraph and this representation consume the same checked semantic snapshot. Declaration ownership, resolved references, canonical alias and facade targets, and dependency relationships belong to that shared compiler layer. Execution requirement selection must query those relationships rather than introduce a build-command extractor or resolve source names again. A missing relationship needed by both consumers should be added at its semantic producer and projected into both surfaces.
+
+That identity contract applies to types inside signatures and bodies as well as to callable targets. A public function accepting a dependency's model must retain that model's declaring identity through nested types, aliases and facade imports. Package admission binds the identity to the selected artifact; a consumer's import alias or native linker route is a presentation of that selection, not another semantic identity. Publication must retain the checked binding before reducing a type to its display spelling. Required public type context then follows the same admitted dependencies and checked relationships as executable bodies.
+
+The two products preserve different information. Codegraph adds source navigation, provenance, diagnostics and tolerant facts for incomplete programs. The executable representation carries versioned bodies, required type context and explicit coverage. Its serializer must still audit the actual retained payload, including defaults and deferred computations, because a source reference graph alone does not establish executable coverage. Tolerant, syntax-derived or advisory codegraph facts cannot authorize execution.
+
+Package representation version, coverage and declared requirements can in turn enrich inspection and codegraph through the same canonical identities. Their provenance must distinguish a manifest or coverage declaration from a successfully decoded payload and from observed execution. Neither consumer needs to decode the other's wire format or reconstruct the other's graph: checked relationship queries are shared, while graph export and binary executable publication remain separate projections.
+
 Coverage is likely to grow along the same axis as executable constructs generally, which is one reason the decision below records it explicitly rather than inferring it from what happens to be present.
 
 Consumers will want the decoded form to outlive one invocation, and the natural shape for that is an identity-keyed local store rather than a cache private to this contract. Nothing here requires one, and nothing here should prevent one: a consumer that keeps decoded declarations addressed by the same canonical identities the representation uses needs no format of its own.
@@ -153,6 +164,52 @@ Consumers will want the decoded form to outlive one invocation, and the natural 
 - **Emission**: producing the representation for a library's public surface as part of the same build that produces its manifest.
 - **Tooling**: publishing and locating the representation beside a package's other products, and surfacing version and coverage in inspection output.
 
+## Implementation Plan
+
+### Phase 1: Public executable publication
+
+Produce the representation from the compilation that finalizes the manifest. Select declarations through its canonical public graph, record explicit uncovered reasons, and retain the complete public execution closure, including defaults, deferred computations and required type context. Reuse the checked relationship queries that feed RFC 106 codegraph; keep executable payload validation specific to publication. Exclude private declarations and compiler-session identities. A public declaration that cannot satisfy those constraints remains uncovered.
+
+### Phase 2: Versioned selective consumption
+
+Separate the stable version prefix and coverage index from individually addressable declaration payloads. Resolve dependency aliases and facades through the selected package graph, retaining the declaring identity and version. Load only required bodies and type context, and reject malformed, incompatible or incomplete requirements before execution.
+
+### Phase 3: Execution and refusal parity
+
+Connect resolved package fragments to the existing non-linking execution graph. Prove producer-to-consumer execution after removing dependency source, and compare observable behavior with the Rust-linking route. Exercise aliases, transitive facades, defaults, recursion and distinct packages with identical source paths. Test missing, uncovered and incompatible content before output or a successful receipt can be published.
+
+### Phase 4: Distribution and acceptance
+
+Keep each selected semantic sidecar coherent with its manifest through publication, copying, sealed materialization and reuse. Integrate the semantic slot with the signed archive boundary owned by RFC 034 when that boundary is available; local sidecar tests do not establish signed archive acceptance. Publish user-facing coverage and refusal documentation, and retain direct execution, selective-loading and relevant repository-gate evidence before completing this RFC.
+
+## Progress Checklist
+
+### Design and publication
+
+- [x] Review the RFC contract and establish an independent implementation and acceptance design.
+- [x] Select published identities from the finalized manifest, including public members and canonical facade targets.
+- [x] Record uncovered exports separately from empty executable bodies.
+- [x] Close public requirements over defaults, deferred computations, callees and type context without publishing private declarations or compiler-session state.
+- [x] Share checked dependency relationships with RFC 106 codegraph and prove agreement for aliases, facades, members, type context and defaults without another analysis pass.
+- [x] Publish semantic content from the same checked compilation as the manifest and native artifact.
+
+### Resolution and execution
+
+- [x] Reject unsupported versions before interpreting version-specific metadata or payloads.
+- [x] Resolve direct, aliased and transitive facade calls through canonical package identities.
+- [x] Load only selected fragments and their required public context; prove selective loading with a three-of-four-hundred case.
+- [x] Execute a real source-unavailable package consumer on the non-linking route with native observable-behavior parity.
+- [x] Refuse missing, incompatible, malformed and uncovered requirements before program output or a successful receipt.
+- [ ] Preserve Rust-linking use of packages without executable representations.
+
+### Distribution and verification
+
+- [x] Verify coherent semantic sidecar publication, copying, sealed materialization and reuse, including failed publication.
+- [ ] Verify the semantic slot within the signed package archive boundary; track RFC 034's dependency explicitly until this is executable.
+- [x] Pass focused codec, compiler, package-boundary and failure regressions.
+- [ ] Complete the applicable PR integration gates for the final published head.
+- [x] Update user documentation, release notes and generated RFC references with verified behavior.
+
 ## Design Decisions
 
 **Coverage is declared explicitly, not inferred from the identities present.** A consumer must be able to answer "can this route execute this call?" before decoding the declaration, and a reader must be able to see what a package supports without executing anything. Inferring coverage from content also conflates two different states -- "this declaration is not covered" and "this declaration is covered and its body happens to be empty" -- which a refusal has to tell apart.
@@ -162,4 +219,3 @@ Consumers will want the decoded form to outlive one invocation, and the natural 
 **The representation carries one version for the whole representation.** Integrity and identity are already settled at the archive: RFC 034 covers the package with one checksum and one signature, so the representation's version answers only "can this compiler interpret this?" That is a property of the encoding and the fact vocabulary, not of individual constructs, and per-construct versioning would multiply a compatibility surface that the coverage declaration already expresses more directly.
 
 **A representation and the Rust-linking route must agree by construction.** They are produced by one compilation of one package version and ship inside one signed archive, so a disagreement between them is not two artifacts drifting apart -- it is one publisher being internally inconsistent within a single signed unit. Permitting divergence would also make a package's meaning depend on how a consumer reached it, which is the outcome this RFC exists to prevent. Where a construct cannot be represented for a route, the answer is to leave it uncovered and refuse, not to represent it differently.
-

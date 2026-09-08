@@ -356,6 +356,7 @@ mod tests {
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: crate::library_manifest::TypeRef::Named {
+                origin: None,
                 name: constructors::as_str(constructors::ConstructorId::None).to_string(),
             },
             is_async: false,
@@ -367,6 +368,7 @@ mod tests {
         crate::library_manifest::ConstExport {
             name: name.to_string(),
             ty: crate::library_manifest::TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
         }
@@ -413,6 +415,7 @@ mod tests {
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: crate::library_manifest::TypeRef::Named {
+                origin: None,
                 name: constructors::as_str(constructors::ConstructorId::None).to_string(),
             },
             is_async: false,
@@ -523,6 +526,7 @@ mod tests {
                 manifest.exports.aliases.push(crate::library_manifest::AliasExport {
                     name: "where_".to_string(),
                     target_path: vec!["demo".to_string(), "filter_rows".to_string()],
+                    projected_type: None,
                     projected_function: None,
                 });
             },
@@ -547,6 +551,7 @@ mod tests {
                 manifest.exports.aliases.push(crate::library_manifest::AliasExport {
                     name: "Filterish".to_string(),
                     target_path: vec!["demo".to_string(), "FILTER_LIMIT".to_string()],
+                    projected_type: None,
                     projected_function: None,
                 });
             },
@@ -576,6 +581,7 @@ mod tests {
                     manifest.exports.aliases.push(crate::library_manifest::AliasExport {
                         name: name.to_string(),
                         target_path: vec!["demo".to_string(), target.to_string()],
+                        projected_type: None,
                         projected_function: None,
                     });
                 }

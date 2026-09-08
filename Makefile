@@ -19,11 +19,11 @@ INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT ?= $(CURDIR)/target
 # refusal tests pass explicit tiny CLI limits rather than redefining production policy here.
 INCAN_TEST_OVEN_BAKE_FORMAT ?= text
 INCAN_TEST_OVEN_BAKE_REPORT ?=
-# Optional caller-owned location for a completed compiler-suite JSON report. The default test target removes its
-# one-use caller output after success; the case-timing target retains only this small evidence file for ranking.
+# Optional caller-owned location for the compiler-suite JSON report. The default test target removes its one-use
+# caller output; setting this retains the report, transcript archive and outer wrapper timing record.
 INCAN_TEST_OVEN_COMPILER_SUITE_REPORT ?=
-# Optional caller-owned location for a successful `test-one` compiler-suite JSON report. The focused command keeps
-# its disposable output clean by default; a diagnostic caller can retain only the report for nested-command analysis.
+# Optional caller-owned location for `test-one` evidence, using the same report/archive/timing retention as replay.
+# Successful focused commands reclaim disposable output; failures retain their available diagnostic evidence.
 INCAN_TEST_OVEN_TEST_ONE_REPORT ?=
 # The pinned publisher Cargo supplies the unstable unit graph and the package-qualified Rust-inspection tests that
 # exercise Cargo's nightly-only metadata flags. Loaf receipts and direct-rustc suite execution use the selected
@@ -45,9 +45,6 @@ TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 TEST_RUNTIME_ENV = $(TEST_ENV) \
 	INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
 	INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
-ifneq ($(strip $(INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS)),)
-TEST_RUNTIME_ENV += INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS="$(INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS)"
-endif
 ifneq ($(strip $(INCAN_TEST_COMMAND_TIMINGS)),)
 TEST_RUNTIME_ENV += INCAN_TEST_COMMAND_TIMINGS="$(INCAN_TEST_COMMAND_TIMINGS)"
 endif
@@ -336,18 +333,18 @@ test-oven-partition:
 test-oven-replay:
 	@echo "\033[1mRunning prepared compiler-suite replay through Oven...\033[0m"
 	@set -e; \
+		suite_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		command_started=0; \
 		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)"; \
 		suite_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-compiler-suite-output.XXXXXX")"; \
 		suite_tmp="$$(mktemp -d "/tmp/incan-oven-suite.XXXXXX")"; \
 		suite_succeeded=false; \
 		cleanup_suite_output() { \
-			rm -rf -- "$$suite_tmp"; \
-			if [ "$$suite_succeeded" = true ]; then \
-				if [ -n "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)" ]; then \
-					cp "$$suite_output/compiler-suite-report.json" "$(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT)"; \
-				fi; \
-				rm -rf -- "$$suite_output"; \
-			else echo "Oven suite failed; retaining caller output at $$suite_output" >&2; fi; \
+			suite_status=$$?; \
+			bash "$(CURDIR)/scripts/retain_oven_suite_output.sh" "$$suite_output" "$$suite_tmp" \
+				"$$suite_succeeded" "$(abspath $(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT))" "$$suite_status" \
+				"$$suite_started" "$$command_started"; \
+			exit $$?; \
 		}; \
 		trap cleanup_suite_output EXIT; \
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
@@ -357,6 +354,7 @@ test-oven-replay:
 			> "$$suite_output/cargo-guard/cargo"; \
 		chmod +x "$$suite_output/cargo-guard/cargo"; \
 		: > "$$suite_output/cargo-guard/invocations.log"; \
+		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		PATH="$$suite_output/cargo-guard:$$PATH" \
 			INCAN_OVEN_CARGO_GUARD_LOG="$$suite_output/cargo-guard/invocations.log" TMPDIR="$$suite_tmp" \
 			$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
@@ -371,9 +369,11 @@ test-oven-replay:
 		test ! -s "$$suite_output/cargo-guard/invocations.log"; \
 		suite_succeeded=true
 
-.PHONY: test-oven-case-timings  ## test - Run the complete Oven suite once and retain its top-25 case-timing report
+.PHONY: test-oven-case-timings  ## test - Run the complete Oven suite once and retain its measured-duration report
+# Every root now reports its case timings, so this target only chooses where to keep the report rather than turning
+# a diagnostic on. The nested-command timings it also enables remain opt-in: those come from instrumented tests.
 test-oven-case-timings:
-	@$(MAKE) --no-print-directory test-oven INCAN_OVEN_NATIVE_TEST_CASE_TIMINGS=1 \
+	@$(MAKE) --no-print-directory test-oven INCAN_TEST_COMMAND_TIMINGS=1 \
 		INCAN_TEST_OVEN_COMPILER_SUITE_REPORT="$(CURDIR)/target/oven-compiler-suite-case-timings.json"
 
 .PHONY: test  ## test - Run all compiler tests through bounded Oven direct-Rustc execution
@@ -489,8 +489,12 @@ test-oven-focused:
 	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test toolchain_installer_tests \
 		compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence -- --exact
 
+.PHONY: test-oven-report-retention
+test-oven-report-retention:
+	@python3 scripts/test_oven_transcript_retention.py
+
 .PHONY: test-oven-pr-regressions
-test-oven-pr-regressions:
+test-oven-pr-regressions: test-oven-report-retention
 	@echo "\033[1mRunning bounded Oven process-containment regressions...\033[0m"
 	@CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked --features lsp --test oven_pr_regressions
 
@@ -701,18 +705,18 @@ test-one: test-prewarm-oven-loafs
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=tests/cli_integration.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
 	@set -e; \
+		root_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		command_started=0; \
 		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)"; \
 		root_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-test-one.XXXXXX")"; \
 		root_tmp="$$(mktemp -d "/tmp/incan-oven-root.XXXXXX")"; \
 		root_succeeded=false; \
 		cleanup_root_output() { \
-			rm -rf -- "$$root_tmp"; \
-			if [ "$$root_succeeded" = true ]; then \
-				if [ -n "$(INCAN_TEST_OVEN_TEST_ONE_REPORT)" ]; then \
-					cp "$$root_output/compiler-suite-report.json" "$(INCAN_TEST_OVEN_TEST_ONE_REPORT)"; \
-				fi; \
-				rm -rf -- "$$root_output"; \
-			else echo "Oven root failed; retaining caller output at $$root_output" >&2; fi; \
+			root_status=$$?; \
+			bash "$(CURDIR)/scripts/retain_oven_suite_output.sh" "$$root_output" "$$root_tmp" \
+				"$$root_succeeded" "$(abspath $(INCAN_TEST_OVEN_TEST_ONE_REPORT))" "$$root_status" \
+				"$$root_started" "$$command_started"; \
+			exit $$?; \
 		}; \
 		trap cleanup_root_output EXIT; \
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
@@ -722,6 +726,7 @@ test-one: test-prewarm-oven-loafs
 			> "$$root_output/cargo-guard/cargo"; \
 		chmod +x "$$root_output/cargo-guard/cargo"; \
 		: > "$$root_output/cargo-guard/invocations.log"; \
+		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \
 			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
 			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(CURDIR)/target" \

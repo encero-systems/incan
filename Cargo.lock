@@ -1531,8 +1531,10 @@ name = "incan_semantics_core"
 version = "0.6.0-dev.3"
 dependencies = [
  "incan_core",
+ "postcard",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

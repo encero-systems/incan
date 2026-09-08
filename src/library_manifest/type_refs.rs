@@ -26,20 +26,24 @@ pub(crate) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
         ResolvedType::FrozenStr => named_type_ref(ResolvedType::FrozenStr.to_string()),
         ResolvedType::FrozenBytes => named_type_ref(ResolvedType::FrozenBytes.to_string()),
         ResolvedType::FrozenList(inner) => TypeRef::Applied {
+            origin: None,
             name: collections::as_str(CollectionTypeId::FrozenList).to_string(),
             args: vec![type_ref_from_resolved(inner)],
         },
         ResolvedType::FrozenDict(key, value) => TypeRef::Applied {
+            origin: None,
             name: collections::as_str(CollectionTypeId::FrozenDict).to_string(),
             args: vec![type_ref_from_resolved(key), type_ref_from_resolved(value)],
         },
         ResolvedType::FrozenSet(inner) => TypeRef::Applied {
+            origin: None,
             name: collections::as_str(CollectionTypeId::FrozenSet).to_string(),
             args: vec![type_ref_from_resolved(inner)],
         },
         ResolvedType::Unit => named_type_ref(conventions::UNIT_TYPE_NAME),
         ResolvedType::Named(name) => named_type_ref(name.clone()),
         ResolvedType::Generic(name, args) => TypeRef::Applied {
+            origin: None,
             name: name.clone(),
             args: args.iter().map(type_ref_from_resolved).collect(),
         },
@@ -74,9 +78,15 @@ pub(crate) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
 /// mapping contract.
 pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
     match ty {
-        TypeRef::Named { name } => resolved_named_type_from_manifest(name),
-        TypeRef::Applied { name, args } => {
+        TypeRef::Named { name, origin } => origin.as_ref().map_or_else(
+            || resolved_named_type_from_manifest(name),
+            |origin| ResolvedType::Named(origin.binding_key()),
+        ),
+        TypeRef::Applied { name, args, origin } => {
             let resolved_args: Vec<ResolvedType> = args.iter().map(resolved_type_from_manifest_type_ref).collect();
+            if let Some(origin) = origin {
+                return ResolvedType::Generic(origin.binding_key(), resolved_args);
+            }
             match collections::from_str(name.as_str()) {
                 Some(CollectionTypeId::FrozenList) => ResolvedType::FrozenList(Box::new(
                     resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
@@ -110,6 +120,14 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
         TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),
         TypeRef::Unknown => ResolvedType::Unknown,
+        TypeRef::NativeUnion(native) => ResolvedType::Generic(
+            incan_core::lang::types::UNION_TYPE_NAME.to_string(),
+            native
+                .members
+                .iter()
+                .map(resolved_type_from_manifest_type_ref)
+                .collect(),
+        ),
     }
 }
 
@@ -144,6 +162,10 @@ fn resolved_named_type_from_manifest(name: &str) -> ResolvedType {
     ResolvedType::Named(name.to_string())
 }
 
+/// Construct a legacy/local named type without claiming a foreign artifact origin.
 fn named_type_ref(name: impl Into<String>) -> TypeRef {
-    TypeRef::Named { name: name.into() }
+    TypeRef::Named {
+        origin: None,
+        name: name.into(),
+    }
 }

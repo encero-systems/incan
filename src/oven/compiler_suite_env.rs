@@ -51,7 +51,10 @@ impl OvenCompilerSuiteTargetCapabilities {
         );
         let explicit_bake_cargo = matches!(
             (package_name, target_kind, source_relative_path),
-            ("incan", "test", "tests/cli_integration.rs") | ("incan", "test", "tests/integration_tests.rs")
+            ("incan", "test", "tests/cli_integration.rs")
+                | ("incan", "test", "tests/integration_tests.rs")
+                | ("incan", "test", "tests/canonical_item_imports.rs")
+                | ("incan", "test", "tests/package_executable_representation.rs")
         );
         Self {
             generated_rust_closure,

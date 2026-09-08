@@ -123,6 +123,26 @@ pub(super) fn union_ir_type(members: Vec<IrType>) -> IrType {
 }
 
 impl AstLowering {
+    /// Retain checked nominal origins under the exact Rust spellings chosen by this module's lowering pass.
+    pub(in crate::backend::ir) fn native_publication_origins(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
+        self.type_info
+            .as_ref()
+            .into_iter()
+            .flat_map(|info| &info.declarations.named_type_origins)
+            .map(|(name, origin)| {
+                (
+                    self.lower_resolved_type(&ResolvedType::Named(name.clone()))
+                        .rust_name()
+                        .trim_start_matches("::")
+                        .to_string(),
+                    origin.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// Preserve dependency ownership for public anonymous union aliases while retaining their semantic member list.
     pub(super) fn pub_external_type(&self, library: &str, ty: IrType) -> IrType {
         if matches!(ty, IrType::ExternalUnion { .. }) {
@@ -132,6 +152,7 @@ impl AstLowering {
         if ty.union_type_name().is_some() {
             return IrType::ExternalUnion {
                 library: library.to_string(),
+                native: None,
                 union: Box::new(ty),
             };
         }
@@ -186,7 +207,99 @@ impl AstLowering {
 
     /// Lower one public manifest type reference in the context of its owning library.
     pub(super) fn lower_pub_manifest_type_ref(&self, library: &str, ty: &crate::library_manifest::TypeRef) -> IrType {
-        self.lower_pub_manifest_type(library, &resolved_type_from_manifest_type_ref(ty))
+        let mut expanded = ty.clone();
+        let mut expanding = std::collections::HashSet::new();
+        self.expand_pub_manifest_type_refs(library, &mut expanded, &mut expanding);
+        let routes = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.declarations.foreign_pub_type_remappings.get(library));
+        let projected = match crate::library_manifest::with_checked_native_unions(
+            expanded,
+            library,
+            self.provider_plan.as_deref(),
+            routes,
+        ) {
+            Ok(projected) => projected,
+            Err(error) => {
+                self.metadata_errors.borrow_mut().push(error);
+                return IrType::Unknown;
+            }
+        };
+        let projected = crate::library_manifest::with_checked_type_routes(projected, routes);
+        let projected =
+            crate::library_manifest::with_native_nominal_origins(projected, &self.native_publication_origins());
+        super::super::types::ir_type_from_projected_manifest(&projected, &|ordinary| {
+            self.lower_pub_manifest_type(library, &resolved_type_from_manifest_type_ref(ordinary))
+        })
+    }
+
+    /// Expand provider-local aliases at the typed wire boundary so native representation carriers survive expansion.
+    fn expand_pub_manifest_type_refs(
+        &self,
+        library: &str,
+        ty: &mut crate::library_manifest::TypeRef,
+        expanding: &mut std::collections::HashSet<String>,
+    ) {
+        use crate::library_manifest::{TypeRef, VisitTypeRefs};
+        let named = match ty {
+            TypeRef::Named { name, origin: None } => Some((name.clone(), Vec::new())),
+            TypeRef::Applied {
+                name,
+                args,
+                origin: None,
+            } => Some((name.clone(), args.clone())),
+            _ => None,
+        };
+        if let Some((name, args)) = named
+            && let Some(alias) = self.pub_type_alias_export(library, &name)
+            && alias.type_params.len() == args.len()
+            && expanding.insert(name.clone())
+        {
+            let mut target = alias.target;
+            target.visit_type_refs(&mut |ty| {
+                if let TypeRef::TypeParam { name } = ty
+                    && let Some(index) = alias.type_params.iter().position(|param| &param.name == name)
+                {
+                    *ty = args[index].clone();
+                }
+            });
+            self.expand_pub_manifest_type_refs(library, &mut target, expanding);
+            expanding.remove(&name);
+            *ty = target;
+            return;
+        }
+        match ty {
+            TypeRef::Applied { args, .. } | TypeRef::Tuple { elements: args } => {
+                for arg in args {
+                    self.expand_pub_manifest_type_refs(library, arg, expanding);
+                }
+            }
+            TypeRef::Function { params, return_type } => {
+                for param in params {
+                    self.expand_pub_manifest_type_refs(library, param, expanding);
+                }
+                self.expand_pub_manifest_type_refs(library, return_type, expanding);
+            }
+            TypeRef::Ref { inner } | TypeRef::TypeToken { inner } => {
+                self.expand_pub_manifest_type_refs(library, inner, expanding)
+            }
+            // Native descriptors already describe final emitted members, not source aliases.
+            _ => {}
+        }
+    }
+
+    /// Project retained nominal origins through the exact native routes selected by the successful checker.
+    ///
+    /// The manifest's binding token is an identity carrier, never a Rust path. Missing checked route evidence leaves
+    /// the type unsupported instead of guessing a dependency alias or exposing that token to code generation.
+    fn checked_pub_manifest_type_ref(&self, library: &str, ty: &crate::library_manifest::TypeRef) -> ResolvedType {
+        let routes = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.declarations.foreign_pub_type_remappings.get(library));
+        let projected = crate::library_manifest::with_checked_type_routes(ty.clone(), routes);
+        resolved_type_from_manifest_type_ref(&projected)
     }
 
     /// Mark every type in a callable signature that belongs to a public dependency as dependency-owned.
@@ -295,10 +408,15 @@ impl AstLowering {
             IrType::TypeToken(inner) => IrType::TypeToken(Box::new(
                 self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
             )),
-            IrType::ExternalUnion { library: owner, union } => {
+            IrType::ExternalUnion {
+                library: owner,
+                union,
+                native,
+            } => {
                 let owner_for_union = owner.clone();
                 IrType::ExternalUnion {
                     library: owner,
+                    native,
                     union: Box::new(self.expand_pub_manifest_ir_type_aliases(&owner_for_union, *union, expanding)),
                 }
             }
@@ -320,9 +438,7 @@ impl AstLowering {
         if !expanding.insert(name.clone()) {
             return None;
         }
-        let target = resolved_type_from_manifest_type_ref(&alias.target);
-        let expanded = self.expand_pub_manifest_type_aliases(library, target, expanding);
-        let expanded = self.lower_resolved_type(&expanded);
+        let expanded = self.lower_pub_manifest_type_ref(library, &alias.target);
         expanding.remove(&name);
         Some(expanded)
     }
@@ -400,7 +516,7 @@ impl AstLowering {
         if alias.type_params.len() != args.len() || !expanding.insert(name.clone()) {
             return None;
         }
-        let target = resolved_type_from_manifest_type_ref(&alias.target);
+        let target = self.checked_pub_manifest_type_ref(library, &alias.target);
         let substituted = if alias.type_params.is_empty() {
             target
         } else {
@@ -425,6 +541,15 @@ impl AstLowering {
         };
         if let Some(alias) = manifest.exports.type_aliases.iter().find(|alias| alias.name == name) {
             return Some(alias.clone());
+        }
+        if let Some(alias) = manifest.exports.aliases.iter().find(|alias| alias.name == name)
+            && let Some(target) = alias.projected_type.as_ref().filter(|target| target.has_native_union())
+        {
+            return Some(TypeAliasExport {
+                name: alias.name.clone(),
+                type_params: Vec::new(),
+                target: target.clone(),
+            });
         }
         if let Some(target_path) = manifest
             .contract_metadata
@@ -462,6 +587,15 @@ impl AstLowering {
         let module = api.modules.iter().find(|module| module.module_path == module_path)?;
         module.declarations.iter().find_map(|declaration| match declaration {
             ApiDeclaration::TypeAlias(alias) if alias.name == *alias_name => Some(alias.type_alias.clone()),
+            ApiDeclaration::Alias(alias) if alias.name == *alias_name => alias
+                .projected_type
+                .as_ref()
+                .filter(|target| target.has_native_union())
+                .map(|target| TypeAliasExport {
+                    name: alias.name.clone(),
+                    type_params: Vec::new(),
+                    target: target.clone(),
+                }),
             _ => None,
         })
     }
@@ -478,20 +612,63 @@ impl AstLowering {
         if root != "pub" {
             return None;
         }
-        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
-        let entry = manifest_index.get(library)?;
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
-            return None;
-        };
-        let alias = manifest
-            .exports
-            .type_aliases
-            .iter()
-            .find(|alias| alias.name == *member)?;
+        let alias = self.pub_type_alias_export(library, member)?;
         if !alias.type_params.is_empty() {
             return None;
         }
         Some(self.lower_pub_manifest_type_ref(library, &alias.target))
+    }
+
+    /// Retain native carriers from the same checked callable declaration while keeping call-site specialization.
+    ///
+    /// The caller must already have joined the declaration through its selected binding. This does not compare names,
+    /// select overloads, or change ordinary inferred leaves; it restores only admitted native unions at matching typed
+    /// positions after frontend alias expansion erased their representation.
+    pub(super) fn retain_native_union_representation(mut inferred: IrType, declared: &IrType) -> IrType {
+        match (&mut inferred, declared) {
+            (target, IrType::ExternalUnion { native: Some(_), .. }) if target.is_union() => {
+                *target = declared.clone();
+            }
+            (IrType::List(left), IrType::List(right))
+            | (IrType::Set(left), IrType::Set(right))
+            | (IrType::Option(left), IrType::Option(right))
+            | (IrType::Ref(left), IrType::Ref(right))
+            | (IrType::RefMut(left), IrType::RefMut(right))
+            | (IrType::TypeToken(left), IrType::TypeToken(right)) => {
+                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
+            }
+            (IrType::Dict(left, value), IrType::Dict(right, other))
+            | (IrType::Result(left, value), IrType::Result(right, other)) => {
+                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
+                **value = Self::retain_native_union_representation(std::mem::take(value.as_mut()), other);
+            }
+            (IrType::Tuple(left), IrType::Tuple(right)) if left.len() == right.len() => {
+                for (left, right) in left.iter_mut().zip(right) {
+                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                }
+            }
+            (IrType::NamedGeneric(left_name, left), IrType::NamedGeneric(right_name, right))
+                if left_name == right_name && left.len() == right.len() =>
+            {
+                for (left, right) in left.iter_mut().zip(right) {
+                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                }
+            }
+            (
+                IrType::Function { params, ret },
+                IrType::Function {
+                    params: declared_params,
+                    ret: declared_ret,
+                },
+            ) if params.len() == declared_params.len() => {
+                for (param, declared) in params.iter_mut().zip(declared_params) {
+                    *param = Self::retain_native_union_representation(std::mem::take(param), declared);
+                }
+                **ret = Self::retain_native_union_representation(std::mem::take(ret.as_mut()), declared_ret);
+            }
+            _ => {}
+        }
+        inferred
     }
 
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
@@ -1304,6 +1481,330 @@ mod tests {
     use incan_core::lang::types::numerics::NumericTypeId;
 
     #[test]
+    fn foreign_union_keeps_its_producer_wrapper_identity() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::library_manifest::TypeRef;
+        let program = crate::frontend::parser::parse(
+            &crate::frontend::lexer::lex("pub type Answer = Product | int\n").map_err(|error| format!("{error:?}"))?,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        let ast::Declaration::TypeAlias(alias) = &program.declarations[0].node else {
+            return Err("type alias absent".into());
+        };
+        // This is the production declaration-lowering path for an already-imported local Product binding.
+        let producer = AstLowering::new().lower_type(&alias.target.node);
+        let mut published = TypeRef::Applied {
+            name: super::IR_UNION_TYPE_NAME.into(),
+            origin: None,
+            args: vec![
+                TypeRef::Named {
+                    name: "Product".into(),
+                    origin: None,
+                },
+                TypeRef::Named {
+                    name: "int".into(),
+                    origin: None,
+                },
+            ],
+        };
+        let legacy = AstLowering::new().lower_pub_manifest_type_ref("pricing", &published);
+        assert_eq!(
+            legacy.union_type_name(),
+            producer.union_type_name(),
+            "legacy local alias spelling preserved the declaring wrapper"
+        );
+        let origin = crate::library_manifest::NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "catalog".into(),
+                version: "1.2.3".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: crate::library_manifest::CanonicalIdentityExport {
+                namespace: crate::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
+                origin: crate::library_manifest::CanonicalIdentityOriginExport::Package {
+                    library: "catalog".into(),
+                    module_path: vec!["lib".into()],
+                },
+                declaration_name: "Product".into(),
+                kind: "model".into(),
+                declaration_span: crate::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 20 },
+            },
+        };
+        if let TypeRef::Applied { args, .. } = &mut published {
+            args[0] = TypeRef::Named {
+                name: "Product".into(),
+                origin: Some(origin.clone()),
+            };
+        }
+        let mut facts = crate::frontend::typechecker::TypeCheckInfo::default();
+        facts.declarations.foreign_pub_type_remappings.insert(
+            "pricing".into(),
+            std::collections::HashMap::from([(
+                origin.binding_key(),
+                "pub::pricing::__incan_provider_rust::catalog::Product".into(),
+            )]),
+        );
+        // Obtain the wrapper from real emission, then publish the exact ordered table entry with checked leaf origins.
+        let lowered_program = AstLowering::new().lower_program(&program)?;
+        let mut emitter = crate::backend::ir::IrEmitter::new(&lowered_program.function_registry);
+        let _ = emitter.emit_program(&lowered_program)?;
+        let definitions = emitter.emitted_native_union_types();
+        let (wrapper, emitted) = definitions.iter().next().ok_or("emitter produced no union")?;
+        let native = crate::library_manifest::NativeUnionExport {
+            owner: crate::library_manifest::NativeUnionOwnerExport::ContainingArtifact,
+            rust_name: wrapper.clone(),
+            local_nominals: Default::default(),
+            members: emitted
+                .union_members()
+                .ok_or("emitted union has no members")?
+                .iter()
+                .map(|member| {
+                    super::super::super::codegen::manifest_type_ref_from_ir(member).map(|ty| {
+                        crate::library_manifest::with_checked_type_origins(
+                            ty,
+                            &std::collections::BTreeMap::from([("Product".into(), origin.clone())]),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            checked_projection: None,
+        };
+        let mut manifest = crate::library_manifest::LibraryManifest::new("pricing", "1.0.0");
+        manifest.contract_metadata.native_unions.push(native.clone());
+        manifest
+            .exports
+            .type_aliases
+            .push(crate::library_manifest::TypeAliasExport {
+                name: "Answer".into(),
+                type_params: Vec::new(),
+                target: TypeRef::NativeUnion(native.clone()),
+            });
+        manifest
+            .exports
+            .functions
+            .push(crate::library_manifest::FunctionExport {
+                name: "echo".into(),
+                emitted_name: None,
+                type_params: Vec::new(),
+                params: vec![crate::library_manifest::ParamExport {
+                    name: "value".into(),
+                    ty: TypeRef::NativeUnion(native.clone()),
+                    kind: Default::default(),
+                    has_default: false,
+                    default: None,
+                }],
+                return_type: TypeRef::NativeUnion(native.clone()),
+                is_async: false,
+            });
+        let artifact = crate::frontend::library_manifest_index::LibraryArtifactMetadata::from_crate_root(
+            "pricing",
+            "pricing",
+            std::path::Path::new("/checked/pricing"),
+        );
+        let index = crate::frontend::library_manifest_index::LibraryManifestIndex::from_entries(
+            std::collections::HashMap::from([(
+                "pricing".into(),
+                crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded {
+                    manifest: Box::new(manifest.clone()),
+                    metadata: artifact.clone(),
+                },
+            )]),
+        );
+        let record = crate::provider::ProviderRecord {
+            identity: crate::provider::ProviderIdentity {
+                name: "pricing".into(),
+                version: "1.0.0".into(),
+                digest: "b".repeat(64),
+                feature_projection: Default::default(),
+            },
+            provenance: crate::provider::ProviderProvenance::ProjectDependency {
+                dependency_key: "pricing".into(),
+                manifest_path: artifact.manifest_path.clone(),
+            },
+            authority: crate::provider::NamespaceAuthority::ProjectDependency {
+                dependency_key: "pricing".into(),
+            },
+            namespace_claims: Default::default(),
+            available: true,
+            enabled: true,
+            manifest: Some(std::sync::Arc::new(manifest)),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        };
+        let plan = crate::provider::ProviderPlan::new(index, vec![record], [])?;
+        facts
+            .declarations
+            .named_type_origins
+            .insert("pub::stock::Product".into(), origin.clone());
+        let mut facade = crate::library_manifest::LibraryManifest::new("facade", "1.0.0");
+        let aliases = ["Answer", "echo"]
+            .into_iter()
+            .map(|name| {
+                crate::frontend::api_metadata::ApiDeclaration::Alias(crate::frontend::api_metadata::ApiAlias {
+                    name: name.into(),
+                    anchor: crate::frontend::api_metadata::SourceAnchor {
+                        id: name.into(),
+                        span: crate::frontend::api_metadata::SourceSpan { start: 0, end: 1 },
+                    },
+                    target_path: vec!["pub".into(), "pricing".into(), name.into()],
+                    is_public: true,
+                    projected_function: None,
+                    projected_type: None,
+                })
+            })
+            .collect();
+        facade.contract_metadata.api = Some(crate::frontend::api_metadata::CheckedApiMetadataPackage {
+            schema_version: crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![crate::frontend::api_metadata::CheckedApiMetadata {
+                schema_version: crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION,
+                module_path: vec!["lib".into()],
+                declarations: aliases,
+            }],
+            public_namespaces: Vec::new(),
+        });
+        facade.exports.aliases = ["Answer", "echo"]
+            .into_iter()
+            .map(|name| crate::library_manifest::AliasExport {
+                name: name.into(),
+                target_path: vec!["pub".into(), "pricing".into(), name.into()],
+                projected_function: None,
+                projected_type: None,
+            })
+            .collect();
+        crate::backend::ir::emit::native_unions::preserve_native_aliases(&mut facade, Some(&plan))?;
+        assert!(
+            facade.contract_metadata.native_unions.is_empty(),
+            "a facade must not claim a local native definition"
+        );
+        let forwarded = facade.exports.aliases[0]
+            .projected_type
+            .as_ref()
+            .ok_or("facade lost its type alias")?;
+        let TypeRef::NativeUnion(forwarded) = forwarded else {
+            return Err("facade erased native type carrier".into());
+        };
+        let expected_owner = crate::provider::ProviderIdentity {
+            name: "pricing".into(),
+            version: "1.0.0".into(),
+            digest: "b".repeat(64),
+            feature_projection: Default::default(),
+        };
+        assert_eq!(
+            forwarded.owner,
+            crate::library_manifest::NativeUnionOwnerExport::SelectedArtifact(expected_owner.clone())
+        );
+        assert_eq!(forwarded.rust_name, *wrapper);
+        assert_eq!(
+            facade.exports.aliases[1]
+                .projected_function
+                .as_ref()
+                .ok_or("facade lost its callable")?
+                .params[0]
+                .ty,
+            TypeRef::NativeUnion(forwarded.clone())
+        );
+        let mut wrong_owner = forwarded.clone();
+        let mut other_artifact = expected_owner;
+        other_artifact.digest = "c".repeat(64);
+        wrong_owner.owner = crate::library_manifest::NativeUnionOwnerExport::SelectedArtifact(other_artifact);
+        assert!(plan.public_native_union_projection("pricing", &wrong_owner).is_err());
+        facts.declarations.named_type_origins.insert(
+            "pub::pricing::__incan_provider_rust::catalog::Product".into(),
+            origin.clone(),
+        );
+        let mut lowering = AstLowering::new_with_type_info(facts);
+        lowering.set_provider_plan(Some(std::sync::Arc::new(plan.clone())));
+        let published = TypeRef::NativeUnion(native.clone());
+        let consumer = lowering.lower_pub_manifest_type_ref("pricing", &published);
+        assert!(lowering.metadata_errors.borrow().is_empty());
+        assert_eq!(consumer.union_type_name(), producer.union_type_name());
+        assert_eq!(consumer.rust_name(), format!("::pricing::{wrapper}"));
+        let product_index = emitted
+            .union_members()
+            .ok_or("missing emitted members")?
+            .iter()
+            .position(|member| matches!(member, IrType::Struct(name) if name == "Product"))
+            .ok_or("missing Product variant")?;
+        assert_eq!(
+            consumer.union_variant_index_for_member(&IrType::Struct("stock::Product".into())),
+            Some(product_index)
+        );
+        assert_eq!(
+            crate::backend::ir::types::isinstance_union_variant_indices(
+                &consumer,
+                &IrType::Struct("stock::Product".into())
+            ),
+            Some(vec![product_index])
+        );
+        let mut forged = native;
+        forged.members.reverse();
+        assert!(plan.public_native_union_projection("pricing", &forged).is_err());
+        forged.rust_name = "__IncanUnion_not_emitted".into();
+        assert!(plan.public_native_union_projection("pricing", &forged).is_err());
+        Ok(())
+    }
+
+    /// Ordinary manifest signatures, including nested callable leaves, consume checked native bridge routes.
+    #[test]
+    fn foreign_manifest_signatures_use_checked_native_routes() {
+        use crate::library_manifest::TypeRef;
+        let origin = crate::library_manifest::NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "catalog".into(),
+                version: "1.2.3".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: crate::library_manifest::CanonicalIdentityExport {
+                namespace: crate::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
+                origin: crate::library_manifest::CanonicalIdentityOriginExport::Package {
+                    library: "catalog".into(),
+                    module_path: vec!["lib".into()],
+                },
+                declaration_name: "Product".into(),
+                kind: "model".into(),
+                declaration_span: crate::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 20 },
+            },
+        };
+        let leaf = TypeRef::Named {
+            name: "Product".into(),
+            origin: Some(origin.clone()),
+        };
+        let signature = TypeRef::Function {
+            params: vec![TypeRef::Tuple {
+                elements: vec![leaf.clone()],
+            }],
+            return_type: Box::new(TypeRef::Applied {
+                name: "list".into(),
+                args: vec![leaf.clone()],
+                origin: None,
+            }),
+        };
+        let mut facts = crate::frontend::typechecker::TypeCheckInfo::default();
+        facts.declarations.foreign_pub_type_remappings.insert(
+            "pricing".into(),
+            std::collections::HashMap::from([(
+                origin.binding_key(),
+                "pub::pricing::__incan_provider_rust::catalog::Product".into(),
+            )]),
+        );
+        let lowering = AstLowering::new_with_type_info(facts);
+        let nominal = IrType::Struct("::pricing::__incan_provider_rust::catalog::Product".into());
+        assert_eq!(
+            lowering.lower_pub_manifest_type_ref("pricing", &signature),
+            IrType::Function {
+                params: vec![IrType::Tuple(vec![nominal.clone()])],
+                ret: Box::new(IrType::List(Box::new(nominal))),
+            }
+        );
+        assert_eq!(
+            AstLowering::new().lower_pub_manifest_type_ref("pricing", &leaf),
+            IrType::Unknown
+        );
+    }
+
+    #[test]
     fn exact_binary_float_arithmetic_keeps_its_native_ir_width() {
         let lowering = AstLowering::new();
         for kind in [NumericTypeId::F32, NumericTypeId::F64] {
@@ -1438,6 +1939,7 @@ mod tests {
             lowered,
             IrType::ExternalUnion {
                 library: "widgets".to_string(),
+                native: None,
                 union: Box::new(IrType::NamedGeneric(
                     crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
                     vec![

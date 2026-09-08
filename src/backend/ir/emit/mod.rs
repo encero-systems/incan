@@ -21,6 +21,7 @@ mod consts;
 mod decls;
 mod errors;
 mod expressions;
+pub(in crate::backend::ir) mod native_unions;
 mod program;
 mod statements;
 mod types;
@@ -645,6 +646,11 @@ pub struct IrEmitter<'a> {
     qualify_union_types_from_crate: bool,
     /// Extra anonymous union shapes that should be emitted in this module in addition to locally referenced shapes.
     generated_union_types: HashMap<String, IrType>,
+    /// Exact local wrappers passed to definition emission after alias resolution and generated-use filtering.
+    emitted_native_unions: RefCell<HashMap<String, IrType>>,
+    /// Exact consumer nominal bindings retained by this source module's lowering pass.
+    native_nominal_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+
     /// Whether this module should emit generated ordinary union wrapper definitions.
     emit_generated_union_definitions: bool,
     /// Stack of statement-slice analyses describing which local `StaticBinding` names need mutable Rust bindings.
@@ -746,6 +752,8 @@ impl<'a> IrEmitter<'a> {
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
             generated_union_types: HashMap::new(),
+            emitted_native_unions: RefCell::new(HashMap::new()),
+            native_nominal_origins: Default::default(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
             result_observer_callable_types: RefCell::new(HashSet::new()),
@@ -1220,8 +1228,10 @@ impl<'a> IrEmitter<'a> {
             IrType::TypeToken(inner) => {
                 IrType::TypeToken(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
             }
-            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+            IrType::ExternalUnion { native: Some(_), .. } => ty.clone(),
+            IrType::ExternalUnion { library, union, native } => IrType::ExternalUnion {
                 library: library.clone(),
+                native: native.clone(),
                 union: Box::new(self.resolve_type_aliases_for_emit_inner(union, visiting)),
             },
             IrType::Ref(inner) => IrType::Ref(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
@@ -1870,16 +1880,48 @@ impl<'a> IrEmitter<'a> {
         self.source_dependency_constructor_reexports_dirty = true;
     }
 
+    /// Supply exact lowered nominal bindings for conversion metadata emitted in this source module.
+    pub(crate) fn set_native_nominal_origins(
+        &mut self,
+        origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+    ) {
+        self.native_nominal_origins = origins;
+    }
+
     /// Seed public dependency nominal metadata from `.incnlib` manifests.
     ///
     /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
     /// need the same field metadata for public models/classes that source-module consumers receive from lowered
     /// dependency modules.
-    pub(crate) fn seed_public_dependency_nominal_metadata(&mut self, index: &LibraryManifestIndex) {
+    pub(crate) fn seed_public_dependency_nominal_metadata(
+        &mut self,
+        index: &LibraryManifestIndex,
+        routes: &HashMap<String, HashMap<String, String>>,
+        plan: Option<&crate::provider::ProviderPlan>,
+    ) -> Result<(), EmitError> {
+        let mut manifests = HashMap::new();
+        for library in index.known_libraries() {
+            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+                continue;
+            };
+            let projected = crate::library_manifest::with_checked_native_unions(
+                manifest.as_ref().clone(),
+                &library,
+                plan,
+                routes.get(&library),
+            )
+            .map_err(EmitError::InternalInvariant)?;
+            let projected =
+                crate::library_manifest::with_native_nominal_origins(projected, &self.native_nominal_origins);
+            manifests.insert(
+                library.clone(),
+                crate::library_manifest::with_checked_type_routes(projected, routes.get(&library)),
+            );
+        }
         let mut counts = HashMap::<String, usize>::new();
         let mut public_type_paths = HashMap::<String, HashSet<Vec<String>>>::new();
         for library in index.known_libraries() {
-            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+            let Some(manifest) = manifests.get(&library) else {
                 continue;
             };
             let mut manifest_nominal_names = manifest
@@ -1980,7 +2022,7 @@ impl<'a> IrEmitter<'a> {
             .collect();
 
         for library in index.known_libraries() {
-            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+            let Some(manifest) = manifests.get(&library) else {
                 continue;
             };
             let mut public_names = manifest
@@ -2001,6 +2043,7 @@ impl<'a> IrEmitter<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Return the public nominal name represented by one checked API declaration.
@@ -2895,7 +2938,9 @@ impl<'a> IrEmitter<'a> {
 
     /// Convert a public manifest type reference into the IR vocabulary used by emission metadata.
     fn manifest_type_ref_to_ir_type(ty: &TypeRef) -> IrType {
-        Self::resolved_type_to_ir_type(&resolved_type_from_manifest_type_ref(ty))
+        super::types::ir_type_from_projected_manifest(ty, &|ordinary| {
+            Self::resolved_type_to_ir_type(&resolved_type_from_manifest_type_ref(ordinary))
+        })
     }
 
     /// Convert resolved frontend metadata into IR type metadata without requiring an AST lowering context.
@@ -3249,8 +3294,9 @@ impl<'a> IrEmitter<'a> {
                 ret: Box::new(Self::substitute_signature_type(ret, subst)),
             },
             IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::substitute_signature_type(inner, subst))),
-            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+            IrType::ExternalUnion { library, union, native } => IrType::ExternalUnion {
                 library: library.clone(),
+                native: native.clone(),
                 union: Box::new(Self::substitute_signature_type(union, subst)),
             },
             IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_signature_type(inner, subst))),
@@ -3451,6 +3497,99 @@ mod tests {
     use incan_semantics_core::{
         CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
     };
+
+    /// Field metadata uses the same checked foreign route projection as ordinary callable lowering.
+    #[test]
+    fn public_constructor_metadata_preserves_checked_foreign_routes() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use crate::library_manifest::{
+            FieldExport, FieldVisibilityExport, ModelExport, NominalTypeOriginExport, TypeRef,
+        };
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "catalog".into(),
+                module_path: vec!["lib".into()],
+            },
+            declaration_name: "Product".into(),
+            kind: SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 20),
+        };
+        let origin = NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "catalog".into(),
+                version: "1.2.3".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: CanonicalIdentityExport::from_canonical("catalog", &identity)
+                .ok_or("identity projection failed")?,
+        };
+        let mut manifest = LibraryManifest::new("pricing", "1.2.3");
+        manifest.exports.models.push(ModelExport {
+            name: "Basket".into(),
+            type_params: vec![],
+            traits: vec![],
+            trait_adoptions: vec![],
+            derives: vec![],
+            properties: vec![],
+            methods: vec![],
+            fields: vec![FieldExport {
+                name: "product".into(),
+                canonical: None,
+                ty: TypeRef::Named {
+                    name: "Product".into(),
+                    origin: Some(origin.clone()),
+                },
+                surface_type_name: None,
+                visibility: FieldVisibilityExport::Public,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            }],
+        });
+        let index = LibraryManifestIndex::from_entries(std::collections::HashMap::from([(
+            "pricing".into(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest.clone()),
+                metadata: LibraryArtifactMetadata::from_manifest_path(
+                    "pricing",
+                    "pricing",
+                    "/artifact/pricing.incnlib".into(),
+                    "/artifact".into(),
+                ),
+            },
+        )]));
+        let routes = std::collections::HashMap::from([(
+            "pricing".into(),
+            std::collections::HashMap::from([(
+                origin.binding_key(),
+                "pub::pricing::__incan_provider_rust::catalog::Product".into(),
+            )]),
+        )]);
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.seed_public_dependency_nominal_metadata(&index, &routes, None)?;
+        let metadata = emitter
+            .pub_dependency_constructor_metadata
+            .get(&("pricing".into(), vec!["Basket".into()]))
+            .ok_or("constructor metadata absent")?;
+        assert_eq!(
+            metadata.field_types.get("product"),
+            Some(&IrType::Struct(
+                "::pricing::__incan_provider_rust::catalog::Product".into()
+            ))
+        );
+        assert!(matches!(
+            manifest.exports.models[0].fields[0].ty,
+            TypeRef::Named { origin: Some(_), .. }
+        ));
+        Ok(())
+    }
 
     #[test]
     fn compiled_sdk_manifest_seeds_exact_stdlib_function_identity() {
@@ -3921,6 +4060,7 @@ mod tests {
                 name: "secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "bool".to_string(),
                 },
                 surface_type_name: None,
@@ -3934,6 +4074,7 @@ mod tests {
                 name: "label".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,

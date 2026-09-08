@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
@@ -19,7 +19,7 @@ use super::features::feature_value_location;
 use super::{PackageFeaturePlan, ResolvedSdkComponents, SdkInventory};
 
 /// Stable identity of one immutable compiled-provider projection.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ProviderIdentity {
     /// Provider package or SDK artifact name.
     pub name: String,
@@ -276,6 +276,27 @@ pub(crate) struct SdkArtifactProjection {
     pub artifact: LibraryArtifactMetadata,
 }
 
+/// One public artifact admitted by the provider graph's checked identity and dependency-edge validation.
+#[derive(Debug, Clone)]
+pub(crate) struct PublicProviderArtifact {
+    /// Selected package version, artifact digest and public feature projection.
+    pub identity: ProviderIdentity,
+    /// Checked manifest from that artifact generation.
+    pub manifest: Arc<LibraryManifest>,
+    /// Materialized artifact location; consumers must not rediscover dependency source.
+    pub artifact: LibraryArtifactMetadata,
+}
+
+/// Products retained from the single compiled-provider graph traversal.
+#[derive(Default)]
+struct ResolvedArtifactGraph {
+    rebindings: Vec<SdkDependencyRebinding>,
+    projections: Vec<SdkArtifactProjection>,
+    public_artifacts: BTreeMap<String, PublicProviderArtifact>,
+    /// Public dependency edges retained by artifact admission, keyed by the containing artifact root.
+    public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
+}
+
 /// Immutable provider catalog and active module projection shared by every compiler stage.
 #[derive(Debug, Clone, Default)]
 pub struct ProviderPlan {
@@ -285,6 +306,9 @@ pub struct ProviderPlan {
     used_module_paths: BTreeSet<Vec<String>>,
     sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
     sdk_artifact_projections: Vec<SdkArtifactProjection>,
+    public_artifacts: BTreeMap<String, PublicProviderArtifact>,
+    /// Public dependency edges retained by artifact admission, keyed by the containing artifact root.
+    public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
@@ -331,16 +355,17 @@ impl ProviderPlan {
             }
             indexed_records.insert(key, record);
         }
-        let (sdk_dependency_rebindings, sdk_artifact_projections) =
-            resolve_sdk_dependency_rebindings(&indexed_records)?;
+        let artifact_graph = resolve_artifact_graph(&indexed_records)?;
 
         Ok(Self {
             library_manifest_index,
             records: indexed_records,
             module_catalog,
             used_module_paths: used_module_paths.into_iter().collect(),
-            sdk_dependency_rebindings,
-            sdk_artifact_projections,
+            sdk_dependency_rebindings: artifact_graph.rebindings,
+            sdk_artifact_projections: artifact_graph.projections,
+            public_artifacts: artifact_graph.public_artifacts,
+            public_dependencies: artifact_graph.public_dependencies,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         })
     }
@@ -348,6 +373,344 @@ impl ProviderPlan {
     /// Return the consumer-side dependency manifest index normalized into this plan.
     pub fn library_manifest_index(&self) -> &LibraryManifestIndex {
         &self.library_manifest_index
+    }
+
+    /// Return public materialized artifacts already admitted by this plan, including validated transitive facades.
+    pub(crate) fn public_artifacts(&self) -> impl Iterator<Item = &PublicProviderArtifact> {
+        self.public_artifacts.values()
+    }
+
+    /// Project a foreign type through already-admitted public dependency edges and exact public membership.
+    ///
+    /// This query does not read dependency source or rediscover artifacts. The native route follows the existing
+    /// compiler-owned dependency bridge, while semantic identity remains the selected artifact and declaration.
+    pub(crate) fn public_nominal_projection(
+        &self,
+        importing_library: &str,
+        origin: &crate::library_manifest::NominalTypeOriginExport,
+    ) -> Result<
+        (
+            PublicProviderArtifact,
+            crate::library_manifest::ExportIdentity,
+            Vec<String>,
+        ),
+        String,
+    > {
+        let (target, export) = self.public_nominal_declaration(origin)?;
+        let route = self.public_artifact_route(importing_library, &target.identity)?;
+        Ok((target, export, route))
+    }
+
+    /// Return the existing admitted public dependency route to one exact selected artifact.
+    ///
+    /// Nominal and native representation projections share this traversal; neither query discovers another graph.
+    pub(crate) fn public_artifact_route(
+        &self,
+        importing_library: &str,
+        identity: &ProviderIdentity,
+    ) -> Result<Vec<String>, String> {
+        let target = self
+            .public_artifacts
+            .get(&identity.stable_key())
+            .ok_or_else(|| format!("unadmitted public artifact {}", identity.stable_key()))?;
+        let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
+            self.library_manifest_index.get(importing_library)
+        else {
+            return Err(format!(
+                "public signature has no admitted importing library `{importing_library}`"
+            ));
+        };
+        let target_root = normalize_artifact_root(&target.artifact.crate_root);
+        let mut pending =
+            std::collections::VecDeque::from([(normalize_artifact_root(&metadata.crate_root), Vec::new())]);
+        let mut seen = BTreeSet::new();
+        while let Some((root, route)) = pending.pop_front() {
+            if !seen.insert(root.clone()) {
+                continue;
+            }
+            if root == target_root {
+                return Ok(route);
+            }
+            for (dependency, key) in self.public_dependencies.get(&root).into_iter().flatten() {
+                let admitted = self
+                    .public_artifacts
+                    .get(key)
+                    .ok_or("admitted public edge has no target artifact")?;
+                let mut child_route = route.clone();
+                child_route.push(dependency.clone());
+                pending.push_back((normalize_artifact_root(&admitted.artifact.crate_root), child_route));
+            }
+        }
+        Err(format!(
+            "public signature in `{importing_library}` has no admitted public dependency route to {}",
+            identity.stable_key()
+        ))
+    }
+
+    /// Bind a producer union representation to its exact admitted owner and existing native dependency route.
+    ///
+    /// The wrapper must be present in the selected owner's final emitted-definition table. A plausible generated name
+    /// is insufficient: its ordered semantic payloads must agree with the representation published by that
+    /// artifact.
+    pub(crate) fn public_native_union_projection(
+        &self,
+        importing_library: &str,
+        native: &crate::library_manifest::NativeUnionExport,
+    ) -> Result<(crate::library_manifest::NativeUnionExport, Vec<String>), String> {
+        use crate::library_manifest::{NativeUnionOwnerExport, TypeRef, VisitTypeRefs};
+        let identity = match &native.owner {
+            NativeUnionOwnerExport::SelectedArtifact(identity) => identity.clone(),
+            NativeUnionOwnerExport::ContainingArtifact => {
+                let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
+                    self.library_manifest_index.get(importing_library)
+                else {
+                    return Err(format!("union import container `{importing_library}` is unavailable"));
+                };
+                let mut owners = self.public_artifacts.values().filter(|artifact| {
+                    normalize_artifact_root(&artifact.artifact.crate_root)
+                        == normalize_artifact_root(&metadata.crate_root)
+                });
+                let owner = owners.next().ok_or("union containing artifact was not admitted")?;
+                if owners.next().is_some() {
+                    return Err("union containing artifact is ambiguous".to_string());
+                }
+                owner.identity.clone()
+            }
+        };
+        let route = self.public_artifact_route(importing_library, &identity)?;
+        let artifact = self
+            .public_artifacts
+            .get(&identity.stable_key())
+            .ok_or("union defining artifact was not admitted")?;
+        let candidates = artifact
+            .manifest
+            .contract_metadata
+            .native_unions
+            .iter()
+            .filter(|candidate| {
+                candidate.owner == NativeUnionOwnerExport::ContainingArtifact && candidate.rust_name == native.rust_name
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let normalize = |native: &crate::library_manifest::NativeUnionExport| -> Result<TypeRef, String> {
+            let mut ty = TypeRef::NativeUnion(self.bind_native_union_local_nominals(native, &identity)?);
+            ty.visit_type_refs(&mut |ty| match ty {
+                TypeRef::Named {
+                    name,
+                    origin: Some(origin),
+                }
+                | TypeRef::Applied {
+                    name,
+                    origin: Some(origin),
+                    ..
+                } => *name = origin.binding_key(),
+                _ => {}
+            });
+            Ok(ty)
+        };
+        let requested = normalize(native)?;
+        let mut matched = None;
+        for candidate in candidates {
+            if normalize(&candidate)? == requested {
+                matched = Some(candidate);
+                break;
+            }
+        }
+        let candidate = matched.ok_or_else(|| {
+            format!(
+                "native union `{}` has no matching emitted representation in {}",
+                native.rust_name,
+                identity.stable_key()
+            )
+        })?;
+        let bound = self.bind_native_union_local_nominals(&candidate, &identity)?;
+        Ok((bound, route))
+    }
+
+    /// Bind retained producer-local leaves only after validating every declaration against its selected owner.
+    ///
+    /// Even unused entries must belong to the owner's public nominal surface. Nested native wrappers retain their
+    /// own owner and binding map; an enclosing union cannot lend them its declaration authority.
+    fn bind_native_union_local_nominals(
+        &self,
+        native: &crate::library_manifest::NativeUnionExport,
+        containing_owner: &crate::provider::ProviderIdentity,
+    ) -> Result<crate::library_manifest::NativeUnionExport, String> {
+        use crate::library_manifest::{NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef};
+        let mut bound = native.for_publication();
+        let owner = match &bound.owner {
+            NativeUnionOwnerExport::ContainingArtifact => containing_owner.clone(),
+            NativeUnionOwnerExport::SelectedArtifact(identity) => identity.clone(),
+        };
+        let mut origins = BTreeMap::new();
+        for (spelling, canonical) in &bound.local_nominals {
+            let origin = NominalTypeOriginExport {
+                provider: owner.clone(),
+                canonical: canonical.clone(),
+            };
+            self.public_nominal_declaration(&origin)?;
+            origins.insert(spelling.clone(), origin);
+        }
+        /// Bind only this wrapper's semantic leaves, crossing nested carriers through their own checked owner.
+        fn bind_member(
+            plan: &ProviderPlan,
+            ty: &mut TypeRef,
+            owner: &crate::provider::ProviderIdentity,
+            origins: &BTreeMap<String, NominalTypeOriginExport>,
+        ) -> Result<(), String> {
+            match ty {
+                TypeRef::Named { name, origin } | TypeRef::Applied { name, origin, .. } if origin.is_none() => {
+                    *origin = origins.get(name).cloned();
+                }
+                _ => {}
+            }
+            match ty {
+                TypeRef::NativeUnion(nested) => *nested = plan.bind_native_union_local_nominals(nested, owner)?,
+                TypeRef::Applied { args, .. } | TypeRef::Tuple { elements: args } => {
+                    for arg in args {
+                        bind_member(plan, arg, owner, origins)?;
+                    }
+                }
+                TypeRef::Function { params, return_type } => {
+                    for param in params {
+                        bind_member(plan, param, owner, origins)?;
+                    }
+                    bind_member(plan, return_type, owner, origins)?;
+                }
+                TypeRef::Ref { inner } | TypeRef::TypeToken { inner } => bind_member(plan, inner, owner, origins)?,
+                TypeRef::Named { .. }
+                | TypeRef::TypeParam { .. }
+                | TypeRef::SelfType
+                | TypeRef::RustPath { .. }
+                | TypeRef::Unknown => {}
+            }
+            Ok(())
+        }
+        for member in &mut bound.members {
+            bind_member(self, member, &owner, &origins)?;
+        }
+        bound.owner = NativeUnionOwnerExport::SelectedArtifact(owner);
+        Ok(bound)
+    }
+
+    /// Resolve exact foreign nominal membership independently of its consumer's physical exposure route.
+    pub(crate) fn public_nominal_declaration(
+        &self,
+        origin: &crate::library_manifest::NominalTypeOriginExport,
+    ) -> Result<(PublicProviderArtifact, crate::library_manifest::ExportIdentity), String> {
+        let target = self
+            .public_artifacts
+            .get(&origin.provider.stable_key())
+            .ok_or_else(|| {
+                format!(
+                    "public signature requires unadmitted type artifact {}",
+                    origin.provider.stable_key()
+                )
+            })?;
+        let canonical = origin
+            .canonical
+            .hydrate()
+            .ok_or("public signature has an invalid nominal identity")?;
+        if !matches!(&canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. }
+            if library == &target.identity.name)
+        {
+            return Err("public signature nominal identity belongs to a different package".to_string());
+        }
+        let export = target
+            .manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .filter(|entry| entry.canonical.as_ref() == Some(&origin.canonical))
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    crate::library_manifest::ExportIdentityKind::Model
+                        | crate::library_manifest::ExportIdentityKind::Class
+                        | crate::library_manifest::ExportIdentityKind::Enum
+                        | crate::library_manifest::ExportIdentityKind::Newtype
+                )
+            })
+            .min_by(|left, right| {
+                left.public_path
+                    .len()
+                    .cmp(&right.public_path.len())
+                    .then(left.public_path.cmp(&right.public_path))
+            })
+            .ok_or_else(|| {
+                format!(
+                    "type `{}` is not a public nominal of {}",
+                    canonical.declaration_name,
+                    origin.provider.stable_key()
+                )
+            })?;
+        Ok((target.clone(), export.clone()))
+    }
+
+    /// Find the exact declaring artifact reachable through already-admitted public edges of one import container.
+    ///
+    /// Canonical package names alone cannot select among multiple artifact generations. Such ambiguity refuses
+    /// instead of collapsing nominal types; explicit leaf origins avoid it in newly published signatures.
+    pub(crate) fn declaring_public_provider(
+        &self,
+        importing_library: &str,
+        canonical: &incan_semantics_core::CanonicalSymbolId,
+    ) -> Result<ProviderIdentity, String> {
+        let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
+            self.library_manifest_index.get(importing_library)
+        else {
+            return Err(format!("import container `{importing_library}` is unavailable"));
+        };
+        let mut pending = vec![normalize_artifact_root(&metadata.crate_root)];
+        let mut seen = BTreeSet::new();
+        let mut candidates = BTreeMap::new();
+        while let Some(root) = pending.pop() {
+            if !seen.insert(root.clone()) {
+                continue;
+            }
+            for artifact in self
+                .public_artifacts
+                .values()
+                .filter(|artifact| normalize_artifact_root(&artifact.artifact.crate_root) == root)
+            {
+                if matches!(&canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. }
+                    if library == &artifact.identity.name)
+                    && artifact
+                        .manifest
+                        .contract_metadata
+                        .identity_graph
+                        .exports
+                        .iter()
+                        .any(|entry| {
+                            entry
+                                .canonical
+                                .as_ref()
+                                .and_then(|identity| identity.hydrate())
+                                .as_ref()
+                                == Some(canonical)
+                        })
+                {
+                    candidates.insert(artifact.identity.stable_key(), artifact.identity.clone());
+                }
+            }
+            for (_, key) in self.public_dependencies.get(&root).into_iter().flatten() {
+                if let Some(artifact) = self.public_artifacts.get(key) {
+                    pending.push(normalize_artifact_root(&artifact.artifact.crate_root));
+                }
+            }
+        }
+        if candidates.len() != 1 {
+            return Err(format!(
+                "type `{}` has {} admitted declaring artifacts through `{importing_library}`",
+                canonical.declaration_name,
+                candidates.len()
+            ));
+        }
+        candidates
+            .into_values()
+            .next()
+            .ok_or("declaring artifact disappeared".into())
     }
 
     /// Return artifact projections needed to replace stale physical SDK cache paths without mutating either artifact.
@@ -414,6 +777,8 @@ impl ProviderPlan {
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
             sdk_artifact_projections: Vec::new(),
+            public_artifacts: BTreeMap::new(),
+            public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -480,6 +845,8 @@ impl ProviderPlan {
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
             sdk_artifact_projections: Vec::new(),
+            public_artifacts: BTreeMap::new(),
+            public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -680,35 +1047,41 @@ impl ProviderPlan {
     }
 }
 
-/// Resolve historical private SDK edges in ordinary compiled libraries against the active inventory by logical
-/// identity.
+/// Admit public compiled artifacts and resolve historical private SDK edges through one graph traversal.
 ///
 /// The checked `.incnlib` descriptor is authoritative for the frozen name, version, digest, and feature projection;
 /// the old physical cache root is deliberately not read because content-addressed provider generations may already
 /// have been collected. Only an enabled, available active SDK record with the exact identity can replace that path.
-fn resolve_sdk_dependency_rebindings(
+fn resolve_artifact_graph(
     records: &BTreeMap<String, ProviderRecord>,
-) -> Result<(Vec<SdkDependencyRebinding>, Vec<SdkArtifactProjection>), ProviderPlanError> {
+) -> Result<ResolvedArtifactGraph, ProviderPlanError> {
     let sdk_records = records
         .values()
         .filter(|record| matches!(record.authority, NamespaceAuthority::SdkReserved))
         .collect::<Vec<_>>();
-    if sdk_records.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
-
+    let mut public_artifacts = BTreeMap::new();
+    let mut public_dependencies = BTreeMap::new();
     let mut rebindings = Vec::new();
     let mut projected = BTreeMap::<PathBuf, LibraryArtifactMetadata>::new();
     let mut visited = BTreeSet::new();
     let mut visiting = BTreeSet::new();
     for library in records
         .values()
+        .filter(|record| record.enabled && record.available)
         .filter(|record| matches!(record.authority, NamespaceAuthority::ProjectDependency { .. }))
     {
         let (Some(manifest), Some(containing_artifact)) = (library.manifest.as_deref(), library.artifact.as_ref())
         else {
             continue;
         };
+        public_artifacts.insert(
+            library.identity.stable_key(),
+            PublicProviderArtifact {
+                identity: library.identity.clone(),
+                manifest: Arc::new(manifest.clone()),
+                artifact: containing_artifact.clone(),
+            },
+        );
         resolve_sdk_artifact_projection(
             &library.identity.name,
             manifest,
@@ -718,6 +1091,8 @@ fn resolve_sdk_dependency_rebindings(
             &mut visited,
             &mut rebindings,
             &mut projected,
+            &mut public_artifacts,
+            &mut public_dependencies,
         )?;
     }
     rebindings.sort_by(|left, right| {
@@ -741,7 +1116,12 @@ fn resolve_sdk_dependency_rebindings(
         .into_values()
         .map(|artifact| SdkArtifactProjection { artifact })
         .collect();
-    Ok((rebindings, projections))
+    Ok(ResolvedArtifactGraph {
+        rebindings,
+        projections,
+        public_artifacts,
+        public_dependencies,
+    })
 }
 
 /// Traverse one compiled provider graph and mark every ancestor that must point at a projected child artifact.
@@ -755,6 +1135,8 @@ fn resolve_sdk_artifact_projection(
     visited: &mut BTreeSet<PathBuf>,
     rebindings: &mut Vec<SdkDependencyRebinding>,
     projected: &mut BTreeMap<PathBuf, LibraryArtifactMetadata>,
+    public_artifacts: &mut BTreeMap<String, PublicProviderArtifact>,
+    public_dependencies: &mut BTreeMap<PathBuf, Vec<(String, String)>>,
 ) -> Result<bool, ProviderPlanError> {
     let artifact_root = normalize_artifact_root(&artifact.crate_root);
     if visited.contains(&artifact_root) {
@@ -771,6 +1153,11 @@ fn resolve_sdk_artifact_projection(
     let mut requires_projection = false;
     for dependency in &manifest.contract_metadata.provider.provider_dependencies {
         if dependency.kind == ProviderDependencyKind::PrivateImplementation {
+            // SDK-free adapters have no replacement inventory. Private implementation edges never grant a public
+            // semantic artifact, regardless of whether a native SDK rebinding is available.
+            if sdk_records.is_empty() {
+                continue;
+            }
             let candidates = sdk_records
                 .iter()
                 .copied()
@@ -833,6 +1220,24 @@ fn resolve_sdk_artifact_projection(
             }
         };
         validate_transitive_provider_dependency(dependency, &dependency_manifest, &dependency_artifact)?;
+        let identity = ProviderIdentity {
+            name: dependency.provider_name.clone(),
+            version: dependency.provider_version.clone(),
+            digest: dependency.artifact_digest.clone(),
+            feature_projection: dependency_manifest.contract_metadata.provider.active_features.clone(),
+        };
+        public_dependencies
+            .entry(artifact_root.clone())
+            .or_default()
+            .push((dependency.dependency_key.clone(), identity.stable_key()));
+        public_artifacts.insert(
+            identity.stable_key(),
+            PublicProviderArtifact {
+                identity,
+                manifest: Arc::new((*dependency_manifest).clone()),
+                artifact: dependency_artifact.clone(),
+            },
+        );
         if resolve_sdk_artifact_projection(
             &dependency.provider_name,
             &dependency_manifest,
@@ -842,6 +1247,8 @@ fn resolve_sdk_artifact_projection(
             visited,
             rebindings,
             projected,
+            public_artifacts,
+            public_dependencies,
         )? {
             requires_projection = true;
         }
@@ -1864,6 +2271,30 @@ mod tests {
             normalize_artifact_root(&projection.artifact.crate_root) == normalize_artifact_root(&child_artifact)
         }));
         assert!(!absent_sdk_artifact.exists());
+        Ok(())
+    }
+
+    /// Inactive roots do not admit public executable artifacts or touch unavailable transitive files.
+    #[test]
+    fn inactive_providers_do_not_expand_the_public_artifact_catalog() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut record = compiled_library_record(root.path(), "unused-sdk-digest", BTreeSet::new());
+        let manifest = Arc::make_mut(record.manifest.as_mut().ok_or("test manifest absent")?);
+        let dependency = manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .first_mut()
+            .ok_or("test edge absent")?;
+        dependency.kind = ProviderDependencyKind::PublicPackage;
+        dependency.relative_artifact_path = "missing-public-artifact".into();
+        record.enabled = false;
+        let disabled = ProviderPlan::new(LibraryManifestIndex::default(), vec![record.clone()], [])?;
+        assert_eq!(disabled.public_artifacts().count(), 0);
+        record.enabled = true;
+        record.available = false;
+        let unavailable = ProviderPlan::new(LibraryManifestIndex::default(), vec![record], [])?;
+        assert_eq!(unavailable.public_artifacts().count(), 0);
         Ok(())
     }
 

@@ -46,17 +46,16 @@ use incan_core::lang::builtins::BuiltinFnId;
 use incan_core::lang::errors;
 use incan_core::lang::surface::string_methods::StringMethodId;
 use incan_core::lang::types::numerics::NumericTypeId;
+use serde::{Deserialize, Serialize};
 
-use crate::{
-    AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, module_identity_for_path,
-};
+use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType};
 
 // ============================================================================
 // Module / body containers
 // ============================================================================
 
 /// One module's lowered function/method bodies and direct-execution declaration facts.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
     /// Identity of the owning module, matching [`crate::HirModule::id`].
     pub module_id: CompilerNodeId,
@@ -73,15 +72,15 @@ pub struct BodyIrModule {
     ///
     /// This is not a general algebraic-data-type registry. The direct profile may materialize only an exact retained
     /// unit variant, compare two carriers of the same retained enum identity, and dispatch a pattern carrying the
-    /// same exact enum/member identities; payload variants, aliases, imports, traits, and methods remain absent and
-    /// must refuse.
+    /// same exact enum/member identities. Consumers may resolve aliases to this context through a published package;
+    /// payload variants, traits, and methods remain outside the profile.
     pub fieldless_enum_declarations: Vec<FieldlessEnumDeclaration>,
     /// Source-local RFC 032 value-enum declarations whose canonical scalar members are available to direct execution.
     ///
     /// This is deliberately separate from [`Self::nominal_declarations`]: a value enum has no model field layout,
     /// and the direct runtime may extract only a retained member's scalar backing through the compiler-provided
-    /// zero-argument `.value()` surface. Ordinary enums, payload variants, aliases, imports, behavior-bearing
-    /// enums, and generic enums are absent and must refuse rather than being rediscovered by spelling.
+    /// zero-argument `.value()` surface. Package aliases retain these canonical contexts. Ordinary enums, payload
+    /// variants, behavior-bearing enums, and generic enums remain absent and must refuse.
     pub value_enum_declarations: Vec<ValueEnumDeclaration>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
@@ -99,10 +98,10 @@ impl BodyIrModule {
     /// would hand back whichever came first.
     ///
     /// `None` has three distinct causes and is never permission to fall back to [`NamedCallableTarget::name`]: the
-    /// identity is owned by another module; its origin is not a project source module at all (a package, a `rust::`
-    /// crate, or a builtin); or this module owns it but it has no lowered body, as for a model or a `const`.
+    /// identity is owned by another source or published module; its origin has no Body-IR module (a `rust::` crate or
+    /// builtin); or this module owns it but it has no lowered body, as for a model or a `const`.
     pub fn body_for_canonical_target(&self, target: &CanonicalSymbolId) -> Option<&Body> {
-        if module_identity_for_path(target.module_path()?) != self.module_id.path() {
+        if crate::canonical_module_identity(target)? != self.module_id.path() {
             return None;
         }
         let mut bodies = self
@@ -167,11 +166,12 @@ impl BodyIrModule {
 
 /// The exact local declaration and canonical field layout for one direct-executable plain model.
 ///
-/// The record is module-scoped and deliberately excludes classes, enums, imported nominals, generic models, and
-/// behavior-bearing models. Its field order is the checked constructor-slot order; a direct runtime must compare it
+/// The record belongs to its declaring module and deliberately excludes classes, enums, generic models, and
+/// behavior-bearing models. A consumer may load this same canonical context from a package artifact. Its field order is
+/// the checked constructor-slot order; a direct runtime must compare it
 /// with [`ConstructorTarget::canonical_field_layout`] before applying [`ConstructorTarget::binding`], rather than
 /// treating constructor argument spelling as layout evidence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
@@ -187,6 +187,10 @@ pub struct NominalDeclaration {
     /// names, while a source projection must match its checked identity at the same slot before the name is used to
     /// select storage.
     pub field_identities: Vec<CanonicalSymbolId>,
+    /// Checked field types in the same canonical order, including private layout dependencies.
+    pub field_types: Vec<IncanType>,
+    /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Number of declared type parameters; this profile admits only zero.
     pub type_parameter_count: usize,
 }
@@ -196,7 +200,7 @@ pub struct NominalDeclaration {
 /// The record exists only for undecorated, non-generic declarations with no traits, methods, aliases, value backing,
 /// or payload variants. A runtime validates these records before materializing a carrier and never treats the enum
 /// spelling itself as an execution authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldlessEnumDeclaration {
     /// Exact source-local enum declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
@@ -209,7 +213,7 @@ pub struct FieldlessEnumDeclaration {
 }
 
 /// One canonical zero-payload member of a retained fieldless normal enum.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldlessEnumVariantDeclaration {
     /// Exact source-local variant declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
@@ -232,7 +236,7 @@ impl FieldlessEnumVariantDeclaration {
 }
 
 /// The scalar backing category a retained RFC 032 value enum exposes through `.value()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ValueEnumBacking {
     /// An integer-backed value enum.
     Int,
@@ -255,7 +259,7 @@ impl ValueEnumBacking {
 /// The record exists only for undecorated, non-generic declarations with no traits, methods, aliases, or payload
 /// variants. Each member has its own source-span identity, so a direct executor verifies the actual selected member
 /// without treating a qualified `Enum.Member` spelling as an identity.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValueEnumDeclaration {
     /// Exact source-local enum declaration identity, derived from its declaration span.
     pub direct_declaration_id: CompilerNodeId,
@@ -270,7 +274,7 @@ pub struct ValueEnumDeclaration {
 }
 
 /// One canonical scalar member of a retained source-local value enum.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValueEnumVariantDeclaration {
     /// Exact source-local variant declaration identity, derived from its declaration span.
     pub direct_declaration_id: CompilerNodeId,
@@ -296,7 +300,7 @@ impl ValueEnumVariantDeclaration {
 }
 
 /// Body IR v0 for a single function or method.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     /// Identity of the owning declaration, matching the [`crate::HirDeclaration::id`] this body was lowered from.
     pub decl_id: CompilerNodeId,
@@ -318,6 +322,9 @@ pub struct Body {
     pub span: HirSourceSpan,
     /// Fully resolved source return type used to validate direct-execution results.
     pub return_type: IncanType,
+    /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
+    /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Every local (parameter, user binding, or compiler-introduced temporary) declared in this body, in
     /// declaration order. Referenced elsewhere by [`LocalId`] index.
     pub locals: Vec<LocalDecl>,
@@ -484,7 +491,7 @@ fn render_runtime_requirement(req: &AbiV0RuntimeRequirement) -> String {
 // ============================================================================
 
 /// Stable index of one local within a [`Body`]'s `locals` vector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LocalId(pub u32);
 
 impl LocalId {
@@ -495,7 +502,7 @@ impl LocalId {
 }
 
 /// One explicit local or temporary value declared in a body.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LocalDecl {
     pub id: LocalId,
     /// Source-level binding name, or `None` for a compiler-introduced temporary.
@@ -533,7 +540,7 @@ impl LocalDecl {
 }
 
 /// Where a local came from, for diagnostics and drop-planning purposes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocalOrigin {
     /// Bound to a function/method parameter.
     Parameter,
@@ -584,11 +591,11 @@ impl LocalOrigin {
 }
 
 /// Stable index of one lexical scope within a [`Body`]'s `scopes` vector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ScopeId(pub u32);
 
 /// One lexical source scope, used to map statements and locals back to diagnostics-relevant source structure.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScopeInfo {
     pub id: ScopeId,
     /// Enclosing scope, or `None` for the body's root scope.
@@ -597,7 +604,7 @@ pub struct ScopeInfo {
 }
 
 /// Root storage selected for a Body IR place.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PlaceRoot {
     /// A function-frame local selected by canonical source identity.
     Local(LocalId),
@@ -606,7 +613,7 @@ pub enum PlaceRoot {
 }
 
 /// Canonical module-level storage retained in a Body IR place.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GlobalPlace {
     pub identity: CanonicalSymbolId,
     pub ty: IncanType,
@@ -614,7 +621,7 @@ pub struct GlobalPlace {
 }
 
 /// Which writes a global place permits after typechecking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GlobalWritePolicy {
     /// Constants cannot be written at either their root or through a projection.
     ReadOnly,
@@ -625,7 +632,7 @@ pub enum GlobalWritePolicy {
 }
 
 /// A place in memory: a canonical local/global root plus zero or more projections (field/index) into it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Place {
     pub root: PlaceRoot,
     pub projection: Vec<PlaceElem>,
@@ -709,17 +716,20 @@ impl Place {
 }
 
 /// One projection step applied to a place.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PlaceElem {
     /// `.field` access, with the selected source member identity when the projection came from checked source.
     ///
-    /// Compiler-synthesized tuple/range/protocol projections carry `None`. A consumer may interpret those only in
-    /// its explicitly admitted structural profile; `None` is never permission to resolve a nominal member by name.
+    /// Compiler-synthesized tuple/range/protocol projections have an explicit structural marker. A missing source
+    /// identity alone is never permission to resolve a nominal member by name or publish a covered body.
     Field {
         /// Written or compiler-synthesized field spelling retained for diagnostics and physical layout selection.
         name: String,
         /// Canonical member selected by typechecking, independent of the source spelling.
         canonical: Option<CanonicalSymbolId>,
+        /// Whether checked tuple/range/protocol lowering proved a structural projection without a nominal member.
+        #[serde(default)]
+        structural: bool,
     },
     /// `[index]` access. Boxed because the index itself is an arbitrary operand.
     Index(Box<Operand>),
@@ -739,14 +749,16 @@ impl PlaceElem {
         Self::Field {
             name: name.into(),
             canonical,
+            structural: false,
         }
     }
 
-    /// Build a compiler-synthesized structural projection with no source member identity.
-    pub fn synthetic_field(name: impl Into<String>) -> Self {
+    /// Build a projection proved by checked structural type or protocol lowering, with no nominal member identity.
+    pub fn structural_field(name: impl Into<String>) -> Self {
         Self::Field {
             name: name.into(),
             canonical: None,
+            structural: true,
         }
     }
 }
@@ -760,7 +772,7 @@ impl PlaceElem {
 /// Every place-read carries its own [`OwnershipFact`] and last-use marker directly (see [`PlaceOperand`]) — this is
 /// the Duckborrower fact for that read, exposed as compiler-owned data rather than left for a backend to re-derive
 /// from generated Rust.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operand {
     /// A read of a place, annotated with its ownership decision.
     Place(PlaceOperand),
@@ -789,7 +801,7 @@ impl Operand {
 }
 
 /// A place-read operand paired with its Duckborrower ownership fact.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlaceOperand {
     pub place: Place,
     /// The ownership decision selected for this read.
@@ -802,7 +814,7 @@ pub struct PlaceOperand {
 }
 
 /// A literal constant operand value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Constant {
     Int(i64),
     Float(String),
@@ -832,7 +844,7 @@ pub enum Constant {
 }
 
 /// One exact numeric constant retained in Body IR without collapsing its checked type or value domain.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypedNumericConstant {
     /// An exact signed integer constant with its canonical checked identity.
     Signed {
@@ -917,7 +929,7 @@ impl Constant {
 /// move/clone split that a real Rust emission boundary needs, plus an explicit [`OwnershipFact::Unknown`] escape
 /// hatch for reads Body IR v0 cannot yet classify — per #653, ownership decisions must be represented "as
 /// Duckborrower facts or explicit unknowns," not silently defaulted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OwnershipFact {
     /// Trivial bitwise copy of a `Copy`-shaped type.
     Copy,
@@ -952,7 +964,7 @@ impl OwnershipFact {
 // ============================================================================
 
 /// The right-hand side of an [`StatementKind::Assign`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Rvalue {
     /// Use an operand's value directly.
     Use(Operand),
@@ -1157,7 +1169,7 @@ impl Rvalue {
 }
 
 /// Exact checked target carried by a Body-IR `isinstance` operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IsInstanceTarget {
     /// Alias-expanded semantic target type.
     pub ty: IncanType,
@@ -1188,7 +1200,7 @@ impl IsInstanceTarget {
 }
 
 /// Exact source-local enum/member identity selected for one value-enum member expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueEnumVariantTarget {
     /// Exact source-local owner enum declaration identity.
     pub enum_declaration_id: CompilerNodeId,
@@ -1220,7 +1232,7 @@ impl ValueEnumVariantTarget {
 }
 
 /// Exact source-local enum/member identity selected for one fieldless normal-enum member expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldlessEnumVariantTarget {
     /// Exact source-local owner enum declaration identity.
     pub enum_declaration_id: CompilerNodeId,
@@ -1252,7 +1264,7 @@ impl FieldlessEnumVariantTarget {
 }
 
 /// One direct compiler-owned `Result` construction with its checked payload and error facts retained.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResultVariant {
     /// Which intrinsic Result constructor source checking selected.
     pub kind: ResultVariantKind,
@@ -1262,23 +1274,70 @@ pub struct ResultVariant {
     pub ok_type: IncanType,
     /// Checked `Result` error type.
     pub error_type: IncanType,
+    /// Checked canonical identities of named leaves, with paths rooted at Result argument 0 (Ok) or 1 (Err).
+    ///
+    /// Nested tuple/list arguments append their zero-based child index. Names in `ok_type` and `error_type` remain
+    /// diagnostic spelling; these identities authorize nominal payloads across aliases and package boundaries.
+    pub canonical_types: std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
 }
 
 impl ResultVariant {
+    /// Require exactly one declaration identity for every named payload-type leaf before execution.
+    pub fn has_complete_canonical_types(&self) -> bool {
+        /// Collect named leaves using the same structural child positions retained in the type facts.
+        fn paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut std::collections::BTreeSet<Vec<usize>>) {
+            match ty {
+                IncanType::Named(_) => {
+                    out.insert(path.clone());
+                }
+                IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
+                    for (index, item) in items.iter().enumerate() {
+                        path.push(index);
+                        paths(item, path, out);
+                        path.pop();
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut required = std::collections::BTreeSet::new();
+        paths(&self.ok_type, &mut vec![0], &mut required);
+        paths(&self.error_type, &mut vec![1], &mut required);
+        required.len() == self.canonical_types.len()
+            && required.iter().all(|path| {
+                self.canonical_types.get(path).is_some_and(|identity| {
+                    identity.scope_discriminant.is_none()
+                        && matches!(
+                            identity.kind,
+                            crate::SemanticSourceTargetKind::Model | crate::SemanticSourceTargetKind::Enum
+                        )
+                        && matches!(
+                            identity.origin,
+                            crate::SymbolOrigin::Module(_) | crate::SymbolOrigin::Package { .. }
+                        )
+                })
+            })
+    }
+
     /// Render the construction and checked type facts without consulting any target-language Result spelling.
     fn render_snapshot(&self) -> String {
         format!(
-            "result_{}({}, ok_type={}, error_type={})",
+            "result_{}({}, ok_type={}, error_type={}, canonical_types=[{}])",
             self.kind.as_str(),
             self.payload.render_snapshot(),
             self.ok_type,
-            self.error_type
+            self.error_type,
+            self.canonical_types
+                .iter()
+                .map(|(path, identity)| format!("{path:?}:{}", identity.render_compact()))
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     }
 }
 
 /// Intrinsic source-level Result constructor selected by typechecking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResultVariantKind {
     /// `Ok(payload)`.
     Ok,
@@ -1304,7 +1363,7 @@ impl ResultVariantKind {
 /// already evaluated when the callable was constructed. A consumer must visibly refuse
 /// [`CallableParamDefault::Unsupported`] at its stored source span instead of guessing from source structures or
 /// silently falling back.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallableParam {
     /// The local that receives this argument in the callable's execution frame.
     pub local: LocalId,
@@ -1343,7 +1402,7 @@ impl CallableParam {
 /// that contract. A partial preset instead names a closure-frame local populated from the partial's construction-time
 /// capture. These variants must remain distinct: treating a preset as a source computation would evaluate it again,
 /// while treating a source computation as a capture would evaluate it too early.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CallableParamDefault {
     /// The caller must supply this argument.
     Required,
@@ -1396,7 +1455,7 @@ impl CallableParamDefault {
 /// omitted call site, before binding the callable frame's [`CallableParam::local`] argument. Any source read that
 /// would require a callable-local or otherwise unrepresented lexical binding is recorded instead as
 /// [`CallableParamDefault::Unsupported`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DefaultComputation {
     /// Full source span of the default expression.
     pub span: HirSourceSpan,
@@ -1443,7 +1502,7 @@ impl DefaultComputation {
 /// unique and lets [`Rvalue::Closure`]'s [`CallableParam::local`] values and [`Self::capture_locals`] simply index
 /// into the same [`Body::locals`] the rest of the function uses, so a closure's own parameters and captures show up
 /// in the ordinary `locals:` listing like any other local.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosureBody {
     /// The closure's own captured-binding locals, in the same order as [`Rvalue::Closure::captured_operands`] --
     /// `capture_locals[i]` is where a read of the `i`-th captured operand's value is durably bound inside the
@@ -1477,7 +1536,7 @@ impl ClosureBody {
 /// `captured_operands[i]` value, so no statement in `stmts` reaches back into the enclosing body's places when the
 /// generator is later polled. Clause bindings and iterator temporaries are ordinary locals in `stmts`; they become
 /// live only while the corresponding deferred loops execute.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GeneratorBody {
     /// Local holding the eagerly evaluated first-clause source value.
     pub source_local: LocalId,
@@ -1512,7 +1571,7 @@ fn render_flattened_stmts(stmts: &[Statement]) -> Vec<String> {
 }
 
 /// One arm of a [`Rvalue::Match`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchArm {
     /// The pattern tested against the match scrutinee.
     pub pattern: Pattern,
@@ -1588,7 +1647,7 @@ impl MatchArm {
 /// would need either still lowers structurally through the plain (non-narrowed) mapping, at the cost of the
 /// resulting field types sometimes falling back to [`IncanType::Unknown`] where the existing backend's richer
 /// resolution would have found something more precise.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Pattern {
     /// `_`: matches anything, binds nothing.
     Wildcard,
@@ -1711,7 +1770,7 @@ impl Pattern {
 }
 
 /// Exact source-local plain-model declaration selected by one structural pattern.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NominalPatternTarget {
     /// Exact source-local model declaration identity.
     pub direct_declaration_id: CompilerNodeId,
@@ -1735,7 +1794,7 @@ impl NominalPatternTarget {
 /// `Assign` statement copying out of the scrutinee: the actual value transfer happens as a side effect of the
 /// target backend's native pattern match, and this model only needs to record *how* that transfer should be
 /// treated (move/clone/borrow/copy) -- the same way [`PlaceOperand`] records it for an ordinary read.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PatternBinding {
     pub local: LocalId,
     /// The ownership decision selected for this binding, computed the same way [`PlaceOperand::fact`] is: the
@@ -1766,7 +1825,7 @@ impl PatternBinding {
 /// carries an [`Operand`] rather than a full expression tree -- Body IR always lowers embedded expressions through
 /// the same [`Operand`]-producing path as any other read, so ownership facts and last-use tracking apply to
 /// f-string interpolations exactly like any other expression use.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FormatPart {
     /// Literal text between interpolations, carried through unescaped -- brace/format-string escaping is an
     /// emission-target concern (see the existing Rust-emission backend's `escape_format_literal`), not something
@@ -1795,7 +1854,7 @@ impl FormatPart {
 /// Rust-emission backend's `FormatStyle` (`src/backend/ir/expr.rs`); unlike that backend's version, this one carries
 /// no `emits_rust_debug`-style target-representation logic, since Body IR v0 stays target-agnostic and leaves the
 /// decision of how a given style maps to a concrete formatting call to the consuming backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormatStyle {
     /// User-facing display formatting (`{value}`).
     Display,
@@ -1814,7 +1873,7 @@ impl FormatStyle {
 }
 
 /// Unary operator kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnOp {
     Neg,
     Not,
@@ -1844,7 +1903,7 @@ impl UnOp {
 /// existing Rust-emission backend currently emits both pairs the same way. Collapsing them here would discard which
 /// operator the source actually wrote, and Body IR is the representation a later identity/equality split would have
 /// to be decided against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -1929,7 +1988,7 @@ impl BinOp {
 /// sibling statement kind would re-fork exactly what [`ArgumentBinding`] unified. Changing the element type instead
 /// makes every reader of an element list a compile error at precisely the place a wrong answer would be produced,
 /// while readers that never inspect elements are untouched.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ArgumentElement {
     /// Exactly one value at this position.
     One(Operand),
@@ -1977,7 +2036,7 @@ impl ArgumentElement {
 /// [`Operand::Place`] carries its own [`OwnershipFact`] and last-use marker. This type adds no separate ownership
 /// field; what it adds is that the read is *identified as a splice*, so a consumer distributing the source's
 /// elements can see that its length is a runtime fact rather than one value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpreadElement {
     /// The sequence or mapping being spliced.
     pub source: Operand,
@@ -1997,7 +2056,7 @@ impl SpreadElement {
 }
 
 /// Which spread form a [`SpreadElement`] was spelled with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpreadKind {
     /// `*source` — splices a sequence's elements positionally.
     Sequence,
@@ -2012,7 +2071,7 @@ pub enum SpreadKind {
 /// (a later entry overwrites an earlier one). That is why [`Rvalue::Dict`] carries this ordered list rather than a
 /// map — a map would have to collapse duplicates at construction, which is exactly the override semantics that
 /// must survive, and it could not hold a spread whose keys are unknown until runtime.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DictEntry {
     /// A `key: value` pair. Both operands are evaluated, key first.
     Pair(Operand, Box<Operand>),
@@ -2031,7 +2090,7 @@ impl DictEntry {
 }
 
 /// Aggregate value shape built by [`Rvalue::Aggregate`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggregateKind {
     Tuple,
     List,
@@ -2049,7 +2108,7 @@ pub enum AggregateKind {
     /// [`crate::AbiV0RuntimeRequirement`], the same as [`Self::Tuple`] and unlike [`Self::List`]/[`Self::Set`].
     ///
     /// Operands appear in exactly [`Self::RANGE_FIELDS`] order, and a consumer reading one back projects it by
-    /// that name (`PlaceElem::synthetic_field("start")`). Inclusivity is an *operand*, not a static property of this
+    /// that name (`PlaceElem::structural_field("start")`). Inclusivity is an *operand*, not a static property of this
     /// variant: `..` versus `..=` is fixed per construction site, but the site that constructs a range and the
     /// loop that later iterates it need not be the same statement, so a consumer holding only the value must be
     /// able to read which one it is instead of having to prove where it came from.
@@ -2117,7 +2176,7 @@ impl AggregateKind {
 /// This is the single binding mechanism for every call shape, replacing the per-target slot map #1124 introduced on
 /// [`LocalCallableTarget`]: local callables, direct named calls, method calls, and nominal construction all record
 /// their binding here, so a consumer learns the same fact the same way regardless of how the call was spelled.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArgumentBinding {
     /// No declared parameter slots were resolved for this call's arguments.
     ///
@@ -2211,7 +2270,7 @@ impl ArgumentBinding {
 }
 
 /// One call argument's resolved declaration slot and its position in written source order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundArgument {
     /// Declared parameter or field index this operand supplies.
     pub slot: usize,
@@ -2229,7 +2288,7 @@ fn render_type_arguments(type_args: &[IncanType]) -> String {
 }
 
 /// Call target for a [`StatementKind::Call`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Callee {
     /// A direct named function or a locally held callable value.
     ///
@@ -2278,7 +2337,7 @@ impl Callee {
 /// ultimately invoke a callable. The alternatives themselves are intentionally distinct. In particular, a stored
 /// closure/partial is never represented as [`Self::Named`] with a fabricated source name; it is a
 /// [`Self::Local`] operand, carrying the lexical-environment ownership decision the caller made.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CallableTarget {
     /// A direct call to a named Incan function.
     ///
@@ -2305,7 +2364,7 @@ pub enum CallableTarget {
 /// source identity and exact header token span. The body is a full [`Block`] plus a `result` operand, mirroring how
 /// [`ClosureBody`] carries a nested statement sequence with an explicit value instead of relying on a
 /// trailing-statement convention.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RaceArm {
     /// This arm's awaitable, evaluated before selection along with every other arm's.
     pub awaitable: Operand,
@@ -2330,7 +2389,7 @@ impl RaceArm {
 /// The binding makes a local partial's two source-level call conventions explicit: positional arguments skip
 /// preset-default slots, while named arguments may override them. Callers that lower an ordinary local closure use
 /// [`ArgumentBinding::positional`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LocalCallableTarget {
     /// The local read that owns the callable value and its lexical environment.
     pub operand: PlaceOperand,
@@ -2344,7 +2403,7 @@ pub struct LocalCallableTarget {
 /// and `decode_rows[Row](path)` are different calls, and a consumer that only saw the name could not tell them
 /// apart. `type_args` holds the *typechecker-resolved* arguments, so lowering never re-derives them from the source
 /// spelling.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NamedCallableTarget {
     /// Source-level function name.
     pub name: String,
@@ -2380,7 +2439,7 @@ pub struct NamedCallableTarget {
 /// reason it keeps them apart: they have different remedies. A disabled provider is present but not selected by the
 /// project graph, while an unavailable one is selected but has no locally verified artifact. Collapsing them into a
 /// single "not usable" flag would leave a consumer unable to say which.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProviderActivationState {
     /// Enabled and locally available, so an admitted operation may be planned for execution.
     Active,
@@ -2407,7 +2466,7 @@ impl ProviderActivationState {
 /// branch on it: which operation was invoked is answered by [`ProviderOperationPlan::operation`], a canonical
 /// identity, and whether it may run is answered by [`Self::state`]. Recording the key anyway is what lets a receipt
 /// or a diagnostic say *which* provider without re-resolving the catalog.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderActivation {
     /// Stable key of the catalog record this operation was admitted from.
     pub provider_key: String,
@@ -2437,7 +2496,7 @@ impl ProviderActivation {
 /// consumer cannot recover from the operand alone: which declared slot the value fills, where it was written (and so
 /// when it was evaluated relative to its siblings), its checked type, and its own source span — which is what lets an
 /// authority denial point at the argument that carried an out-of-scope value rather than at the whole call.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderOperationInput {
     /// Declared parameter slot this input supplies. Indexes the same slot space as [`BoundArgument::slot`].
     pub slot: usize,
@@ -2470,7 +2529,7 @@ impl ProviderOperationInput {
 /// capability identity does not name a capability, or whose inputs cannot all be represented is refused at its
 /// source span instead, so it has no plan to execute and no receipt to emit. Consumers must still validate a plan:
 /// constructed or corrupt IR is never evidence that source admission occurred.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderOperationPlan {
     /// RFC 120 canonical identity of the operation declaration this call selected.
     ///
@@ -2562,7 +2621,7 @@ fn render_symbol_path(symbol: &CanonicalSymbolId) -> String {
 /// Carries the same resolved type arguments and argument binding as [`NamedCallableTarget`]; the receiver itself
 /// stays `args[0]` of the surrounding [`StatementKind::Call`] and is deliberately *not* part of the binding, whose
 /// slots index the method's own declared parameters.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MethodTarget {
     /// Source-level method name.
     pub name: String,
@@ -2627,7 +2686,7 @@ impl std::fmt::Display for MethodTarget {
 /// Source-level construction is named-only, so the binding is what records which declared field each operand fills.
 /// The surrounding [`Rvalue::Aggregate`] operand vector is in declared field order; the binding carries the written
 /// source order alongside it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConstructorTarget {
     /// Source-level nominal type name.
     pub name: String,
@@ -2708,7 +2767,7 @@ impl std::fmt::Display for CallableTarget {
 /// is the inference this data model exists to replace; and one `Concat` would conflate a string join with a list
 /// concatenation. Negation likewise gets its own variant per collection rather than a wrapper, so one source
 /// operator stays one Body IR operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HelperOp {
     StrConcat,
     StrEq,
@@ -2865,7 +2924,7 @@ impl HelperOp {
 // ============================================================================
 
 /// A normalized block of statements within a body, scoped to one [`ScopeId`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
     pub scope: ScopeId,
     pub stmts: Vec<Statement>,
@@ -3013,7 +3072,7 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
 /// arm, keyed by `TypeCheckInfo::protocol_iteration`): a builtin collection needs no named method dispatch at all,
 /// while a user-defined iterable resolves concrete `__iter__`/`__next__`-shaped method names through the
 /// typechecker's iteration-protocol resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IterProtocol {
     /// Iterate a builtin collection (`List`/`Dict`/`String`) or a range with no explicit method dispatch. How to
     /// concretely advance such an iterator is left to the consuming backend, matching how a plain `for` doesn't
@@ -3050,7 +3109,7 @@ impl IterProtocol {
 }
 
 /// One statement in a normalized Body IR block, carrying its own source span for diagnostics.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Statement {
     pub kind: StatementKind,
     pub span: HirSourceSpan,
@@ -3060,7 +3119,7 @@ pub struct Statement {
 ///
 /// `while`/`for` source statements desugar into `Loop` + a conditional `Break` during lowering, rather than being
 /// represented as distinct statement kinds, so the canonical vocabulary has a single loop shape.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StatementKind {
     /// Assign an rvalue into a place.
     Assign { place: Place, rvalue: Rvalue },
@@ -3215,7 +3274,7 @@ pub enum StatementKind {
 ///
 /// See [`StatementKind::Assert`] for why the three forms are one variant with this payload rather than three
 /// sibling statement kinds.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AssertionKind {
     /// `assert cond`: panics when `cond` is false.
     Condition { cond: Operand },
@@ -3252,7 +3311,7 @@ impl AssertionKind {
 }
 
 /// Typechecker-proven error routing selected for one `?` operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TryErrorRouting {
     /// The operand and enclosing Result have the same exact error type, so direct propagation needs no conversion.
     SameType { error_type: IncanType },
@@ -3287,7 +3346,7 @@ impl TryErrorRouting {
 /// One panic-interaction fact recorded for a body, without committing to a stable public panic strategy. This only
 /// exposes *that* a statement may panic and *why* — strategy decisions (unwind vs. abort, drop-on-unwind ordering)
 /// are left to later, target-specific work.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PanicFact {
     pub span: HirSourceSpan,
     pub reason: PanicReason,
@@ -3301,7 +3360,7 @@ impl PanicFact {
 }
 
 /// Why a statement may panic at runtime.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PanicReason {
     AssertFailure,
     DivisionOrModulo,
@@ -3321,6 +3380,32 @@ impl PanicReason {
 
 #[cfg(test)]
 mod tests {
+    /// Named leaves keep structural identity paths while aliases remain diagnostic spelling.
+    #[test]
+    fn result_type_identity_paths_are_complete_and_reject_extra_or_missing_leaves() {
+        let canonical = crate::CanonicalSymbolId::module_declaration(
+            vec!["types".into()],
+            "Pair",
+            crate::SemanticSourceTargetKind::Model,
+            crate::HirSourceSpan::new(0, 20),
+        );
+        let mut variant = super::ResultVariant {
+            kind: super::ResultVariantKind::Ok,
+            payload: super::Operand::Constant(super::Constant::Unit),
+            ok_type: crate::IncanType::Generic {
+                base: "list".into(),
+                args: vec![crate::IncanType::Tuple(vec![crate::IncanType::Named("Alias".into())])],
+            },
+            error_type: crate::IncanType::Primitive(crate::IncanPrimitiveType::Str),
+            canonical_types: std::collections::BTreeMap::from([(vec![0, 0, 0], canonical.clone())]),
+        };
+        assert!(variant.has_complete_canonical_types());
+        variant.canonical_types.insert(vec![1], canonical);
+        assert!(!variant.has_complete_canonical_types());
+        variant.canonical_types.clear();
+        assert!(!variant.has_complete_canonical_types());
+    }
+
     use super::*;
     use crate::{CompilerNodeKind, IncanPrimitiveType, SemanticSourceTargetKind};
 
@@ -3337,6 +3422,7 @@ mod tests {
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
+            named_type_identities: Default::default(),
             locals: vec![
                 LocalDecl {
                     id: local_x,
@@ -3436,10 +3522,12 @@ mod tests {
         let mut read_only_projection = read_only.clone();
         read_only_projection
             .projection
-            .push(PlaceElem::synthetic_field("member"));
+            .push(PlaceElem::structural_field("member"));
         let projection_only = sample_global_place(SemanticSourceTargetKind::Static, GlobalWritePolicy::ProjectionOnly);
         let mut mutable_projection = projection_only.clone();
-        mutable_projection.projection.push(PlaceElem::synthetic_field("member"));
+        mutable_projection
+            .projection
+            .push(PlaceElem::structural_field("member"));
         let rebindable = sample_global_place(SemanticSourceTargetKind::Static, GlobalWritePolicy::Rebindable);
 
         assert!(local.permits_write());

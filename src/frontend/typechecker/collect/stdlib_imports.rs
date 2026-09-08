@@ -1532,11 +1532,18 @@ impl TypeChecker {
         let mut kinds = declarations
             .iter()
             .filter_map(|declaration| match declaration {
-                ApiDeclaration::Alias(alias) => self.symbol_kind_from_api_target_path(manifest, &alias.target_path),
+                ApiDeclaration::Alias(alias) => self
+                    .symbol_kind_from_nominal_projection(alias.projected_type.as_ref())
+                    .or_else(|| self.symbol_kind_from_api_target_path(manifest, &alias.target_path)),
                 _ => self.symbol_kind_from_api_declaration(declaration),
             })
             .collect::<Vec<_>>();
         let mut type_alias = declarations.iter().find_map(|declaration| {
+            if let ApiDeclaration::Alias(alias) = declaration
+                && let Some(target) = alias.projected_type.as_ref().filter(|ty| ty.has_native_union())
+            {
+                return Some((Vec::new(), resolved_type_from_manifest_type_ref(target)));
+            }
             let declaration = match declaration {
                 ApiDeclaration::Alias(alias) => Self::api_declaration_for_target_path(manifest, &alias.target_path)?,
                 declaration => declaration,
@@ -1556,7 +1563,7 @@ impl TypeChecker {
                 _ => None,
             })
             .unwrap_or_else(|| (source_module_path.clone(), member.to_string()));
-        let public_path = std::iter::once(library.to_string())
+        let public_path = std::iter::once(manifest.name.clone())
             .chain(module_path.iter().cloned())
             .chain(std::iter::once(member.to_string()))
             .collect::<Vec<_>>();
@@ -1654,8 +1661,17 @@ impl TypeChecker {
             let mut source_path = module_path.clone();
             source_path.push(type_name.clone());
             let canonical = canonical_public_library_type_name(library, &source_path.join("::"));
-            self.public_library_type_identities
-                .insert(canonical.clone(), PublicLibraryTypeIdentity::new(library, &source_path));
+            let public_path = std::iter::once(manifest.name.clone())
+                .chain(source_path.iter().cloned())
+                .collect::<Vec<_>>();
+            let declaration_identity = manifest
+                .contract_metadata
+                .identity_graph
+                .canonical_for_public_path(&public_path);
+            self.public_library_type_identities.insert(
+                canonical.clone(),
+                self.admitted_public_type_identity(library, &source_path, declaration_identity),
+            );
             candidates
                 .entry(type_name.clone())
                 .or_default()
@@ -1957,8 +1973,16 @@ impl TypeChecker {
         ) {
             let mut source_path = source_module_path;
             source_path.push(source_name);
-            self.public_library_type_identities
-                .insert(local_name, PublicLibraryTypeIdentity::new(library, &source_path));
+            let declaration_identity = self
+                .type_info
+                .declarations
+                .resolved_import_identities
+                .get(&local_name)
+                .cloned();
+            self.public_library_type_identities.insert(
+                local_name,
+                self.admitted_public_type_identity(library, &source_path, declaration_identity),
+            );
         }
     }
 
@@ -2032,6 +2056,180 @@ impl TypeChecker {
                 .insert(canonical_name.clone(), identity);
             remapping.insert(public_name, canonical_name);
         }
+        remapping.extend(self.public_library_foreign_type_remapping(library, manifest));
+        remapping
+    }
+
+    /// Hydrate foreign signature types from exact admitted artifacts and the existing native dependency bridge.
+    ///
+    /// Leaf binding keys carry identity; this map only chooses their physical consumer route. Required nominal
+    /// layouts come from that same artifact's public identity graph, including types never imported by source name.
+    fn public_library_foreign_type_remapping(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> HashMap<String, String> {
+        use crate::library_manifest::{TypeRef, VisitTypeRefs};
+        if let Some(remapping) = self.foreign_pub_type_remappings.get(library) {
+            return remapping.clone();
+        }
+        let mut carriers = Vec::new();
+        manifest.clone().visit_type_refs(&mut |ty| {
+            if let TypeRef::NativeUnion(native) = ty {
+                carriers.push(native.clone());
+            }
+        });
+        let mut bound_origins = BTreeMap::new();
+        for carrier in carriers {
+            match self.provider_plan.public_native_union_projection(library, &carrier) {
+                Ok((mut bound, _)) => bound.members.visit_type_refs(&mut |ty| {
+                    if let TypeRef::Named {
+                        origin: Some(origin), ..
+                    }
+                    | TypeRef::Applied {
+                        origin: Some(origin), ..
+                    } = ty
+                    {
+                        bound_origins.insert(origin.binding_key(), origin.clone());
+                    }
+                }),
+                Err(message) => self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
+                    format!("compiled library `{library}` has an invalid native union representation: {message}"),
+                    Span::default(),
+                )),
+            }
+        }
+        let collect_origins = |manifest: &LibraryManifest| {
+            let mut origins = BTreeMap::new();
+            let mut projection = manifest.clone();
+            projection.visit_type_refs(&mut |ty| {
+                if let TypeRef::Named {
+                    origin: Some(origin), ..
+                }
+                | TypeRef::Applied {
+                    origin: Some(origin), ..
+                } = ty
+                {
+                    origins.insert(origin.binding_key(), origin.clone());
+                }
+            });
+            origins
+        };
+        bound_origins.extend(collect_origins(manifest));
+        let mut pending = std::collections::VecDeque::from_iter(bound_origins.into_values());
+        let mut seen = HashSet::new();
+        let mut artifacts = BTreeMap::new();
+        let mut remapping = HashMap::new();
+        while let Some(origin) = pending.pop_front() {
+            let key = origin.binding_key();
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let (artifact, export, dependency_route) =
+                match self.provider_plan.public_nominal_projection(library, &origin) {
+                    Ok(projection) => projection,
+                    Err(message) => {
+                        self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
+                            format!("compiled library `{library}` has an invalid public type origin: {message}"),
+                            Span::default(),
+                        ));
+                        continue;
+                    }
+                };
+            let mut route = vec![library.to_string()];
+            for dependency in dependency_route {
+                route.push(crate::frontend::rust_type_display::PROVIDER_RUST_BRIDGE_MODULE.to_string());
+                route.push(dependency);
+            }
+            let owner_route = route.join("::");
+            route.extend(export.public_path.iter().skip(1).cloned());
+            let qualified = format!("pub::{}", route.join("::"));
+            let Some(canonical) = origin.canonical.hydrate() else {
+                continue;
+            };
+            let identity = PublicLibraryTypeIdentity {
+                dependency_key: library.to_string(),
+                source_path: export.source_path.clone(),
+                canonical: Some(canonical),
+                selected_provider: Some(artifact.identity.clone()),
+            };
+            self.public_library_type_identities
+                .insert(key.clone(), identity.clone());
+            self.public_library_type_identities.insert(qualified.clone(), identity);
+            remapping.insert(key, qualified);
+            if let std::collections::btree_map::Entry::Vacant(entry) = artifacts.entry(artifact.identity.stable_key()) {
+                pending.extend(collect_origins(&artifact.manifest).into_values());
+                entry.insert((artifact, owner_route));
+            }
+        }
+        // Complete every type mapping before reconstructing layouts. This preserves mutually referenced nominal
+        // layouts and foreign field/property/default signatures without reopening artifacts or looking up source.
+        for (artifact, owner_route) in artifacts.values() {
+            let mut local_remapping = remapping.clone();
+            for export in &artifact.manifest.contract_metadata.identity_graph.exports {
+                if !matches!(
+                    export.kind,
+                    crate::library_manifest::ExportIdentityKind::Model
+                        | crate::library_manifest::ExportIdentityKind::Class
+                        | crate::library_manifest::ExportIdentityKind::Enum
+                        | crate::library_manifest::ExportIdentityKind::Newtype
+                ) {
+                    continue;
+                }
+                let public_name = export
+                    .public_path
+                    .iter()
+                    .skip(1)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("::");
+                let qualified = canonical_public_library_type_name(owner_route, &public_name);
+                let canonical = export.canonical.as_ref().and_then(|identity| identity.hydrate());
+                self.public_library_type_identities.insert(
+                    qualified.clone(),
+                    PublicLibraryTypeIdentity {
+                        dependency_key: library.to_string(),
+                        source_path: export.source_path.clone(),
+                        canonical,
+                        selected_provider: Some(artifact.identity.clone()),
+                    },
+                );
+                if export.public_path.len() == 2 {
+                    local_remapping.insert(export.public_name.clone(), qualified);
+                }
+            }
+            for export in &artifact.manifest.contract_metadata.identity_graph.exports {
+                let info = if export.public_path.len() == 2 {
+                    self.manifest_nominal_type_info(&artifact.manifest, &export.public_name)
+                } else {
+                    Self::api_declaration_for_target_path(&artifact.manifest, &export.source_path)
+                        .and_then(|declaration| self.symbol_kind_from_api_declaration(declaration))
+                        .and_then(|kind| match kind {
+                            SymbolKind::Type(info) => Some(info),
+                            _ => None,
+                        })
+                };
+                let Some(info) = info else {
+                    continue;
+                };
+                let public_name = export
+                    .public_path
+                    .iter()
+                    .skip(1)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("::");
+                let qualified = canonical_public_library_type_name(owner_route, &public_name);
+                let mut kind = SymbolKind::Type(info);
+                self.remap_symbol_kind_with_import_aliases(&mut kind, &local_remapping);
+                Self::mark_compiled_class_field_provider(&mut kind, owner_route);
+                if let SymbolKind::Type(info) = kind {
+                    self.transitive_pub_types.entry(qualified).or_default().push(info);
+                }
+            }
+        }
+        self.foreign_pub_type_remappings
+            .insert(library.to_string(), remapping.clone());
         remapping
     }
 
@@ -2088,7 +2286,11 @@ impl TypeChecker {
             .identity_graph
             .entry_for_public_name(public_name)?;
         let source_path = entry.target_path().unwrap_or(entry.source_path.as_slice());
-        Some(PublicLibraryTypeIdentity::new(library, source_path))
+        Some(self.admitted_public_type_identity(
+            library,
+            source_path,
+            entry.canonical.as_ref().and_then(|identity| identity.hydrate()),
+        ))
     }
 
     /// Return the missing public features for one known provider export that is inactive in this artifact projection.
@@ -2574,6 +2776,9 @@ impl TypeChecker {
         if let Some(function) = &export.projected_function {
             return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
         }
+        if let Some(kind) = self.symbol_kind_from_nominal_projection(export.projected_type.as_ref()) {
+            return Some(kind);
+        }
         let identity_target_path = Self::manifest_identity_target_path(manifest, &export.name);
         let target_path = identity_target_path.unwrap_or(export.target_path.as_slice());
         if let Some(kind) = Self::symbol_kind_from_manifest_rust_target(manifest, target_path) {
@@ -2602,6 +2807,30 @@ impl TypeChecker {
             return None;
         };
         self.symbol_kind_from_manifest_alias(manifest, target_alias, visited)
+    }
+
+    /// Hydrate a forwarded nominal only from its exact admitted declaring artifact and public membership.
+    fn symbol_kind_from_nominal_projection(
+        &self,
+        projected: Option<&crate::library_manifest::TypeRef>,
+    ) -> Option<SymbolKind> {
+        if projected.is_some_and(|ty| ty.has_native_union()) {
+            return Some(SymbolKind::Type(TypeInfo::TypeAlias));
+        }
+        let crate::library_manifest::TypeRef::Named {
+            origin: Some(origin), ..
+        } = projected?
+        else {
+            return None;
+        };
+        let (artifact, identity) = self.provider_plan.public_nominal_declaration(origin).ok()?;
+        if identity.public_path.len() == 2 {
+            self.manifest_nominal_type_info(&artifact.manifest, &identity.public_name)
+                .map(SymbolKind::Type)
+        } else {
+            Self::api_declaration_for_target_path(&artifact.manifest, &identity.source_path)
+                .and_then(|declaration| self.symbol_kind_from_api_declaration(declaration))
+        }
     }
 
     /// Reconstruct a checked `rust::` reexport from the ABI metadata shipped beside the public manifest.
@@ -2751,7 +2980,8 @@ impl TypeChecker {
                         self.function_info_from_manifest(&function_export_from_api_projected(function)),
                     ));
                 }
-                self.symbol_kind_from_api_target_path_inner(manifest, &alias.target_path, visited)
+                self.symbol_kind_from_nominal_projection(alias.projected_type.as_ref())
+                    .or_else(|| self.symbol_kind_from_api_target_path_inner(manifest, &alias.target_path, visited))
             }
             _ => self.symbol_kind_from_api_declaration(declaration),
         }
@@ -2790,9 +3020,15 @@ impl TypeChecker {
                 is_imported: true,
                 is_used: false,
             })),
-            ApiDeclaration::Alias(item) => item.projected_function.as_ref().map(|function| {
-                SymbolKind::Function(self.function_info_from_manifest(&function_export_from_api_projected(function)))
-            }),
+            ApiDeclaration::Alias(item) => item
+                .projected_function
+                .as_ref()
+                .map(|function| {
+                    SymbolKind::Function(
+                        self.function_info_from_manifest(&function_export_from_api_projected(function)),
+                    )
+                })
+                .or_else(|| self.symbol_kind_from_nominal_projection(item.projected_type.as_ref())),
             ApiDeclaration::Partial(item) => Some(SymbolKind::Function(
                 self.partial_info_from_manifest(&partial_export_from_api(item)),
             )),
@@ -2801,15 +3037,16 @@ impl TypeChecker {
 
     /// Return whether a manifest export introduces a type-like name into the importing module.
     fn manifest_export_is_type(export: &ManifestExportRef<'_>) -> bool {
-        matches!(
-            export,
-            ManifestExportRef::Model(_)
-                | ManifestExportRef::Class(_)
-                | ManifestExportRef::Trait(_)
-                | ManifestExportRef::Enum(_)
-                | ManifestExportRef::TypeAlias(_)
-                | ManifestExportRef::Newtype(_)
-        )
+        matches!(export, ManifestExportRef::Alias(alias) if alias.projected_type.is_some())
+            || matches!(
+                export,
+                ManifestExportRef::Model(_)
+                    | ManifestExportRef::Class(_)
+                    | ManifestExportRef::Trait(_)
+                    | ManifestExportRef::Enum(_)
+                    | ManifestExportRef::TypeAlias(_)
+                    | ManifestExportRef::Newtype(_)
+            )
     }
 
     /// Return a stable diagnostic label for a symbol that already exists in the current local scope.
@@ -2897,6 +3134,14 @@ impl TypeChecker {
                 is_used: false,
             }),
             ManifestExportRef::Alias(export) => {
+                if let Some(projected) = export.projected_type.as_ref().filter(|ty| ty.has_native_union()) {
+                    let mut target = resolved_type_from_manifest_type_ref(projected);
+                    Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
+                    type_alias_target = Some(crate::frontend::typechecker::TypeAliasTarget {
+                        type_params: Vec::new(),
+                        target,
+                    });
+                }
                 let Some(kind) = self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()) else {
                     return;
                 };

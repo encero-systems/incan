@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::IncanType;
 
 /// Kind of compiler-owned node that can receive semantic facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CompilerNodeKind {
     /// A package selected at a command/session boundary.
     Package,
@@ -44,7 +44,7 @@ impl CompilerNodeKind {
 /// The `path` is intentionally semantic rather than Rust-shaped. Current bridge code may derive it from spans or
 /// source paths at first, but consumers should treat the rendered form as a compiler identity, not as an emitted Rust
 /// item path.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CompilerNodeId {
     kind: CompilerNodeKind,
     path: String,
@@ -101,6 +101,15 @@ impl CompilerNodeId {
         )
     }
 
+    /// Address one named leaf of an expression's checked type by structural child indices, independent of aliases.
+    pub fn expression_type_component(module_identity: &str, start: usize, end: usize, indices: &[usize]) -> Self {
+        let path = indices.iter().map(usize::to_string).collect::<Vec<_>>().join(".");
+        Self::new(
+            CompilerNodeKind::Type,
+            format!("{module_identity}#expr.{start}..{end}/type.{path}"),
+        )
+    }
+
     /// Build a statement identity from its module and source byte span.
     pub fn statement_span(module_identity: &str, start: usize, end: usize) -> Self {
         Self::new(
@@ -142,6 +151,16 @@ pub enum SemanticFactKind {
     Type,
     SymbolTarget,
     SymbolIdentity,
+    /// Identity of a checked declaring context, including fields, methods and properties.
+    DeclarationIdentity,
+    /// Unique nearest checked declaration owning one reference site.
+    ReferenceOwner,
+    /// Source anchor for a checked reference without parsing an opaque compiler node id.
+    ReferenceSpan,
+    /// Declaring type that requires a field or variant layout and its checked defaults.
+    RequiredMemberOwner,
+    /// Retained declaration context required by a compiler-generated reference target.
+    RequiredReferenceTarget,
     Registry,
     RuntimeRequirement,
     Diagnostic,
@@ -156,6 +175,11 @@ impl SemanticFactKind {
             Self::Type => "type",
             Self::SymbolTarget => "symbol_target",
             Self::SymbolIdentity => "symbol_identity",
+            Self::DeclarationIdentity => "declaration_identity",
+            Self::ReferenceOwner => "reference_owner",
+            Self::ReferenceSpan => "reference_span",
+            Self::RequiredMemberOwner => "required_member_owner",
+            Self::RequiredReferenceTarget => "required_reference_target",
             Self::Registry => "registry",
             Self::RuntimeRequirement => "runtime_requirement",
             Self::Diagnostic => "diagnostic",
@@ -176,6 +200,8 @@ pub enum SemanticFactValue {
     Type(IncanType),
     SourceTarget(SemanticSourceTarget),
     CanonicalIdentity(CanonicalSymbolId),
+    /// Original checked reference anchor used by inspection projections.
+    SourceSpan(crate::HirSourceSpan),
     RegistryEntry(SemanticRegistryEntry),
     AuthorityDecision(Box<AuthorityDecision>),
     Flag(bool),
@@ -222,6 +248,7 @@ impl SemanticFactValue {
             Self::RegistryEntry(value) => value.to_string(),
             Self::AuthorityDecision(value) => value.to_string(),
             Self::Flag(value) => value.to_string(),
+            Self::SourceSpan(span) => format!("{}..{}", span.start, span.end),
         }
     }
 }
@@ -1406,5 +1433,19 @@ mod tests {
             SemanticSourceTargetKind::Function
         );
         assert_eq!(SemanticSourceTargetKind::from_kind_str("macro").as_str(), "macro");
+    }
+}
+
+/// Stable package-owned module identity; unlike a source path, it cannot collide between packages.
+pub fn package_module_identity(library: &str, module_path: &[String]) -> String {
+    format!("pub::{library}::{}", crate::module_identity_for_path(module_path))
+}
+
+/// Resolve the physical module scope of an existing canonical identity without minting a new semantic identity.
+pub fn canonical_module_identity(identity: &CanonicalSymbolId) -> Option<String> {
+    match &identity.origin {
+        SymbolOrigin::Module(path) => Some(crate::module_identity_for_path(path)),
+        SymbolOrigin::Package { library, module_path } => Some(package_module_identity(library, module_path)),
+        SymbolOrigin::RustCrate(_) | SymbolOrigin::Builtin => None,
     }
 }
