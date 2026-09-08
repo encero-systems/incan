@@ -6,7 +6,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::frontend::api_metadata::{
-    ApiDeclaration, checked_api_declaration_is_public_namespace_member, checked_api_modules_for_public_namespace,
+    ApiDeclaration, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
+    checked_api_declaration_is_public_namespace_member, checked_api_modules_for_public_namespace,
     checked_api_public_module_paths, checked_api_public_namespace, class_export_from_api, enum_export_from_api,
     function_export_from_api, function_export_from_api_projected, model_export_from_api, newtype_export_from_api,
     partial_export_from_api, trait_export_from_api,
@@ -37,6 +38,7 @@ use crate::library_manifest::{
 };
 use crate::provider::{ProviderModuleResolution, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
+use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
 use incan_core::lang::surface::functions as surface_functions;
 use incan_core::lang::surface::types as surface_types;
@@ -573,6 +575,8 @@ impl TypeChecker {
                     // artifact are still one public module rather than a second overload set.
                     continue;
                 }
+                self.dependency_derivable_modules
+                    .insert(module_key.clone(), module.derivable_traits.clone());
                 let function_counts = module
                     .declarations
                     .iter()
@@ -617,6 +621,28 @@ impl TypeChecker {
                             canonical,
                         ));
                         continue;
+                    }
+                    if let ApiDeclaration::Trait(trait_metadata) = &declaration {
+                        let mut paths = Vec::new();
+                        for decorator in &trait_metadata.decorators {
+                            if core_decorators::from_str(&decorator.path.join(".")) != Some(DecoratorId::RustDerive) {
+                                continue;
+                            }
+                            for argument in &decorator.args {
+                                if let DecoratorArgMetadata::Positional {
+                                    value:
+                                        DecoratorValue::Literal {
+                                            value: SafeMetadataValue::String(path),
+                                        },
+                                } = argument
+                                    && !paths.contains(path)
+                                {
+                                    paths.push(path.clone());
+                                }
+                            }
+                        }
+                        self.dependency_trait_rust_derive_paths
+                            .insert(format!("{module_key}.{}", trait_metadata.name), paths);
                     }
                     let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
                         continue;
@@ -707,6 +733,14 @@ impl TypeChecker {
                             .or_insert_with(|| trait_info.clone());
                         self.dependency_module_traits
                             .insert(format!("{module_key}.{name}"), trait_info.clone());
+                        if let Some(paths) = self
+                            .dependency_trait_rust_derive_paths
+                            .get(&format!("{target_module}.{target_name}"))
+                            .cloned()
+                        {
+                            self.dependency_trait_rust_derive_paths
+                                .insert(format!("{module_key}.{name}"), paths);
+                        }
                     }
                     _ => {}
                 }

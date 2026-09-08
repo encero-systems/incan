@@ -967,6 +967,31 @@ impl TypeChecker {
         name.to_string()
     }
 
+    /// Retain a generic bound's foreign identity before its declaring module's imports leave scope.
+    ///
+    /// Source imports and checked SDK signatures carry the absolute Rust path rather than a local alias. Known
+    /// non-trait items keep their binding so ordinary bound validation can reject them instead of deferring them.
+    pub(crate) fn resolve_generic_bound_name(&mut self, name: &str, span: Span) -> String {
+        if let Some(path) = self.imported_generic_rust_bound_path(name) {
+            return path;
+        }
+        self.resolve_trait_bound_name(name, span)
+    }
+
+    /// Resolve a foreign generic bound for both declaration collection and checked public export metadata.
+    pub(crate) fn imported_generic_rust_bound_path(&self, name: &str) -> Option<String> {
+        if let Some(symbol) = self.lookup_symbol(name)
+            && let SymbolKind::RustItem(info) = &symbol.kind
+            && info
+                .metadata
+                .as_ref()
+                .is_none_or(|metadata| matches!(metadata.kind, incan_core::interop::RustItemKind::Trait(_)))
+        {
+            return Some(format!("::{}", info.path.trim_start_matches("::")));
+        }
+        None
+    }
+
     /// Collect synthetic trait adoptions introduced by RFC 024 `@derive(...)` arguments.
     pub(crate) fn collect_derive_trait_adoption_infos(&mut self, derives: &[String]) -> Vec<TypeBoundInfo> {
         let mut out = Vec::new();
@@ -1039,13 +1064,10 @@ impl TypeChecker {
 
     /// Look up a module's RFC 024 `__derives__` trait list from stdlib or imported dependency metadata.
     pub(crate) fn lookup_derivable_traits(&mut self, module_path: &[String]) -> Option<Vec<String>> {
-        if let Some(traits) = self.stdlib_cache.lookup_derivable_traits(module_path) {
-            return Some(traits);
+        if let Some(traits) = self.dependency_derivable_modules.get(&module_path.join(".")) {
+            return (!traits.is_empty()).then(|| traits.clone());
         }
-        self.dependency_derivable_modules
-            .get(&module_path.join("."))
-            .cloned()
-            .filter(|traits| !traits.is_empty())
+        self.stdlib_cache.lookup_derivable_traits(module_path)
     }
 
     /// Look up a trait declared by an imported module, falling back to the current scope for direct imports.
@@ -1054,20 +1076,38 @@ impl TypeChecker {
         module_path: &[String],
         trait_name: &str,
     ) -> Option<TraitInfo> {
-        if let Some(info) = self.stdlib_cache.lookup_trait(module_path, trait_name) {
-            return Some(info);
-        }
-        if let Some(info) = self
-            .dependency_module_traits
-            .get(&format!("{}.{}", module_path.join("."), trait_name))
-        {
+        let module_key = module_path.join(".");
+        if let Some(info) = self.dependency_module_traits.get(&format!("{module_key}.{trait_name}")) {
             return Some(info.clone());
         }
-        self.lookup_trait_info(trait_name).cloned()
+        if self
+            .provider_plan
+            .active_sdk_provider_for_module(module_path)
+            .is_some_and(|provider| provider.manifest.is_some())
+        {
+            return None;
+        }
+        self.stdlib_cache
+            .lookup_trait(module_path, trait_name)
+            .or_else(|| self.lookup_trait_info(trait_name).cloned())
     }
 
     /// Return whether a module-qualified trait may be adopted through `@derive(...)`.
     pub(crate) fn imported_trait_is_derivable(&mut self, module_path: &[String], trait_name: &str) -> bool {
+        if self
+            .provider_plan
+            .active_sdk_provider_for_module(module_path)
+            .is_some_and(|provider| provider.manifest.is_some())
+        {
+            return self.lookup_imported_module_trait(module_path, trait_name).is_some()
+                && (self
+                    .lookup_derivable_traits(module_path)
+                    .is_some_and(|traits| traits.iter().any(|name| name == trait_name))
+                    || self
+                        .dependency_trait_rust_derive_paths
+                        .get(&format!("{}.{}", module_path.join("."), trait_name))
+                        .is_some_and(|paths| !paths.is_empty()));
+        }
         if self
             .stdlib_cache
             .lookup_trait_meta(module_path, trait_name)
@@ -1700,7 +1740,7 @@ impl TypeChecker {
                     tp.name.clone(),
                     tp.bounds
                         .iter()
-                        .map(|bound| self.resolve_trait_bound_name(&bound.name, Span::default()))
+                        .map(|bound| self.resolve_generic_bound_name(&bound.name, Span::default()))
                         .collect(),
                 )
             })
@@ -1714,7 +1754,7 @@ impl TypeChecker {
                     tp.bounds
                         .iter()
                         .map(|bound| TypeBoundInfo {
-                            name: self.resolve_trait_bound_name(&bound.name, Span::default()),
+                            name: self.resolve_generic_bound_name(&bound.name, Span::default()),
                             source_name: self.trait_bound_source_name(&bound.name),
                             type_args: bound
                                 .type_args

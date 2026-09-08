@@ -71,6 +71,7 @@ import std.telemetry.core
 import std.tempfile
 import std.testing
 import std.this
+import std.toml
 import std.traits.callable
 import std.traits.convert
 import std.traits.error as traits_error

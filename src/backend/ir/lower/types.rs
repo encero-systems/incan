@@ -1658,6 +1658,7 @@ mod tests {
             package: None,
             modules: vec![crate::frontend::api_metadata::CheckedApiMetadata {
                 schema_version: crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["lib".into()],
                 declarations: aliases,
             }],

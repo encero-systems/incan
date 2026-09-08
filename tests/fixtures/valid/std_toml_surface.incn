@@ -1,0 +1,246 @@
+"""Exercise typed manifest and generated lock TOML without a custom Rust format backend."""
+
+from std.toml import (
+    TomlValue,
+    TomlError,
+    TomlKind,
+    TomlErrorKind,
+    parse,
+    deserialize,
+    serialize,
+    serialize_pretty,
+    locate,
+)
+from std import toml
+
+
+@derive(toml)
+model Project:
+    """Manifest identity fields retain Unicode strings."""
+
+    name: str
+    version: str
+
+
+@derive(toml)
+model SettingsDocument:
+    """An arbitrary settings document isolates typed boolean and list validation from Loaf policy."""
+
+    project: Project
+    features: list[str]
+    enabled: bool
+
+
+@derive(toml)
+model Package:
+    """One resolved package entry in a generated lock."""
+
+    name: str
+    version: str
+    dependencies: list[str]
+
+
+@derive(toml)
+model Lock:
+    """A generated lock document containing an array of package tables."""
+
+    version: int
+    packages: list[Package]
+
+
+@derive(toml)
+model ScriptProject:
+    """Loaf project identity includes a scripts table owned by the project section."""
+
+    name: str
+    version: str
+    scripts: Dict[str, str]
+
+
+@derive(toml)
+model LocalDependency:
+    """An inline dependency entry keeps its source-relative project path."""
+
+    path: str
+
+
+@derive(toml)
+model LoafManifest:
+    """Public loaf.toml shape with project scripts, Rust dependency alias and local dependency tables."""
+
+    project: ScriptProject
+    rust_dependencies as "rust-dependencies": Dict[str, str]
+    dependencies: Dict[str, LocalDependency]
+
+
+@derive(toml)
+model IncanMetadata:
+    """Public lock metadata retains hyphenated wire names through field aliases."""
+
+    format: int
+    incan_version as "incan-version": str
+    deps_fingerprint as "deps-fingerprint": str
+    cargo_features as "cargo-features": list[str]
+
+
+@derive(toml)
+model SdkComponent:
+    """A selected SDK component appears as an array of tables in the lock."""
+
+    id: str
+    version: str
+    reason: str
+
+
+@derive(toml)
+model SdkSelection:
+    """The semantic lock records SDK identity and selected component evidence."""
+
+    identity: str
+    inventory_digest: str
+    profile: str
+    components: list[SdkComponent]
+
+
+@derive(toml)
+model SemanticGraph:
+    """Nested semantic tables retain the graph's SDK selection."""
+
+    sdk: SdkSelection
+
+
+@derive(toml)
+model CargoPayload:
+    """The embedded Cargo lock remains a multiline string, not another parsed table."""
+
+    lock: str
+
+
+@derive(toml)
+model OvenLock:
+    """Representative public oven.lock envelope with metadata, semantic graph and embedded lock."""
+
+    incan: IncanMetadata
+    semantic: SemanticGraph
+    cargo: CargoPayload
+
+
+def assert_error[T](result: Result[T, TomlError], kind: TomlErrorKind) -> None:
+    """Require a failure of the expected category without unwrapping an error payload."""
+    match result:
+        Ok(_) =>
+            assert false, "expected a TOML failure"
+        Err(error) =>
+            assert error.kind == kind
+
+
+def run() -> Result[None, TomlError]:
+    """Round-trip representative Loaf shapes and exercise source-bearing structural failures."""
+    source = "features = [\"json\", \"toml\"]\nenabled = true\n[project]\nname = \"café\"\nversion = \"0.1.0\"\n"
+    manifest = deserialize[SettingsDocument](source)?
+    assert manifest.project.name == "café"
+    assert manifest.features == ["json", "toml"]
+    assert manifest.enabled
+    restored = deserialize[SettingsDocument](serialize(manifest)?)?
+    assert restored.project.version == "0.1.0"
+
+    lock_source = "version = 1\n[[packages]]\nname = \"app\"\nversion = \"1.0.0\"\ndependencies = [\"core\"]\n[[packages]]\nname = \"core\"\nversion = \"0.6.0\"\ndependencies = []\n"
+    lock = deserialize[Lock](lock_source)?
+    restored_lock = deserialize[Lock](serialize_pretty(lock)?)?
+    assert len(restored_lock.packages) == 2
+    assert restored_lock.packages[0].dependencies == ["core"]
+    assert restored_lock.packages[1].name == "core"
+
+    loaf_source = "[project]\nname = \"regex_tutorial\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"main.incn\"\n[rust-dependencies]\nregex = \"1\"\n[dependencies]\nhelpers = { path = \"../helpers\" }\n"
+    loaf = deserialize[LoafManifest](loaf_source)?
+    restored_loaf = deserialize[LoafManifest](serialize(loaf)?)?
+    assert restored_loaf.project.scripts["main"] == "main.incn"
+    assert restored_loaf.rust_dependencies["regex"] == "1"
+    assert restored_loaf.dependencies["helpers"].path == "../helpers"
+
+    oven_source = "[incan]\nformat = 2\nincan-version = \"0.6.0-dev.3\"\ndeps-fingerprint = \"sha256:example\"\ncargo-features = []\n[semantic.sdk]\nidentity = \"incan@0.6.0-dev.3\"\ninventory_digest = \"sha256:inventory\"\nprofile = \"default\"\n[[semantic.sdk.components]]\nid = \"stdlib-data\"\nversion = \"0.6.0-dev.3\"\nreason = \"profile:default\"\n[cargo]\nlock = \"\"\"\nversion = 4\n[[package]]\nname = \"example\"\nversion = \"1.0.0\"\n\"\"\"\n"
+    oven_lock = deserialize[OvenLock](oven_source)?
+    restored_oven = deserialize[OvenLock](serialize_pretty(oven_lock)?)?
+    assert restored_oven.incan.incan_version == "0.6.0-dev.3"
+    assert restored_oven.incan.deps_fingerprint == "sha256:example"
+    assert restored_oven.semantic.sdk.components[0].id == "stdlib-data"
+    assert restored_oven.cargo.lock == oven_lock.cargo.lock
+    assert "incan-version" in serialize(oven_lock)?
+
+    dynamic = parse(
+        "offset = 1979-05-27T07:32:00Z\nlocal = 1979-05-27T07:32:00\ndate = 1979-05-27\ntime = 07:32:00\nnumber = 42\nfraction = 1.5\nflag = true\ntext = \"hello\"\narray = [1, 2]\n[table]\nname = \"nested\"\n",
+    )?
+    assert dynamic.kind() == TomlKind.Table
+    for key, expected in [("text", TomlKind.String), ("number", TomlKind.Integer), ("fraction", TomlKind.Float), ("flag", TomlKind.Boolean), ("offset", TomlKind.Datetime), ("array", TomlKind.Array), ("table", TomlKind.Table)]:
+        assert dynamic.get_value(key)?.kind() == expected
+    assert dynamic.get_value("offset")?.as_datetime()?.as_str() == "1979-05-27T07:32:00Z"
+    reparsed = parse(dynamic.to_toml()?)?
+    for key in ["offset", "local", "date", "time"]:
+        assert reparsed.get_value(key)?.kind() == TomlKind.Datetime
+    array = dynamic.get_value("array")?
+    assert_error(array.get_index(-1), TomlErrorKind.Missing)
+    assert_error(array.get_index(9), TomlErrorKind.Missing)
+    assert array.get_index(0)?.as_int()? == 1
+    assert array.as_array()?[1].as_int()? == 2
+    table = dynamic.as_table()?
+    assert table["number"].as_int()? == 42
+    assert table["fraction"].as_float()? == 1.5
+    assert table["flag"].as_bool()?
+    assert table["text"].as_str()? == "hello"
+    assert_error(table["number"].as_str(), TomlErrorKind.Type)
+    assert table["table"].get[str]("name")? == "nested"
+    assert dynamic.get_optional[str]("missing")? == None
+
+    policy_source = "title = \"café\"\n[dependencies.\"my.library\"]\nunknown_option = true\n"
+    match locate(policy_source, ["dependencies", "my.library", "unknown_option"])?:
+        Some(location) =>
+            assert location.line == 3
+            assert location.column == 18
+            assert location.byte_start == 61
+            assert location.byte_end == 65
+        None =>
+            assert false, "custom policy error lost its value location"
+    assert locate(policy_source, ["dependencies", "missing"])? == None
+    match locate("dependencies = { app = { unknown = \"café\" } }", ["dependencies", "app", "unknown"])?:
+        Some(location) =>
+            assert location.column == 36
+        None =>
+            assert false, "inline dependency entry lost its location"
+    match locate("broken = [", ["broken"]):
+        Ok(_) =>
+            assert false, "location lookup accepted malformed source"
+        Err(error) =>
+            assert error.line == Some(1)
+
+    match deserialize[SettingsDocument](
+        "features = []\nenabled = \"wrong\"\n[project]\nname = \"café\"\nversion = \"0.1\"\n",
+    ):
+        Ok(_) =>
+            assert false, "wrong boolean accepted"
+        Err(error) =>
+            assert error.line == Some(2)
+            assert error.column == Some(11)
+            assert error.byte_start == Some(24)
+    match parse("name = \"café\"; broken"):
+        Ok(_) =>
+            assert false, "invalid TOML accepted"
+        Err(error) =>
+            assert error.line == Some(1)
+            assert error.column == Some(14)
+            assert error.byte_start == Some(14)
+    match dynamic.get_value("number")?.to_toml():
+        Ok(_) =>
+            assert false, "scalar TOML document accepted"
+        Err(error) =>
+            assert error.kind == TomlErrorKind.Encode
+            assert error.line == None
+    println("TOML manifest, lock, datetime, and located errors passed")
+    return Ok(None)
+
+
+def main() -> None:
+    """Make any unexpected TOML failure fail this native acceptance program."""
+    match run():
+        Ok(_) => return
+        Err(error) =>
+            assert false, error.message()

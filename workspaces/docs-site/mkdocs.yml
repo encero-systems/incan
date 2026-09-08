@@ -81,7 +81,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2
+  - /shared/incapunk/incapunk.css?v=20260908-code-annotations-2
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
@@ -149,6 +149,7 @@ nav:
           - Binary-text encoding: language/how-to/binary_text_encoding.md
           - Compression: language/how-to/compression.md
           - Dynamic JSON: language/how-to/dynamic_json.md
+          - TOML data: language/how-to/toml.md
           - Hashing data: language/how-to/hashing_data.md
           - Logging: language/how-to/logging.md
           - Generators: language/how-to/generators.md
@@ -203,6 +204,7 @@ nav:
               - std.io: language/reference/stdlib/io.md
               - std.interop: language/reference/stdlib/interop.md
               - std.json: language/reference/stdlib/json.md
+              - std.toml: language/reference/stdlib/toml.md
               - std.logging: language/reference/stdlib/logging.md
               - std.telemetry: language/reference/stdlib/telemetry.md
               - std.regex: language/reference/stdlib/regex.md
