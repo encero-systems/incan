@@ -205,11 +205,6 @@ pub struct OvenCompilerLibtestsRunCommandOptions {
     pub partition_index: Option<usize>,
     /// Number of deterministic receipt-index partitions.
     pub partition_count: Option<usize>,
-    /// Explicit Cargo executable for compiler-suite roots that deliberately exercise the Loaf baker.
-    ///
-    /// The suite creates a logged proxy and grants it only through its package-qualified capability registry. It is
-    /// never available to normal Incan commands or used as an Oven execution fallback.
-    pub fixture_cargo: Option<PathBuf>,
     /// Caller-owned directory for linked stored test executables.
     pub output: Option<PathBuf>,
     /// Bounded store selection and policy.
