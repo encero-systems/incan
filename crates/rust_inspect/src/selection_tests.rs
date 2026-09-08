@@ -193,3 +193,130 @@ fn temporary_root_must_not_overlap_selected_inputs() -> Result<(), Box<dyn std::
     assert_eq!(fs::read_dir(fixture.source.path())?.count(), 2);
     Ok(())
 }
+
+/// Include and path attributes cannot make the analysis database read an unselected source tree.
+#[test]
+fn selected_source_files_contain_include_and_path_attribute_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    let foreign = tempfile::tempdir()?;
+    let outside = foreign.path().canonicalize()?.join("foreign.rs");
+    fs::write(&outside, "pub struct Foreign { pub forbidden: bool }\n")?;
+    let source = format!(
+        "#![no_std]\n#[rustc_builtin_macro] macro_rules! include {{ () => {{}} }}\ninclude!(\"allowed.rs\");\ninclude!({outside:?});\n#[path = {outside:?}] mod escaped;\npub use escaped::Foreign as Escaped;\npub struct Local;\n"
+    );
+    let mut fixture = InspectionFixture::new(&source)?;
+    fs::write(fixture.source.path().join("allowed.rs"), "pub struct Included;\n")?;
+    fixture.inputs.sources[0].digest = super::digest_oven_source_tree(fixture.source.path())?;
+    let workspace = fixture.load()?;
+    assert!(extract_rust_item(&workspace, "demo::Local").is_ok());
+    assert!(
+        extract_rust_item(&workspace, "demo::Included").is_ok(),
+        "positive include expansion must run"
+    );
+    for query in ["demo::Foreign", "demo::Escaped", "demo::escaped::Foreign"] {
+        assert!(matches!(
+            extract_rust_item(&workspace, query),
+            Err(RustMetadataError::PathNotResolved(_))
+        ));
+    }
+    let selected_root = fixture.source.path().canonicalize()?;
+    for (_, path) in workspace.vfs.iter() {
+        let path = path.as_path().ok_or("unexpected virtual input")?;
+        assert!(path.starts_with(&selected_root), "unselected VFS input: {path}");
+    }
+    assert_eq!(
+        fs::read_to_string(&outside)?,
+        "pub struct Foreign { pub forbidden: bool }\n"
+    );
+    Ok(())
+}
+
+/// Selected module files remain visible through ordinary path attributes.
+#[test]
+fn selected_path_attribute_keeps_explicit_source_members_visible() -> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture =
+        InspectionFixture::new("#![no_std]\n#[path = \"generated.rs\"] mod included;\npub use included::Generated;\n")?;
+    fs::write(
+        fixture.source.path().join("generated.rs"),
+        "pub struct Generated { pub number: u32 }\n",
+    )?;
+    fixture.inputs.sources[0].digest = super::digest_oven_source_tree(fixture.source.path())?;
+    let workspace = fixture.load()?;
+    let metadata = extract_rust_item(&workspace, "demo::Generated")?;
+    let incan_core::interop::RustItemKind::Type(ty) = metadata.kind else {
+        return Err("selected generated type absent".into());
+    };
+    assert_eq!(ty.fields.len(), 1);
+    assert_eq!(ty.fields[0].name, "number");
+    Ok(())
+}
+
+/// A selected tree cannot grant an unselected file by following a symbolic link during VFS traversal.
+#[cfg(unix)]
+#[test]
+fn selected_source_symlink_refuses_before_database_loading() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = InspectionFixture::new("#![no_std]\npub struct Local;\n")?;
+    let foreign = tempfile::tempdir()?;
+    let outside = foreign.path().join("foreign.rs");
+    fs::write(&outside, "pub struct Foreign;\n")?;
+    std::os::unix::fs::symlink(&outside, fixture.source.path().join("foreign.rs"))?;
+    assert!(matches!(
+        fixture.load(),
+        Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+    assert_eq!(fs::read_dir(fixture.output.path())?.count(), 0);
+    Ok(())
+}
+
+/// The physical loader works with empty ambient tool/cache roots and never invokes the supplied trap executables.
+#[cfg(unix)]
+#[test]
+fn selected_neutral_loader_does_not_spawn_ambient_tools() -> Result<(), Box<dyn std::error::Error>> {
+    const CHILD: &str = "INCAN_INSPECTION_PROCESS_BOUNDARY_TEST";
+    if std::env::var_os(CHILD).is_some() {
+        let fixture = InspectionFixture::new("#![no_std]\npub struct Local { pub number: u64 }\n")?;
+        let workspace = fixture.load()?;
+        assert!(extract_rust_item(&workspace, "demo::Local").is_ok());
+        return Ok(());
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let guard = tempfile::tempdir()?;
+    let marker = guard.path().join("unexpected-tool-call");
+    let trap = guard.path().join("tool-trap");
+    fs::write(
+        &trap,
+        "#!/bin/sh\nprintf '%s\\n' \"$0 $*\" >> \"$INCAN_INSPECTION_TOOL_MARKER\"\nexit 91\n",
+    )?;
+    fs::set_permissions(&trap, fs::Permissions::from_mode(0o755))?;
+    let empty = guard.path().join("empty");
+    fs::create_dir(&empty)?;
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "loader::tests::selected_neutral_loader_does_not_spawn_ambient_tools",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("INCAN_INSPECTION_TOOL_MARKER", &marker)
+        .env("CARGO", &trap)
+        .env("RUSTC", &trap)
+        .env("CARGO_HOME", &empty)
+        .env("RUSTUP_HOME", &empty)
+        .env("PATH", &empty)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "isolated loader failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+        "isolated harness did not execute exactly one passing probe"
+    );
+    assert!(
+        !marker.exists(),
+        "loader invoked an ambient tool: {}",
+        fs::read_to_string(&marker).unwrap_or_default()
+    );
+    Ok(())
+}

@@ -62,6 +62,20 @@ impl InspectionFixture {
         Ok(())
     }
 
+    /// Validate this fixture's selected input binding without creating an analysis database.
+    pub(crate) fn validate(&self) -> Result<ValidatedInspectionProject, RustMetadataError> {
+        ValidatedInspectionProject::validate(self.inputs.clone())
+    }
+
+    /// Bind a test cache to exact selected inputs without loading rust-analyzer.
+    pub(crate) fn bind(
+        &self,
+        cache: &crate::RustMetadataCache,
+        context: &std::path::Path,
+    ) -> Result<(), RustMetadataError> {
+        cache.bind_selected_project(context, self.validate()?, self.output.path())
+    }
+
     /// Load only this fixture's selected projection and explicit output root.
     pub(crate) fn load(&self) -> Result<RustWorkspace, RustMetadataError> {
         let validated = ValidatedInspectionProject::validate(self.inputs.clone())?;

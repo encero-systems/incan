@@ -41,7 +41,7 @@ pub use selection::{InspectionSourceInput, SelectedInspectionInputs, ValidatedIn
 pub enum Fidelity {
     /// Exact canonical-path cache hit.
     Exact,
-    /// Resolved via normalized raw-identifier spelling or a checked definition alias.
+    /// Resolved via normalized raw-identifier spelling.
     Normalized,
     /// Metadata exists, but contains unknown shapes/displays (`?`) and should be treated conservatively.
     Unknown,
@@ -95,7 +95,7 @@ impl Inspector {
 
     /// Create an inspector for one caller-owned cache context.
     ///
-    /// Preparation must bind a selected database through [`RustMetadataCache::bind_selected_workspace`] before
+    /// Preparation must bind selected inputs through [`RustMetadataCache::bind_selected_project`] before
     /// extraction or persisted-cache access. A directory alone does not establish dependency/source authority.
     pub fn new(config: InspectorConfig) -> Self {
         Self {
@@ -331,7 +331,7 @@ mod tests {
         )?;
         let inspector = Inspector::new(InspectorConfig::new(tmp.path()));
         let fixture = crate::selection_test_support::InspectionFixture::new("#![no_std]\npub struct Thing;\n")?;
-        inspector.cache().bind_selected_workspace(tmp.path(), fixture.load()?)?;
+        fixture.bind(inspector.cache(), tmp.path())?;
         inspector
             .cache()
             .insert_test_item(tmp.path(), dummy_type_metadata("demo::Thing"))?;

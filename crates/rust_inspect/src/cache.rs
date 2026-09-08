@@ -1,8 +1,9 @@
-//! Metadata cache bound to an explicitly loaded selected inspection projection.
+//! Metadata cache bound to a validated selected inspection projection.
 //!
-//! Preparation binds a database before extraction; ordinary semantic/codegen consumers use cache-only reads.
+//! Preparation binds validated inputs; cache hits do not require a database. Semantic misses load it on demand.
 //! A path or source catalog cannot establish selection, and no cache miss triggers ambient source discovery.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
@@ -15,6 +16,7 @@ use std::time::Instant;
 use incan_core::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeMetadataCompleteness};
 use serde::{Deserialize, Serialize};
 
+use crate::ValidatedInspectionProject;
 use crate::cache_resolve::crate_name_for_path;
 use crate::cache_timing::{CallTrace, log_timing_stage, rust_inspect_timing_enabled};
 use crate::error::RustMetadataError;
@@ -37,14 +39,20 @@ pub struct RustMetadataCache {
 
 #[derive(Default)]
 struct CacheInner {
+    selections: HashMap<PathBuf, InspectionContext>,
     workspaces: HashMap<PathBuf, RustWorkspace>,
     items: HashMap<(PathBuf, String), Arc<RustItemMetadata>>,
-    definition_aliases: HashMap<(PathBuf, String), String>,
     fast_failed_items: HashSet<(PathBuf, String)>,
     /// Items whose record was produced by complete semantic extraction rather than a source-only fallback.
     complete_items: HashSet<(PathBuf, String)>,
     failed_items: HashMap<(PathBuf, String), NegativeLookup>,
     disk_cache_state: HashMap<PathBuf, DiskCacheState>,
+}
+
+/// Validated selection and an explicit output location; neither requires a loaded analysis database.
+struct InspectionContext {
+    projection: ValidatedInspectionProject,
+    temporary_root: PathBuf,
 }
 
 #[derive(Default)]
@@ -134,12 +142,12 @@ fn legacy_disk_cache_path(root: &Path) -> PathBuf {
     root.join(LEGACY_DISK_CACHE_FILE)
 }
 
-/// Require the loaded selected projection before considering any persisted or in-memory metadata.
+/// Require validated selected bindings before cache reuse, without constructing an analysis database.
 fn workspace_fingerprint(inner: &CacheInner, root: &Path) -> Result<String, RustMetadataError> {
     inner
-        .workspaces
+        .selections
         .get(root)
-        .map(|workspace| workspace.selection_fingerprint.clone())
+        .map(|selection| selection.projection.fingerprint().to_string())
         .ok_or_else(|| RustMetadataError::SelectedInputUnavailable {
             path: root.to_path_buf(),
         })
@@ -290,7 +298,7 @@ fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<DiskC
 /// Build the current workspace-local disk cache snapshot.
 ///
 /// Reuses the loaded projection's complete physical binding. A former Cargo workspace fingerprint can never
-/// authorize this cache format; the selected database must be bound before persistence or lookup.
+/// authorize this cache format; the validated selected projection must be bound before persistence or lookup.
 fn disk_cache_envelope(inner: &CacheInner, root: &Path) -> Result<DiskCacheEnvelope, RustMetadataError> {
     let fingerprint = match inner
         .disk_cache_state
@@ -353,7 +361,6 @@ pub struct CacheLookupHit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CacheAccessOutcome {
     ExactHit,
-    DefinitionAliasHit,
     AliasHit,
     Extracted,
 }
@@ -361,14 +368,13 @@ pub(crate) enum CacheAccessOutcome {
 impl CacheAccessOutcome {
     /// Return true when an access reused existing cache state rather than extracting metadata.
     pub(crate) fn reused(self) -> bool {
-        matches!(self, Self::ExactHit | Self::DefinitionAliasHit | Self::AliasHit)
+        matches!(self, Self::ExactHit | Self::AliasHit)
     }
 
     /// Return the stable timing-trace label for this cache access outcome.
     fn trace_label(self) -> &'static str {
         match self {
             Self::ExactHit => "hit.memory.exact",
-            Self::DefinitionAliasHit => "hit.memory.definition_alias",
             Self::AliasHit => "hit.memory.alias",
             Self::Extracted => "hit.extracted",
         }
@@ -405,43 +411,8 @@ fn canonical_path_candidates(canonical_path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Remove definition-path aliases owned by the currently cached item at `canonical_path`.
-fn remove_cached_item_definition_aliases(inner: &mut CacheInner, root: &Path, canonical_path: &str) {
-    let key_item = (root.to_path_buf(), canonical_path.to_owned());
-    let Some(existing) = inner.items.get(&key_item) else {
-        return;
-    };
-    let Some(definition_path) = existing.definition_path.as_deref() else {
-        return;
-    };
-    for candidate in canonical_path_candidates(definition_path) {
-        let key = (root.to_path_buf(), candidate);
-        if inner
-            .definition_aliases
-            .get(&key)
-            .is_some_and(|indexed_path| indexed_path == canonical_path)
-        {
-            inner.definition_aliases.remove(&key);
-        }
-    }
-}
-
-/// Index one cached item by its resolved Rust definition path and supported spelling aliases.
-fn index_cached_item_definition_aliases(inner: &mut CacheInner, root: &Path, metadata: &RustItemMetadata) {
-    let Some(definition_path) = metadata.definition_path.as_deref() else {
-        return;
-    };
-    for candidate in canonical_path_candidates(definition_path) {
-        inner
-            .definition_aliases
-            .insert((root.to_path_buf(), candidate), metadata.canonical_path.clone());
-    }
-}
-
-/// Insert or replace cached metadata while keeping the definition-path alias index in sync.
+/// Insert or replace metadata only under the exact selected query that produced it.
 fn insert_cached_item(inner: &mut CacheInner, root: &Path, metadata: Arc<RustItemMetadata>) {
-    remove_cached_item_definition_aliases(inner, root, metadata.canonical_path.as_str());
-    index_cached_item_definition_aliases(inner, root, metadata.as_ref());
     inner
         .complete_items
         .remove(&(root.to_path_buf(), metadata.canonical_path.clone()));
@@ -514,20 +485,6 @@ fn insert_aliased_item(
     arc
 }
 
-/// Look up cached public aliases whose recorded definition path matches the requested path.
-fn cached_definition_alias(inner: &CacheInner, root: &Path, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
-    for candidate in canonical_path_candidates(canonical_path) {
-        let alias_key = (root.to_path_buf(), candidate);
-        if let Some(canonical_path) = inner.definition_aliases.get(&alias_key) {
-            let item_key = (root.to_path_buf(), canonical_path.clone());
-            if let Some(cached) = inner.items.get(&item_key) {
-                return Some(Arc::clone(cached));
-            }
-        }
-    }
-    None
-}
-
 /// Return whether an extraction error is a stable miss in this same selected database.
 fn metadata_extraction_missed(err: &RustMetadataError) -> bool {
     matches!(
@@ -544,12 +501,34 @@ fn extract_in_workspace_set(
     progress: &(dyn Fn(String) + Sync),
     timing_enabled: bool,
 ) -> Result<RustItemMetadata, RustMetadataError> {
-    let workspace = inner
-        .workspaces
+    let selection = inner
+        .selections
         .get(root)
         .ok_or_else(|| RustMetadataError::SelectedInputUnavailable {
             path: root.to_path_buf(),
         })?;
+    let workspace = match inner.workspaces.entry(root.to_path_buf()) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            let started = Instant::now();
+            let workspace = RustWorkspace::load_selected(&selection.projection, &selection.temporary_root, progress)?;
+            log_timing_stage(
+                timing_enabled,
+                root,
+                canonical_path,
+                "workspace.load.selected",
+                started.elapsed(),
+                "status=ok",
+            );
+            entry.insert(workspace)
+        }
+    };
+    if workspace.selection_fingerprint != selection.projection.fingerprint() {
+        return Err(RustMetadataError::InvalidSelectedInput {
+            path: root.to_path_buf(),
+            message: "loaded inspection database does not match its selected context".to_string(),
+        });
+    }
     progress(format!("extracting selected Rust item {canonical_path}"));
     let started = Instant::now();
     let result = extract_rust_item(workspace, canonical_path);
@@ -562,6 +541,23 @@ fn extract_in_workspace_set(
         if result.is_ok() { "status=ok" } else { "status=error" },
     );
     result
+}
+
+/// Clear all bookkeeping for one context while holding the cache mutex.
+fn clear_context(inner: &mut CacheInner, root: &Path) {
+    inner.selections.remove(root);
+    inner.workspaces.remove(root);
+    inner.items.retain(|(workspace_root, _), _| workspace_root != root);
+    inner
+        .fast_failed_items
+        .retain(|(workspace_root, _)| workspace_root != root);
+    inner
+        .failed_items
+        .retain(|(workspace_root, _), _| workspace_root != root);
+    inner
+        .complete_items
+        .retain(|(workspace_root, _)| workspace_root != root);
+    inner.disk_cache_state.remove(root);
 }
 
 impl RustMetadataCache {
@@ -584,24 +580,76 @@ impl RustMetadataCache {
         }
     }
 
-    /// Bind a physically loaded selected database to this caller-owned cache context.
+    /// Bind validated selection to a caller-owned cache context without loading rust-analyzer.
     ///
-    /// The caller retains admitted input leases while this cache holds the database. Existing items and negative
-    /// entries are discarded before changing the selection; disk reuse requires the new complete binding fingerprint.
+    /// The caller retains admitted input leases while this cache uses the projection. A matching persisted record
+    /// needs only this binding; semantic extraction lazily loads the selected database on a miss. Changing the
+    /// fingerprint atomically discards all previous metadata, misses and the database for this context.
+    pub fn bind_selected_project(
+        &self,
+        context: &Path,
+        projection: ValidatedInspectionProject,
+        temporary_root: &Path,
+    ) -> Result<(), RustMetadataError> {
+        let root = context.canonicalize()?;
+        // Checking the allocated directory does not create the per-load projection or read selected source trees.
+        let temporary_root = temporary_root.canonicalize()?;
+        if !temporary_root.is_dir() {
+            return Err(RustMetadataError::InvalidSelectedInput {
+                path: temporary_root,
+                message: "inspection temporary root must be an allocated directory".to_string(),
+            });
+        }
+        if projection.contains_input_path(&temporary_root) || projection.contains_input_path(&root) {
+            return Err(RustMetadataError::InvalidSelectedInput {
+                path: root,
+                message: "metadata cache and temporary output must be outside selected input roots".to_string(),
+            });
+        }
+        let mut inner = self.inner.lock().map_err(|error| RustMetadataError::LoadWorkspace {
+            path: root.clone(),
+            message: format!("metadata cache lock poisoned: {error}"),
+        })?;
+        if inner
+            .selections
+            .get(&root)
+            .is_none_or(|selected| selected.projection.fingerprint() != projection.fingerprint())
+        {
+            clear_context(&mut inner, &root);
+        }
+        inner.selections.insert(
+            root,
+            InspectionContext {
+                projection,
+                temporary_root,
+            },
+        );
+        Ok(())
+    }
+
+    /// Attach an already loaded database only when it matches the context's validated selection.
+    ///
+    /// This is optional preparation reuse. A database cannot stand in for selection authority or replace a different
+    /// binding. Ordinary disk-cache reads do not call this method.
     pub fn bind_selected_workspace(&self, context: &Path, workspace: RustWorkspace) -> Result<(), RustMetadataError> {
-        self.invalidate_manifest_dir(context)?;
         let root = context.canonicalize()?;
         let mut inner = self.inner.lock().map_err(|error| RustMetadataError::LoadWorkspace {
             path: root.clone(),
             message: format!("metadata cache lock poisoned: {error}"),
         })?;
+        if workspace_fingerprint(&inner, &root)? != workspace.selection_fingerprint {
+            return Err(RustMetadataError::InvalidSelectedInput {
+                path: root,
+                message: "loaded inspection database does not match its selected context".to_string(),
+            });
+        }
         inner.workspaces.insert(root, workspace);
         Ok(())
     }
 
     /// Return metadata for `canonical_path`, loading/extracting on cache miss.
     ///
-    /// Lookup uses in-memory exact/definition/spelling aliases, then this selected database, then persistence.
+    /// Lookup uses in-memory exact/raw-identifier spelling aliases, then this selected database, then persistence.
     /// A missing selection and operational failures are terminal; only stable item misses try spelling aliases.
     fn get_or_extract_inner(
         &self,
@@ -639,31 +687,6 @@ impl RustMetadataCache {
                 metadata: Arc::clone(hit),
                 outcome,
             });
-        }
-        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
-            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
-            let persist_started = Instant::now();
-            if persist_immediately
-                && let Err(err) = persist_item_to_disk_cache(&inner, &root)
-                && timing_enabled
-            {
-                eprintln!(
-                    "[rust-inspect-timing] root={} query={} stage=disk_cache.persist.definition_alias_hit status=error err={err}",
-                    root.display(),
-                    canonical_path
-                );
-            }
-            log_timing_stage(
-                timing_enabled,
-                &root,
-                canonical_path,
-                "disk_cache.persist.definition_alias_hit",
-                persist_started.elapsed(),
-                if persist_immediately { "" } else { "deferred=true" },
-            );
-            let outcome = CacheAccessOutcome::DefinitionAliasHit;
-            trace.set_outcome(outcome.trace_label());
-            return Ok(CacheAccess { metadata: arc, outcome });
         }
         if let Some(miss) = inner.failed_items.get(&key_item) {
             trace.set_outcome("hit.memory.negative");
@@ -975,29 +998,6 @@ impl RustMetadataCache {
             }));
         }
 
-        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
-            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
-            if let Err(err) = persist_item_to_disk_cache(&inner, &root) {
-                tracing::warn!(
-                    root = %root.display(),
-                    query = %canonical_path,
-                    error = %err,
-                    "failed to persist rust-inspect disk cache after definition alias hit"
-                );
-                if rust_inspect_timing_enabled() {
-                    eprintln!(
-                        "[rust-inspect-timing] root={} query={} stage=disk_cache.persist.cached_definition_alias status=error err={err}",
-                        root.display(),
-                        canonical_path
-                    );
-                }
-            }
-            return Ok(Some(CacheLookupHit {
-                metadata: arc,
-                alias_used: true,
-            }));
-        }
-
         for candidate in canonical_path_candidates(canonical_path) {
             let candidate_key = (root.clone(), candidate.clone());
             if let Some(hit) = inner.items.get(&candidate_key).cloned() {
@@ -1072,13 +1072,6 @@ impl RustMetadataCache {
                 alias_used: false,
             }));
         }
-        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
-            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
-            return Ok(Some(CacheLookupHit {
-                metadata: arc,
-                alias_used: true,
-            }));
-        }
         if inner.fast_failed_items.contains(&key_item) {
             return Ok(None);
         }
@@ -1131,27 +1124,13 @@ impl RustMetadataCache {
             path: root.clone(),
             message: format!("metadata cache lock poisoned: {e}"),
         })?;
-        inner.workspaces.remove(&root);
-        inner.items.retain(|(workspace_root, _), _| workspace_root != &root);
-        inner
-            .definition_aliases
-            .retain(|(workspace_root, _), _| workspace_root != &root);
-        inner
-            .fast_failed_items
-            .retain(|(workspace_root, _)| workspace_root != &root);
-        inner
-            .failed_items
-            .retain(|(workspace_root, _), _| workspace_root != &root);
-        inner
-            .complete_items
-            .retain(|(workspace_root, _)| workspace_root != &root);
-        inner.disk_cache_state.remove(&root);
+        clear_context(&mut inner, &root);
         Ok(())
     }
 
     /// Query the selected database with the former source-catalog entrypoint signature.
     ///
-    /// Kept for source compatibility while callers migrate to `bind_selected_workspace`. A source catalog alone
+    /// Kept for source compatibility while callers migrate to `bind_selected_project`. A source catalog alone
     /// cannot select the graph; this method uses only the already bound database.
     pub fn get_or_extract_with_registry_src_roots(
         &self,

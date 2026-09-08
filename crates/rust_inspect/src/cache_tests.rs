@@ -51,7 +51,7 @@ fn selected_metadata_persists_and_reuses_only_its_complete_binding() -> Result<(
     let context = tempfile::tempdir()?;
     let fixture = InspectionFixture::new("#![no_std]\npub struct Thing { pub number: u64 }\n")?;
     let cache = RustMetadataCache::new();
-    cache.bind_selected_workspace(context.path(), fixture.load()?)?;
+    fixture.bind(&cache, context.path())?;
     let first = cache.get_or_extract_complete(context.path(), "demo::Thing", &|_| {})?;
     cache.persist_manifest_dir(context.path())?;
     let reopened = RustMetadataCache::new();
@@ -60,7 +60,16 @@ fn selected_metadata_persists_and_reuses_only_its_complete_binding() -> Result<(
         reopened.get_cached(context.path(), "demo::Thing"),
         Err(RustMetadataError::SelectedInputUnavailable { .. })
     ));
-    reopened.bind_selected_workspace(context.path(), fixture.load()?)?;
+    fixture.bind(&reopened, context.path())?;
+    assert!(
+        reopened
+            .inner
+            .lock()
+            .map_err(|error| error.to_string())?
+            .workspaces
+            .is_empty()
+    );
+    assert_eq!(fs::read_dir(fixture.output.path())?.count(), 0);
     let hit = reopened
         .get_cached(context.path(), "demo::Thing")?
         .ok_or("selected persisted record absent")?;
@@ -68,9 +77,27 @@ fn selected_metadata_persists_and_reuses_only_its_complete_binding() -> Result<(
         serde_json::to_value(first.as_ref())?,
         serde_json::to_value(hit.metadata.as_ref())?
     );
+    assert!(
+        reopened
+            .inner
+            .lock()
+            .map_err(|error| error.to_string())?
+            .workspaces
+            .is_empty()
+    );
+    assert_eq!(fs::read_dir(fixture.output.path())?.count(), 0);
     let changed = InspectionFixture::new("#![no_std]\npub struct Different;\n")?;
-    reopened.bind_selected_workspace(context.path(), changed.load()?)?;
+    changed.bind(&reopened, context.path())?;
     assert!(reopened.get_cached(context.path(), "demo::Thing")?.is_none());
+    assert!(
+        reopened
+            .inner
+            .lock()
+            .map_err(|error| error.to_string())?
+            .workspaces
+            .is_empty()
+    );
+    assert_eq!(fs::read_dir(changed.output.path())?.count(), 0);
     assert!(
         reopened
             .get_or_extract_complete(context.path(), "demo::Different", &|_| {})
@@ -85,14 +112,14 @@ fn stable_missing_item_remains_local_to_one_selected_database() -> Result<(), Bo
     let context = tempfile::tempdir()?;
     let fixture = InspectionFixture::new("#![no_std]\npub struct Thing;\n")?;
     let cache = RustMetadataCache::new();
-    cache.bind_selected_workspace(context.path(), fixture.load()?)?;
+    fixture.bind(&cache, context.path())?;
     assert!(matches!(
         cache.get_or_extract_complete(context.path(), "demo::Absent", &|_| {}),
         Err(RustMetadataError::PathNotResolved(_))
     ));
     cache.persist_manifest_dir(context.path())?;
     let replacement = InspectionFixture::new("#![no_std]\npub struct Absent;\n")?;
-    cache.bind_selected_workspace(context.path(), replacement.load()?)?;
+    replacement.bind(&cache, context.path())?;
     assert!(
         cache
             .get_or_extract_complete(context.path(), "demo::Absent", &|_| {})
@@ -107,13 +134,13 @@ fn old_cargo_cache_cannot_satisfy_selected_metadata() -> Result<(), Box<dyn std:
     let context = tempfile::tempdir()?;
     let fixture = InspectionFixture::new("#![no_std]\npub struct Thing;\n")?;
     let cache = RustMetadataCache::new();
-    cache.bind_selected_workspace(context.path(), fixture.load()?)?;
+    fixture.bind(&cache, context.path())?;
     cache.get_or_extract_complete(context.path(), "demo::Thing", &|_| {})?;
     let mut envelope = read_disk_cache(context.path())?.ok_or("persisted cache absent")?;
     envelope.cache_format = 38;
     write_disk_cache(context.path(), &envelope)?;
     let reopened = RustMetadataCache::new();
-    reopened.bind_selected_workspace(context.path(), fixture.load()?)?;
+    fixture.bind(&reopened, context.path())?;
     assert!(reopened.get_cached(context.path(), "demo::Thing")?.is_none());
     Ok(())
 }
@@ -124,7 +151,7 @@ fn raw_identifier_alias_uses_the_selected_cache() -> Result<(), Box<dyn std::err
     let context = tempfile::tempdir()?;
     let fixture = InspectionFixture::new("#![no_std]\npub struct r#type;\n")?;
     let cache = RustMetadataCache::new();
-    cache.bind_selected_workspace(context.path(), fixture.load()?)?;
+    fixture.bind(&cache, context.path())?;
     cache.get_or_extract_complete(context.path(), "demo::r#type", &|_| {})?;
     assert!(cache.get_cached(context.path(), "demo::type")?.is_some());
     Ok(())
@@ -142,4 +169,76 @@ fn selected_aliases_do_not_reinterpret_std_as_hashbrown_or_core() {
         ["std::option::Option"]
     );
     assert_eq!(canonical_path_candidates("left-crate::Item"), ["left-crate::Item"]);
+}
+
+/// A database from another selected binding cannot replace the context or satisfy its metadata.
+#[test]
+fn selected_database_must_match_the_bound_projection() -> Result<(), Box<dyn std::error::Error>> {
+    let context = tempfile::tempdir()?;
+    let fixture = InspectionFixture::new("#![no_std]\npub struct First;\n")?;
+    let other = InspectionFixture::new("#![no_std]\npub struct Other;\n")?;
+    let cache = RustMetadataCache::new();
+    assert!(matches!(
+        cache.bind_selected_workspace(context.path(), fixture.load()?),
+        Err(RustMetadataError::SelectedInputUnavailable { .. })
+    ));
+    fixture.bind(&cache, context.path())?;
+    assert!(matches!(
+        cache.bind_selected_workspace(context.path(), other.load()?),
+        Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+    assert!(
+        cache
+            .inner
+            .lock()
+            .map_err(|error| error.to_string())?
+            .workspaces
+            .is_empty()
+    );
+    cache.bind_selected_workspace(context.path(), fixture.load()?)?;
+    assert!(
+        cache
+            .get_or_extract_complete(context.path(), "demo::First", &|_| {})
+            .is_ok()
+    );
+    Ok(())
+}
+
+/// Equal display names do not let one selected package's definition spelling satisfy another package's query.
+#[test]
+fn selected_cache_does_not_conflate_equal_display_names() -> Result<(), Box<dyn std::error::Error>> {
+    let context = tempfile::tempdir()?;
+    let mut first = InspectionFixture::new("#![no_std]\npub struct Item { pub left: u32 }\n")?;
+    let second = InspectionFixture::new("#![no_std]\npub struct Item { pub right: bool }\n")?;
+    let mut project: serde_json::Value = serde_json::from_slice(&first.inputs.project_json)?;
+    let other: serde_json::Value = serde_json::from_slice(&second.inputs.project_json)?;
+    project["crates"]
+        .as_array_mut()
+        .ok_or("crates absent")?
+        .push(other["crates"][0].clone());
+    first.set_project(project)?;
+    first.inputs.sources.extend(second.inputs.sources.clone());
+    first.inputs.query_roots.insert("right".to_string(), second.module()?);
+    let cache = RustMetadataCache::new();
+    first.bind(&cache, context.path())?;
+    let right = cache.get_or_extract_complete(context.path(), "right::Item", &|_| {})?;
+    assert_eq!(
+        right.definition_path.as_deref(),
+        Some("demo::Item"),
+        "fixture must exercise equal definition spelling across selected roots"
+    );
+    let RustItemKind::Type(right_type) = &right.kind else {
+        return Err("right selected type absent".into());
+    };
+    assert_eq!(right_type.fields[0].name, "right");
+    assert!(
+        cache.get_cached(context.path(), "demo::Item")?.is_none(),
+        "a different selected query is not a definition-spelling cache hit"
+    );
+    let left = cache.get_or_extract_complete(context.path(), "demo::Item", &|_| {})?;
+    let RustItemKind::Type(left_type) = &left.kind else {
+        return Err("left selected type absent".into());
+    };
+    assert_eq!(left_type.fields[0].name, "left");
+    Ok(())
 }
