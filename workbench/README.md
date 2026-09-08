@@ -10,15 +10,16 @@ The project prints an order quotation from a small catalog. The application and 
 
 Use the compiler built from the owning hot-path worktree. Keep its exact path, revision, toolchain and SDK/provider identity in the run record. No installed/global toolchain or Cargo cache should be modified to run this project.
 
-Initial source is prepared; native baseline and the Cargo removal are still pending RFC 123 acceptance. The TOML settings use the accepted #1438 API. There is no claim that the complete project currently builds or meets the time budget.
+The baseline compiler built catalog and pricing, then failed while importing the app's transitive package: reading a published store changed its access bookkeeping and invalidated the recorded artifact digest. That defect is fixed in merged #1460 and the fix has been ported here.
+
+Cargo-dependent planning and execution have been removed together, with the broken checkpoint retained. The first whole-compiler check after the inspection repair took 45.32 seconds and reached the root crate after checking its local dependencies. Removed-API callers and old fixtures are still being repaired. The TOML settings use the #1438 API. The complete project has not yet passed native execution or the iteration budget on the repaired compiler.
 
 ## Working loop
 
-1. Establish the native baseline and record preparation, build, run and cleanup wall times.
-2. Remove Cargo-dependent Oven paths together on this branch and keep that broken checkpoint.
-3. Repair the real project path, rerunning only the selected project operation. Keep a 300-second deadline over the entire normal iteration, including required rebuild work.
-4. Change catalog prices, the public quotation shape, a Rust input, and then remove producer source after publication. Confirm the result changes correctly and inspect exactly which units rebuild.
-5. Preserve a cold preparation lane as evidence that warm caches are not hiding Cargo. Add focused regressions to the compiler suite after each concrete defect is understood.
+1. Repair the real project path from the retained Cargo removal checkpoint, rerunning only the selected project operation. Keep a 300-second deadline over the entire normal iteration, including required rebuild work.
+2. Record preparation, build, run and cleanup wall times, along with the inputs and output digests for each executed or reused unit.
+3. Change catalog prices, the public quotation shape, a Rust input, and then remove producer source after publication. Confirm the result changes correctly and inspect exactly which units rebuild.
+4. Preserve a cold preparation lane as evidence that warm caches are not hiding Cargo. Add focused regressions to the compiler suite after each concrete defect is understood.
 
 Current production commands are `incan oven bake --project <package>` and `incan run --locked src/main.incn` from `app/`. The first verified transcript will pin the exact commands and environment. This file intentionally does not wrap a full-suite/prewarm command around every edit.
 
