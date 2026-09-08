@@ -48,11 +48,19 @@ impl AstLowering {
 
     /// Map a supertrait name and resolved type arguments to IR for Rust trait bounds (RFC 042).
     fn lower_supertrait_from_resolved(&self, trait_name: &str, type_args: &[ResolvedType]) -> (String, Vec<IrType>) {
-        let path = trait_bounds::incan_to_rust(trait_name)
-            .map(str::to_string)
-            .unwrap_or_else(|| trait_name.to_string());
+        let path = self.supertrait_rust_path(trait_name);
         let ir_args = type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect();
         (path, ir_args)
+    }
+
+    /// Preserve an imported Rust supertrait's absolute path across aliases and dependency-module lowering.
+    fn supertrait_rust_path(&self, trait_name: &str) -> String {
+        if let Some(path) = self.rust_import_aliases.get(trait_name) {
+            return format!("::{}", path.join("::"));
+        }
+        trait_bounds::incan_to_rust(trait_name)
+            .map(str::to_string)
+            .unwrap_or_else(|| trait_name.to_string())
     }
 
     /// Lower `with` supertraits from the AST when typechecker output is unavailable (e.g. dependency lowering).
@@ -64,9 +72,7 @@ impl AstLowering {
         t.traits
             .iter()
             .map(|bound| {
-                let path = trait_bounds::incan_to_rust(&bound.node.name)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| bound.node.name.clone());
+                let path = self.supertrait_rust_path(&bound.node.name);
                 let ir_args = bound
                     .node
                     .type_args

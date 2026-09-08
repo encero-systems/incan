@@ -2594,6 +2594,20 @@ impl TypeChecker {
         if candidate == expected {
             return true;
         }
+        let foreign_path = |name: &str| {
+            if name.starts_with("::") {
+                return Some(name.trim_start_matches("::").to_string());
+            }
+            self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
+                SymbolKind::RustItem(info) => Some(info.path.trim_start_matches("::").to_string()),
+                _ => None,
+            })
+        };
+        match (foreign_path(candidate), foreign_path(expected)) {
+            (Some(candidate), Some(expected)) => return candidate == expected,
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
         match (
             self.resolve_bound_trait_path(candidate),
             self.resolve_bound_trait_path(expected),
