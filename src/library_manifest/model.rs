@@ -1302,6 +1302,12 @@ pub struct NativeUnionExport {
     pub owner: NativeUnionOwnerExport,
     pub rust_name: String,
     pub members: Vec<TypeRef>,
+    /// Producer-local nominal bindings captured from checked declarations, without a self artifact digest.
+    ///
+    /// Keys are the producer's actual lowered spellings. Admission validates every canonical declaration against
+    /// the selected owner's public surface before binding these leaves to that exact artifact.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub local_nominals: BTreeMap<String, CanonicalIdentityExport>,
     /// Checked consumer-only physical projection; never accepted from or written to the manifest wire.
     #[serde(skip)]
     pub(crate) checked_projection: Option<Box<NativeUnionProjection>>,

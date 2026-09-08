@@ -2079,12 +2079,24 @@ impl TypeChecker {
                 carriers.push(native.clone());
             }
         });
+        let mut bound_origins = BTreeMap::new();
         for carrier in carriers {
-            if let Err(message) = self.provider_plan.public_native_union_projection(library, &carrier) {
-                self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
+            match self.provider_plan.public_native_union_projection(library, &carrier) {
+                Ok((mut bound, _)) => bound.members.visit_type_refs(&mut |ty| {
+                    if let TypeRef::Named {
+                        origin: Some(origin), ..
+                    }
+                    | TypeRef::Applied {
+                        origin: Some(origin), ..
+                    } = ty
+                    {
+                        bound_origins.insert(origin.binding_key(), origin.clone());
+                    }
+                }),
+                Err(message) => self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
                     format!("compiled library `{library}` has an invalid native union representation: {message}"),
                     Span::default(),
-                ));
+                )),
             }
         }
         let collect_origins = |manifest: &LibraryManifest| {
@@ -2103,7 +2115,8 @@ impl TypeChecker {
             });
             origins
         };
-        let mut pending = std::collections::VecDeque::from_iter(collect_origins(manifest).into_values());
+        bound_origins.extend(collect_origins(manifest));
+        let mut pending = std::collections::VecDeque::from_iter(bound_origins.into_values());
         let mut seen = HashSet::new();
         let mut artifacts = BTreeMap::new();
         let mut remapping = HashMap::new();

@@ -2940,7 +2940,7 @@ impl AstLowering {
                 .drain(..)
                 .map(|message| LoweringError {
                     message,
-                    span: IrSpan::default(),
+                    span: super::IrSpan::default(),
                 }),
         );
         if errors.is_empty() {

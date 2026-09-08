@@ -418,3 +418,21 @@ pub(crate) fn with_checked_native_unions<T: VisitTypeRefs>(
         None => Ok(value),
     }
 }
+
+/// Attach one source module's checked nominal bindings to its consumer-only native conversion projections.
+pub(crate) fn with_native_nominal_origins<T: VisitTypeRefs>(
+    mut value: T,
+    origins: &BTreeMap<String, NominalTypeOriginExport>,
+) -> T {
+    /// Include nested physical carriers while preserving the ordinary semantic visitor's immutable wire walk.
+    fn attach(ty: &mut TypeRef, origins: &BTreeMap<String, NominalTypeOriginExport>) {
+        if let TypeRef::NativeUnion(native) = ty {
+            if let Some(projection) = &mut native.checked_projection {
+                projection.nominal_origins = origins.clone();
+                projection.members.visit_type_refs(&mut |ty| attach(ty, origins));
+            }
+        }
+    }
+    value.visit_type_refs(&mut |ty| attach(ty, origins));
+    value
+}

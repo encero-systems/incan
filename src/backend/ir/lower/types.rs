@@ -226,15 +226,9 @@ impl AstLowering {
                 return IrType::Unknown;
             }
         };
-        let mut projected = crate::library_manifest::with_checked_type_routes(projected, routes);
-        let origins = self.native_publication_origins();
-        crate::library_manifest::VisitTypeRefs::visit_type_refs(&mut projected, &mut |ty| {
-            if let crate::library_manifest::TypeRef::NativeUnion(native) = ty {
-                if let Some(projection) = &mut native.checked_projection {
-                    projection.nominal_origins = origins.clone();
-                }
-            }
-        });
+        let projected = crate::library_manifest::with_checked_type_routes(projected, routes);
+        let projected =
+            crate::library_manifest::with_native_nominal_origins(projected, &self.native_publication_origins());
         super::super::types::ir_type_from_projected_manifest(&projected, &|ordinary| {
             self.lower_pub_manifest_type(library, &resolved_type_from_manifest_type_ref(ordinary))
         })
@@ -1507,6 +1501,7 @@ mod tests {
         let native = crate::library_manifest::NativeUnionExport {
             owner: crate::library_manifest::NativeUnionOwnerExport::ContainingArtifact,
             rust_name: wrapper.clone(),
+            local_nominals: Default::default(),
             members: emitted
                 .union_members()
                 .ok_or("emitted union has no members")?

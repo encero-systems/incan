@@ -6,7 +6,8 @@ use super::super::decl::{IrDeclKind, IrFunction, VariantFields};
 use super::{EmitError, IrEmitter, IrProgram, IrType};
 use crate::frontend::api_metadata::{ApiDeclaration, CheckedApiMetadata, SourceAnchor};
 use crate::library_manifest::{
-    LibraryManifest, NativeUnionExport, NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef, VisitTypeRefs,
+    CanonicalIdentityExport, CanonicalIdentityOriginExport, LibraryIdentityGraph, LibraryManifest, NativeUnionExport,
+    NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef, VisitTypeRefs,
 };
 
 /// Type projections for one declaration, scoped by its checked source module and declaration anchor.
@@ -92,6 +93,117 @@ fn declaration_anchor(declaration: &ApiDeclaration) -> &SourceAnchor {
     }
 }
 
+/// Retain nominal bindings from this module's checked declarations and resolved source imports.
+///
+/// Numeric anchors are compared only within the supplied module. Imported declarations use their retained canonical
+/// identity; neither short names nor generated Rust names are parsed to recover a declaration's owner.
+fn capture_local_nominal_bindings(
+    module: &CheckedApiMetadata,
+    program: &IrProgram,
+    package_name: &str,
+    identities: &LibraryIdentityGraph,
+) -> Result<BTreeMap<String, CanonicalIdentityExport>, EmitError> {
+    let mut bindings = BTreeMap::new();
+    let public_nominals = identities
+        .exports
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.kind,
+                crate::library_manifest::ExportIdentityKind::Model
+                    | crate::library_manifest::ExportIdentityKind::Class
+                    | crate::library_manifest::ExportIdentityKind::Enum
+                    | crate::library_manifest::ExportIdentityKind::Newtype
+            ) && entry.canonical.as_ref().is_some_and(|canonical| {
+                matches!(
+                &canonical.origin, CanonicalIdentityOriginExport::Package { library, .. } if library == package_name)
+            })
+        })
+        .collect::<Vec<_>>();
+    for declaration in &module.declarations {
+        if !matches!(
+            declaration,
+            ApiDeclaration::Model(_) | ApiDeclaration::Class(_) | ApiDeclaration::Enum(_) | ApiDeclaration::Newtype(_)
+        ) {
+            continue;
+        }
+        let anchor = declaration_anchor(declaration);
+        let Some(source_name) = crate::frontend::api_metadata::api_declaration_public_name(declaration) else {
+            continue;
+        };
+        let mut source_path = module.module_path.clone();
+        source_path.push(source_name.to_string());
+        let Some(canonical) = public_nominals
+            .iter()
+            .filter(|entry| entry.source_path == source_path)
+            .filter_map(|entry| entry.canonical.as_ref())
+            .find(|canonical| {
+                canonical.declaration_span.start == anchor.span.start as u64
+                    && canonical.declaration_span.end == anchor.span.end as u64
+                    && matches!(&canonical.origin, CanonicalIdentityOriginExport::Package { module_path, .. }
+                        if module_path == &module.module_path)
+            })
+        else {
+            continue;
+        };
+        for lowered in &program.declarations {
+            if lowered.span.start != anchor.span.start || lowered.span.end != anchor.span.end {
+                continue;
+            }
+            let name = match &lowered.kind {
+                IrDeclKind::Struct(item) => &item.name,
+                IrDeclKind::Enum(item) => &item.name,
+                _ => continue,
+            };
+            insert_nominal_binding(&mut bindings, name.clone(), canonical.clone())?;
+        }
+    }
+    for declaration in &program.declarations {
+        let IrDeclKind::Import {
+            items,
+            origin: super::super::decl::IrImportOrigin::Standard,
+            ..
+        } = &declaration.kind
+        else {
+            continue;
+        };
+        for item in items {
+            let Some(canonical) = item
+                .canonical
+                .as_ref()
+                .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity))
+            else {
+                continue;
+            };
+            if public_nominals
+                .iter()
+                .any(|entry| entry.canonical.as_ref() == Some(&canonical))
+            {
+                insert_nominal_binding(&mut bindings, item.emitted_binding_name(), canonical)?;
+            }
+        }
+    }
+    Ok(bindings)
+}
+
+/// Refuse incompatible canonical declarations sharing one physical binding in a module's native metadata.
+fn insert_nominal_binding(
+    bindings: &mut BTreeMap<String, CanonicalIdentityExport>,
+    spelling: String,
+    canonical: CanonicalIdentityExport,
+) -> Result<(), EmitError> {
+    if let Some(existing) = bindings.get(&spelling) {
+        if existing != &canonical {
+            return Err(EmitError::InternalInvariant(format!(
+                "native nominal binding `{spelling}` has incompatible checked declarations"
+            )));
+        }
+    } else {
+        bindings.insert(spelling, canonical);
+    }
+    Ok(())
+}
+
 impl IrEmitter<'_> {
     /// Return the actual definitions emitted by this emitter after all alias resolution and filtering.
     pub(in crate::backend::ir) fn emitted_native_union_types(&self) -> HashMap<String, IrType> {
@@ -108,7 +220,10 @@ impl IrEmitter<'_> {
         program: &IrProgram,
         definitions: &HashMap<String, IrType>,
         origins: &BTreeMap<String, NominalTypeOriginExport>,
+        package_name: &str,
+        identities: &LibraryIdentityGraph,
     ) -> Result<(Vec<EmittedDeclarationTypes>, Vec<NativeUnionExport>), EmitError> {
+        let local_nominals = capture_local_nominal_bindings(module, program, package_name, identities)?;
         let mut captured = Vec::new();
         let mut native_definitions = Vec::new();
         for declaration in &module.declarations {
@@ -193,7 +308,8 @@ impl IrEmitter<'_> {
             }
             let mut replacements = Vec::new();
             for (original, lowered) in pairs {
-                let projected = self.project_emitted_union_type(original, lowered, definitions, origins)?;
+                let projected =
+                    self.project_emitted_union_type(original, lowered, definitions, origins, &local_nominals)?;
                 if projected != *original {
                     projected.clone().visit_type_refs(&mut |ty| {
                         if let TypeRef::NativeUnion(native) = ty {
@@ -229,6 +345,7 @@ impl IrEmitter<'_> {
         name: &str,
         ty: &IrType,
         origins: &BTreeMap<String, NominalTypeOriginExport>,
+        local_nominals: &BTreeMap<String, CanonicalIdentityExport>,
     ) -> Result<NativeUnionExport, EmitError> {
         let members = ty
             .union_members()
@@ -241,10 +358,19 @@ impl IrEmitter<'_> {
                     .map_err(EmitError::InternalInvariant)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut used_nominals = BTreeMap::new();
+        members.clone().visit_type_refs(&mut |ty| {
+            if let TypeRef::Named { name, origin: None } | TypeRef::Applied { name, origin: None, .. } = ty {
+                if let Some(canonical) = local_nominals.get(name) {
+                    used_nominals.insert(name.clone(), canonical.clone());
+                }
+            }
+        });
         Ok(NativeUnionExport {
             owner: NativeUnionOwnerExport::ContainingArtifact,
             rust_name: name.to_string(),
             members,
+            local_nominals: used_nominals,
             checked_projection: None,
         })
     }
@@ -256,6 +382,7 @@ impl IrEmitter<'_> {
         lowered: &IrType,
         definitions: &HashMap<String, IrType>,
         origins: &BTreeMap<String, NominalTypeOriginExport>,
+        local_nominals: &BTreeMap<String, CanonicalIdentityExport>,
     ) -> Result<TypeRef, EmitError> {
         let lowered = self.resolve_type_aliases_for_emit(lowered);
         if let IrType::ExternalUnion {
@@ -270,9 +397,12 @@ impl IrEmitter<'_> {
                     "public union has no exact final emitted definition".to_string(),
                 ));
             };
-            return Ok(TypeRef::NativeUnion(
-                self.native_union_definition(name, emitted, origins)?,
-            ));
+            return Ok(TypeRef::NativeUnion(self.native_union_definition(
+                name,
+                emitted,
+                origins,
+                local_nominals,
+            )?));
         }
         if matches!(original, TypeRef::Named { .. })
             && !matches!(
@@ -288,7 +418,7 @@ impl IrEmitter<'_> {
                     || matches!(ty, TypeRef::Applied { name, .. } if name == incan_core::lang::types::UNION_TYPE_NAME);
             });
             if has_union {
-                return self.project_emitted_union_type(&expanded, &lowered, definitions, origins);
+                return self.project_emitted_union_type(&expanded, &lowered, definitions, origins, local_nominals);
             }
         }
         let mut projected = original.clone();
@@ -297,26 +427,26 @@ impl IrEmitter<'_> {
             | (TypeRef::Tuple { elements: args }, IrType::Tuple(members)) => {
                 require_arity(args.len(), members.len())?;
                 for (arg, member) in args.iter_mut().zip(members) {
-                    *arg = self.project_emitted_union_type(arg, member, definitions, origins)?;
+                    *arg = self.project_emitted_union_type(arg, member, definitions, origins, local_nominals)?;
                 }
             }
             (TypeRef::Applied { args, .. }, IrType::List(inner) | IrType::Set(inner) | IrType::Option(inner)) => {
                 require_arity(args.len(), 1)?;
                 if let Some(arg) = args.first_mut() {
-                    *arg = self.project_emitted_union_type(arg, inner, definitions, origins)?;
+                    *arg = self.project_emitted_union_type(arg, inner, definitions, origins, local_nominals)?;
                 }
             }
             (TypeRef::Applied { args, .. }, IrType::Dict(left, right) | IrType::Result(left, right)) => {
                 require_arity(args.len(), 2)?;
                 for (arg, member) in args.iter_mut().zip([left.as_ref(), right.as_ref()]) {
-                    *arg = self.project_emitted_union_type(arg, member, definitions, origins)?;
+                    *arg = self.project_emitted_union_type(arg, member, definitions, origins, local_nominals)?;
                 }
             }
             (
                 TypeRef::Ref { inner } | TypeRef::TypeToken { inner },
                 IrType::Ref(ty) | IrType::RefMut(ty) | IrType::TypeToken(ty),
             ) => {
-                **inner = self.project_emitted_union_type(inner, ty, definitions, origins)?;
+                **inner = self.project_emitted_union_type(inner, ty, definitions, origins, local_nominals)?;
             }
             (
                 TypeRef::Function { params, return_type },
@@ -327,9 +457,10 @@ impl IrEmitter<'_> {
             ) => {
                 require_arity(params.len(), lowered_params.len())?;
                 for (param, ty) in params.iter_mut().zip(lowered_params) {
-                    *param = self.project_emitted_union_type(param, ty, definitions, origins)?;
+                    *param = self.project_emitted_union_type(param, ty, definitions, origins, local_nominals)?;
                 }
-                **return_type = self.project_emitted_union_type(return_type, ret, definitions, origins)?;
+                **return_type =
+                    self.project_emitted_union_type(return_type, ret, definitions, origins, local_nominals)?;
             }
             _ => {}
         }
@@ -441,14 +572,21 @@ mod tests {
             Vec<EmittedDeclarationTypes>,
             Vec<NativeUnionExport>,
             String,
+            LibraryIdentityGraph,
         ),
         Box<dyn std::error::Error>,
     > {
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec![module.to_string()]));
+        checker.set_current_package_identity(Some("producer".to_string()));
         checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
         let api = collect_checked_api_metadata(&ast, &checker, vec![module.to_string()]);
+        let identities = LibraryIdentityGraph::from_checked_exports(
+            "producer",
+            &crate::frontend::library_exports::collect_checked_public_exports(&ast, &checker),
+        );
         let program = AstLowering::new_with_type_info(checker.type_info().clone()).lower_program(&ast)?;
         let mut emitter = IrEmitter::new(&program.function_registry);
         let rust = emitter.emit_program(&program)?;
@@ -457,15 +595,17 @@ mod tests {
             &program,
             &emitter.emitted_native_union_types(),
             &BTreeMap::new(),
+            "producer",
+            &identities,
         )?;
-        Ok((api, declarations, definitions, rust))
+        Ok((api, declarations, definitions, rust, identities))
     }
 
     #[test]
     fn emitted_union_publication_is_scoped_to_module_and_span() -> TestResult {
-        let (first, first_captured, first_definitions, first_rust) =
+        let (first, first_captured, first_definitions, first_rust, _) =
             emitted_module("pub type Answer = int | str\n", "first")?;
-        let (second, second_captured, second_definitions, second_rust) =
+        let (second, second_captured, second_definitions, second_rust, _) =
             emitted_module("pub type Answer = int | i32\n", "second")?;
         assert_eq!(
             declaration_anchor(&first.declarations[0]).span,
@@ -516,7 +656,7 @@ mod tests {
     fn publication_captures_nominal_method_return_unions() -> TestResult {
         let source =
             "pub model Box:\n    value: int\n\n    def answer(self) -> int | str:\n        return self.value\n";
-        let (_, captured, definitions, _) = emitted_module(source, "lib")?;
+        let (_, captured, definitions, _, _) = emitted_module(source, "lib")?;
         assert!(
             !definitions.is_empty(),
             "public method return must retain its emitted wrapper"
@@ -528,6 +668,160 @@ mod tests {
                 .any(|(_, ty)| matches!(ty, TypeRef::NativeUnion(_)))
         }));
         Ok(())
+    }
+
+    #[test]
+    fn native_union_local_nominals_keep_module_identity_through_forwarding() -> TestResult {
+        let source = "pub model Product:\n    value: int\n\npub type Answer = Product | int\n";
+        let (first_api, _, first, _, first_graph) = emitted_module(source, "first")?;
+        let (second_api, _, second, _, second_graph) = emitted_module(source, "second")?;
+        let first = first.first().ok_or("first emitted union absent")?;
+        let second = second.first().ok_or("second emitted union absent")?;
+        let first_identity = first
+            .local_nominals
+            .get("Product")
+            .ok_or("first local nominal absent")?;
+        let second_identity = second
+            .local_nominals
+            .get("Product")
+            .ok_or("second local nominal absent")?;
+        assert_ne!(first_identity, second_identity);
+        assert_eq!(first_identity.declaration_span, second_identity.declaration_span);
+        assert_eq!(
+            declaration_anchor(&first_api.declarations[0]).span,
+            declaration_anchor(&second_api.declarations[0]).span
+        );
+        assert!(
+            matches!(&first_identity.origin, CanonicalIdentityOriginExport::Package { module_path, .. }
+            if module_path == &["first"])
+        );
+        assert!(
+            matches!(&second_identity.origin, CanonicalIdentityOriginExport::Package { module_path, .. }
+            if module_path == &["second"])
+        );
+        // Both checked declarations share their short name and span. Only the selected containing artifact can bind
+        // the retained identity; substituting the other module's declaration is not a legal normalization.
+        let mut manifest = LibraryManifest::new("producer", "1.0.0");
+        manifest.contract_metadata.native_unions.push(first.clone());
+        manifest.contract_metadata.identity_graph = first_graph;
+        manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .extend(second_graph.exports);
+        manifest
+            .exports
+            .type_aliases
+            .push(crate::library_manifest::TypeAliasExport {
+                name: "Answer".into(),
+                type_params: Vec::new(),
+                target: TypeRef::NativeUnion(first.clone()),
+            });
+        let plan = selected_manifest_plan(manifest)?;
+        let producer_wire = serde_json::to_vec(first)?;
+        let (bound, _) = plan.public_native_union_projection("producer", first)?;
+        let NativeUnionOwnerExport::SelectedArtifact(owner) = &bound.owner else {
+            return Err("union owner was not bound".into());
+        };
+        let expected_origin = NominalTypeOriginExport {
+            provider: owner.clone(),
+            canonical: first_identity.clone(),
+        };
+        let mut origins = Vec::new();
+        bound.members.clone().visit_type_refs(&mut |ty| {
+            if let TypeRef::Named {
+                origin: Some(origin), ..
+            } = ty
+            {
+                origins.push(origin.clone());
+            }
+        });
+        assert_eq!(origins, vec![expected_origin.clone()]);
+        assert_eq!(bound.rust_name, first.rust_name);
+        assert!(
+            first
+                .members
+                .iter()
+                .all(|ty| !matches!(ty, TypeRef::Named { origin: Some(_), .. }))
+        );
+        let (forwarded, _) = plan.public_native_union_projection("producer", &bound)?;
+        assert_eq!(forwarded, bound);
+        assert_eq!(serde_json::to_vec(first)?, producer_wire);
+        let semantic = crate::library_manifest::resolved_type_from_manifest_type_ref(&TypeRef::NativeUnion(forwarded));
+        assert!(
+            matches!(semantic, crate::frontend::symbols::ResolvedType::Generic(_, ref members)
+            if members.iter().any(|member| matches!(member, crate::frontend::symbols::ResolvedType::Named(name)
+                if name == &expected_origin.binding_key())))
+        );
+        let mut wrong_module = first.clone();
+        wrong_module
+            .local_nominals
+            .insert("Product".into(), second_identity.clone());
+        assert!(plan.public_native_union_projection("producer", &wrong_module).is_err());
+        // Validate all entries, including entries that have no matching payload leaf.
+        let mut forged = first.clone();
+        let mut private_identity = first_identity.clone();
+        private_identity.declaration_name = "Private".into();
+        forged.local_nominals.insert("UnusedPrivate".into(), private_identity);
+        let error = plan
+            .public_native_union_projection("producer", &forged)
+            .err()
+            .ok_or("private map entry admitted")?;
+        assert!(error.contains("not a public nominal"), "{error}");
+        let mut foreign_identity = first_identity.clone();
+        foreign_identity.origin = CanonicalIdentityOriginExport::Package {
+            library: "foreign".into(),
+            module_path: vec!["first".into()],
+        };
+        forged.local_nominals.remove("UnusedPrivate");
+        forged.local_nominals.insert("UnusedForeign".into(), foreign_identity);
+        let error = plan
+            .public_native_union_projection("producer", &forged)
+            .err()
+            .ok_or("foreign map entry admitted")?;
+        assert!(error.contains("different package"), "{error}");
+        Ok(())
+    }
+
+    /// Admit one already-selected in-memory artifact without consulting source files or minting a new provider.
+    fn selected_manifest_plan(
+        manifest: LibraryManifest,
+    ) -> Result<crate::provider::ProviderPlan, Box<dyn std::error::Error>> {
+        use crate::frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
+        let artifact =
+            LibraryArtifactMetadata::from_crate_root("producer", "producer", std::path::Path::new("/checked/producer"));
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "producer".into(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest.clone()),
+                metadata: artifact.clone(),
+            },
+        )]));
+        let record = ProviderRecord {
+            identity: ProviderIdentity {
+                name: "producer".into(),
+                version: "1.0.0".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            provenance: ProviderProvenance::ProjectDependency {
+                dependency_key: "producer".into(),
+                manifest_path: artifact.manifest_path.clone(),
+            },
+            authority: NamespaceAuthority::ProjectDependency {
+                dependency_key: "producer".into(),
+            },
+            namespace_claims: Default::default(),
+            available: true,
+            enabled: true,
+            manifest: Some(std::sync::Arc::new(manifest)),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        };
+        Ok(ProviderPlan::new(index, vec![record], [])?)
     }
 
     #[test]

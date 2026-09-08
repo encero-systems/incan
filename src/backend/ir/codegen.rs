@@ -585,6 +585,9 @@ pub struct IrCodegen<'a> {
     metadata_root_module_path: Option<Vec<String>>,
     /// Checked API supplied by the publication caller, joined only to the same emitted source module.
     publication_api: Option<crate::frontend::api_metadata::CheckedApiMetadataPackage>,
+    /// Checked public identities from the same publication, before its containing digest exists.
+    publication_identities: crate::library_manifest::LibraryIdentityGraph,
+    publication_package_name: String,
     /// Final crate-root emitted definitions, shared with source modules whose wrappers live at the root.
     emitted_union_definitions: HashMap<String, IrType>,
     /// Exact lowered nominal spellings from each module's accepted checker bindings.
@@ -628,6 +631,8 @@ impl<'a> IrCodegen<'a> {
             implementation_bound_requirements: Vec::new(),
             metadata_root_module_path: None,
             publication_api: None,
+            publication_identities: Default::default(),
+            publication_package_name: String::new(),
             emitted_union_definitions: HashMap::new(),
             native_union_origins: HashMap::new(),
             emitted_declaration_types: Vec::new(),
@@ -671,6 +676,16 @@ impl<'a> IrCodegen<'a> {
         self.publication_api = api;
     }
 
+    /// Supply the exact public declaration identities used to bind producer-local native payloads.
+    pub(crate) fn set_publication_identities(
+        &mut self,
+        package_name: String,
+        identities: crate::library_manifest::LibraryIdentityGraph,
+    ) {
+        self.publication_identities = identities;
+        self.publication_package_name = package_name;
+    }
+
     /// Capture module-scoped public representations after the emitter has finalized its native wrapper table.
     fn capture_native_union_metadata(
         &mut self,
@@ -688,8 +703,14 @@ impl<'a> IrCodegen<'a> {
             return Ok(());
         };
         let origins = self.native_union_origins.get(path).cloned().unwrap_or_default();
-        let (declarations, definitions) =
-            emitter.capture_native_union_metadata(module, program, &self.emitted_union_definitions, &origins)?;
+        let (declarations, definitions) = emitter.capture_native_union_metadata(
+            module,
+            program,
+            &self.emitted_union_definitions,
+            &origins,
+            &self.publication_package_name,
+            &self.publication_identities,
+        )?;
         self.emitted_declaration_types.extend(declarations);
         for definition in definitions {
             if let Some(existing) = self
@@ -1772,6 +1793,12 @@ impl<'a> IrCodegen<'a> {
             // Configure inner emitter
             let inner = svc.inner_mut();
             self.apply_canonical_emission_context(inner);
+            inner.set_native_nominal_origins(
+                self.native_union_origins
+                    .get(&root_module_path)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
             inner.set_internal_module_roots(internal_module_roots.clone());
             Self::configure_source_import_paths(inner, ir_program.source_module_name.as_deref(), &source_module_paths);
             if self.emit_zen_in_main {
@@ -1807,6 +1834,12 @@ impl<'a> IrCodegen<'a> {
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             self.apply_canonical_emission_context(&mut emitter);
+            emitter.set_native_nominal_origins(
+                self.native_union_origins
+                    .get(&root_module_path)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
             emitter.set_internal_module_roots(internal_module_roots.clone());
             Self::configure_source_import_paths(
                 &mut emitter,
@@ -2466,6 +2499,7 @@ impl<'a> IrCodegen<'a> {
                 let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 self.apply_canonical_emission_context(inner);
+                inner.set_native_nominal_origins(self.native_union_origins.get(path).cloned().unwrap_or_default());
                 inner.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(inner, ir.source_module_name.as_deref(), &source_module_paths);
                 inner.set_preserve_public_items(preserve_public_items);
@@ -2496,6 +2530,7 @@ impl<'a> IrCodegen<'a> {
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 self.apply_canonical_emission_context(&mut emitter);
+                emitter.set_native_nominal_origins(self.native_union_origins.get(path).cloned().unwrap_or_default());
                 emitter.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(
                     &mut emitter,
