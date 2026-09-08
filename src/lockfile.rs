@@ -196,8 +196,8 @@ impl IncanLock {
 
     /// Publish this lockfile while the caller retains the matching compiler-private publication lock.
     ///
-    /// Workspace lock generation holds this guard across resolution and Cargo lockfile generation as well as the final
-    /// publish, preventing concurrent commands from sharing the generated-project staging directory.
+    /// Workspace lock publication retains this guard while collecting checked facts and replacing the canonical file,
+    /// so cooperating publishers cannot interleave those operations.
     pub(crate) fn write_while_locked(
         &self,
         path: &Path,
@@ -230,7 +230,7 @@ impl IncanLock {
         Self::new_with_semantic(deps_fingerprint, cargo_features, SemanticLockState::default())
     }
 
-    /// Construct a lock containing both the backend dependency payload and the resolved semantic provider graph.
+    /// Construct a lock from the dependency fingerprint, declared Rust features and checked semantic provider facts.
     pub fn new_with_semantic(
         deps_fingerprint: String,
         cargo_features: CargoFeatureSelection,
@@ -1721,18 +1721,8 @@ mod tests {
         );
         assert_eq!(first_fingerprint, second_fingerprint);
 
-        let first_lock = IncanLock::new_with_semantic(
-            first_fingerprint,
-            selection.clone(),
-            semantic.clone(),
-            "version = 4\n".to_string(),
-        );
-        let second_lock = IncanLock::new_with_semantic(
-            second_fingerprint,
-            selection.clone(),
-            semantic.clone(),
-            "version = 4\n".to_string(),
-        );
+        let first_lock = IncanLock::new_with_semantic(first_fingerprint, selection.clone(), semantic.clone());
+        let second_lock = IncanLock::new_with_semantic(second_fingerprint, selection.clone(), semantic.clone());
         let first_lock_path = temp.path().join("first/oven.lock");
         let second_lock_path = temp.path().join("second/oven.lock");
         fs::create_dir_all(first_lock_path.parent().ok_or("first lock path has no parent")?)?;
@@ -2293,11 +2283,7 @@ mod tests {
             cargo_no_default_features: false,
             cargo_all_features: false,
         };
-        let lock = IncanLock::new(
-            "sha256:deadbeef".to_string(),
-            selection,
-            "[[package]]\nname = \"x\"\n".to_string(),
-        );
+        let lock = IncanLock::new("sha256:deadbeef".to_string(), selection);
 
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("oven.lock");
@@ -2311,7 +2297,8 @@ mod tests {
         let loaded = IncanLock::load(&path)?;
         assert_eq!(loaded.deps_fingerprint, "sha256:deadbeef");
         assert_eq!(loaded.cargo_features.cargo_features, vec!["alpha".to_string()]);
-        assert!(loaded.cargo_lock_payload.contains("package"));
+        let encoded: toml::Value = toml::from_str(&content)?;
+        assert!(encoded.get("cargo").is_none());
         Ok(())
     }
 
@@ -2359,7 +2346,6 @@ mod tests {
             "sha256:semantic".to_string(),
             CargoFeatureSelection::default(),
             semantic.clone(),
-            "payload".to_string(),
         );
 
         let dir = tempfile::tempdir()?;
@@ -2420,7 +2406,7 @@ mod tests {
         let path = dir.path().join("oven.lock");
         let legacy_toml = r#"
 [incan]
-format = 1
+format = 3
 incan-version = "0.3.0-dev.23"
 generated = "2026-04-27T13:41:45.845714Z"
 deps-fingerprint = "sha256:abc"
@@ -2428,14 +2414,12 @@ cargo-features = []
 cargo-no-default-features = false
 cargo-all-features = false
 
-[cargo]
-lock = "payload"
 "#;
         std::fs::write(&path, legacy_toml)?;
 
         let lock = IncanLock::load(&path)?;
         assert_eq!(lock.deps_fingerprint, "sha256:abc");
-        assert_eq!(lock.cargo_lock_payload, "payload\n");
+        assert_eq!(lock.semantic, SemanticLockState::default());
         Ok(())
     }
 
@@ -2478,7 +2462,7 @@ lock = "payload"
         let deps_v1 = vec![sample_spec("alpha", vec!["a"])];
         let fp_v1 = compute_deps_fingerprint(&deps_v1, &[], &selection, None);
 
-        let lock = IncanLock::new(fp_v1.clone(), selection.clone(), "payload".to_string());
+        let lock = IncanLock::new(fp_v1.clone(), selection.clone());
 
         // Simulate deps changing
         let deps_v2 = vec![sample_spec("alpha", vec!["a", "new_feature"])];
@@ -2490,27 +2474,30 @@ lock = "payload"
         );
     }
 
-    // ---- Phase 4: Cargo.lock materialization via ProjectGenerator ----
-
     #[test]
-    fn cargo_lock_payload_materializes_in_project() -> TestResult {
-        use std::fs;
-
-        let temp_dir = tempfile::tempdir()?;
-        let project_dir = temp_dir.path().join("test_lock_project");
-
-        let mut generator = crate::backend::ProjectGenerator::new(&project_dir, "test_lock", true);
-        generator.set_cargo_lock_payload(Some("[[package]]\nname = \"hello\"\nversion = \"0.1.0\"\n".to_string()));
-
-        generator.generate("fn main() {}")?;
-
-        let cargo_lock_path = project_dir.join("Cargo.lock");
-        assert!(cargo_lock_path.exists(), "Cargo.lock should be written to project dir");
-        let content = fs::read_to_string(&cargo_lock_path)?;
-        assert!(
-            content.contains("hello"),
-            "Cargo.lock should contain the payload, got:\n{content}"
-        );
+    fn semantic_lock_refuses_legacy_cargo_authority() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("oven.lock");
+        let lock = IncanLock::new("sha256:semantic".to_string(), CargoFeatureSelection::default());
+        lock.write(&path)?;
+        let current = std::fs::read_to_string(&path)?;
+        for format in [1, LOCKFILE_FORMAT_VERSION] {
+            let mut encoded: toml::Value = toml::from_str(&current)?;
+            encoded
+                .get_mut("incan")
+                .and_then(toml::Value::as_table_mut)
+                .ok_or("serialized lock has no incan table")?
+                .insert("format".to_string(), toml::Value::Integer(i64::from(format)));
+            encoded.as_table_mut().ok_or("serialized lock is not a table")?.insert(
+                "cargo".to_string(),
+                toml::Value::Table(toml::Table::from_iter([(
+                    "lock".to_string(),
+                    toml::Value::String("version = 4\n".to_string()),
+                )])),
+            );
+            std::fs::write(&path, toml::to_string(&encoded)?)?;
+            assert!(matches!(IncanLock::load(&path), Err(LockfileError::Parse { .. })));
+        }
         Ok(())
     }
 
@@ -2532,12 +2519,12 @@ cargo-features = []
 cargo-no-default-features = false
 cargo-all-features = false
 
-[cargo]
-lock = "payload"
 "#;
         std::fs::write(&path, bad_toml)?;
         let result = IncanLock::load(&path);
-        assert!(result.is_err(), "loading a future format version should fail");
+        assert!(
+            matches!(result, Err(LockfileError::Invalid { message, .. }) if message.contains("unsupported lockfile format 999"))
+        );
         Ok(())
     }
 

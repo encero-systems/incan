@@ -2204,17 +2204,10 @@ fn compute_library_dependency_preheat_fingerprint(
     )
 }
 
-/// Cargo projection text held in an Oven-native lock.
+/// Publish the supplied checked dependency and provider facts as the canonical semantic `oven.lock`.
 ///
-/// `oven.lock` retains this structurally valid inert payload for compatibility with the existing lockfile format,
-/// but normal command execution neither materializes nor consumes it. The explicit `legacy_cargo` publisher owns
-/// the historical exact Cargo projection below.
-const INERT_CARGO_LOCK_PAYLOAD: &str = "version = 4\n";
-
-/// Generate an Oven-native `oven.lock` without constructing a generated Cargo project.
-///
-/// The semantic provider graph and dependency fingerprint are the normal-command lock authority. A project that
-/// needs an actual Cargo resolution is outside this path and must enter the named `legacy_cargo` publisher.
+/// The publication guard coordinates the physical write. This service does not select native inputs or materialize a
+/// Cargo dependency projection.
 fn generate_oven_lockfile(
     project_root: &Path,
     resolved: &ResolvedDependencies,
@@ -2242,12 +2235,7 @@ fn generate_oven_lockfile(
         semantic,
         &semantic_sdk_paths,
     );
-    let lock = IncanLock::new_with_semantic(
-        fingerprint,
-        cargo_features.clone(),
-        semantic.clone(),
-        INERT_CARGO_LOCK_PAYLOAD.to_string(),
-    );
+    let lock = IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone());
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
     lock.write_while_locked(&lock_path, publication_lock)
@@ -2637,7 +2625,11 @@ mod tests {
             None,
         )?;
 
-        assert_eq!(lock.cargo_lock_payload, INERT_CARGO_LOCK_PAYLOAD);
+        let encoded: toml::Value = toml::from_str(&fs::read_to_string(temp_dir.path().join("oven.lock"))?)?;
+        assert!(encoded.get("cargo").is_none());
+        let loaded = IncanLock::load(&temp_dir.path().join("oven.lock"))?;
+        assert_eq!(loaded.deps_fingerprint, lock.deps_fingerprint);
+        assert_eq!(loaded.semantic, lock.semantic);
         assert!(temp_dir.path().join("oven.lock").is_file());
         let state_dir = crate::lockfile::compiler_lock_state_dir(temp_dir.path());
         assert!(
@@ -2722,7 +2714,8 @@ regex = "1"
         assert_eq!(dev_dependencies, BTreeSet::from(["regex"]));
         let lock = IncanLock::load(&project_root.join("oven.lock"))?;
         assert!(!lock.deps_fingerprint.is_empty());
-        assert_eq!(lock.cargo_lock_payload, INERT_CARGO_LOCK_PAYLOAD);
+        let encoded: toml::Value = toml::from_str(&fs::read_to_string(project_root.join("oven.lock"))?)?;
+        assert!(encoded.get("cargo").is_none());
         Ok(())
     }
 
@@ -2758,10 +2751,10 @@ regex = "1"
         })?;
 
         assert!(matches!(resolution.cargo_lock_authority, CargoLockAuthority::None));
-        assert_eq!(
-            IncanLock::load(&project_root.join("oven.lock"))?.cargo_lock_payload,
-            INERT_CARGO_LOCK_PAYLOAD
-        );
+        let lock = IncanLock::load(&project_root.join("oven.lock"))?;
+        assert!(!lock.deps_fingerprint.is_empty());
+        let encoded: toml::Value = toml::from_str(&fs::read_to_string(project_root.join("oven.lock"))?)?;
+        assert!(encoded.get("cargo").is_none());
         let state_dir = crate::lockfile::compiler_lock_state_dir(project_root);
         assert!(
             !state_dir.join("Cargo.toml").exists() && !state_dir.join("Cargo.lock").exists(),
