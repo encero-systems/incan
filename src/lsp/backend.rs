@@ -354,15 +354,28 @@ impl IncanLanguageServer {
             }
         };
         #[cfg(feature = "rust_inspect")]
-        if let (Some(manifest), Some(path)) = (project_manifest.as_ref(), module_path.as_ref()) {
+        if let Some(path) = module_path.as_ref() {
             let mut metadata_modules = Vec::with_capacity(deps.len() + 1);
             metadata_modules.push(parsed_module_for_lsp_document(path, source, &ast));
             metadata_modules.extend(deps.iter().cloned());
             let preparation = tokio::task::spawn_blocking({
-                let manifest = manifest.clone();
+                let manifest = project_manifest.clone();
+                let project_root = manifest
+                    .as_ref()
+                    .map(|manifest| manifest.project_root().to_path_buf())
+                    .unwrap_or_else(|| crate::cli::commands::common::resolve_project_root(path));
                 let index = library_manifest_index.clone();
                 let provider_plan = Arc::clone(&provider_plan);
-                move || prepare_lsp_rust_inspect_workspace(&manifest, &metadata_modules, &index, &provider_plan, None)
+                move || {
+                    prepare_lsp_rust_inspect_workspace(
+                        &project_root,
+                        manifest.as_ref(),
+                        &metadata_modules,
+                        &index,
+                        &provider_plan,
+                        None,
+                    )
+                }
             })
             .await;
             rust_inspect_context = match preparation
@@ -844,7 +857,7 @@ fn parsed_module_for_lsp_document(path: &Path, source: &str, ast: &Program) -> P
 #[cfg(feature = "rust_inspect")]
 /// Resolve the exact Rust-inspection dependency closure from the same provider plan used for document typechecking.
 fn resolved_rust_inspect_dependencies(
-    manifest: &ProjectManifest,
+    manifest: Option<&ProjectManifest>,
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
     provider_plan: &ProviderPlan,
@@ -859,15 +872,14 @@ fn resolved_rust_inspect_dependencies(
     }
 
     let cargo_features = CargoFeatureSelection::default();
-    let mut resolved =
-        resolve_dependencies(Some(manifest), &inline_imports, true, &cargo_features).map_err(|errors| {
-            let sources = build_source_map(modules);
-            let mut msg = String::new();
-            for err in errors {
-                msg.push_str(&format_dependency_error(&err, &sources));
-            }
-            msg.trim_end().to_string()
-        })?;
+    let mut resolved = resolve_dependencies(manifest, &inline_imports, true, &cargo_features).map_err(|errors| {
+        let sources = build_source_map(modules);
+        let mut msg = String::new();
+        for err in errors {
+            msg.push_str(&format_dependency_error(&err, &sources));
+        }
+        msg.trim_end().to_string()
+    })?;
     merge_project_requirement_dependencies(&mut resolved, &project_requirements).map_err(|err| err.to_string())?;
     Ok(resolved)
 }
@@ -879,7 +891,8 @@ fn resolved_rust_inspect_dependencies(
 /// cannot become an analysis without Rust meaning. Empty demand needs no projection. No Cargo manifest/target or
 /// ambient source fallback is constructed, and the returned handle retains the admitted input leases.
 fn prepare_lsp_rust_inspect_workspace(
-    manifest: &ProjectManifest,
+    project_root: &Path,
+    manifest: Option<&ProjectManifest>,
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
     provider_plan: &ProviderPlan,
@@ -890,7 +903,7 @@ fn prepare_lsp_rust_inspect_workspace(
     // Preserve source dependency diagnostics as checked facts; these requests do not select an inspection graph.
     let _resolved = resolved_rust_inspect_dependencies(manifest, modules, library_manifest_index, provider_plan)?;
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
-        project_root: manifest.project_root(),
+        project_root,
         rust_inspect_query_paths: &query_paths,
         rust_derive_probe_paths: &derive_paths,
         selected,
@@ -906,6 +919,60 @@ mod tests {
     use crate::frontend::library_manifest_index::LibraryManifestIndex;
     use crate::frontend::{lexer, parser};
     use crate::manifest::ProjectManifest;
+
+    /// Verify single-file Rust demand produces an error diagnostic while pure Incan needs no physical selection.
+    #[test]
+    fn lsp_single_file_inspection_has_terminal_diagnostics_and_no_preparation_effects()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("main.incn");
+        let cargo_path = root.path().join("Cargo.toml");
+        let poison = "invalid Cargo input; must not be repaired\n";
+        std::fs::write(&cargo_path, poison)?;
+        for (source, requires_inspection) in [
+            ("def main() -> None:\n  pass\n", false),
+            (
+                "from rust::regex @ \"1\" import Regex\n\ndef main() -> None:\n  pass\n",
+                true,
+            ),
+        ] {
+            std::fs::write(&path, source)?;
+            let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+            let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+            let module = super::parsed_module_for_lsp_document(&path, source, &program);
+            let result = prepare_lsp_rust_inspect_workspace(
+                root.path(),
+                None,
+                &[module],
+                &LibraryManifestIndex::default(),
+                &crate::provider::ProviderPlan::default(),
+                None,
+            );
+            if requires_inspection {
+                let Err(message) = result else {
+                    return Err("unselected single-file Rust inspection was accepted".into());
+                };
+                let diagnostic = super::lsp_root_error_diagnostic(message);
+                assert_eq!(
+                    diagnostic.severity,
+                    Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR)
+                );
+                assert!(
+                    diagnostic
+                        .message
+                        .contains("selected Rust inspection inputs are unavailable")
+                );
+            } else {
+                assert!(result.map_err(std::io::Error::other)?.is_none());
+            }
+            assert_eq!(std::fs::read_to_string(&cargo_path)?, poison);
+            assert!(!root.path().join("Cargo.lock").exists());
+            assert!(!root.path().join("oven.lock").exists());
+            assert!(!root.path().join("target").exists());
+            assert!(!crate::lockfile::compiler_lock_state_dir(root.path()).exists());
+        }
+        Ok(())
+    }
 
     #[test]
     /// Prove LSP Rust inspection combines inline Rust imports with provider-derived implementation requirements.
@@ -939,7 +1006,7 @@ def use_it(x: Serialize) -> None:
         let provider_plan = session.provider_plan_for_modules(std::slice::from_ref(&module))?;
 
         let resolved = resolved_rust_inspect_dependencies(
-            &manifest,
+            Some(&manifest),
             std::slice::from_ref(&module),
             &LibraryManifestIndex::default(),
             &provider_plan,
@@ -959,7 +1026,8 @@ def use_it(x: Serialize) -> None:
             "provider implementation requirements must remain checked dependency facts"
         );
         let Err(error) = prepare_lsp_rust_inspect_workspace(
-            &manifest,
+            manifest.project_root(),
+            Some(&manifest),
             &[module],
             &LibraryManifestIndex::default(),
             &provider_plan,

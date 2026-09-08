@@ -3712,10 +3712,11 @@ fn prepare_project_with_options(
             rust_inspect_query_paths: &metadata_query_paths,
             rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
             selected: None,
-        })?
-        .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
-        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.manifest_dir().to_path_buf());
-        Some(rust_inspect_manifest_dir)
+        })?;
+        if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+            codegen.set_rust_inspect_manifest_dir(workspace.manifest_dir().to_path_buf());
+        }
+        rust_inspect_manifest_dir
     };
 
     // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
@@ -10052,54 +10053,18 @@ fn prepare_library_project(
         };
         append_oven_interop_execution_build_inputs(build_inputs, Some(&manifest), target)?;
     }
-    let empty_oven_build_inputs = BTreeMap::new();
     #[cfg(feature = "rust_inspect")]
-    let rust_inspect_manifest_dir = if normal_oven {
-        !metadata_query_paths.is_empty()
-    } else {
-        library_rust_inspection_required(artifact_only, &metadata_query_paths)
-    }
-    .then(|| {
-        if normal_oven {
-            Ok((
-                // Rust inspection is compiler-owned preparation state, not part of the generated provider artifact.
-                // Keeping its Cargo target below `target/lib` leaks build-script outputs (including valid symlinks)
-                // into the provider integrity boundary and needlessly makes every consumer traverse that cache.
-                crate::lockfile::compiler_lock_state_dir(&project_root).join("rust_inspect_target"),
-                None::<crate::generated_cache::GeneratedCacheLease>,
-            ))
-        } else {
-            resolve_generated_cargo_target(
-                generated_cargo_target_dir,
-                &project_root,
-                &project_root,
-                &lock_cargo_package_name,
-                "rust-inspect",
-                lock_payload_for_typecheck.as_deref(),
-                &cargo_features,
-                &cargo_flags,
-            )
-            .map(|target| {
-                let (path, lease, _identity) = target.into_parts();
-                (path, lease)
-            })
-            .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))
-        }
-    })
-    .transpose()?
-    .map(|(rust_inspect_target_path, _rust_inspect_cache_lease)| {
+    let rust_inspect_manifest_dir = {
         let rust_inspect_start = Instant::now();
-        let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+        let workspace = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             rust_inspect_query_paths: &metadata_query_paths,
             rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
             selected: None,
-        })?
-        .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
+        })?;
         record_timing(&mut timings_ms, "library_rust_inspect_prewarm", rust_inspect_start);
-        Ok(rust_inspect_manifest_dir)
-    })
-    .transpose()?;
+        workspace
+    };
 
     let typecheck_start = Instant::now();
     let mut all_errors = String::new();

@@ -661,13 +661,25 @@ impl RustMetadataCache {
             path: root.clone(),
             message: format!("metadata cache lock poisoned: {error}"),
         })?;
-        if inner
-            .selections
-            .get(&root)
-            .is_none_or(|selected| selected.projection.fingerprint() != projection.fingerprint())
+        let previous = inner.selections.get_mut(&root);
+        let source_owner = if let Some(previous) = previous
+            && previous.projection.fingerprint() == projection.fingerprint()
         {
-            clear_context(&mut inner, &root);
-        }
+            if previous.temporary_root == temporary_root {
+                // Reusing the database also reuses its original physical input/output ownership. A caller-owned
+                // rebind must not drop the cache guard merely because it supplied no new guard of its own.
+                if previous._source_owner.is_none() {
+                    previous._source_owner = source_owner;
+                }
+                return Ok(());
+            }
+            // A changed physical output root cannot reuse the old database. When no replacement owner is supplied,
+            // preserve the original selected-source guard while the caller retains its new temporary directory.
+            source_owner.or_else(|| previous._source_owner.clone())
+        } else {
+            source_owner
+        };
+        clear_context(&mut inner, &root);
         inner.selections.insert(
             root,
             InspectionContext {

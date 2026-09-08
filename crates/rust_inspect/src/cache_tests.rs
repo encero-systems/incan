@@ -265,9 +265,13 @@ fn selected_cache_does_not_conflate_equal_display_names() -> Result<(), Box<dyn 
 #[test]
 fn selected_binding_retains_source_owner_until_rebind_or_invalidation() -> Result<(), Box<dyn std::error::Error>> {
     let context = tempfile::tempdir()?;
-    let fixture = Arc::new(InspectionFixture::new("#![no_std]\npub struct First;\n")?);
+    let fixture = Arc::new(InspectionFixture::new(
+        "#![no_std]\npub struct First;\npub struct Also;\n",
+    )?);
     let first_root = fixture.source.path().to_path_buf();
     let first_owner = Arc::downgrade(&fixture);
+    let first_projection = fixture.validate()?;
+    let first_output = fixture.output.path().to_path_buf();
     let cache = RustMetadataCache::new();
     cache.bind_selected_project_with_owner(
         context.path(),
@@ -279,6 +283,35 @@ fn selected_binding_retains_source_owner_until_rebind_or_invalidation() -> Resul
     assert!(first_owner.upgrade().is_some());
     assert!(first_root.is_dir());
     cache.get_or_extract_complete(context.path(), "demo::First", &|_| {})?;
+    cache.bind_selected_project(context.path(), first_projection.clone(), &first_output)?;
+    assert!(
+        first_owner.upgrade().is_some(),
+        "equal unowned rebinding must retain the original database owner"
+    );
+    assert!(first_root.is_dir() && first_output.is_dir());
+    assert!(
+        !cache
+            .inner
+            .lock()
+            .map_err(|error| error.to_string())?
+            .workspaces
+            .is_empty()
+    );
+    cache.get_or_extract_complete(context.path(), "demo::Also", &|_| {})?;
+
+    let changed_output = tempfile::tempdir()?;
+    cache.bind_selected_project(context.path(), first_projection, changed_output.path())?;
+    assert!(
+        cache
+            .inner
+            .lock()
+            .map_err(|error| error.to_string())?
+            .workspaces
+            .is_empty(),
+        "a changed physical output root must clear the old database even when semantic inputs match"
+    );
+    assert!(first_owner.upgrade().is_some());
+    cache.get_or_extract_complete(context.path(), "demo::Also", &|_| {})?;
 
     let changed = Arc::new(InspectionFixture::new("#![no_std]\npub struct Second;\n")?);
     let second_root = changed.source.path().to_path_buf();
