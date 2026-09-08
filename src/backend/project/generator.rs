@@ -21,7 +21,6 @@ use crate::manifest::{DependencySource, DependencySpec};
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
-use toml_edit::{DocumentMut, Item, value};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
 
@@ -118,56 +117,6 @@ fn sanitize_artifact_name(name: &str) -> String {
     } else {
         normalized
     }
-}
-
-/// Copy one generated provider artifact without carrying its mutable nested Cargo target directory.
-fn copy_compiled_artifact_tree(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::create_dir_all(destination)?;
-    let mut entries = fs::read_dir(source)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            if entry.file_name() == "target" {
-                continue;
-            }
-            copy_compiled_artifact_tree(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)?;
-        } else {
-            return Err(io::Error::other(format!(
-                "compiled library artifact contains unsupported filesystem entry {}",
-                source_path.display()
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Compute a portable path from one generated artifact root to an active SDK provider crate.
-fn relative_artifact_path(from: &Path, to: &Path) -> String {
-    let from = normalize_artifact_path(from);
-    let to = normalize_artifact_path(to);
-    let from_components = from.components().collect::<Vec<_>>();
-    let to_components = to.components().collect::<Vec<_>>();
-    let common = from_components
-        .iter()
-        .zip(&to_components)
-        .take_while(|(left, right)| left == right)
-        .count();
-    let mut relative = PathBuf::new();
-    for _ in common..from_components.len() {
-        relative.push("..");
-    }
-    for component in &to_components[common..] {
-        relative.push(component.as_os_str());
-    }
-    if relative.as_os_str().is_empty() {
-        relative.push(".");
-    }
-    relative.to_string_lossy().replace('\\', "/")
 }
 
 /// Render a path-independent dependency identity for generated root-artifact naming.
@@ -1145,10 +1094,12 @@ impl ProjectGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
-    use crate::library_manifest::{ProviderDependencyMetadata, ProviderModuleClaim};
+    use crate::frontend::library_manifest_index::{LibraryArtifactMetadata, LibraryManifestIndex};
+    use crate::library_manifest::ProviderDependencyMetadata;
     use crate::manifest::DependencySource;
-    use crate::provider::{SdkArtifactProjection, SdkDependencyRebinding};
+    use crate::provider::{
+        NamespaceAuthority, ProviderIdentity, ProviderPlanError, ProviderProvenance, ProviderRecord,
+    };
     use std::collections::HashMap;
     use std::process::Command;
 
@@ -1262,593 +1213,316 @@ mod tests {
         .into())
     }
 
+    /// Write immutable checked fixture inputs; these records are not a production native unit plan.
+    fn sdk_rebinding_fixture_record(
+        root: &Path,
+        name: &str,
+        source: &str,
+        sdk: bool,
+        dependencies: Vec<ProviderDependencyMetadata>,
+    ) -> Result<ProviderRecord, Box<dyn std::error::Error>> {
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("src/lib.rs"), source)?;
+        let mut manifest = LibraryManifest::new(name, "0.1.0");
+        manifest.contract_metadata.provider.provider_dependencies = dependencies;
+        let manifest_path = root.join(format!("{name}.incnlib"));
+        manifest.write_to_path(&manifest_path)?;
+        Ok(ProviderRecord {
+            identity: ProviderIdentity {
+                name: name.to_string(),
+                version: "0.1.0".to_string(),
+                digest: digest_provider_artifact(root)?,
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: if sdk {
+                ProviderProvenance::Sdk {
+                    sdk_identity: "checked-fixture-sdk".to_string(),
+                    component_id: name.to_string(),
+                    inventory_path: None,
+                }
+            } else {
+                ProviderProvenance::ProjectDependency {
+                    dependency_key: name.to_string(),
+                    manifest_path: manifest_path.clone(),
+                }
+            },
+            authority: if sdk {
+                NamespaceAuthority::SdkReserved
+            } else {
+                NamespaceAuthority::ProjectDependency {
+                    dependency_key: name.to_string(),
+                }
+            },
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(std::sync::Arc::new(manifest)),
+            artifact: Some(LibraryArtifactMetadata::from_manifest_path(
+                name,
+                name,
+                manifest_path,
+                root.to_path_buf(),
+            )),
+            implementation_facets: Vec::new(),
+        })
+    }
+
+    /// Retain the exact declared identity and coordinate of a fixture dependency without resolving it again.
+    fn sdk_rebinding_fixture_edge(
+        record: &ProviderRecord,
+        relative_path: &str,
+        private: bool,
+    ) -> ProviderDependencyMetadata {
+        ProviderDependencyMetadata {
+            kind: if private {
+                ProviderDependencyKind::PrivateImplementation
+            } else {
+                ProviderDependencyKind::PublicPackage
+            },
+            dependency_key: record.identity.name.clone(),
+            provider_name: record.identity.name.clone(),
+            provider_version: record.identity.version.clone(),
+            artifact_digest: record.identity.digest.clone(),
+            relative_artifact_path: relative_path.to_string(),
+            requested_features: record.identity.feature_projection.clone(),
+            default_features: false,
+            optional: false,
+        }
+    }
+
+    /// Snapshot complete fixture source inventories before physical compilation writes elsewhere.
+    fn sdk_rebinding_fixture_inventory(
+        roots: &[&Path],
+    ) -> Result<BTreeMap<PathBuf, String>, Box<dyn std::error::Error>> {
+        roots
+            .iter()
+            .map(|root| Ok((root.to_path_buf(), digest_provider_artifact(root)?)))
+            .collect()
+    }
+
     #[test]
     fn generated_consumer_rebinds_absent_private_sdk_cache_root_issue911() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
-        let library_artifact = workspace.path().join("root-lib");
-        let absent_sdk_artifact = workspace.path().join("sdk-cache-a/stdlib-codecs");
-        let absent_sdk_core = workspace.path().join("sdk-cache-a/stdlib-core");
-        let absent_sdk_testing = workspace.path().join("sdk-cache-a/stdlib-testing");
-        let active_sdk_artifact = workspace.path().join("sdk-cache-b/stdlib-codecs");
-        let active_sdk_core = workspace.path().join("sdk-cache-b/stdlib-core");
-        let active_sdk_testing = workspace.path().join("sdk-cache-b/stdlib-testing");
-        let active_sdk_external_decoy = workspace.path().join("sdk-cache-b/stdlib-external");
-        let frozen_external = workspace.path().join("ordinary-external");
-        let internal_support = library_artifact.join("support");
-        let internal_dev_support = library_artifact.join("dev-support");
-        let generated = workspace
-            .path()
-            .join("Users/danny/Development/encero/tmp/hees/target/incan_lock");
-        fs::create_dir_all(library_artifact.join("src"))?;
-        for active in [
-            &active_sdk_artifact,
-            &active_sdk_core,
-            &active_sdk_testing,
-            &active_sdk_external_decoy,
-            &frozen_external,
-            &internal_support,
-            &internal_dev_support,
+        let library = workspace.path().join("root");
+        let active = workspace.path().join("active");
+        let absent = workspace.path().join("historical-sdk");
+        let external = workspace.path().join("external");
+        let decoy = workspace.path().join("sdk-external-decoy");
+        let support = workspace.path().join("support");
+        let dev_support = workspace.path().join("dev-support");
+        let generated = workspace.path().join("generated");
+        let mut records = Vec::new();
+        let mut edges = Vec::new();
+        for (name, value) in [
+            ("incan_issue911_codecs", 7),
+            ("incan_issue911_core", 8),
+            ("incan_issue911_testing", 9),
         ] {
-            fs::create_dir_all(active.join("src"))?;
-        }
-        fs::write(
-            library_artifact.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies.incan_issue911_codecs]\npath = {:?}\ndefault-features = false\n\n[dependencies.incan_issue911_core]\npath = {:?}\n\n[dependencies.incan_issue911_testing]\npath = {:?}\n\n[dependencies.incan_issue911_external]\npath = {:?}\n\n[dependencies.incan_issue911_support]\npath = \"support\"\n\n[dev-dependencies.incan_issue911_dev_support]\npath = \"dev-support\"\n",
-                relative_artifact_path(&library_artifact, &absent_sdk_artifact),
-                relative_artifact_path(&library_artifact, &absent_sdk_core),
-                relative_artifact_path(&library_artifact, &absent_sdk_testing),
-                relative_artifact_path(&library_artifact, &frozen_external)
-            ),
-        )?;
-        fs::write(
-            library_artifact.join("src/lib.rs"),
-            "pub fn root_value() -> u8 { incan_issue911_codecs::value() + incan_issue911_core::value() + incan_issue911_testing::value() + incan_issue911_external::value() + incan_issue911_support::value() }\n",
-        )?;
-        fs::write(
-            active_sdk_artifact.join("Cargo.toml"),
-            "[package]\nname = \"incan_issue911_codecs\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
-        )?;
-        fs::write(active_sdk_artifact.join("src/lib.rs"), "pub fn value() -> u8 { 7 }\n")?;
-        fs::write(
-            active_sdk_core.join("Cargo.toml"),
-            "[package]\nname = \"incan_issue911_core\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
-        )?;
-        fs::write(active_sdk_core.join("src/lib.rs"), "pub fn value() -> u8 { 8 }\n")?;
-        fs::write(
-            active_sdk_testing.join("Cargo.toml"),
-            "[package]\nname = \"incan_issue911_testing\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
-        )?;
-        fs::write(active_sdk_testing.join("src/lib.rs"), "pub fn value() -> u8 { 9 }\n")?;
-        for (artifact, package, value) in [
-            (&active_sdk_external_decoy, "incan_issue911_external", 99),
-            (&frozen_external, "incan_issue911_external", 10),
-            (&internal_support, "incan_issue911_support", 5),
-            (&internal_dev_support, "incan_issue911_dev_support", 6),
-        ] {
-            fs::write(
-                artifact.join("Cargo.toml"),
-                format!("[package]\nname = \"{package}\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n"),
+            let record = sdk_rebinding_fixture_record(
+                &active.join(name),
+                name,
+                &format!("pub fn value() -> u8 {{ {value} }}\n"),
+                true,
+                Vec::new(),
             )?;
-            fs::write(
-                artifact.join("src/lib.rs"),
-                format!("pub fn value() -> u8 {{ {value} }}\n"),
-            )?;
+            edges.push(sdk_rebinding_fixture_edge(
+                &record,
+                &format!("../historical-sdk/{name}"),
+                true,
+            ));
+            records.push(record);
         }
-        let digest = digest_provider_artifact(&active_sdk_artifact)?;
-        let mut manifest = LibraryManifest::new("root_lib", "0.1.0");
-        manifest.contract_metadata.provider.namespace_claims = vec![ProviderModuleClaim {
-            module_path: vec!["root".to_string()],
-            required_features: BTreeSet::new(),
-        }];
-        manifest
-            .contract_metadata
-            .provider
-            .provider_dependencies
-            .push(ProviderDependencyMetadata {
-                kind: ProviderDependencyKind::PrivateImplementation,
-                dependency_key: "incan_issue911_codecs".to_string(),
-                provider_name: "incan_issue911_codecs".to_string(),
-                provider_version: "0.5.0".to_string(),
-                artifact_digest: digest,
-                relative_artifact_path: relative_artifact_path(&library_artifact, &absent_sdk_artifact),
-                requested_features: BTreeSet::new(),
-                default_features: false,
-                optional: false,
-            });
-        let manifest_path = library_artifact.join("root_lib.incnlib");
-        manifest.write_to_path(&manifest_path)?;
-        let containing_artifact = LibraryArtifactMetadata::from_manifest_path(
-            "root_lib",
-            "root_lib",
-            manifest_path,
-            library_artifact.clone(),
-        );
-        let mut generator = ProjectGenerator::new(&generated, "issue911_consumer", true);
-        generator.set_dependencies(vec![
-            DependencySpec {
-                crate_name: "root_lib".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path {
-                    path: library_artifact.clone(),
-                },
-                optional: false,
-                package: None,
-            },
-            DependencySpec {
-                crate_name: "incan_issue911_codecs".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: false,
-                source: DependencySource::Path {
-                    path: active_sdk_artifact.clone(),
-                },
-                optional: false,
-                package: None,
-            },
-            DependencySpec {
-                crate_name: "incan_issue911_core".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path {
-                    path: active_sdk_core.clone(),
-                },
-                optional: false,
-                package: None,
-            },
-            DependencySpec {
-                crate_name: "incan_issue911_testing".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path {
-                    path: active_sdk_testing.clone(),
-                },
-                optional: false,
-                package: None,
-            },
-        ]);
-        generator.sdk_dependency_rebindings = vec![SdkDependencyRebinding {
-            containing_artifact: containing_artifact.clone(),
-            source_crate_root: absent_sdk_artifact.clone(),
-            provider_name: "incan_issue911_codecs".to_string(),
-            dependency_key: "incan_issue911_codecs".to_string(),
-            active_crate_root: active_sdk_artifact.clone(),
-        }];
-        generator.set_sdk_path_dependencies(vec![
-            DependencySpec {
-                crate_name: "incan_issue911_core".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path {
-                    path: active_sdk_core.clone(),
-                },
-                optional: false,
-                package: None,
-            },
-            DependencySpec {
-                crate_name: "incan_issue911_testing".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path {
-                    path: active_sdk_testing.clone(),
-                },
-                optional: false,
-                package: None,
-            },
-            DependencySpec {
-                crate_name: "incan_issue911_external".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path {
-                    path: active_sdk_external_decoy.clone(),
-                },
-                optional: false,
-                package: None,
-            },
-        ]);
-        generator.sdk_artifact_projections = vec![SdkArtifactProjection {
-            artifact: containing_artifact,
-        }];
-
-        let original_sdk_paths = generator.sdk_path_dependencies.clone();
-        let original_shadow = generator
-            .sdk_projection_shadow_roots()?
-            .into_values()
-            .next()
-            .ok_or("missing original SDK shadow")?
-            .1;
-        let alternate_core = workspace.path().join("sdk-cache-c/stdlib-core");
-        fs::create_dir_all(alternate_core.join("src"))?;
-        fs::write(
-            alternate_core.join("Cargo.toml"),
-            "[package]\nname = \"incan_issue911_core\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
-        )?;
-        fs::write(alternate_core.join("src/lib.rs"), "pub fn value() -> u8 { 8 }\n")?;
-        generator
-            .sdk_path_dependencies
-            .retain(|dependency| dependency.crate_name != "incan_issue911_core");
-        generator.set_sdk_path_dependencies(vec![DependencySpec {
-            crate_name: "incan_issue911_core".to_string(),
-            version: None,
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Path { path: alternate_core },
-            optional: false,
-            package: None,
-        }]);
-        let changed_shadow = generator
-            .sdk_projection_shadow_roots()?
-            .into_values()
-            .next()
-            .ok_or("missing changed SDK shadow")?
-            .1;
-        assert_ne!(
-            original_shadow, changed_shadow,
-            "active SDK path targets must participate in shadow identity"
-        );
-        generator.sdk_path_dependencies = original_sdk_paths;
-
-        copy_compiled_artifact_tree(&library_artifact, &original_shadow)?;
-        fs::write(original_shadow.join(".incan-sdk-rebound-ready"), "v3\n")?;
-        let stale_digest = digest_provider_artifact(&original_shadow)?;
-        let shadow_name = original_shadow
-            .file_name()
-            .ok_or("missing SDK shadow name")?
-            .to_string_lossy();
-        fs::write(
-            original_shadow
-                .parent()
-                .ok_or("missing SDK shadow parent")?
-                .join(format!(".{shadow_name}.integrity")),
-            format!("{stale_digest}\n"),
-        )?;
-        let (left_projection, right_projection) = std::thread::scope(|scope| {
-            let left = scope.spawn(|| generator.effective_dependencies());
-            let right = scope.spawn(|| generator.effective_dependencies());
-            match (left.join(), right.join()) {
-                (Ok(left), Ok(right)) => Ok((left?, right?)),
-                _ => Err(io::Error::other("concurrent SDK projection worker panicked")),
-            }
-        })?;
-        assert_eq!(left_projection, right_projection);
-        let projected_root = left_projection.first().ok_or("missing projected root dependency")?;
-        let projected_root = match &projected_root.source {
-            DependencySource::Path { path } => path,
-            DependencySource::Registry | DependencySource::Git { .. } => {
-                return Err("projected root dependency is not path-backed".into());
-            }
-        };
-        assert_eq!(
-            fs::read_to_string(projected_root.join(".incan-sdk-rebound-ready"))?,
-            "v4\n"
-        );
-        fs::write(projected_root.join("src/lib.rs"), "pub fn corrupt() {}\n")?;
-        let repaired_projection = generator.effective_dependencies()?;
-        assert_eq!(repaired_projection, left_projection);
-        assert!(fs::read_to_string(projected_root.join("src/lib.rs"))?.contains("root_value"));
-        generator.generate("fn main() { assert_eq!(root_lib::root_value(), 39); }")?;
-
-        let rebound_cargo = fs::read_to_string(projected_root.join("Cargo.toml"))?.parse::<DocumentMut>()?;
-        let rebound_dependencies = rebound_cargo
-            .get("dependencies")
-            .and_then(Item::as_table_like)
-            .ok_or("projected Cargo manifest has no dependencies")?;
-        for (dependency_key, expected_root) in [
-            ("incan_issue911_codecs", &active_sdk_artifact),
-            ("incan_issue911_core", &active_sdk_core),
-            ("incan_issue911_testing", &active_sdk_testing),
-        ] {
-            let relative = rebound_dependencies
-                .get(dependency_key)
-                .and_then(Item::as_table_like)
-                .and_then(|dependency| dependency.get("path"))
-                .and_then(Item::as_str)
-                .ok_or("projected Cargo dependency has no path")?;
-            assert_eq!(
-                fs::canonicalize(projected_root.join(relative))?,
-                fs::canonicalize(expected_root)?,
-                "projected Cargo dependency `{dependency_key}` must resolve from the shadow manifest directory"
-            );
-        }
-        for (dependency_key, expected_root) in [
-            ("incan_issue911_external", frozen_external.as_path()),
-            ("incan_issue911_support", projected_root.join("support").as_path()),
-        ] {
-            let relative = rebound_dependencies
-                .get(dependency_key)
-                .and_then(Item::as_table_like)
-                .and_then(|dependency| dependency.get("path"))
-                .and_then(Item::as_str)
-                .ok_or("projected Cargo dependency has no path")?;
-            assert_eq!(
-                fs::canonicalize(projected_root.join(relative))?,
-                fs::canonicalize(expected_root)?,
-                "projected Cargo dependency `{dependency_key}` must preserve its intended source"
-            );
-        }
-        let rebound_dev_dependencies = rebound_cargo
-            .get("dev-dependencies")
-            .and_then(Item::as_table_like)
-            .ok_or("projected Cargo manifest has no dev dependencies")?;
-        let relative = rebound_dev_dependencies
-            .get("incan_issue911_dev_support")
-            .and_then(Item::as_table_like)
-            .and_then(|dependency| dependency.get("path"))
-            .and_then(Item::as_str)
-            .ok_or("projected dev Cargo dependency has no path")?;
-        assert_eq!(
-            fs::canonicalize(projected_root.join(relative))?,
-            fs::canonicalize(projected_root.join("dev-support"))?,
-            "projected dev Cargo dependency must remain inside the copied shadow"
-        );
-
-        assert!(
-            !absent_sdk_artifact.exists(),
-            "logical rebinding must not recreate the historical SDK cache root"
-        );
-        assert!(!absent_sdk_core.exists());
-        assert!(!absent_sdk_testing.exists());
-        let direct = workspace.path().join("oven-direct-rustc");
-        fs::create_dir_all(&direct)?;
-        let codecs = direct.join("libincan_issue911_codecs.rlib");
-        let core = direct.join("libincan_issue911_core.rlib");
-        let testing = direct.join("libincan_issue911_testing.rlib");
-        let external = direct.join("libincan_issue911_external.rlib");
-        let support = direct.join("libincan_issue911_support.rlib");
-        let root = direct.join("libroot_lib.rlib");
-        let consumer = direct.join("issue911_consumer");
-        compile_rebound_fixture_with_rustc(
-            &active_sdk_artifact.join("src/lib.rs"),
-            "incan_issue911_codecs",
-            "lib",
-            &codecs,
-            &[],
-        )?;
-        compile_rebound_fixture_with_rustc(
-            &active_sdk_core.join("src/lib.rs"),
-            "incan_issue911_core",
-            "lib",
-            &core,
-            &[],
-        )?;
-        compile_rebound_fixture_with_rustc(
-            &active_sdk_testing.join("src/lib.rs"),
-            "incan_issue911_testing",
-            "lib",
-            &testing,
-            &[],
-        )?;
-        compile_rebound_fixture_with_rustc(
-            &frozen_external.join("src/lib.rs"),
-            "incan_issue911_external",
-            "lib",
+        let ordinary = sdk_rebinding_fixture_record(
             &external,
-            &[],
+            "incan_issue911_external",
+            "pub fn value() -> u8 { 10 }\n",
+            false,
+            Vec::new(),
         )?;
-        compile_rebound_fixture_with_rustc(
-            &projected_root.join("support/src/lib.rs"),
-            "incan_issue911_support",
-            "lib",
+        edges.push(sdk_rebinding_fixture_edge(&ordinary, "../external", false));
+        records.push(sdk_rebinding_fixture_record(
+            &decoy,
+            "incan_issue911_external",
+            "pub fn value() -> u8 { 99 }\n",
+            true,
+            Vec::new(),
+        )?);
+        // Rust-only support is an explicit fixture input, not a claim of general native dependency selection.
+        sdk_rebinding_fixture_record(
             &support,
-            &[],
+            "incan_issue911_support",
+            "pub fn value() -> u8 { 5 }\n",
+            false,
+            Vec::new(),
         )?;
-        compile_rebound_fixture_with_rustc(
-            &projected_root.join("src/lib.rs"),
-            "root_lib",
-            "lib",
-            &root,
-            &[
-                ("incan_issue911_codecs", codecs.as_path()),
-                ("incan_issue911_core", core.as_path()),
-                ("incan_issue911_testing", testing.as_path()),
-                ("incan_issue911_external", external.as_path()),
-                ("incan_issue911_support", support.as_path()),
-            ],
+        sdk_rebinding_fixture_record(
+            &dev_support,
+            "incan_issue911_dev_support",
+            "pub fn value() -> u8 { 6 }\n",
+            false,
+            Vec::new(),
         )?;
+        records.push(sdk_rebinding_fixture_record(&library, "root_lib", "pub fn root_value() -> u8 { incan_issue911_codecs::value() + incan_issue911_core::value() + incan_issue911_testing::value() + incan_issue911_external::value() + incan_issue911_support::value() }\n", false, edges)?);
+        let roots = [&library, &active, &external, &decoy, &support, &dev_support];
+        let roots = roots.iter().map(|root| root.as_path()).collect::<Vec<_>>();
+        let before = sdk_rebinding_fixture_inventory(&roots)?;
+        assert!(!absent.exists());
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), records, [])?;
+        assert_eq!(plan.sdk_dependency_rebindings().len(), 3);
+        assert_eq!(plan.sdk_artifact_projections().len(), 1);
+        let mut selected = Vec::new();
+        for binding in plan.sdk_dependency_rebindings() {
+            assert_eq!(binding.containing_artifact.crate_root, library);
+            assert_eq!(
+                binding.active_crate_root,
+                fs::canonicalize(active.join(&binding.provider_name))?
+            );
+            assert_eq!(
+                binding.source_crate_root,
+                library.join(format!("../historical-sdk/{}", binding.provider_name))
+            );
+            assert_ne!(binding.dependency_key, "incan_issue911_external");
+            assert!(!binding.active_crate_root.starts_with(&support));
+            assert!(!binding.active_crate_root.starts_with(&dev_support));
+            selected.push((binding.dependency_key.clone(), binding.active_crate_root.clone()));
+        }
+        let external_artifact = plan
+            .public_artifacts()
+            .find(|artifact| artifact.identity == ordinary.identity)
+            .ok_or("checked ordinary dependency absent")?;
+        assert_eq!(external_artifact.artifact.crate_root, fs::canonicalize(&external)?);
+        selected.push((
+            "incan_issue911_external".to_string(),
+            external_artifact.artifact.crate_root.clone(),
+        ));
+        selected.push(("incan_issue911_support".to_string(), support.clone()));
+        let mut generator = ProjectGenerator::new(&generated, "issue911_consumer", true);
+        generator.set_provider_plan(&plan);
+        generator.generate("fn main() { assert_eq!(root_lib::root_value(), 39); }")?;
+        assert!(!absent.exists());
+        let direct = workspace.path().join("direct");
+        fs::create_dir_all(&direct)?;
+        let mut compiled = Vec::new();
+        for (name, root) in selected {
+            let output = direct.join(format!("lib{name}.rlib"));
+            compile_rebound_fixture_with_rustc(&root.join("src/lib.rs"), &name, "lib", &output, &[])?;
+            compiled.push((name, output));
+        }
+        let externs = compiled
+            .iter()
+            .map(|(name, path)| (name.as_str(), path.as_path()))
+            .collect::<Vec<_>>();
+        let root_output = direct.join("libroot_lib.rlib");
+        compile_rebound_fixture_with_rustc(&library.join("src/lib.rs"), "root_lib", "lib", &root_output, &externs)?;
+        let consumer = direct.join("consumer");
+        let mut consumer_externs = externs;
+        consumer_externs.push(("root_lib", root_output.as_path()));
         compile_rebound_fixture_with_rustc(
             &generated.join("src/main.rs"),
             "issue911_consumer",
             "bin",
             &consumer,
-            &[
-                ("root_lib", root.as_path()),
-                ("incan_issue911_codecs", codecs.as_path()),
-                ("incan_issue911_core", core.as_path()),
-                ("incan_issue911_testing", testing.as_path()),
-                ("incan_issue911_external", external.as_path()),
-                ("incan_issue911_support", support.as_path()),
-            ],
+            &consumer_externs,
         )?;
         let execution = Command::new(&consumer).output()?;
         if !execution.status.success() {
             return Err(format!(
-                "rebound direct-Rustc consumer failed:\n{}{}",
-                String::from_utf8_lossy(&execution.stdout),
+                "native39 fixture failed: {}",
                 String::from_utf8_lossy(&execution.stderr)
             )
             .into());
         }
+        assert!(!absent.exists());
+        assert_eq!(sdk_rebinding_fixture_inventory(&roots)?, before);
         Ok(())
     }
 
     #[test]
     fn nested_compiled_artifacts_propagate_sdk_projection_issue911() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
-        let root_artifact = workspace.path().join("root-lib");
-        let child_artifact = workspace.path().join("child-lib");
-        let absent_sdk_artifact = workspace.path().join("sdk-cache-a/runtime");
-        let active_sdk_artifact = workspace.path().join("sdk-cache-b/runtime");
-        let generated = workspace.path().join("generated/consumer");
-        for artifact in [&root_artifact, &child_artifact, &active_sdk_artifact] {
-            fs::create_dir_all(artifact.join("src"))?;
-        }
-        fs::write(
-            active_sdk_artifact.join("Cargo.toml"),
-            "[package]\nname = \"incan_issue911_runtime\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
-        )?;
-        fs::write(active_sdk_artifact.join("src/lib.rs"), "pub fn value() -> u8 { 11 }\n")?;
-        let sdk_digest = digest_provider_artifact(&active_sdk_artifact)?;
-
-        fs::write(
-            child_artifact.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"issue911_child\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies.incan_issue911_runtime]\npath = {:?}\ndefault-features = false\n",
-                absent_sdk_artifact.to_string_lossy()
-            ),
-        )?;
-        fs::write(
-            child_artifact.join("src/lib.rs"),
-            "pub fn child_value() -> u8 { incan_issue911_runtime::value() }\n",
-        )?;
-        let mut child_manifest = LibraryManifest::new("issue911_child", "0.1.0");
-        child_manifest
-            .contract_metadata
-            .provider
-            .provider_dependencies
-            .push(ProviderDependencyMetadata {
-                kind: ProviderDependencyKind::PrivateImplementation,
-                dependency_key: "incan_issue911_runtime".to_string(),
-                provider_name: "incan_issue911_runtime".to_string(),
-                provider_version: "0.5.0".to_string(),
-                artifact_digest: sdk_digest,
-                relative_artifact_path: relative_artifact_path(&child_artifact, &absent_sdk_artifact),
-                requested_features: BTreeSet::new(),
-                default_features: false,
-                optional: false,
-            });
-        let child_manifest_path = child_artifact.join("issue911_child.incnlib");
-        child_manifest.write_to_path(&child_manifest_path)?;
-        let child_digest = digest_provider_artifact(&child_artifact)?;
-
-        fs::write(
-            root_artifact.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"issue911_root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[features]\ndefault = [\"issue911_child\"]\n\n[dependencies.issue911_child]\npath = {:?}\ndefault-features = true\noptional = true\n",
-                child_artifact.to_string_lossy()
-            ),
-        )?;
-        fs::write(
-            root_artifact.join("src/lib.rs"),
-            "pub fn root_value() -> u8 { issue911_child::child_value() }\n",
-        )?;
-        let mut root_manifest = LibraryManifest::new("issue911_root", "0.1.0");
-        root_manifest
-            .contract_metadata
-            .provider
-            .provider_dependencies
-            .push(ProviderDependencyMetadata {
-                kind: ProviderDependencyKind::PublicPackage,
-                dependency_key: "issue911_child".to_string(),
-                provider_name: "issue911_child".to_string(),
-                provider_version: "0.1.0".to_string(),
-                artifact_digest: child_digest,
-                relative_artifact_path: relative_artifact_path(&root_artifact, &child_artifact),
-                requested_features: BTreeSet::new(),
-                default_features: true,
-                optional: true,
-            });
-        let root_manifest_path = root_artifact.join("issue911_root.incnlib");
-        root_manifest.write_to_path(&root_manifest_path)?;
-        let root_metadata = LibraryArtifactMetadata::from_manifest_path(
-            "issue911_root",
-            "issue911_root",
-            root_manifest_path,
-            root_artifact.clone(),
-        );
-        let child_metadata = LibraryArtifactMetadata::from_manifest_path(
-            "issue911_child",
-            "issue911_child",
-            child_manifest_path,
-            child_artifact.clone(),
-        );
-
-        let mut generator = ProjectGenerator::new(&generated, "issue911_nested_consumer", true);
-        generator.set_dependencies(vec![DependencySpec {
-            crate_name: "issue911_root".to_string(),
-            version: None,
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Path {
-                path: root_artifact.clone(),
-            },
-            optional: false,
-            package: None,
-        }]);
-        generator.sdk_dependency_rebindings = vec![SdkDependencyRebinding {
-            containing_artifact: child_metadata.clone(),
-            source_crate_root: absent_sdk_artifact.clone(),
-            provider_name: "incan_issue911_runtime".to_string(),
-            dependency_key: "incan_issue911_runtime".to_string(),
-            active_crate_root: active_sdk_artifact,
-        }];
-        generator.sdk_artifact_projections = vec![
-            SdkArtifactProjection {
-                artifact: root_metadata,
-            },
-            SdkArtifactProjection {
-                artifact: child_metadata,
-            },
-        ];
-        generator.generate("fn main() { assert_eq!(issue911_root::root_value(), 11); }")?;
-
-        let effective = generator.effective_dependencies()?;
-        let root_shadow = match &effective[0].source {
-            DependencySource::Path { path } => path,
-            DependencySource::Registry | DependencySource::Git { .. } => {
-                return Err("projected root dependency is not path-backed".into());
-            }
-        };
-        let rebound_root = LibraryManifest::read_from_path(&root_shadow.join("issue911_root.incnlib"))?;
-        let rebound_child = &rebound_root.contract_metadata.provider.provider_dependencies[0];
-        let child_shadow = root_shadow.join(&rebound_child.relative_artifact_path);
-        assert_eq!(rebound_child.artifact_digest, digest_provider_artifact(&child_shadow)?);
-        assert!(child_shadow.join(".incan-sdk-rebound-ready").is_file());
-        assert!(!absent_sdk_artifact.exists());
-
-        let rebound_child_cargo = fs::read_to_string(child_shadow.join("Cargo.toml"))?.parse::<DocumentMut>()?;
-        let runtime_relative = rebound_child_cargo
-            .get("dependencies")
-            .and_then(Item::as_table_like)
-            .and_then(|dependencies| dependencies.get("incan_issue911_runtime"))
-            .and_then(Item::as_table_like)
-            .and_then(|dependency| dependency.get("path"))
-            .and_then(Item::as_str)
-            .ok_or("nested rebound child has no runtime path dependency")?;
-        let runtime_shadow = child_shadow.join(runtime_relative);
-
-        let direct = workspace.path().join("oven-direct-rustc");
-        fs::create_dir_all(&direct)?;
-        let runtime = direct.join("libincan_issue911_runtime.rlib");
-        let child = direct.join("libissue911_child.rlib");
-        let root = direct.join("libissue911_root.rlib");
-        let consumer = direct.join("issue911_nested_consumer");
-        compile_rebound_fixture_with_rustc(
-            &runtime_shadow.join("src/lib.rs"),
+        let active = workspace.path().join("active");
+        let absent = workspace.path().join("historical-sdk");
+        let child = workspace.path().join("child");
+        let root = workspace.path().join("root");
+        let generated = workspace.path().join("generated");
+        let runtime = sdk_rebinding_fixture_record(
+            &active,
             "incan_issue911_runtime",
+            "pub fn value() -> u8 { 11 }\n",
+            true,
+            Vec::new(),
+        )?;
+        let child_record = sdk_rebinding_fixture_record(
+            &child,
+            "issue911_child",
+            "pub fn child_value() -> u8 { incan_issue911_runtime::value() }\n",
+            false,
+            vec![sdk_rebinding_fixture_edge(&runtime, "../historical-sdk", true)],
+        )?;
+        let mut public_edge = sdk_rebinding_fixture_edge(&child_record, "../child", false);
+        public_edge.default_features = true;
+        public_edge.optional = true;
+        let root_record = sdk_rebinding_fixture_record(
+            &root,
+            "issue911_root",
+            "pub fn root_value() -> u8 { issue911_child::child_value() }\n",
+            false,
+            vec![public_edge.clone()],
+        )?;
+        let before = sdk_rebinding_fixture_inventory(&[&active, &child, &root])?;
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), vec![root_record, runtime], [])?;
+        assert_eq!(plan.sdk_dependency_rebindings().len(), 1);
+        assert_eq!(plan.sdk_artifact_projections().len(), 2);
+        let projected_roots = plan
+            .sdk_artifact_projections()
+            .iter()
+            .map(|projection| fs::canonicalize(&projection.artifact.crate_root))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        for expected in [&root, &child] {
+            assert!(projected_roots.contains(&fs::canonicalize(expected)?));
+        }
+        let binding = &plan.sdk_dependency_rebindings()[0];
+        assert_eq!(binding.containing_artifact.crate_root, fs::canonicalize(&child)?);
+        assert_eq!(binding.active_crate_root, fs::canonicalize(&active)?);
+        let admitted_child = plan
+            .public_artifacts()
+            .find(|artifact| artifact.identity == child_record.identity)
+            .ok_or("checked child absent")?;
+        assert_eq!(admitted_child.artifact.crate_root, fs::canonicalize(&child)?);
+        let root_manifest = LibraryManifest::read_from_path(&root.join("issue911_root.incnlib"))?;
+        assert_eq!(
+            root_manifest.contract_metadata.provider.provider_dependencies,
+            vec![public_edge]
+        );
+        let mut generator = ProjectGenerator::new(&generated, "issue911_nested_consumer", true);
+        generator.set_provider_plan(&plan);
+        generator.generate("fn main() { assert_eq!(issue911_root::root_value(), 11); }")?;
+        let direct = workspace.path().join("direct");
+        fs::create_dir_all(&direct)?;
+        let runtime_output = direct.join("libincan_issue911_runtime.rlib");
+        let child_output = direct.join("libissue911_child.rlib");
+        let root_output = direct.join("libissue911_root.rlib");
+        let consumer = direct.join("consumer");
+        compile_rebound_fixture_with_rustc(
+            &binding.active_crate_root.join("src/lib.rs"),
+            &binding.dependency_key,
             "lib",
-            &runtime,
+            &runtime_output,
             &[],
         )?;
         compile_rebound_fixture_with_rustc(
-            &child_shadow.join("src/lib.rs"),
+            &admitted_child.artifact.crate_root.join("src/lib.rs"),
             "issue911_child",
             "lib",
-            &child,
-            &[("incan_issue911_runtime", runtime.as_path())],
+            &child_output,
+            &[(binding.dependency_key.as_str(), runtime_output.as_path())],
         )?;
         compile_rebound_fixture_with_rustc(
-            &root_shadow.join("src/lib.rs"),
+            &root.join("src/lib.rs"),
             "issue911_root",
             "lib",
-            &root,
-            &[("issue911_child", child.as_path())],
+            &root_output,
+            &[("issue911_child", child_output.as_path())],
         )?;
         compile_rebound_fixture_with_rustc(
             &generated.join("src/main.rs"),
@@ -1856,137 +1530,73 @@ mod tests {
             "bin",
             &consumer,
             &[
-                ("issue911_root", root.as_path()),
-                ("issue911_child", child.as_path()),
-                ("incan_issue911_runtime", runtime.as_path()),
+                ("issue911_root", root_output.as_path()),
+                ("issue911_child", child_output.as_path()),
+                ("incan_issue911_runtime", runtime_output.as_path()),
             ],
         )?;
         let execution = Command::new(&consumer).output()?;
         if !execution.status.success() {
             return Err(format!(
-                "nested rebound direct-Rustc consumer failed:\n{}{}",
-                String::from_utf8_lossy(&execution.stdout),
+                "native11 fixture failed: {}",
                 String::from_utf8_lossy(&execution.stderr)
             )
             .into());
         }
+        assert!(!absent.exists());
+        assert_eq!(sdk_rebinding_fixture_inventory(&[&active, &child, &root])?, before);
         Ok(())
     }
 
     #[test]
-    fn sdk_projection_rejects_cargo_source_mismatch_before_cargo_issue911() -> Result<(), Box<dyn std::error::Error>> {
+    fn sdk_projection_rejects_checked_identity_and_feature_mismatch_before_generation_issue911()
+    -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
+        let active = workspace.path().join("active");
         let artifact = workspace.path().join("library");
-        let descriptor_source = workspace.path().join("sdk-cache-a/runtime");
-        let cargo_source = workspace.path().join("untrusted/runtime");
-        let active = workspace.path().join("sdk-cache-b/runtime");
-        for root in [&artifact, &active] {
-            fs::create_dir_all(root.join("src"))?;
-        }
-        fs::write(
-            artifact.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"issue911_source_mismatch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies.incan_issue911_runtime]\npath = {:?}\n",
-                cargo_source.to_string_lossy()
-            ),
+        let absent = workspace.path().join("historical-sdk");
+        let generated = workspace.path().join("generated");
+        let runtime = sdk_rebinding_fixture_record(
+            &active,
+            "incan_issue911_runtime",
+            "pub fn value() {}\n",
+            true,
+            Vec::new(),
         )?;
-        fs::write(artifact.join("src/lib.rs"), "pub fn value() {}\n")?;
-        fs::write(
-            active.join("Cargo.toml"),
-            "[package]\nname = \"incan_issue911_runtime\"\nversion = \"0.5.0\"\nedition = \"2024\"\n",
-        )?;
-        fs::write(active.join("src/lib.rs"), "pub fn value() {}\n")?;
-        let mut manifest = LibraryManifest::new("issue911_source_mismatch", "0.1.0");
-        manifest
-            .contract_metadata
-            .provider
-            .provider_dependencies
-            .push(ProviderDependencyMetadata {
-                kind: ProviderDependencyKind::PrivateImplementation,
-                dependency_key: "incan_issue911_runtime".to_string(),
-                provider_name: "incan_issue911_runtime".to_string(),
-                provider_version: "0.5.0".to_string(),
-                artifact_digest: digest_provider_artifact(&active)?,
-                relative_artifact_path: relative_artifact_path(&artifact, &descriptor_source),
-                requested_features: BTreeSet::new(),
-                default_features: false,
-                optional: false,
-            });
-        let manifest_path = artifact.join("issue911_source_mismatch.incnlib");
-        manifest.write_to_path(&manifest_path)?;
-        let metadata = LibraryArtifactMetadata::from_manifest_path(
-            "issue911_source_mismatch",
-            "issue911_source_mismatch",
-            manifest_path,
-            artifact.clone(),
-        );
-        let mut generator = ProjectGenerator::new(workspace.path().join("generated"), "consumer", true);
-        generator.set_dependencies(vec![DependencySpec {
-            crate_name: "issue911_source_mismatch".to_string(),
-            version: None,
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Path { path: artifact.clone() },
-            optional: false,
-            package: None,
-        }]);
-        generator.sdk_dependency_rebindings = vec![SdkDependencyRebinding {
-            containing_artifact: metadata.clone(),
-            source_crate_root: descriptor_source.clone(),
-            provider_name: "incan_issue911_runtime".to_string(),
-            dependency_key: "incan_issue911_runtime".to_string(),
-            active_crate_root: active,
-        }];
-        generator.sdk_artifact_projections = vec![SdkArtifactProjection { artifact: metadata }];
-
-        let error = generator
-            .generate("fn main() {}")
-            .err()
-            .ok_or("expected Cargo/source descriptor mismatch")?;
-
-        assert!(error.to_string().contains("checked .incnlib descriptor freezes"));
-        assert!(!cargo_source.exists());
-
-        fs::write(
-            artifact.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"issue911_source_mismatch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies.incan_issue911_runtime]\npath = {:?}\n",
-                descriptor_source.to_string_lossy()
-            ),
-        )?;
-        generator.generate("fn main() {}")?;
-        let projected = generator.effective_dependencies()?;
-        let projected_root = match &projected[0].source {
-            DependencySource::Path { path } => path,
-            DependencySource::Registry | DependencySource::Git { .. } => {
-                return Err("projected dependency is not path-backed".into());
+        let edge = sdk_rebinding_fixture_edge(&runtime, "../historical-sdk", true);
+        let record =
+            sdk_rebinding_fixture_record(&artifact, "issue911_root", "pub fn value() {}\n", false, vec![edge])?;
+        let before = sdk_rebinding_fixture_inventory(&[&active, &artifact])?;
+        for dimension in ["version", "digest", "features", "default-features", "optional"] {
+            let mut changed = record.clone();
+            let manifest = std::sync::Arc::make_mut(changed.manifest.as_mut().ok_or("fixture manifest absent")?);
+            let dependency = &mut manifest.contract_metadata.provider.provider_dependencies[0];
+            match dimension {
+                "version" => dependency.provider_version = "9.9.9".to_string(),
+                "digest" => dependency.artifact_digest = "sha256:wrong".to_string(),
+                "features" => {
+                    dependency.requested_features.insert("unexpected".to_string());
+                }
+                "default-features" => dependency.default_features = true,
+                _ => dependency.optional = true,
             }
-        };
-        let cargo = fs::read_to_string(projected_root.join("Cargo.toml"))?.parse::<DocumentMut>()?;
-        assert_eq!(
-            cargo
-                .get("dependencies")
-                .and_then(Item::as_table_like)
-                .and_then(|dependencies| dependencies.get("incan_issue911_runtime"))
-                .and_then(Item::as_table_like)
-                .and_then(|dependency| dependency.get("default-features"))
-                .and_then(Item::as_bool),
-            Some(false),
-            "legacy private SDK edges must be normalized to their checked feature contract"
-        );
-
-        fs::write(
-            artifact.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"issue911_source_mismatch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies.incan_issue911_runtime]\npath = {:?}\ndefault-features = \"false\"\n",
-                descriptor_source.to_string_lossy()
-            ),
-        )?;
-        let error = generator
-            .generate("fn main() {}")
-            .err()
-            .ok_or("expected malformed Cargo/default-feature descriptor mismatch")?;
-        assert!(error.to_string().contains("optional/default feature flags disagree"));
+            let error = ProviderPlan::new(LibraryManifestIndex::default(), vec![changed, runtime.clone()], [])
+                .err()
+                .ok_or("checked mismatch must refuse")?;
+            assert!(
+                matches!(error, ProviderPlanError::IncompatibleCompiledSdkDependency { .. }),
+                "{dimension}: {error}"
+            );
+            assert!(!generated.exists());
+            assert!(!absent.exists());
+        }
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), vec![record, runtime], [])?;
+        let mut generator = ProjectGenerator::new(&generated, "consumer", true);
+        generator.set_provider_plan(&plan);
+        generator.generate("fn main() {}")?;
+        assert_eq!(plan.sdk_dependency_rebindings().len(), 1);
+        assert!(!absent.exists());
+        assert_eq!(sdk_rebinding_fixture_inventory(&[&active, &artifact])?, before);
         Ok(())
     }
 
