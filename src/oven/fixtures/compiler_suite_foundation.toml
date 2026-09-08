@@ -27,6 +27,8 @@ sha2 = "0.10"
 sha3 = "0.10"
 snap = "1"
 tempfile = "3"
+toml = "0.9"
+toml_edit = { version = "0.25", features = ["parse", "serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
 xz2 = "0.1"
