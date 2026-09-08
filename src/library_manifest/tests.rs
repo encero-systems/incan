@@ -4362,6 +4362,7 @@ fn native_union_wire_is_optional_and_excludes_checked_routes() -> Result<(), Box
         members: members.clone(),
         local_nominals: Default::default(),
         checked_projection: Some(Box::new(super::model::NativeUnionProjection {
+            dependency_root: "consumer_only".into(),
             rust_owner: "::consumer_only::pricing".into(),
             members: members.clone(),
             nominal_origins: Default::default(),

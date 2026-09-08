@@ -1316,6 +1316,8 @@ pub struct NativeUnionExport {
 /// Physical projection of an admitted union, separate from its immutable producer representation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NativeUnionProjection {
+    /// Direct admitted dependency through which this exact native owner was selected.
+    pub dependency_root: String,
     pub rust_owner: String,
     pub members: Vec<TypeRef>,
     /// Exact accepted nominal bindings under the Rust spellings selected by the consumer's lowering pass.

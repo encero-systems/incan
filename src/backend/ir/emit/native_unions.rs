@@ -1,6 +1,6 @@
 //! Publication of native union representations retained from the final emitted wrapper table.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::super::decl::{IrDeclKind, IrFunction, VariantFields};
 use super::{EmitError, IrEmitter, IrProgram, IrType};
@@ -17,6 +17,8 @@ pub(in crate::backend::ir) struct EmittedDeclarationTypes {
     anchor: SourceAnchor,
     source_name: String,
     replacements: Vec<(TypeRef, TypeRef)>,
+    /// Admitted direct dependencies needed by this public declaration's native signature.
+    pub(in crate::backend::ir) bridge_roots: BTreeSet<String>,
 }
 
 impl EmittedDeclarationTypes {
@@ -309,9 +311,18 @@ impl IrEmitter<'_> {
                 }
             }
             let mut replacements = Vec::new();
+            let mut bridge_roots = BTreeSet::new();
             for (original, lowered) in pairs {
-                let projected =
+                let mut projected =
                     self.project_emitted_union_type(original, lowered, definitions, origins, &local_nominals)?;
+                projected.visit_type_refs(&mut |ty| {
+                    if let TypeRef::NativeUnion(native) = ty {
+                        if let Some(projection) = &native.checked_projection {
+                            bridge_roots.insert(projection.dependency_root.clone());
+                        }
+                        *native = native.for_publication();
+                    }
+                });
                 if projected != *original {
                     projected.clone().visit_type_refs(&mut |ty| {
                         if let TypeRef::NativeUnion(native) = ty
@@ -324,7 +335,7 @@ impl IrEmitter<'_> {
                     replacements.push((original.clone(), projected));
                 }
             }
-            if !replacements.is_empty() {
+            if !replacements.is_empty() || !bridge_roots.is_empty() {
                 captured.push(EmittedDeclarationTypes {
                     module_path: module.module_path.clone(),
                     anchor: anchor.clone(),
@@ -334,6 +345,7 @@ impl IrEmitter<'_> {
                         })?
                         .to_string(),
                     replacements,
+                    bridge_roots,
                 });
             }
         }
@@ -390,7 +402,7 @@ impl IrEmitter<'_> {
             native: Some(native), ..
         } = &lowered
         {
-            return Ok(TypeRef::NativeUnion(native.for_publication()));
+            return Ok(TypeRef::NativeUnion(native.as_ref().clone()));
         }
         if lowered.is_union() && !matches!(lowered, IrType::ExternalUnion { .. }) {
             let Some((name, emitted)) = definitions.iter().find(|(_, emitted)| **emitted == lowered) else {
@@ -1189,6 +1201,7 @@ mod tests {
             None,
             [],
         )?);
+        assert_private_signature_bridge_projection(&plan)?;
         let source = "pub from pub::admitted import select as forwarded\n";
         let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
             .map_err(|errors| format!("{errors:?}"))?;
@@ -1246,6 +1259,58 @@ mod tests {
             .err()
             .ok_or("unproven foreign callable was accepted")?;
         assert!(error.contains("no admitted declaring artifact"), "{error}");
+        Ok(())
+    }
+
+    /// Only a public typed use of a privately imported native carrier publishes its admitted provider bridge.
+    fn assert_private_signature_bridge_projection(plan: &std::sync::Arc<crate::provider::ProviderPlan>) -> TestResult {
+        for (source, expected) in [
+            (
+                "from pub::admitted import Answer\npub def echo(value: Answer) -> Answer:\n    return value\n",
+                true,
+            ),
+            (
+                "from pub::admitted import Answer\npub def plain() -> int:\n    return 0\n",
+                false,
+            ),
+            (
+                "from pub::admitted import Answer, select\npub def plain() -> int:\n    select(1)\n    return 0\n",
+                false,
+            ),
+        ] {
+            let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let module_path = vec!["lib".to_string()];
+            let mut checker = TypeChecker::new();
+            checker.set_current_package_identity(Some("facade".into()));
+            checker.set_current_module_path(Some(module_path.clone()));
+            checker.set_provider_plan(plan.clone());
+            checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+            assert!(checker.type_info().declarations.public_type_bridge_roots.is_empty());
+            let exports = crate::frontend::library_exports::collect_checked_public_exports(&ast, &checker);
+            let mut facade = LibraryManifest::from_checked_exports("facade", "1.0.0", &exports);
+            facade.contract_metadata.api = Some(CheckedApiMetadataPackage {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                package: None,
+                modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+                public_namespaces: Vec::new(),
+            });
+            let mut codegen = crate::backend::ir::IrCodegen::new();
+            codegen.set_provider_plan(plan.clone());
+            codegen.set_preserve_dependency_public_items(true);
+            codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+            codegen.set_publication_api(facade.contract_metadata.api.clone());
+            codegen.set_publication_identities(facade.name.clone(), facade.contract_metadata.identity_graph.clone());
+            let (rust, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+            metadata.apply_to_library_manifest(&mut facade)?;
+            assert_eq!(rust.contains("pub use ::admitted;"), expected, "{source}\n{rust}");
+            if expected {
+                assert!(matches!(
+                    facade.exports.functions[0].return_type,
+                    TypeRef::NativeUnion(_)
+                ));
+            }
+        }
         Ok(())
     }
 
