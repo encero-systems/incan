@@ -22,13 +22,22 @@ if [ -n "$report" ]; then
     if ! mkdir -p -- "$(dirname -- "$report")"; then
         retention_failed=true
     fi
+    # A repeated local replay must not pair this run's JSON with a previous run's transcript archive.
+    if ! rm -f -- "$report.transcripts.tar.gz"; then
+        retention_failed=true
+    fi
     if [ -s "$suite_output/compiler-suite-report.json" ]; then
         if ! cp -- "$suite_output/compiler-suite-report.json" "$report"; then
             retention_failed=true
         fi
-    elif [ "$suite_succeeded" = true ]; then
-        echo "Oven replay succeeded without its requested JSON report" >&2
-        retention_failed=true
+    else
+        if ! rm -f -- "$report"; then
+            retention_failed=true
+        fi
+        if [ "$suite_succeeded" = true ]; then
+            echo "Oven replay succeeded without its requested JSON report" >&2
+            retention_failed=true
+        fi
     fi
 
     # A report-write failure must not hide the transcripts that were already produced. Stage the archive in caller

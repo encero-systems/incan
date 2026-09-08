@@ -20,7 +20,7 @@ INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT ?= $(CURDIR)/target
 INCAN_TEST_OVEN_BAKE_FORMAT ?= text
 INCAN_TEST_OVEN_BAKE_REPORT ?=
 # Optional caller-owned location for the compiler-suite JSON report. The default test target removes its one-use
-# caller output; setting this retains the report, which carries every root's measured durations and case timings.
+# caller output; setting this retains the report with every root's timings and a sibling transcript archive.
 INCAN_TEST_OVEN_COMPILER_SUITE_REPORT ?=
 # Optional caller-owned location for a successful `test-one` compiler-suite JSON report. The focused command keeps
 # its disposable output clean by default; a diagnostic caller can retain only the report for nested-command analysis.

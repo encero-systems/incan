@@ -12,7 +12,7 @@ SCRIPT = Path(__file__).with_name("retain_oven_suite_output.sh")
 
 
 class TranscriptRetentionTests(unittest.TestCase):
-    def run_cleanup(self, *, report_exists=True, succeeded=True, broken_tar=False):
+    def run_cleanup(self, *, report_exists=True, succeeded=True, broken_tar=False, previous_evidence=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -27,6 +27,10 @@ class TranscriptRetentionTests(unittest.TestCase):
         if report_exists:
             (output / "compiler-suite-report.json").write_text('{"probe": true}\n')
         destination = root / "retained" / "report.json"
+        if previous_evidence:
+            destination.parent.mkdir()
+            destination.write_text('{"previous_run": true}\n')
+            Path(str(destination) + ".transcripts.tar.gz").write_bytes(b"previous run archive")
         environment = os.environ.copy()
         if broken_tar:
             shim = root / "shim"
@@ -80,6 +84,22 @@ class TranscriptRetentionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertTrue(output.exists())
         self.assert_archive(destination)
+
+    def test_failed_replay_without_report_cannot_reuse_an_older_report(self):
+        result, output, _, destination = self.run_cleanup(
+            report_exists=False, succeeded=False, previous_evidence=True
+        )
+        self.assertEqual(result.returncode, 9, result.stderr)
+        self.assertTrue(output.exists())
+        self.assertFalse(destination.exists(), "an earlier run's report was left as current evidence")
+        self.assert_archive(destination)
+
+    def test_archive_failure_cannot_pair_a_new_report_with_an_older_archive(self):
+        result, output, _, destination = self.run_cleanup(broken_tar=True, previous_evidence=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertTrue(output.exists())
+        self.assertEqual(destination.read_text(), '{"probe": true}\n')
+        self.assertFalse(Path(str(destination) + ".transcripts.tar.gz").exists())
 
 
 if __name__ == "__main__":

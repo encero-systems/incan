@@ -94,3 +94,22 @@ The pinned Rust harness writes these outcomes to a private result file supplied 
 Run `make test-oven-case-timings` to retain `target/oven-compiler-suite-case-timings.json` and its `.transcripts.tar.gz` sibling. When `INCAN_TEST_OVEN_COMPILER_SUITE_REPORT` names another report file, replay retains the transcript archive beside that file. CI uploads each partition's report for 30 days and its full native transcripts for seven days, on success and failure. These artifacts supply the duration evidence needed by replay weighting; producing them does not imply the current partitioner consumes them.
 
 For reporting-overhead measurements, hold the root binary, verified inventory, worker/thread budgets, environment, warm providers, and output destination fixed. Alternate baseline and candidate runs and report median, spread, CPU time, and emitted bytes. Include both a quiet workload and a deterministic high-output workload. Separate console I/O from parsing by repeating with a collecting sink. A microbenchmark cannot explain heavy-root wall time: measure the same prewarmed integration roots before making that claim, and distinguish root execution from total CI job duration.
+
+### Controlled reporting probe
+
+A macOS arm64 probe on 8 September 2026 compared the runner at `5ff730ffb` with the result-channel implementation above. Both runner modules were compiled together with Rust 1.99.0-nightly (`504869653`); the identical native workload binaries used the pinned CI Rust 1.98.0 (`88d9e12ae`). This isolates native reporting behavior from the separate full compiler verification gate.
+
+Each workload selected eight cases with two libtest threads, over seven alternating baseline/candidate pairs per sink. The quiet cases only emitted a completion marker; the high-output cases produced 80,000 captured stdout lines and 80,000 uncaptured stderr lines in total. Every run verified complete work and eight passing cases. `collect` buffered progress in memory; `stderr` wrote to a regular file, not an interactive terminal. CPU is child-process user plus system time, including the runner and its descendants.
+
+| Workload | Sink | Runner | Median wall ms | Min–max ms | Median CPU s | Progress bytes |
+|---|---|---|---:|---|---:|---:|
+| quiet | collect | baseline | 110.159 | 104.254–114.561 | 0.00800 | 647 |
+| quiet | collect | candidate | 11.533 | 10.267–15.527 | 0.01306 | 328 |
+| quiet | stderr | baseline | 113.999 | 104.331–114.413 | 0.00860 | 647 |
+| quiet | stderr | candidate | 11.589 | 10.526–14.976 | 0.01396 | 328 |
+| high_output | collect | baseline | 263.977 | 257.991–272.117 | 0.32868 | 10,222,887 |
+| high_output | collect | candidate | 149.826 | 144.816–153.642 | 0.21191 | 328 |
+| high_output | stderr | baseline | 687.760 | 672.039–698.220 | 0.84243 | 10,222,887 |
+| high_output | stderr | candidate | 152.676 | 145.728–154.286 | 0.20967 | 328 |
+
+The quiet cases cost a few more CPU milliseconds to own and validate the result channel, while removing the heartbeat's 100 ms shutdown poll lowers wall time. Retaining successful diagnostics in transcripts reduces console traffic and high-output CPU cost. These probes use no SDK/provider work and do not establish heavy-root throughput or explain historical CI job duration. The prewarmed-root comparison and complete partition reports remain separate evidence.

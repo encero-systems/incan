@@ -660,7 +660,7 @@ fn add_structured_libtest_output(command: &mut Command) {
     command.env_remove("RUST_TEST_NOCAPTURE");
 }
 
-/// Convert libtest's JSON floating-point seconds to a rounded millisecond report value.
+/// Convert libtest's measured seconds to a rounded millisecond report value.
 fn seconds_to_rounded_millis(seconds: f64) -> Option<u64> {
     let milliseconds = seconds * 1_000.0;
     (seconds.is_finite() && seconds >= 0.0 && milliseconds <= u64::MAX as f64).then(|| milliseconds.round() as u64)
@@ -1386,7 +1386,7 @@ fn combined_output(stdout: &[u8], stderr: &[u8]) -> String {
     format!("{}{}", String::from_utf8_lossy(stdout), String::from_utf8_lossy(stderr))
 }
 
-/// Parse libtest's final `test result` line without treating diagnostic text as a result.
+/// Parse the legacy text summary used by public `incan test`.
 ///
 /// This legacy text parser serves `incan test` transcript compatibility only. Compiler-suite roots never derive
 /// evidence from diagnostic streams; their selected harness writes a private result file.
