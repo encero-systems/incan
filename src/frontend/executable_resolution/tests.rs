@@ -906,14 +906,11 @@ fn imported_nominal_result_payload_uses_declaring_type_context() -> Result<(), B
     Ok(())
 }
 
-/// Same-spelled nominal declarations retain separate artifacts through aliases, nested leaves and local shadowing.
-#[test]
-fn two_foreign_products_keep_distinct_signature_origins() -> Result<(), Box<dyn Error>> {
-    use crate::library_manifest::{TypeRef, VisitTypeRefs};
-    let temporary = tempfile::tempdir()?;
+/// Admit two checked packages whose same-spelled nominal declarations must retain distinct artifact identities.
+fn product_pair_provider_plan(root: &Path) -> Result<std::sync::Arc<crate::provider::ProviderPlan>, Box<dyn Error>> {
     let mut entries = HashMap::new();
     for library in ["first", "second"] {
-        let root = temporary.path().join(library);
+        let root = root.join(library);
         let manifest = artifact(&root, library, "pub model Product:\n    pub value: int\n")?;
         entries.insert(
             library.into(),
@@ -928,13 +925,23 @@ fn two_foreign_products_keep_distinct_signature_origins() -> Result<(), Box<dyn 
             },
         );
     }
-    let plan = std::sync::Arc::new(crate::provider::ProviderPlan::from_resolved_inputs(
-        LibraryManifestIndex::from_entries(entries),
-        None,
-        None,
-        None,
-        [],
-    )?);
+    Ok(std::sync::Arc::new(
+        crate::provider::ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::from_entries(entries),
+            None,
+            None,
+            None,
+            [],
+        )?,
+    ))
+}
+
+/// Same-spelled nominal declarations retain separate artifacts through aliases, nested leaves and local shadowing.
+#[test]
+fn two_foreign_products_keep_distinct_signature_origins() -> Result<(), Box<dyn Error>> {
+    use crate::library_manifest::{TypeRef, VisitTypeRefs};
+    let temporary = tempfile::tempdir()?;
+    let plan = product_pair_provider_plan(temporary.path())?;
     let source = "from pub::first import Product as Left\nfrom pub::second import Product as Right\n\npub def combine(left: Left, right: Right, nested: list[Right]) -> int:\n    Left = 1\n    return left.value + right.value + Left\n";
     let mut manifest = artifact_with_provider_plan(&temporary.path().join("pairing"), "pairing", source, plan.clone())?;
     let params = &manifest.exports.functions[0].params;
@@ -980,5 +987,85 @@ fn two_foreign_products_keep_distinct_signature_origins() -> Result<(), Box<dyn 
         errors.iter().any(|error| error.message.contains("type mismatch")),
         "{errors:?}"
     );
+    Ok(())
+}
+
+/// Union coverage follows admitted nominal identities through aliases, optional subjects, groups and guards.
+#[test]
+fn package_union_patterns_cover_exact_selected_nominals() -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let plan = product_pair_provider_plan(temporary.path())?;
+    let imports = "from pub::first import Product as Left\nfrom pub::first import Product as OtherLeft\nfrom pub::second import Product as Right\n\n";
+    let cases = [
+        (
+            "renamed nominal",
+            "def read(value: Union[Left, Right, int]) -> int:\n    match value:\n        OtherLeft(item) => return item.value\n        Right(item) => return item.value\n        int(number) => return number\n",
+            true,
+        ),
+        (
+            "optional grouped alternation",
+            "def read(value: Union[Left, Right, int] | None) -> int:\n    match value:\n        (OtherLeft(_)) | Right(_) => return 1\n        int(number) => return number\n        None => return 0\n",
+            true,
+        ),
+        (
+            "union alias subset",
+            "type Pair = Union[OtherLeft, Right]\n\ndef read(value: Union[Left, Right, int]) -> int:\n    match value:\n        Pair(_) => return 1\n        int(number) => return number\n",
+            true,
+        ),
+        (
+            "other selected artifact uncovered",
+            "def read(value: Union[Left, Right, int]) -> int:\n    match value:\n        OtherLeft(_) => return 1\n        Left(_) => return 2\n        int(number) => return number\n",
+            false,
+        ),
+        (
+            "guard does not prove coverage",
+            "def read(value: Union[Left, Right, int]) -> int:\n    match value:\n        case OtherLeft(item) if item.value > 0:\n            return item.value\n        case Right(item):\n            return item.value\n        case int(number):\n            return number\n",
+            false,
+        ),
+        (
+            "optional None uncovered",
+            "def read(value: Union[Left, Right, int] | None) -> int:\n    match value:\n        OtherLeft(_) | Right(_) => return 1\n        int(number) => return number\n",
+            false,
+        ),
+    ];
+    for (label, body, accepted) in cases {
+        let source = format!("{imports}{body}");
+        let program = parser::parse(&lexer::lex(&source).map_err(|error| format!("{label}: {error:?}"))?)
+            .map_err(|error| format!("{label}: {error:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.set_provider_plan(plan.clone());
+        match checker.check_program(&program) {
+            Ok(()) if accepted => {
+                let origins = &checker.type_info().declarations.named_type_origins;
+                let left = origins.get("Left").ok_or("left checked origin missing")?;
+                let right = origins.get("Right").ok_or("right checked origin missing")?;
+                assert_eq!(left.canonical.declaration_name, right.canonical.declaration_name);
+                assert_ne!(left.provider, right.provider);
+            }
+            Err(errors) if !accepted && errors.iter().any(|error| error.message.contains("Non-exhaustive")) => {}
+            result => return Err(format!("{label}: unexpected check result {result:?}").into()),
+        }
+    }
+    Ok(())
+}
+
+/// Assignment-compatible numeric representations remain distinct alternatives for exhaustive union matching.
+#[test]
+fn numeric_union_patterns_preserve_distinct_alternatives() -> Result<(), Box<dyn Error>> {
+    for (arms, accepted) in [
+        ("        int(_) => return 1\n        i32(_) => return 2\n", true),
+        ("        int(_) => return 1\n", false),
+    ] {
+        let source = format!("def read(value: Union[int, i32]) -> int:\n    match value:\n{arms}");
+        let program = parser::parse(&lexer::lex(&source).map_err(|error| format!("{error:?}"))?)
+            .map_err(|error| format!("{error:?}"))?;
+        let mut checker = TypeChecker::new();
+        match checker.check_program(&program) {
+            Ok(()) if accepted => {}
+            Err(errors) if !accepted && errors.iter().any(|error| error.message.contains("Non-exhaustive")) => {}
+            result => return Err(format!("numeric union coverage: unexpected check result {result:?}").into()),
+        }
+    }
     Ok(())
 }
