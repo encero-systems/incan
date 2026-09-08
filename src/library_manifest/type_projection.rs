@@ -336,6 +336,7 @@ pub(crate) fn with_checked_native_unions<T: VisitTypeRefs>(
             _ => {}
         });
         bound.checked_projection = Some(Box::new(super::model::NativeUnionProjection {
+            dependency_root: library.to_string(),
             rust_owner,
             members,
             nominal_origins: BTreeMap::new(),

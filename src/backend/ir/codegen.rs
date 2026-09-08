@@ -711,6 +711,11 @@ impl<'a> IrCodegen<'a> {
             &self.publication_package_name,
             &self.publication_identities,
         )?;
+        self.provider_rust_bridge_roots.extend(
+            declarations
+                .iter()
+                .flat_map(|declaration| declaration.bridge_roots.iter().cloned()),
+        );
         self.emitted_declaration_types.extend(declarations);
         for definition in definitions {
             if let Some(existing) = self
@@ -2178,8 +2183,6 @@ impl<'a> IrCodegen<'a> {
                 direct_generated_path_support_items: Some(&mut dependency_reachable_items),
             },
         )?;
-        let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-
         let source_module_paths = lowered_modules
             .iter()
             .map(|(_, module_path, _)| module_path.clone())
@@ -2258,7 +2261,7 @@ impl<'a> IrCodegen<'a> {
             modules.insert(name.clone(), module_code);
         }
 
-        Ok((main_code, modules))
+        Ok((self.attach_provider_rust_dependency_bridge(main_code), modules))
     }
 
     /// Generate Rust code for a multi-file project with nested module paths
@@ -2481,8 +2484,6 @@ impl<'a> IrCodegen<'a> {
                 direct_generated_path_support_items: Some(&mut dependency_reachable_items),
             },
         )?;
-        let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-
         let source_module_paths = lowered_modules
             .iter()
             .map(|(module_path, _)| module_path.clone())
@@ -2567,7 +2568,7 @@ impl<'a> IrCodegen<'a> {
             modules.insert(path.clone(), module_code);
         }
 
-        Ok((main_code, modules))
+        Ok((self.attach_provider_rust_dependency_bridge(main_code), modules))
     }
 }
 
