@@ -8058,6 +8058,7 @@ mod tests {
             name: "child".to_string(),
             span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            named_type_identities: Default::default(),
             locals: Vec::new(),
             params: Vec::new(),
             param_locals: Vec::new(),

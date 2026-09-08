@@ -1608,6 +1608,7 @@ mod tests {
                 name: "secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 surface_type_name: None,
@@ -1621,6 +1622,7 @@ mod tests {
                 name: "label".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,
@@ -1635,6 +1637,7 @@ mod tests {
             name: "unrelated".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "bool".to_string(),
             },
             surface_type_name: None,
@@ -1694,6 +1697,7 @@ mod tests {
             name: "size".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             surface_type_name: None,
@@ -1720,6 +1724,7 @@ mod tests {
             name: "size".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             surface_type_name: None,

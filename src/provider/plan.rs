@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
@@ -19,7 +19,7 @@ use super::features::feature_value_location;
 use super::{PackageFeaturePlan, ResolvedSdkComponents, SdkInventory};
 
 /// Stable identity of one immutable compiled-provider projection.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ProviderIdentity {
     /// Provider package or SDK artifact name.
     pub name: String,
@@ -293,6 +293,8 @@ struct ResolvedArtifactGraph {
     rebindings: Vec<SdkDependencyRebinding>,
     projections: Vec<SdkArtifactProjection>,
     public_artifacts: BTreeMap<String, PublicProviderArtifact>,
+    /// Public dependency edges retained by artifact admission, keyed by the containing artifact root.
+    public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
 }
 
 /// Immutable provider catalog and active module projection shared by every compiler stage.
@@ -305,6 +307,8 @@ pub struct ProviderPlan {
     sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
     sdk_artifact_projections: Vec<SdkArtifactProjection>,
     public_artifacts: BTreeMap<String, PublicProviderArtifact>,
+    /// Public dependency edges retained by artifact admission, keyed by the containing artifact root.
+    public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
@@ -361,6 +365,7 @@ impl ProviderPlan {
             sdk_dependency_rebindings: artifact_graph.rebindings,
             sdk_artifact_projections: artifact_graph.projections,
             public_artifacts: artifact_graph.public_artifacts,
+            public_dependencies: artifact_graph.public_dependencies,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         })
     }
@@ -373,6 +378,177 @@ impl ProviderPlan {
     /// Return public materialized artifacts already admitted by this plan, including validated transitive facades.
     pub(crate) fn public_artifacts(&self) -> impl Iterator<Item = &PublicProviderArtifact> {
         self.public_artifacts.values()
+    }
+
+    /// Project a foreign type through already-admitted public dependency edges and exact public membership.
+    ///
+    /// This query does not read dependency source or rediscover artifacts. The native route follows the existing
+    /// compiler-owned dependency bridge, while semantic identity remains the selected artifact and declaration.
+    pub(crate) fn public_nominal_projection(
+        &self,
+        importing_library: &str,
+        origin: &crate::library_manifest::NominalTypeOriginExport,
+    ) -> Result<
+        (
+            PublicProviderArtifact,
+            crate::library_manifest::ExportIdentity,
+            Vec<String>,
+        ),
+        String,
+    > {
+        let (target, export) = self.public_nominal_declaration(origin)?;
+        let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
+            self.library_manifest_index.get(importing_library)
+        else {
+            return Err(format!(
+                "public signature has no admitted importing library `{importing_library}`"
+            ));
+        };
+        let target_root = normalize_artifact_root(&target.artifact.crate_root);
+        let mut pending =
+            std::collections::VecDeque::from([(normalize_artifact_root(&metadata.crate_root), Vec::new())]);
+        let mut seen = BTreeSet::new();
+        while let Some((root, route)) = pending.pop_front() {
+            if !seen.insert(root.clone()) {
+                continue;
+            }
+            if root == target_root {
+                return Ok((target.clone(), export.clone(), route));
+            }
+            for (dependency, key) in self.public_dependencies.get(&root).into_iter().flatten() {
+                let admitted = self
+                    .public_artifacts
+                    .get(key)
+                    .ok_or("admitted public edge has no target artifact")?;
+                let mut child_route = route.clone();
+                child_route.push(dependency.clone());
+                pending.push_back((normalize_artifact_root(&admitted.artifact.crate_root), child_route));
+            }
+        }
+        Err(format!(
+            "public signature in `{importing_library}` has no admitted public dependency route to {}",
+            origin.provider.stable_key()
+        ))
+    }
+
+    /// Resolve exact foreign nominal membership independently of its consumer's physical exposure route.
+    pub(crate) fn public_nominal_declaration(
+        &self,
+        origin: &crate::library_manifest::NominalTypeOriginExport,
+    ) -> Result<(PublicProviderArtifact, crate::library_manifest::ExportIdentity), String> {
+        let target = self
+            .public_artifacts
+            .get(&origin.provider.stable_key())
+            .ok_or_else(|| {
+                format!(
+                    "public signature requires unadmitted type artifact {}",
+                    origin.provider.stable_key()
+                )
+            })?;
+        let canonical = origin
+            .canonical
+            .hydrate()
+            .ok_or("public signature has an invalid nominal identity")?;
+        if !matches!(&canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. }
+            if library == &target.identity.name)
+        {
+            return Err("public signature nominal identity belongs to a different package".to_string());
+        }
+        let export = target
+            .manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .filter(|entry| entry.canonical.as_ref() == Some(&origin.canonical))
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    crate::library_manifest::ExportIdentityKind::Model
+                        | crate::library_manifest::ExportIdentityKind::Class
+                        | crate::library_manifest::ExportIdentityKind::Enum
+                        | crate::library_manifest::ExportIdentityKind::Newtype
+                )
+            })
+            .min_by(|left, right| {
+                left.public_path
+                    .len()
+                    .cmp(&right.public_path.len())
+                    .then(left.public_path.cmp(&right.public_path))
+            })
+            .ok_or_else(|| {
+                format!(
+                    "type `{}` is not a public nominal of {}",
+                    canonical.declaration_name,
+                    origin.provider.stable_key()
+                )
+            })?;
+        Ok((target.clone(), export.clone()))
+    }
+
+    /// Find the exact declaring artifact reachable through already-admitted public edges of one import container.
+    ///
+    /// Canonical package names alone cannot select among multiple artifact generations. Such ambiguity refuses
+    /// instead of collapsing nominal types; explicit leaf origins avoid it in newly published signatures.
+    pub(crate) fn declaring_public_provider(
+        &self,
+        importing_library: &str,
+        canonical: &incan_semantics_core::CanonicalSymbolId,
+    ) -> Result<ProviderIdentity, String> {
+        let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
+            self.library_manifest_index.get(importing_library)
+        else {
+            return Err(format!("import container `{importing_library}` is unavailable"));
+        };
+        let mut pending = vec![normalize_artifact_root(&metadata.crate_root)];
+        let mut seen = BTreeSet::new();
+        let mut candidates = BTreeMap::new();
+        while let Some(root) = pending.pop() {
+            if !seen.insert(root.clone()) {
+                continue;
+            }
+            for artifact in self
+                .public_artifacts
+                .values()
+                .filter(|artifact| normalize_artifact_root(&artifact.artifact.crate_root) == root)
+            {
+                if matches!(&canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. }
+                    if library == &artifact.identity.name)
+                    && artifact
+                        .manifest
+                        .contract_metadata
+                        .identity_graph
+                        .exports
+                        .iter()
+                        .any(|entry| {
+                            entry
+                                .canonical
+                                .as_ref()
+                                .and_then(|identity| identity.hydrate())
+                                .as_ref()
+                                == Some(canonical)
+                        })
+                {
+                    candidates.insert(artifact.identity.stable_key(), artifact.identity.clone());
+                }
+            }
+            for (_, key) in self.public_dependencies.get(&root).into_iter().flatten() {
+                if let Some(artifact) = self.public_artifacts.get(key) {
+                    pending.push(normalize_artifact_root(&artifact.artifact.crate_root));
+                }
+            }
+        }
+        if candidates.len() != 1 {
+            return Err(format!(
+                "type `{}` has {} admitted declaring artifacts through `{importing_library}`",
+                canonical.declaration_name,
+                candidates.len()
+            ));
+        }
+        candidates
+            .into_values()
+            .next()
+            .ok_or("declaring artifact disappeared".into())
     }
 
     /// Return artifact projections needed to replace stale physical SDK cache paths without mutating either artifact.
@@ -440,6 +616,7 @@ impl ProviderPlan {
             sdk_dependency_rebindings: Vec::new(),
             sdk_artifact_projections: Vec::new(),
             public_artifacts: BTreeMap::new(),
+            public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -507,6 +684,7 @@ impl ProviderPlan {
             sdk_dependency_rebindings: Vec::new(),
             sdk_artifact_projections: Vec::new(),
             public_artifacts: BTreeMap::new(),
+            public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -720,6 +898,7 @@ fn resolve_artifact_graph(
         .filter(|record| matches!(record.authority, NamespaceAuthority::SdkReserved))
         .collect::<Vec<_>>();
     let mut public_artifacts = BTreeMap::new();
+    let mut public_dependencies = BTreeMap::new();
     let mut rebindings = Vec::new();
     let mut projected = BTreeMap::<PathBuf, LibraryArtifactMetadata>::new();
     let mut visited = BTreeSet::new();
@@ -751,6 +930,7 @@ fn resolve_artifact_graph(
             &mut rebindings,
             &mut projected,
             &mut public_artifacts,
+            &mut public_dependencies,
         )?;
     }
     rebindings.sort_by(|left, right| {
@@ -778,6 +958,7 @@ fn resolve_artifact_graph(
         rebindings,
         projections,
         public_artifacts,
+        public_dependencies,
     })
 }
 
@@ -793,6 +974,7 @@ fn resolve_sdk_artifact_projection(
     rebindings: &mut Vec<SdkDependencyRebinding>,
     projected: &mut BTreeMap<PathBuf, LibraryArtifactMetadata>,
     public_artifacts: &mut BTreeMap<String, PublicProviderArtifact>,
+    public_dependencies: &mut BTreeMap<PathBuf, Vec<(String, String)>>,
 ) -> Result<bool, ProviderPlanError> {
     let artifact_root = normalize_artifact_root(&artifact.crate_root);
     if visited.contains(&artifact_root) {
@@ -882,6 +1064,10 @@ fn resolve_sdk_artifact_projection(
             digest: dependency.artifact_digest.clone(),
             feature_projection: dependency_manifest.contract_metadata.provider.active_features.clone(),
         };
+        public_dependencies
+            .entry(artifact_root.clone())
+            .or_default()
+            .push((dependency.dependency_key.clone(), identity.stable_key()));
         public_artifacts.insert(
             identity.stable_key(),
             PublicProviderArtifact {
@@ -900,6 +1086,7 @@ fn resolve_sdk_artifact_projection(
             rebindings,
             projected,
             public_artifacts,
+            public_dependencies,
         )? {
             requires_projection = true;
         }

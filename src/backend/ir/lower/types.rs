@@ -186,7 +186,20 @@ impl AstLowering {
 
     /// Lower one public manifest type reference in the context of its owning library.
     pub(super) fn lower_pub_manifest_type_ref(&self, library: &str, ty: &crate::library_manifest::TypeRef) -> IrType {
-        self.lower_pub_manifest_type(library, &resolved_type_from_manifest_type_ref(ty))
+        self.lower_pub_manifest_type(library, &self.checked_pub_manifest_type_ref(library, ty))
+    }
+
+    /// Project retained nominal origins through the exact native routes selected by the successful checker.
+    ///
+    /// The manifest's binding token is an identity carrier, never a Rust path. Missing checked route evidence leaves
+    /// the type unsupported instead of guessing a dependency alias or exposing that token to code generation.
+    fn checked_pub_manifest_type_ref(&self, library: &str, ty: &crate::library_manifest::TypeRef) -> ResolvedType {
+        let routes = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.declarations.foreign_pub_type_remappings.get(library));
+        let projected = crate::library_manifest::with_checked_type_routes(ty.clone(), routes);
+        resolved_type_from_manifest_type_ref(&projected)
     }
 
     /// Mark every type in a callable signature that belongs to a public dependency as dependency-owned.
@@ -320,7 +333,7 @@ impl AstLowering {
         if !expanding.insert(name.clone()) {
             return None;
         }
-        let target = resolved_type_from_manifest_type_ref(&alias.target);
+        let target = self.checked_pub_manifest_type_ref(library, &alias.target);
         let expanded = self.expand_pub_manifest_type_aliases(library, target, expanding);
         let expanded = self.lower_resolved_type(&expanded);
         expanding.remove(&name);
@@ -400,7 +413,7 @@ impl AstLowering {
         if alias.type_params.len() != args.len() || !expanding.insert(name.clone()) {
             return None;
         }
-        let target = resolved_type_from_manifest_type_ref(&alias.target);
+        let target = self.checked_pub_manifest_type_ref(library, &alias.target);
         let substituted = if alias.type_params.is_empty() {
             target
         } else {
@@ -1302,6 +1315,65 @@ mod tests {
     use crate::frontend::symbols::ResolvedType;
     use crate::frontend::typechecker::canonical_public_library_type_name;
     use incan_core::lang::types::numerics::NumericTypeId;
+
+    /// Ordinary manifest signatures, including nested callable leaves, consume checked native bridge routes.
+    #[test]
+    fn foreign_manifest_signatures_use_checked_native_routes() {
+        use crate::library_manifest::TypeRef;
+        let origin = crate::library_manifest::NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "catalog".into(),
+                version: "1.2.3".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: crate::library_manifest::CanonicalIdentityExport {
+                namespace: crate::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
+                origin: crate::library_manifest::CanonicalIdentityOriginExport::Package {
+                    library: "catalog".into(),
+                    module_path: vec!["lib".into()],
+                },
+                declaration_name: "Product".into(),
+                kind: "model".into(),
+                declaration_span: crate::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 20 },
+            },
+        };
+        let leaf = TypeRef::Named {
+            name: "Product".into(),
+            origin: Some(origin.clone()),
+        };
+        let signature = TypeRef::Function {
+            params: vec![TypeRef::Tuple {
+                elements: vec![leaf.clone()],
+            }],
+            return_type: Box::new(TypeRef::Applied {
+                name: "list".into(),
+                args: vec![leaf.clone()],
+                origin: None,
+            }),
+        };
+        let mut facts = crate::frontend::typechecker::TypeCheckInfo::default();
+        facts.declarations.foreign_pub_type_remappings.insert(
+            "pricing".into(),
+            std::collections::HashMap::from([(
+                origin.binding_key(),
+                "pub::pricing::__incan_provider_rust::catalog::Product".into(),
+            )]),
+        );
+        let lowering = AstLowering::new_with_type_info(facts);
+        let nominal = IrType::Struct("::pricing::__incan_provider_rust::catalog::Product".into());
+        assert_eq!(
+            lowering.lower_pub_manifest_type_ref("pricing", &signature),
+            IrType::Function {
+                params: vec![IrType::Tuple(vec![nominal.clone()])],
+                ret: Box::new(IrType::List(Box::new(nominal))),
+            }
+        );
+        assert_eq!(
+            AstLowering::new().lower_pub_manifest_type_ref("pricing", &leaf),
+            IrType::Unknown
+        );
+    }
 
     #[test]
     fn exact_binary_float_arithmetic_keeps_its_native_ir_width() {

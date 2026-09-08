@@ -3309,13 +3309,17 @@ impl<'a> LibraryReexportResolver<'a> {
                 continue;
             }
 
-            if let ImportKind::RustFrom {
-                crate_name,
-                path,
-                items,
-                ..
-            } = &import.kind
-            {
+            let checked_external_import = match &import.kind {
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    items,
+                    ..
+                } => Some(("rust", crate_name, path, items)),
+                ImportKind::PubFrom { library, path, items } => Some(("pub", library, path, items)),
+                _ => None,
+            };
+            if let Some((namespace, provider, path, items)) = checked_external_import {
                 let Some(exports_by_name) = self.module_exports.get(&module_key(&lib_module.path_segments)) else {
                     errors.push(diagnostics::errors::library_reexport_unknown_module(
                         &module_key(&lib_module.path_segments),
@@ -3324,7 +3328,7 @@ impl<'a> LibraryReexportResolver<'a> {
                     ));
                     continue;
                 };
-                let mut source_segments = vec!["rust".to_string(), crate_name.clone()];
+                let mut source_segments = vec![namespace.to_string(), provider.clone()];
                 source_segments.extend(path.iter().cloned());
                 let source_path = source_segments.join("::");
 
@@ -10014,8 +10018,9 @@ fn materialize_completed_library_outputs<T>(
     complete: impl FnOnce() -> CliResult<T>,
 ) -> CliResult<T> {
     let receipt_path = default_backend_receipt_path(project_root);
-    let expected_receipt = serde_json::to_vec_pretty(backend_receipt)
+    let mut expected_receipt = serde_json::to_vec_pretty(backend_receipt)
         .map_err(|error| CliError::failure(format!("failed to encode completed library receipt: {error}")))?;
+    expected_receipt.push(b'\n');
     let current = outputs.iter().try_fold(true, |current, output| {
         Ok::<_, CliError>(project_output_projection_is_current(project_root, output)? && current)
     })?;
@@ -19213,6 +19218,7 @@ impl ChildId {
             kind: CheckedExportKind::Alias(crate::frontend::library_exports::CheckedAliasExport {
                 name: "PublicWidget".to_string(),
                 target_path: vec!["widgets".to_string(), "Widget".to_string()],
+                projected_type: None,
                 projected_function: None,
             }),
         };
@@ -19276,6 +19282,7 @@ impl ChildId {
             kind: CheckedExportKind::Alias(crate::frontend::library_exports::CheckedAliasExport {
                 name: "run".to_string(),
                 target_path: vec!["provider".to_string(), "helper".to_string()],
+                projected_type: None,
                 projected_function: Some(callable),
             }),
         };
@@ -19342,6 +19349,7 @@ impl ChildId {
                     "receiver_factory".to_string(),
                     "PairFactory".to_string(),
                 ],
+                projected_type: None,
                 projected_function: None,
             }),
         };

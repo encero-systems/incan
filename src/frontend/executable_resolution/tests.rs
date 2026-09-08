@@ -38,12 +38,23 @@ fn resolve_executable_requirements(
 
 /// Produce a manifest and semantic surface from one checked source input, using the real identity exporter.
 fn artifact(root: &Path, library: &str, source: &str) -> Result<LibraryManifest, Box<dyn Error>> {
+    artifact_with_provider_plan(root, library, source, std::sync::Arc::new(Default::default()))
+}
+
+/// Check a producer against an already admitted dependency graph before projecting its public manifest.
+fn artifact_with_provider_plan(
+    root: &Path,
+    library: &str,
+    source: &str,
+    provider_plan: std::sync::Arc<crate::provider::ProviderPlan>,
+) -> Result<LibraryManifest, Box<dyn Error>> {
     let tokens = lexer::lex(source).map_err(|error| format!("{error:?}"))?;
     let program = parser::parse(&tokens).map_err(|error| format!("{error:?}"))?;
     let module_path = vec!["lib".to_string()];
     let mut checker = TypeChecker::new();
     checker.set_current_module_path(Some(module_path.clone()));
     checker.set_current_package_identity(Some(library.to_string()));
+    checker.set_provider_plan(provider_plan);
     checker.check_program(&program).map_err(|error| format!("{error:?}"))?;
     let exports = collect_checked_public_exports(&program, &checker);
     let mut manifest = LibraryManifest::from_checked_exports(library, "1.2.3", &exports);
@@ -370,6 +381,194 @@ fn canonical_frames_reenter_the_entry_module_through_a_checked_cycle() -> Result
     Ok(())
 }
 
+/// A facade callable accepts the nominal result of the same artifact imported under a direct consumer alias.
+#[test]
+fn a_facade_signature_retains_the_admitted_catalog_nominal_identity() -> Result<(), Box<dyn Error>> {
+    exercise_catalog_signature(false)
+}
+
+/// A type facade changes the import route without changing the selected declaration artifact.
+#[test]
+fn a_type_reexport_diamond_retains_the_admitted_catalog_nominal_identity() -> Result<(), Box<dyn Error>> {
+    exercise_catalog_signature(true)
+}
+
+/// Check and execute a signature whose nominal reaches the consumer through a different admitted route.
+fn exercise_catalog_signature(type_facade: bool) -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let catalog_root = temporary.path().join("catalog");
+    let pricing_root = temporary.path().join("pricing");
+    let catalog = artifact(
+        &catalog_root,
+        "catalog",
+        "pub model Product:\n    pub value: int\n\npub def first_product() -> Product:\n    return Product(value=42)\n",
+    )?;
+    let product_identity = catalog
+        .contract_metadata
+        .identity_graph
+        .canonical_for_public_name("Product")
+        .ok_or("checked catalog Product identity missing")?;
+    let catalog_digest = crate::library_manifest::digest_provider_artifact(&catalog_root)?;
+    let facade_root = temporary.path().join("facade");
+    let catalog_plan = || {
+        crate::provider::ProviderPlan::from_resolved_inputs(
+            index(&catalog_root, "catalog", &catalog),
+            None,
+            None,
+            None,
+            [],
+        )
+    };
+    let (import_root, import_manifest) = if type_facade {
+        let mut facade = artifact_with_provider_plan(
+            &facade_root,
+            "facade",
+            "pub from pub::catalog import Product\n",
+            std::sync::Arc::new(catalog_plan()?),
+        )?;
+        attach_public_dependency(&mut facade, "catalog", &catalog, &catalog_root)?;
+        facade.write_to_path(&facade_root.join("facade.incnlib"))?;
+        (facade_root, facade)
+    } else {
+        (catalog_root.clone(), catalog.clone())
+    };
+    let pricing_plan = crate::provider::ProviderPlan::from_resolved_inputs(
+        index(&import_root, "types", &import_manifest),
+        None,
+        None,
+        None,
+        [],
+    )?;
+    let mut pricing = artifact_with_provider_plan(
+        &pricing_root,
+        "pricing",
+        "from pub::types import Product\n\npub def quote(product: Product) -> int:\n    return product.value\n",
+        std::sync::Arc::new(pricing_plan),
+    )?;
+    attach_public_dependency(&mut pricing, "types", &import_manifest, &import_root)?;
+    let crate::library_manifest::TypeRef::Named {
+        origin: Some(origin), ..
+    } = &pricing.exports.functions[0].params[0].ty
+    else {
+        return Err("pricing lost nominal origin".into());
+    };
+    assert_eq!(origin.provider.name, "catalog");
+    assert_eq!(origin.provider.digest, catalog_digest);
+    assert_eq!(origin.canonical.hydrate().as_ref(), Some(&product_identity));
+    pricing.write_to_path(&pricing_root.join("pricing.incnlib"))?;
+    let mut entries = HashMap::new();
+    for (alias, root, manifest) in [
+        ("stock", &catalog_root, catalog),
+        ("pricing", &pricing_root, pricing.clone()),
+    ] {
+        let metadata = LibraryArtifactMetadata::from_manifest_path(
+            alias,
+            &manifest.name,
+            root.join(format!("{}.incnlib", manifest.name)),
+            root.to_path_buf(),
+        );
+        entries.insert(
+            alias.to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata,
+            },
+        );
+    }
+    let plan = crate::provider::ProviderPlan::from_resolved_inputs(
+        LibraryManifestIndex::from_entries(entries),
+        None,
+        None,
+        None,
+        [],
+    )?;
+    let selected_catalogs = plan
+        .public_artifacts()
+        .filter(|artifact| artifact.identity.name == "catalog")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selected_catalogs.len(),
+        1,
+        "both routes must reach one admitted catalog artifact"
+    );
+    assert_eq!(selected_catalogs[0].identity.digest, catalog_digest);
+    assert_eq!(
+        selected_catalogs[0]
+            .manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_name("Product"),
+        Some(product_identity)
+    );
+    let source = "from pub::stock import first_product\nfrom pub::pricing import quote\n\ndef main() -> int:\n    return quote(first_product())\n";
+    let program = parser::parse(&lexer::lex(source).map_err(|error| format!("{error:?}"))?)
+        .map_err(|error| format!("{error:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".into()]));
+    checker.set_provider_plan(std::sync::Arc::new(plan.clone()));
+    checker.check_program(&program).map_err(|errors| format!(
+        "direct/facade nominal check failed: {errors:?}; published pricing signature: {:?}; retained nominal bindings: {:?}",
+        pricing.exports.functions, checker.public_library_type_identities,
+    ))?;
+    let required = ["quote"]
+        .into_iter()
+        .filter_map(|name| pricing.contract_metadata.identity_graph.canonical_for_public_name(name))
+        .collect();
+    let mut required: BTreeSet<_> = required;
+    required.extend(
+        plan.public_artifacts()
+            .filter(|artifact| artifact.identity.name == "catalog")
+            .filter_map(|artifact| {
+                artifact
+                    .manifest
+                    .contract_metadata
+                    .identity_graph
+                    .canonical_for_public_name("first_product")
+            }),
+    );
+    let resolved = super::resolve_executable_requirements(&plan, &required)?;
+    let consumer = crate::frontend::body_ir::build_body_ir_module_v0_with_executable_context(
+        &program,
+        &["main".into()],
+        checker.type_info(),
+        &resolved.modules,
+    );
+    let graph = ReplacementExecutionGraph::new(&consumer, resolved.modules.iter())?;
+    let execution = crate::backend::replacement::prepare_free_function_execution_in_graph(graph, "main", &[], None)?;
+    assert_eq!(
+        crate::backend::replacement::execute_prevalidated_free_function(execution)?
+            .value
+            .observable_text(),
+        "42"
+    );
+    Ok(())
+}
+
+/// Record the same exact public artifact edge used by real library publication.
+fn attach_public_dependency(
+    owner: &mut LibraryManifest,
+    key: &str,
+    target: &LibraryManifest,
+    target_root: &Path,
+) -> Result<(), Box<dyn Error>> {
+    owner
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .push(crate::library_manifest::ProviderDependencyMetadata {
+            kind: crate::library_manifest::ProviderDependencyKind::PublicPackage,
+            dependency_key: key.into(),
+            provider_name: target.name.clone(),
+            provider_version: target.version.clone(),
+            artifact_digest: crate::library_manifest::digest_provider_artifact(target_root)?,
+            relative_artifact_path: format!("../{}", target.name),
+            requested_features: BTreeSet::new(),
+            default_features: true,
+            optional: false,
+        });
+    Ok(())
+}
+
 /// Package identity and version remain attached to absent and incompatible representation refusals.
 #[test]
 fn missing_and_future_representations_are_package_refusals() -> Result<(), Box<dyn Error>> {
@@ -494,13 +693,19 @@ fn aliased_public_model_and_enum_execute_without_a_package_function_call() -> Re
     checker.set_current_module_path(Some(module_path.clone()));
     checker.set_library_manifest_index(index.clone());
     checker.check_program(&program).map_err(|error| format!("{error:?}"))?;
-    let required = checker
+    let facts = checker.type_info().semantic_fact_store(&module_path);
+    let main = checker
         .type_info()
-        .references
-        .resolved_identities
+        .declarations
+        .declaration_identities
         .values()
+        .find(|identity| identity.declaration_name == "main")
+        .ok_or("main identity absent")?
+        .clone();
+    let required = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores([&facts])
+        .reachable_from([main])
+        .into_iter()
         .filter(|identity| matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. }))
-        .cloned()
         .collect();
     let resolved = resolve_executable_requirements(&index, &required)?;
     assert_eq!(resolved.decoded_declarations, 3);
@@ -672,5 +877,82 @@ fn imported_nominal_result_payload_uses_declaring_type_context() -> Result<(), B
             "42"
         );
     }
+    Ok(())
+}
+
+/// Same-spelled nominal declarations retain separate artifacts through aliases, nested leaves and local shadowing.
+#[test]
+fn two_foreign_products_keep_distinct_signature_origins() -> Result<(), Box<dyn Error>> {
+    use crate::library_manifest::{TypeRef, VisitTypeRefs};
+    let temporary = tempfile::tempdir()?;
+    let mut entries = HashMap::new();
+    for library in ["first", "second"] {
+        let root = temporary.path().join(library);
+        let manifest = artifact(&root, library, "pub model Product:\n    pub value: int\n")?;
+        entries.insert(
+            library.into(),
+            LibraryManifestIndexEntry::Loaded {
+                metadata: LibraryArtifactMetadata::from_manifest_path(
+                    library,
+                    library,
+                    root.join(format!("{library}.incnlib")),
+                    root,
+                ),
+                manifest: Box::new(manifest),
+            },
+        );
+    }
+    let plan = std::sync::Arc::new(crate::provider::ProviderPlan::from_resolved_inputs(
+        LibraryManifestIndex::from_entries(entries),
+        None,
+        None,
+        None,
+        [],
+    )?);
+    let source = "from pub::first import Product as Left\nfrom pub::second import Product as Right\n\npub def combine(left: Left, right: Right, nested: list[Right]) -> int:\n    Left = 1\n    return left.value + right.value + Left\n";
+    let mut manifest = artifact_with_provider_plan(&temporary.path().join("pairing"), "pairing", source, plan.clone())?;
+    let params = &manifest.exports.functions[0].params;
+    let TypeRef::Named {
+        origin: Some(first), ..
+    } = &params[0].ty
+    else {
+        return Err("first origin missing".into());
+    };
+    let TypeRef::Named {
+        origin: Some(second), ..
+    } = &params[1].ty
+    else {
+        return Err("second origin missing".into());
+    };
+    assert_eq!(first.canonical.declaration_name, "Product");
+    assert_eq!(second.canonical.declaration_name, "Product");
+    assert_eq!(first.provider.name, "first");
+    assert_eq!(second.provider.name, "second");
+    assert_ne!(first, second);
+    let mut origins = Vec::new();
+    manifest.visit_type_refs(&mut |leaf| {
+        if let TypeRef::Named {
+            origin: Some(origin), ..
+        } = leaf
+        {
+            origins.push(origin.provider.name.clone());
+        }
+    });
+    assert_eq!(origins, ["first", "second", "second"]);
+    let invalid =
+        format!("{source}\ndef main() -> int:\n    wrong = Left(value=1)\n    return combine(wrong, wrong, [])\n");
+    let program = parser::parse(&lexer::lex(&invalid).map_err(|error| format!("{error:?}"))?)
+        .map_err(|error| format!("{error:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".into()]));
+    checker.set_provider_plan(plan);
+    let errors = checker
+        .check_program(&program)
+        .err()
+        .ok_or("distinct selected nominal types were accepted")?;
+    assert!(
+        errors.iter().any(|error| error.message.contains("type mismatch")),
+        "{errors:?}"
+    );
     Ok(())
 }

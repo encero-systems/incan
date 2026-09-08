@@ -861,6 +861,14 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// Checked local model field types keyed by exact field declaration span.
+    pub(crate) model_field_types: HashMap<(usize, usize), ResolvedType>,
+    /// Direct dependency roots required by checked public API nominal types, including callable signatures.
+    pub public_type_bridge_roots: std::collections::BTreeSet<String>,
+    /// Admitted foreign nominal bindings mapped to checked native routes for each direct import container.
+    pub(crate) foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Checked field visibility for local models, keyed first by model name and then canonical field name.
     ///
     /// Field modifiers and the containing model's visibility are resolved by the frontend. Lowering consumes this

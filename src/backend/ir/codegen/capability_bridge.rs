@@ -69,7 +69,7 @@ fn type_bound_matches_capability(bound: &TypeBoundExport, capability: &TraitCapa
             .iter()
             .zip(capability.required_type_args)
             .all(|(actual, required)| {
-                matches!((actual, required), (TypeRef::Named { name }, TraitCapabilityTypeArg::Str) if name == "str")
+                matches!((actual, required), (TypeRef::Named { name, .. }, TraitCapabilityTypeArg::Str) if name == "str")
             })
 }
 
@@ -115,7 +115,8 @@ fn trait_bound_extends_capability(
 fn substitute_type_ref_params(ty: &TypeRef, substitutions: &HashMap<String, TypeRef>) -> TypeRef {
     match ty {
         TypeRef::TypeParam { name } => substitutions.get(name).cloned().unwrap_or_else(|| ty.clone()),
-        TypeRef::Applied { name, args } => TypeRef::Applied {
+        TypeRef::Applied { name, args, origin } => TypeRef::Applied {
+            origin: origin.clone(),
             name: name.clone(),
             args: args
                 .iter()
