@@ -1,6 +1,6 @@
 //! Producer-side vocab companion crate extraction for `incan build --lib`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
