@@ -28,7 +28,6 @@ use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::DependencySpec;
-use crate::oven::legacy_cargo::direct_rustc_compile_environment;
 use crate::oven::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, runtime_build_unit_inputs};
 use crate::oven::native_test::{OvenNativeTestRequest, run_native_test_batch};
 use crate::oven::rustc::{
@@ -2696,11 +2695,7 @@ fn run_file_tests_batch_oven(
         Ok(plan) => plan,
         Err(error) => return failure(error.to_string()),
     };
-    artifact_plan.compile_environment =
-        match direct_rustc_compile_environment(&generated_root, &generator.crate_root_path()) {
-            Ok(environment) => environment,
-            Err(error) => return failure(error.to_string()),
-        };
+    artifact_plan.compile_environment = generator.native_compile_environment();
     if let Err(error) = attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries) {
         return failure(format!("Oven direct-rustc test compilation failed: {error}"));
     }

@@ -21,8 +21,8 @@ use super::interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCH
 use super::legacy_cargo::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage,
     OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
-    canonicalize_supporting_artifacts, copy_regular_directory_tree, direct_rustc_compile_environment,
-    materialized_files_from_directory, prepare_direct_rustc_plan, publisher_capacity_probe_delay,
+    canonicalize_supporting_artifacts, copy_regular_directory_tree, materialized_files_from_directory,
+    prepare_direct_rustc_plan, publisher_capacity_probe_delay,
 };
 use super::process::{isolate_process_group, terminate_process_group};
 use super::rustc::{

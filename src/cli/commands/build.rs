@@ -79,7 +79,7 @@ use crate::oven::interop::{
 };
 use crate::oven::legacy_cargo::{
     OvenLegacyCargoBaseLoaf, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoPrepareRequest,
-    OvenLegacyCargoPublicationKind, digest_local_cargo_workspace_authority, direct_rustc_compile_environment,
+    OvenLegacyCargoPublicationKind, digest_local_cargo_workspace_authority,
     direct_rustc_reusable_project_plan_environment, prepare_direct_rustc_plan, stage_locked_loaf_fixture,
 };
 use crate::oven::loaf::{
@@ -9366,9 +9366,7 @@ fn bake_oven_project(
     if !re_materialized_package_library_names.is_empty() {
         replace_selected_package_library_externs(&mut artifact_plan, &re_materialized_package_library_names);
     }
-    artifact_plan.compile_environment =
-        direct_rustc_compile_environment(prepared.generator.output_dir(), &prepared.generator.crate_root_path())
-            .map_err(|error| CliError::failure(error.to_string()))?;
+    artifact_plan.compile_environment = prepared.generator.native_compile_environment();
     attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries).map_err(oven_rustc_error)?;
     // Loading a re-materialized caller-owned library's own metadata (for example a query-engine provider linked
     // above) can require Rustc to locate that library's own further dependencies purely through
@@ -9469,9 +9467,7 @@ fn bake_oven_library(
     if !re_materialized_package_library_names.is_empty() {
         replace_selected_package_library_externs(&mut artifact_plan, &re_materialized_package_library_names);
     }
-    artifact_plan.compile_environment =
-        direct_rustc_compile_environment(prepared.generator.output_dir(), &prepared.generator.crate_root_path())
-            .map_err(|error| CliError::failure(error.to_string()))?;
+    artifact_plan.compile_environment = prepared.generator.native_compile_environment();
     attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries).map_err(oven_rustc_error)?;
     // See the matching comment in `bake_oven_project`: a re-materialized caller-owned library's own metadata can
     // require this same dependency search closure to load, not only the library's own re-materialization compile.
