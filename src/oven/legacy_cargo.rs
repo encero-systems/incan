@@ -722,6 +722,7 @@ impl OvenCompilerTestSuiteArtifactClosure {
             dependency_search_paths: self.dependency_search_paths.clone(),
             native_search_paths: self.native_search_paths.clone(),
             externs: target.externs.clone(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -755,6 +756,7 @@ impl OvenCompilerTestSuiteArtifactClosure {
             dependency_search_paths: self.dependency_search_paths.clone(),
             native_search_paths: self.native_search_paths.clone(),
             externs: library.externs.clone(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -1722,6 +1724,7 @@ pub fn prepare_direct_rustc_plan(
         dependency_search_paths,
         native_search_paths: Vec::new(),
         externs,
+        entrypoint_dependency_search_paths: BTreeMap::new(),
         entrypoint_externs: provider_entrypoints,
         registry_leaves: registry_leaves.clone(),
         registry_sources,
@@ -1729,6 +1732,14 @@ pub fn prepare_direct_rustc_plan(
         vocab_auxiliary_targets: Vec::new(),
         supporting_artifacts,
     };
+    let source_closure = plan
+        .capture_source_search_closure(&plan.dependency_search_paths)
+        .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
+    plan.entrypoint_dependency_search_paths = plan
+        .entrypoint_externs
+        .keys()
+        .map(|key| (key.clone(), source_closure.clone()))
+        .collect();
     if request.source_compiler_vocab_support {
         if request.base_loaf.is_some() {
             return Err(OvenLegacyCargoError::Plan(
@@ -2283,6 +2294,7 @@ pub fn prepare_compiler_test_suite(
         dependency_search_paths: Vec::new(),
         native_search_paths: Vec::new(),
         externs: Vec::new(),
+        entrypoint_dependency_search_paths: Default::default(),
         entrypoint_externs: BTreeMap::new(),
         registry_leaves: Vec::new(),
         registry_sources: Vec::new(),
@@ -9360,6 +9372,7 @@ mod tests {
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: externs.clone(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -11548,6 +11561,7 @@ version = "1.0.0"
                     dependency_search_paths: Vec::new(),
                     native_search_paths: Vec::new(),
                     externs: Vec::new(),
+                    entrypoint_dependency_search_paths: Default::default(),
                     entrypoint_externs: Default::default(),
                     registry_leaves: Vec::new(),
                     registry_sources: Vec::new(),
@@ -11621,6 +11635,7 @@ version = "1.0.0"
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: Default::default(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -11772,6 +11787,7 @@ version = "1.0.0"
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: Default::default(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -11961,6 +11977,7 @@ version = "1.0.0"
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: Default::default(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -12075,6 +12092,7 @@ version = "1.0.0"
                 relative_path: "deps/libincan_stdlib-release.rlib".to_string(),
                 digest: digest_bytes(b"release stdlib"),
             }],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -12218,6 +12236,7 @@ version = "1.0.0"
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),

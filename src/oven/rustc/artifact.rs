@@ -3,11 +3,10 @@
 //! These describe *what* a direct-rustc invocation compiles and links: its externs, supporting and auxiliary
 //! artifacts, the manifest recording them, and the registry leaves a sealed plan resolves against.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 use super::super::OvenBuildIntent;
 
@@ -48,6 +47,164 @@ pub struct OvenRustcAuxiliaryTarget {
     pub externs: Vec<OvenRustcArtifactExtern>,
 }
 
+/// Search paths captured for a source role, with any earlier-schema projections kept as separate provenance.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenRustcSourceSearchClosure {
+    /// Paths selected by the current publisher before unrelated helper closures were added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publisher_paths: Vec<OvenRustcSourceSearchDirectory>,
+    /// Existing schema-9 policy results, projected before composition rather than inferred from mixed paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub legacy_projections: Vec<OvenRustcLegacySearchProjection>,
+}
+
+/// Provenance of an already-admitted schema-9 contributor's original source projection.
+///
+/// The digest identifies the input manifest; it grants no artifact or filesystem authority. The enclosing plan's
+/// publication, exact artifact declarations, and active store leases still authorize every physical path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenRustcLegacySearchProjection {
+    /// Earlier input format whose unchanged projection produced these paths; currently exactly 9.
+    pub source_schema_version: u32,
+    /// SHA-256 of the original admitted manifest's canonical JSON encoding before composition or path relocation.
+    pub source_manifest_digest: String,
+    /// Original source role used by the earlier projection.
+    pub source_evidence_key: String,
+    /// Resulting paths, relocated only through the enclosing compositor's existing artifact mapping.
+    pub dependency_search_paths: Vec<OvenRustcSourceSearchDirectory>,
+}
+
+/// One selected directory and its contributor's exact declared members, captured before composition.
+///
+/// These records bind physical owners; they do not discover files or grant another root with the same directory name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenRustcSourceSearchDirectory {
+    /// Safe directory relative to the contributor's artifact root.
+    pub relative_path: String,
+    /// Existing selected artifacts, transported through exact substitutions and relocations.
+    pub artifacts: Vec<OvenRustcSupportingArtifact>,
+}
+
+impl OvenRustcSourceSearchClosure {
+    /// Capture selected membership from existing artifact declarations without discovering files or inferring roots.
+    pub(crate) fn publisher_selected(paths: Vec<String>, declared: &BTreeMap<String, String>) -> Self {
+        Self {
+            publisher_paths: paths
+                .into_iter()
+                .map(|relative_path| {
+                    let artifacts = declared
+                        .iter()
+                        .filter(|(path, _)| super::artifact_is_below_search_path(path, &relative_path))
+                        .map(|(path, digest)| OvenRustcSupportingArtifact {
+                            relative_path: path.clone(),
+                            digest: digest.clone(),
+                        })
+                        .collect();
+                    OvenRustcSourceSearchDirectory {
+                        relative_path,
+                        artifacts,
+                    }
+                })
+                .collect(),
+            legacy_projections: Vec::new(),
+        }
+    }
+
+    /// Iterate member-bound directories without upgrading earlier-schema projection evidence.
+    pub(crate) fn directories(&self) -> impl Iterator<Item = &OvenRustcSourceSearchDirectory> {
+        self.publisher_paths.iter().chain(
+            self.legacy_projections
+                .iter()
+                .flat_map(|projection| projection.dependency_search_paths.iter()),
+        )
+    }
+
+    /// Iterate names for logical projection; physical projection separately requires the exact member bindings.
+    pub(crate) fn paths(&self) -> impl Iterator<Item = &String> {
+        self.directories().map(|directory| &directory.relative_path)
+    }
+
+    /// Combine already-derived role contributions while preserving each original legacy manifest and role.
+    pub(crate) fn merge(&mut self, other: &Self) {
+        merge_search_directories(&mut self.publisher_paths, &other.publisher_paths);
+        for incoming in &other.legacy_projections {
+            if let Some(existing) = self.legacy_projections.iter_mut().find(|projection| {
+                projection.source_schema_version == incoming.source_schema_version
+                    && projection.source_manifest_digest == incoming.source_manifest_digest
+                    && projection.source_evidence_key == incoming.source_evidence_key
+            }) {
+                merge_search_directories(&mut existing.dependency_search_paths, &incoming.dependency_search_paths);
+            } else {
+                self.legacy_projections.push(incoming.clone());
+            }
+        }
+        self.legacy_projections.sort_by(|left, right| {
+            (&left.source_manifest_digest, &left.source_evidence_key)
+                .cmp(&(&right.source_manifest_digest, &right.source_evidence_key))
+        });
+    }
+
+    /// Transport members through an existing exact replacement decision, preserving original legacy provenance.
+    pub(crate) fn replace_artifact(
+        &mut self,
+        original: &OvenRustcSupportingArtifact,
+        replacement: Option<&OvenRustcSupportingArtifact>,
+    ) {
+        if replacement == Some(original) {
+            return;
+        }
+        for directories in std::iter::once(&mut self.publisher_paths).chain(
+            self.legacy_projections
+                .iter_mut()
+                .map(|projection| &mut projection.dependency_search_paths),
+        ) {
+            let mut moved = Vec::new();
+            for directory in directories.iter_mut() {
+                if !directory.artifacts.contains(original) {
+                    continue;
+                }
+                directory.artifacts.retain(|artifact| artifact != original);
+                if let Some(replacement) = replacement {
+                    if super::artifact_is_below_search_path(&replacement.relative_path, &directory.relative_path) {
+                        directory.artifacts.push(replacement.clone());
+                    } else if let Some(parent) = std::path::Path::new(&replacement.relative_path).parent() {
+                        moved.push(OvenRustcSourceSearchDirectory {
+                            relative_path: parent.to_string_lossy().into_owned(),
+                            artifacts: vec![replacement.clone()],
+                        });
+                    }
+                }
+            }
+            directories.retain(|directory| !directory.artifacts.is_empty());
+            merge_search_directories(directories, &moved);
+        }
+    }
+}
+
+/// Merge equal directory records while retaining the exact members that select their physical owners.
+fn merge_search_directories(
+    target: &mut Vec<OvenRustcSourceSearchDirectory>,
+    incoming: &[OvenRustcSourceSearchDirectory],
+) {
+    for directory in incoming {
+        if let Some(existing) = target
+            .iter_mut()
+            .find(|existing| existing.relative_path == directory.relative_path)
+        {
+            existing.artifacts.extend(directory.artifacts.iter().cloned());
+        } else {
+            target.push(directory.clone());
+        }
+    }
+    for directory in target.iter_mut() {
+        directory
+            .artifacts
+            .sort_by(|left, right| (&left.relative_path, &left.digest).cmp(&(&right.relative_path, &right.digest)));
+        directory.artifacts.dedup();
+    }
+    target.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+}
+
 /// Immutable direct-rustc dependency plan for one Oven compatibility domain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenRustcArtifactManifest {
@@ -71,6 +228,12 @@ pub struct OvenRustcArtifactManifest {
     /// target's metadata-selected transitive dependency instance.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entrypoint_externs: BTreeMap<String, Vec<String>>,
+    /// Source-role search paths, separating publisher-captured closure from retained earlier-schema projections.
+    ///
+    /// Direct extern visibility does not determine which host or target artifacts a selected rlib's metadata needs.
+    /// Schema 9 omits this evidence; schema 10 records every declared source role, including an empty closure.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entrypoint_dependency_search_paths: BTreeMap<String, OvenRustcSourceSearchClosure>,
     /// Exact registry package artifacts whose metadata closure was emitted with this immutable plan.
     ///
     /// The Loaf repeats this catalog for human inspection, while this copy travels with every bounded
@@ -105,6 +268,8 @@ pub struct OvenRustcArtifactManifest {
 /// Materialized, content-verified inputs ready for a direct `rustc` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OvenRustcArtifactPlan {
+    /// Exact physical bindings of recorded source-role paths, retained across caller-owned additions.
+    pub(crate) source_path_projection: Option<OvenRustcSourcePathProjection>,
     /// Verified directories passed as `-L dependency`.
     pub dependency_search_paths: Vec<PathBuf>,
     /// Verified directories passed as `-L native`.
@@ -118,6 +283,30 @@ pub struct OvenRustcArtifactPlan {
     /// A compiler-suite receipt covers its workspace source closure, but output reuse also records these exact
     /// library bytes so a changed intermediate cannot be mistaken for the previously linked root.
     pub(crate) caller_owned_library_digests: BTreeMap<String, String>,
+}
+
+impl OvenRustcArtifactPlan {
+    /// Retain one caller dependency path whose artifact ownership was already established by the calling boundary.
+    ///
+    /// A caller-owned output or admitted provider fragment may share a directory with the immutable plan. Record that
+    /// separate grant so repeated source projection cannot remove it. This method neither discovers nor admits files.
+    pub(crate) fn retain_caller_dependency_search_path(&mut self, path: PathBuf) {
+        if let Some(projection) = &mut self.source_path_projection {
+            projection.declared.remove(&path);
+        }
+        if !self.dependency_search_paths.contains(&path) {
+            self.dependency_search_paths.push(path);
+        }
+    }
+}
+
+/// Validated path bindings from one complete manifest, including independently leased fragment roots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OvenRustcSourcePathProjection {
+    /// Immutable paths still subject to role filtering; explicit caller additions remove their own paths here.
+    pub(crate) declared: BTreeSet<PathBuf>,
+    /// Exact source contracts paired with physical paths; a same-named differing role cannot reuse the binding.
+    pub(crate) roles: BTreeMap<String, (OvenRustcSourceSearchClosure, BTreeSet<PathBuf>)>,
 }
 
 /// A verified partition of one complete direct-Rustc closure across a selected base Loaf and a project extension.

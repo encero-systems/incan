@@ -39,10 +39,12 @@ use crate::oven::store::{
 };
 
 /// Wire-format version for an Oven-owned direct-rustc artifact manifest.
-/// Version 9 separates the complete sealed Rust-inspection source closure from linkable registry leaves. This keeps
-/// transitive proc-macro sources in the same immutable plan even though they do not provide an `.rlib` leaf. Older
-/// payloads are intentionally ignored during selection and re-materialized from the active toolchain Loaf.
-pub const OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION: u32 = 9;
+///
+/// Version 10 retains the publisher-selected search closure separately from each source role's direct externs.
+/// Version 9 remains readable using its original legacy projection; it never gains inferred role-path evidence.
+pub const OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION: u32 = 10;
+/// Last manifest version without explicit source-role search closures.
+const OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION: u32 = 9;
 /// Fixed supporting-artifact path for the publisher lock that owns sealed registry sources.
 pub const OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH: &str = "registry-sources/Cargo.lock";
 /// Crate-name prefix reserved for the runtime family owned by one Incan release Loaf.
@@ -1323,9 +1325,7 @@ pub(crate) fn attach_caller_owned_rustc_libraries(
             field: "caller-owned library",
             message: format!("{} has no parent directory", output.display()),
         })?;
-        if !plan.dependency_search_paths.contains(&parent.to_path_buf()) {
-            plan.dependency_search_paths.push(parent.to_path_buf());
-        }
+        plan.retain_caller_dependency_search_path(parent.to_path_buf());
         let evidence_key = if library.expose_extern {
             library.crate_name.clone()
         } else {
@@ -1364,6 +1364,22 @@ pub(crate) struct OvenTrustedRustcArtifactRoot<'a> {
     pub native_search_paths: &'a [String],
     /// Every artifact materialized in this root.
     pub supporting_artifacts: &'a [OvenRustcSupportingArtifact],
+    /// Complete artifact inventory from this exact leased root, before assigning or deduplicating fragments.
+    /// Missing inventory cannot establish source-directory isolation for current-schema roles.
+    pub root_inventory: Option<&'a [OvenRustcSupportingArtifact]>,
+}
+
+/// Complete search evidence from one already admitted, actively leased root, independent of byte assignment.
+///
+/// A duplicate-only contributor can provide a clean physical directory without owning another canonical artifact.
+/// Callers retain the original selection and lease; these records neither discover nor grant additional artifacts.
+pub(crate) struct OvenTrustedRustcSearchRoot<'a> {
+    /// Original immutable materialized root held by the selection.
+    pub artifact_root: &'a Path,
+    /// Original publisher-declared dependency search paths, before fragment deduplication.
+    pub dependency_search_paths: &'a [String],
+    /// Complete admitted inventory of that same root, including excluded co-resident files.
+    pub root_inventory: &'a [OvenRustcSupportingArtifact],
 }
 
 /// Publisher-owned artifact input that has passed manifest validation and may be copied into Oven storage.
@@ -1822,6 +1838,17 @@ fn discard_orphaned_metadata_sidecars(manifest: &mut OvenRustcArtifactManifest) 
         )
         .filter_map(|path| path.strip_suffix(".rlib").map(str::to_string))
         .collect::<BTreeSet<_>>();
+    for artifact in &manifest.supporting_artifacts {
+        if artifact
+            .relative_path
+            .strip_suffix(".rmeta")
+            .is_some_and(|stem| !declared_linkable_stems.contains(stem))
+        {
+            for closure in manifest.entrypoint_dependency_search_paths.values_mut() {
+                closure.replace_artifact(artifact, None);
+            }
+        }
+    }
     manifest.supporting_artifacts.retain(|artifact| {
         let Some(stem) = artifact.relative_path.strip_suffix(".rmeta") else {
             return true;
@@ -2153,6 +2180,22 @@ fn replace_declared_release_artifact(
     project_path: &str,
     release: &OvenRustcArtifactExtern,
 ) {
+    let originals = manifest
+        .externs
+        .iter()
+        .filter(|artifact| artifact.relative_path == project_path)
+        .map(|artifact| OvenRustcSupportingArtifact {
+            relative_path: artifact.relative_path.clone(),
+            digest: artifact.digest.clone(),
+        })
+        .chain(
+            manifest
+                .supporting_artifacts
+                .iter()
+                .filter(|artifact| artifact.relative_path == project_path)
+                .cloned(),
+        )
+        .collect::<Vec<_>>();
     if let Some(artifact) = manifest
         .externs
         .iter_mut()
@@ -2168,6 +2211,17 @@ fn replace_declared_release_artifact(
     {
         artifact.relative_path = release.relative_path.clone();
         artifact.digest = release.digest.clone();
+    }
+    for original in originals {
+        for closure in manifest.entrypoint_dependency_search_paths.values_mut() {
+            closure.replace_artifact(
+                &original,
+                Some(&OvenRustcSupportingArtifact {
+                    relative_path: release.relative_path.clone(),
+                    digest: release.digest.clone(),
+                }),
+            );
+        }
     }
 }
 
@@ -2632,6 +2686,56 @@ impl OvenRustcArtifactManifest {
         compiler_runtime_execution_support(self)
     }
 
+    /// Capture selected directory membership from this publisher's existing exact artifact declarations.
+    pub(crate) fn capture_source_search_closure(
+        &self,
+        paths: &[String],
+    ) -> Result<OvenRustcSourceSearchClosure, OvenRustcError> {
+        Ok(OvenRustcSourceSearchClosure::publisher_selected(
+            paths.to_vec(),
+            &expected_artifacts(self)?,
+        ))
+    }
+
+    /// Preserve one admitted contributor's source projection before any other closure is merged into it.
+    ///
+    /// Callers retain the original contributor's existing store lease. The digest records provenance only; the
+    /// enclosing publication and materialization still verify all artifact ownership and bytes.
+    pub(crate) fn source_search_closure(&self, key: &str) -> Result<OvenRustcSourceSearchClosure, OvenRustcError> {
+        self.validate_shape(&self.intent)?;
+        if self.schema_version == OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION {
+            let projected = self.for_source_evidence(key)?;
+            return Ok(OvenRustcSourceSearchClosure {
+                publisher_paths: Vec::new(),
+                legacy_projections: vec![OvenRustcLegacySearchProjection {
+                    source_schema_version: self.schema_version,
+                    source_manifest_digest: digest_bytes(&serde_json::to_vec(self).map_err(|error| {
+                        OvenRustcError::InvalidInput {
+                            field: "legacy search projection",
+                            message: format!("cannot encode admitted manifest: {error}"),
+                        }
+                    })?),
+                    source_evidence_key: key.to_string(),
+                    dependency_search_paths: self
+                        .capture_source_search_closure(&projected.dependency_search_paths)?
+                        .publisher_paths,
+                }],
+            });
+        }
+        if self.entrypoint_externs.is_empty() {
+            // An unscoped current publisher has no helper-expanded source roles. Capture its original normal
+            // closure before composition introduces any named roles or paths from another contributor.
+            return self.capture_source_search_closure(&self.dependency_search_paths);
+        }
+        self.entrypoint_dependency_search_paths
+            .get(key)
+            .cloned()
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "artifact manifest source search closure",
+                message: format!("source evidence `{key}` has no recorded search closure"),
+            })
+    }
+
     /// Replace a generated project's release-owned dependency cohort with the exact selected release-base family.
     ///
     /// Cargo gives path dependencies and even locked registry units publisher-local bytes. The selected release Loaf
@@ -2680,6 +2784,25 @@ impl OvenRustcArtifactManifest {
             });
         };
         let mut composed = self.clone();
+        if self.schema_version != base.schema_version
+            || self.schema_version == OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION
+        {
+            composed.schema_version = OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+            if composed.entrypoint_externs.is_empty() {
+                composed.entrypoint_externs.insert(
+                    "generated-root".to_string(),
+                    self.externs
+                        .iter()
+                        .map(|artifact| artifact.crate_name.clone())
+                        .collect(),
+                );
+            }
+            composed.entrypoint_dependency_search_paths = composed
+                .entrypoint_externs
+                .keys()
+                .map(|key| Ok((key.clone(), self.source_search_closure(key)?)))
+                .collect::<Result<_, OvenRustcError>>()?;
+        }
         let root_registry_packages = root_registry_packages
             .iter()
             .map(|package| normalized_package_name(package))
@@ -2735,22 +2858,53 @@ impl OvenRustcArtifactManifest {
         // resolution Cargo produced. The base still contributes its release execution artifacts and vocabulary
         // auxiliaries below.
         if !retains_extension_built_consumers {
+            let mut replacements = Vec::new();
+            let original_runtime = &composed.externs[*project_runtime_index];
+            replacements.push((
+                OvenRustcSupportingArtifact {
+                    relative_path: original_runtime.relative_path.clone(),
+                    digest: original_runtime.digest.clone(),
+                },
+                Some(OvenRustcSupportingArtifact {
+                    relative_path: base_runtime.relative_path.clone(),
+                    digest: base_runtime.digest.clone(),
+                }),
+            ));
             composed.externs[*project_runtime_index] = (*base_runtime).clone();
             let base_compiler_artifacts = compiler_runtime_artifacts_by_name(base)?;
             let base_compiler_sidecars = compiler_runtime_sidecars_by_name(base)?;
             for artifact in &mut composed.externs {
+                let original = OvenRustcSupportingArtifact {
+                    relative_path: artifact.relative_path.clone(),
+                    digest: artifact.digest.clone(),
+                };
                 replace_compiler_runtime_extern(artifact, &base_compiler_artifacts)?;
+                replacements.push((
+                    original,
+                    Some(OvenRustcSupportingArtifact {
+                        relative_path: artifact.relative_path.clone(),
+                        digest: artifact.digest.clone(),
+                    }),
+                ));
             }
             composed.supporting_artifacts = std::mem::take(&mut composed.supporting_artifacts)
                 .into_iter()
                 .filter_map(|artifact| {
-                    replace_compiler_runtime_supporting_artifact(
+                    let original = artifact.clone();
+                    let replacement = replace_compiler_runtime_supporting_artifact(
                         artifact,
                         &base_compiler_artifacts,
                         &base_compiler_sidecars,
-                    )
+                    );
+                    replacements.push((original, replacement.clone()));
+                    replacement
                 })
                 .collect();
+            for (original, replacement) in replacements {
+                for closure in composed.entrypoint_dependency_search_paths.values_mut() {
+                    closure.replace_artifact(&original, replacement.as_ref());
+                }
+            }
         }
         canonicalize_release_registry_sources(&mut composed, base)?;
         let mut leaf_replacements = Vec::new();
@@ -2808,6 +2962,7 @@ impl OvenRustcArtifactManifest {
             .into_iter()
             .map(|artifact| (artifact.relative_path.clone(), artifact))
             .collect::<BTreeMap<_, _>>();
+        let mut source_replacements = Vec::new();
         if retains_extension_built_consumers {
             let declared_paths = composed
                 .externs
@@ -2874,18 +3029,40 @@ impl OvenRustcArtifactManifest {
                 rerooted_paths.insert(partner, partner_rerooted);
             }
             for artifact in &mut composed.externs {
+                let original = OvenRustcSupportingArtifact {
+                    relative_path: artifact.relative_path.clone(),
+                    digest: artifact.digest.clone(),
+                };
                 if base_adopted_paths.contains(&artifact.relative_path)
                     && let Some(release) = release_artifacts.get(&artifact.relative_path)
                 {
                     artifact.digest = release.digest.clone();
                 }
+                source_replacements.push((
+                    original,
+                    OvenRustcSupportingArtifact {
+                        relative_path: artifact.relative_path.clone(),
+                        digest: artifact.digest.clone(),
+                    },
+                ));
             }
             for artifact in &mut composed.supporting_artifacts {
+                let original = OvenRustcSupportingArtifact {
+                    relative_path: artifact.relative_path.clone(),
+                    digest: artifact.digest.clone(),
+                };
                 if base_adopted_paths.contains(&artifact.relative_path)
                     && let Some(release) = release_artifacts.get(&artifact.relative_path)
                 {
                     artifact.digest = release.digest.clone();
                 }
+                source_replacements.push((
+                    original,
+                    OvenRustcSupportingArtifact {
+                        relative_path: artifact.relative_path.clone(),
+                        digest: artifact.digest.clone(),
+                    },
+                ));
             }
             for leaf in &mut composed.registry_leaves {
                 if base_adopted_paths.contains(&leaf.artifact.relative_path)
@@ -2903,18 +3080,40 @@ impl OvenRustcArtifactManifest {
                         .is_some_and(|release| release.digest == digest)
                 };
                 for artifact in &mut composed.externs {
+                    let original = OvenRustcSupportingArtifact {
+                        relative_path: artifact.relative_path.clone(),
+                        digest: artifact.digest.clone(),
+                    };
                     if let Some(rerooted) = rerooted_paths.get(&artifact.relative_path)
                         && !follows_the_base(&artifact.relative_path, &artifact.digest)
                     {
                         artifact.relative_path = rerooted.clone();
                     }
+                    source_replacements.push((
+                        original,
+                        OvenRustcSupportingArtifact {
+                            relative_path: artifact.relative_path.clone(),
+                            digest: artifact.digest.clone(),
+                        },
+                    ));
                 }
                 for artifact in &mut composed.supporting_artifacts {
+                    let original = OvenRustcSupportingArtifact {
+                        relative_path: artifact.relative_path.clone(),
+                        digest: artifact.digest.clone(),
+                    };
                     if let Some(rerooted) = rerooted_paths.get(&artifact.relative_path)
                         && !follows_the_base(&artifact.relative_path, &artifact.digest)
                     {
                         artifact.relative_path = rerooted.clone();
                     }
+                    source_replacements.push((
+                        original,
+                        OvenRustcSupportingArtifact {
+                            relative_path: artifact.relative_path.clone(),
+                            digest: artifact.digest.clone(),
+                        },
+                    ));
                 }
                 for leaf in &mut composed.registry_leaves {
                     if let Some(rerooted) = rerooted_paths.get(&leaf.artifact.relative_path)
@@ -2935,19 +3134,46 @@ impl OvenRustcArtifactManifest {
             }
         } else {
             for artifact in &mut composed.externs {
+                let original = OvenRustcSupportingArtifact {
+                    relative_path: artifact.relative_path.clone(),
+                    digest: artifact.digest.clone(),
+                };
                 if let Some(release) = release_artifacts.get(&artifact.relative_path) {
                     artifact.digest = release.digest.clone();
                 }
+                source_replacements.push((
+                    original,
+                    OvenRustcSupportingArtifact {
+                        relative_path: artifact.relative_path.clone(),
+                        digest: artifact.digest.clone(),
+                    },
+                ));
             }
             for artifact in &mut composed.supporting_artifacts {
+                let original = OvenRustcSupportingArtifact {
+                    relative_path: artifact.relative_path.clone(),
+                    digest: artifact.digest.clone(),
+                };
                 if let Some(release) = release_artifacts.get(&artifact.relative_path) {
                     artifact.digest = release.digest.clone();
                 }
+                source_replacements.push((
+                    original,
+                    OvenRustcSupportingArtifact {
+                        relative_path: artifact.relative_path.clone(),
+                        digest: artifact.digest.clone(),
+                    },
+                ));
             }
             for leaf in &mut composed.registry_leaves {
                 if let Some(release) = release_artifacts.get(&leaf.artifact.relative_path) {
                     leaf.artifact.digest = release.digest.clone();
                 }
+            }
+        }
+        for (original, replacement) in source_replacements {
+            for closure in composed.entrypoint_dependency_search_paths.values_mut() {
+                closure.replace_artifact(&original, Some(&replacement));
             }
         }
         composed.vocab_auxiliary_targets = base.vocab_auxiliary_targets.clone();
@@ -2978,6 +3204,14 @@ impl OvenRustcArtifactManifest {
             .extend(base.dependency_search_paths.iter().cloned());
         composed.dependency_search_paths.sort();
         composed.dependency_search_paths.dedup();
+        for (key, closure) in &mut composed.entrypoint_dependency_search_paths {
+            let base_key = if base.entrypoint_externs.contains_key(key) {
+                key.as_str()
+            } else {
+                "generated-root"
+            };
+            closure.merge(&base.source_search_closure(base_key)?);
+        }
         composed
             .native_search_paths
             .extend(base.native_search_paths.iter().cloned());
@@ -3108,6 +3342,7 @@ impl OvenRustcArtifactManifest {
                 .filter(|artifact| includes(&artifact.relative_path))
                 .cloned()
                 .collect(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -3202,6 +3437,7 @@ impl OvenRustcArtifactManifest {
             verified_file(&root, &artifact.relative_path, &artifact.digest, "supporting")?;
         }
         Ok(OvenRustcArtifactPlan {
+            source_path_projection: self.source_search_roles_at_root(&root)?,
             dependency_search_paths,
             native_search_paths,
             externs,
@@ -3298,6 +3534,7 @@ impl OvenRustcArtifactManifest {
             trusted_file(&root, &artifact.relative_path, "supporting", &mut trusted_parents)?;
         }
         Ok(OvenRustcArtifactPlan {
+            source_path_projection: self.source_search_roles_at_root(&root)?,
             dependency_search_paths,
             native_search_paths,
             externs,
@@ -3364,6 +3601,19 @@ impl OvenRustcArtifactManifest {
         roots: &[OvenTrustedRustcArtifactRoot<'_>],
         expected_intent: &OvenBuildIntent,
     ) -> Result<OvenRustcArtifactPlan, OvenRustcError> {
+        self.materialize_trusted_store_composed_with_search_roots(roots, &[], expected_intent)
+    }
+
+    /// Bind disjoint canonical artifacts while retaining other admitted copies for closed source search roles.
+    ///
+    /// Extra search roots carry full publisher inventories under the caller's retained leases. They cannot satisfy
+    /// missing canonical artifacts or add extern grants; only exact selected members in a clean directory are used.
+    pub(crate) fn materialize_trusted_store_composed_with_search_roots(
+        &self,
+        roots: &[OvenTrustedRustcArtifactRoot<'_>],
+        search_roots: &[OvenTrustedRustcSearchRoot<'_>],
+        expected_intent: &OvenBuildIntent,
+    ) -> Result<OvenRustcArtifactPlan, OvenRustcError> {
         self.validate_shape(expected_intent)?;
         if roots.is_empty() {
             return Err(OvenRustcError::InvalidInput {
@@ -3373,6 +3623,8 @@ impl OvenRustcArtifactManifest {
         }
         let expected = expected_artifacts(self)?;
         let mut locations = BTreeMap::<String, PathBuf>::new();
+        let mut file_roots = BTreeMap::new();
+        let mut inventories = BTreeMap::<(PathBuf, String), BTreeMap<String, String>>::new();
         let mut dependency_search_paths = Vec::new();
         let mut native_search_paths = Vec::new();
         for fragment in roots {
@@ -3398,6 +3650,7 @@ impl OvenRustcArtifactManifest {
                         message: format!("declare duplicate artifact `{relative}`"),
                     });
                 }
+                file_roots.insert(relative.clone(), root.clone());
                 if fragment_expected.insert(relative, artifact.digest.clone()).is_some() {
                     return Err(OvenRustcError::InvalidInput {
                         field: "composed artifact roots",
@@ -3418,6 +3671,39 @@ impl OvenRustcArtifactManifest {
                 &fragment_expected,
                 &mut trusted_parents,
             )?);
+            if let Some(root_inventory) = fragment.root_inventory {
+                let complete = admitted_search_inventory(root_inventory, &expected)?;
+                if fragment_expected
+                    .iter()
+                    .any(|(path, digest)| complete.get(path) != Some(digest))
+                {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "composed artifact roots",
+                        message: "assigned fragment differs from its complete admitted root inventory".to_string(),
+                    });
+                }
+                for relative in fragment.dependency_search_paths {
+                    let directory = (root.clone(), relative.clone());
+                    let members: BTreeMap<String, String> = complete
+                        .iter()
+                        .filter(|(path, _)| artifact_is_below_search_path(path, relative))
+                        .map(|(path, digest)| (path.clone(), digest.clone()))
+                        .collect();
+                    if let Some(previous) = inventories.insert(directory, members.clone())
+                        && previous != members
+                    {
+                        return Err(OvenRustcError::InvalidInput {
+                            field: "composed artifact roots",
+                            message: "same physical directory has conflicting admitted inventories".to_string(),
+                        });
+                    }
+                }
+            } else if !self.entrypoint_dependency_search_paths.is_empty() {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "composed artifact roots",
+                    message: "source isolation requires the complete admitted root inventory".to_string(),
+                });
+            }
             native_search_paths.extend(trusted_materialize_search_paths(
                 &root,
                 fragment.native_search_paths,
@@ -3437,6 +3723,38 @@ impl OvenRustcArtifactManifest {
                 message: format!("omit required artifact(s): {}", missing.join(", ")),
             });
         }
+        for candidate in search_roots {
+            let root = canonical_directory(candidate.artifact_root, "admitted search root")?;
+            let complete = admitted_search_inventory(candidate.root_inventory, &expected)?;
+            let mut trusted_parents = BTreeMap::new();
+            trusted_materialize_search_paths(
+                &root,
+                candidate.dependency_search_paths,
+                "admitted dependency search",
+                &complete,
+                &mut trusted_parents,
+            )?;
+            for relative in candidate.dependency_search_paths {
+                let members = complete
+                    .iter()
+                    .filter(|(path, _)| artifact_is_below_search_path(path, relative))
+                    .map(|(path, digest)| (path.clone(), digest.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                if let Some(previous) = inventories.insert((root.clone(), relative.clone()), members.clone())
+                    && previous != members
+                {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "composed artifact roots",
+                        message: "same physical directory has conflicting admitted inventories".to_string(),
+                    });
+                }
+            }
+        }
+        let source_path_projection = self.bind_source_search_roles(&file_roots, &inventories)?;
+        if let Some(projection) = &source_path_projection {
+            // These paths remain immutable role bindings, not caller grants. Projection removes other roles' paths.
+            dependency_search_paths.extend(projection.roles.values().flat_map(|(_, paths)| paths.iter().cloned()));
+        }
         dependency_search_paths.sort();
         dependency_search_paths.dedup();
         native_search_paths.sort();
@@ -3454,6 +3772,7 @@ impl OvenRustcArtifactManifest {
             })
             .collect::<Result<Vec<_>, OvenRustcError>>()?;
         Ok(OvenRustcArtifactPlan {
+            source_path_projection,
             dependency_search_paths,
             native_search_paths,
             externs,
@@ -3462,11 +3781,194 @@ impl OvenRustcArtifactManifest {
         })
     }
 
+    /// Validate source-role search evidence without discovering files or widening a legacy plan.
+    fn validate_source_search_roles(&self) -> Result<(), OvenRustcError> {
+        let invalid = |message: String| OvenRustcError::InvalidInput {
+            field: "artifact manifest source search closure",
+            message,
+        };
+        if self.schema_version == OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION {
+            return if self.entrypoint_dependency_search_paths.is_empty() {
+                Ok(())
+            } else {
+                Err(invalid(
+                    "legacy schema must not declare source-role search evidence".to_string(),
+                ))
+            };
+        }
+        if !self
+            .entrypoint_externs
+            .keys()
+            .eq(self.entrypoint_dependency_search_paths.keys())
+        {
+            return Err(invalid(
+                "every declared source role must have exactly one publisher-selected search closure".to_string(),
+            ));
+        }
+        let expected = expected_artifacts(self)?;
+        for (key, closure) in &self.entrypoint_dependency_search_paths {
+            let mut origins = BTreeSet::new();
+            for projection in &closure.legacy_projections {
+                let valid_digest = projection
+                    .source_manifest_digest
+                    .strip_prefix("sha256:")
+                    .is_some_and(|value| {
+                        value.len() == 64
+                            && value
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    });
+                if projection.source_schema_version != OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION
+                    || !valid_digest
+                    || projection.source_evidence_key.trim().is_empty()
+                    || !origins.insert((&projection.source_manifest_digest, &projection.source_evidence_key))
+                {
+                    return Err(invalid(format!(
+                        "source evidence `{key}` has invalid or duplicate legacy projection provenance"
+                    )));
+                }
+            }
+            for directories in std::iter::once(&closure.publisher_paths).chain(
+                closure
+                    .legacy_projections
+                    .iter()
+                    .map(|projection| &projection.dependency_search_paths),
+            ) {
+                let mut seen = BTreeSet::new();
+                for directory in directories {
+                    let path = &directory.relative_path;
+                    let normalized = normalized_relative_path(path, "source search closure")?;
+                    if normalized != *path || !seen.insert(path) || !self.dependency_search_paths.contains(path) {
+                        return Err(invalid(format!(
+                            "source evidence `{key}` declares an invalid, duplicate, or unlisted search path `{path}`"
+                        )));
+                    }
+                    if directory.artifacts.is_empty() {
+                        return Err(invalid(format!(
+                            "source evidence `{key}` search path `{path}` has no declared member"
+                        )));
+                    }
+                    let mut members = BTreeSet::new();
+                    for member in &directory.artifacts {
+                        let normalized = normalized_relative_path(&member.relative_path, "source search member")?;
+                        if normalized != member.relative_path
+                            || !members.insert(&member.relative_path)
+                            || !artifact_is_below_search_path(&member.relative_path, path)
+                            || expected.get(&member.relative_path) != Some(&member.digest)
+                        {
+                            return Err(invalid(format!(
+                                "source evidence `{key}` search path `{path}` has invalid or unowned member `{}`",
+                                member.relative_path
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind selected members to clean assigned directories or exact admitted copies under retained leases.
+    fn bind_source_search_roles(
+        &self,
+        file_roots: &BTreeMap<String, PathBuf>,
+        inventories: &BTreeMap<(PathBuf, String), BTreeMap<String, String>>,
+    ) -> Result<Option<OvenRustcSourcePathProjection>, OvenRustcError> {
+        if self.schema_version == OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION {
+            return Ok(None);
+        }
+        let mut roles = BTreeMap::new();
+        let mut trusted_parents = BTreeMap::new();
+        for (key, closure) in &self.entrypoint_dependency_search_paths {
+            let selected_members = closure
+                .directories()
+                .flat_map(|directory| &directory.artifacts)
+                .map(|artifact| (artifact.relative_path.clone(), artifact.digest.clone()))
+                .collect::<BTreeMap<_, _>>();
+            let mut selected = BTreeSet::new();
+            for directory in closure.directories() {
+                for member in &directory.artifacts {
+                    let root = file_roots
+                        .get(&member.relative_path)
+                        .ok_or_else(|| OvenRustcError::InvalidInput {
+                            field: "materialized source search closure",
+                            message: format!(
+                                "source evidence `{key}` has no assigned owner for `{}`",
+                                member.relative_path
+                            ),
+                        })?;
+                    let canonical = (root.clone(), directory.relative_path.clone());
+                    let clean = |inventory: &BTreeMap<String, String>| {
+                        inventory.get(&member.relative_path) == Some(&member.digest)
+                            && inventory
+                                .iter()
+                                .all(|(path, digest)| selected_members.get(path) == Some(digest))
+                    };
+                    let chosen = if inventories.get(&canonical).is_some_and(clean) {
+                        &canonical
+                    } else {
+                        inventories
+                            .iter()
+                            .find(|((_, relative), inventory)| relative == &directory.relative_path && clean(inventory))
+                            .map(|(candidate, _)| candidate)
+                            .ok_or_else(|| OvenRustcError::InvalidInput {
+                                field: "materialized source search closure",
+                                message: format!(
+                                    "source evidence `{key}` cannot isolate selected member `{}`: its canonical directory has a missing or co-resident unselected artifact and no clean admitted alternative",
+                                    member.relative_path
+                                ),
+                            })?
+                    };
+                    if chosen != &canonical {
+                        // Only an actually used alternate copy needs another containment/file check; no rehash or scan.
+                        trusted_file(
+                            &chosen.0,
+                            &member.relative_path,
+                            "admitted source search member",
+                            &mut trusted_parents,
+                        )?;
+                    }
+                    selected.insert(chosen.0.join(&chosen.1));
+                }
+            }
+            roles.insert(key.clone(), (closure.clone(), selected));
+        }
+        Ok(Some(OvenRustcSourcePathProjection {
+            declared: inventories.keys().map(|(root, relative)| root.join(relative)).collect(),
+            roles,
+        }))
+    }
+
+    /// Bind a complete single-root publication after existing artifact and directory validation.
+    fn source_search_roles_at_root(
+        &self,
+        root: &Path,
+    ) -> Result<Option<OvenRustcSourcePathProjection>, OvenRustcError> {
+        let declared = expected_artifacts(self)?;
+        let file_roots = declared.keys().map(|path| (path.clone(), root.to_path_buf())).collect();
+        let inventories = self
+            .dependency_search_paths
+            .iter()
+            .map(|directory| {
+                (
+                    (root.to_path_buf(), directory.clone()),
+                    declared
+                        .iter()
+                        .filter(|(path, _)| artifact_is_below_search_path(path, directory))
+                        .map(|(path, digest)| (path.clone(), digest.clone()))
+                        .collect(),
+                )
+            })
+            .collect();
+        self.bind_source_search_roles(&file_roots, &inventories)
+    }
+
     /// Select the exact direct root externs authorized for one receipt source target.
     ///
     /// The unselected extern artifacts remain declared supporting inputs so strict search-directory completeness and
     /// publisher-time digest verification still cover the entire immutable compatibility closure.
     fn for_source_evidence(&self, source_evidence_key: &str) -> Result<Self, OvenRustcError> {
+        self.validate_shape(&self.intent)?;
         let Some(allowed_names) = self.entrypoint_externs.get(source_evidence_key) else {
             return Ok(self.clone());
         };
@@ -3523,9 +4025,26 @@ impl OvenRustcArtifactManifest {
         selected
             .externs
             .retain(|artifact| allowed.contains(&artifact.crate_name));
-        selected
-            .dependency_search_paths
-            .retain(|search_path| !excluded_dependency_search_paths.contains(search_path));
+        if self.schema_version == OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION {
+            let paths = self
+                .entrypoint_dependency_search_paths
+                .get(source_evidence_key)
+                .ok_or_else(|| OvenRustcError::InvalidInput {
+                    field: "artifact manifest source search closure",
+                    message: format!(
+                        "source evidence `{source_evidence_key}` has no publisher-selected search closure"
+                    ),
+                })?;
+            selected.dependency_search_paths = paths.paths().cloned().collect::<BTreeSet<_>>().into_iter().collect();
+            selected.entrypoint_externs.retain(|key, _| key == source_evidence_key);
+            selected
+                .entrypoint_dependency_search_paths
+                .retain(|key, _| key == source_evidence_key);
+        } else {
+            selected
+                .dependency_search_paths
+                .retain(|search_path| !excluded_dependency_search_paths.contains(search_path));
+        }
         selected.supporting_artifacts.extend(retained);
         Ok(selected)
     }
@@ -3536,7 +4055,10 @@ impl OvenRustcArtifactManifest {
     /// stronger validation; selection uses this inexpensive gate so a legacy malformed payload cannot make a newly
     /// corrected plan ambiguous forever.
     pub fn validate_shape(&self, expected_intent: &OvenBuildIntent) -> Result<(), OvenRustcError> {
-        if self.schema_version != OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION {
+        if !matches!(
+            self.schema_version,
+            OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION | OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION
+        ) {
             return Err(OvenRustcError::UnsupportedSchema {
                 found: self.schema_version,
                 expected: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
@@ -3546,6 +4068,7 @@ impl OvenRustcArtifactManifest {
             return Err(OvenRustcError::IntentMismatch);
         }
         let _ = validated_compile_environment(&self.compile_environment)?;
+        self.validate_source_search_roles()?;
         let mut names = BTreeSet::new();
         for artifact in &self.externs {
             validate_rust_identifier(&artifact.crate_name)?;
@@ -4915,7 +5438,8 @@ fn trusted_artifact_plan_for_source(
     plan: &OvenRustcArtifactPlan,
     declared_artifacts: &OvenRustcArtifactManifest,
     selected_artifacts: &OvenRustcArtifactManifest,
-) -> OvenRustcArtifactPlan {
+    source_evidence_key: &str,
+) -> Result<OvenRustcArtifactPlan, OvenRustcError> {
     let declared_names = declared_artifacts
         .externs
         .iter()
@@ -4956,10 +5480,40 @@ fn trusted_artifact_plan_for_source(
             || selected_names.contains(crate_name.as_str())
             || caller_owned_extern_names.contains(crate_name.as_str())
     });
-    selected_plan.dependency_search_paths.retain(|search_path| {
-        !excluded_direct_root_parents.contains(search_path) || selected_direct_root_parents.contains(search_path)
-    });
-    selected_plan
+    if declared_artifacts
+        .entrypoint_dependency_search_paths
+        .contains_key(source_evidence_key)
+    {
+        let projection = plan
+            .source_path_projection
+            .as_ref()
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "materialized source search closure",
+                message: format!("source evidence `{source_evidence_key}` has no validated physical path bindings"),
+            })?;
+        let (bound, selected) =
+            projection
+                .roles
+                .get(source_evidence_key)
+                .ok_or_else(|| OvenRustcError::InvalidInput {
+                    field: "materialized source search closure",
+                    message: format!("source evidence `{source_evidence_key}` has no materialized role"),
+                })?;
+        if bound != &declared_artifacts.entrypoint_dependency_search_paths[source_evidence_key] {
+            return Err(OvenRustcError::InvalidInput {
+                field: "materialized source search closure",
+                message: format!("source evidence `{source_evidence_key}` differs from its materialized contract"),
+            });
+        }
+        selected_plan
+            .dependency_search_paths
+            .retain(|path| !projection.declared.contains(path) || selected.contains(path));
+    } else {
+        selected_plan.dependency_search_paths.retain(|search_path| {
+            !excluded_direct_root_parents.contains(search_path) || selected_direct_root_parents.contains(search_path)
+        });
+    }
+    Ok(selected_plan)
 }
 
 /// Project a verified, already-materialized direct-Rustc plan onto one receipt-authorized source root.
@@ -4974,7 +5528,7 @@ pub(crate) fn trusted_artifact_plan_for_source_evidence(
     source_evidence_key: &str,
 ) -> Result<OvenRustcArtifactPlan, OvenRustcError> {
     let selected_artifacts = artifacts.for_source_evidence(source_evidence_key)?;
-    Ok(trusted_artifact_plan_for_source(plan, artifacts, &selected_artifacts))
+    trusted_artifact_plan_for_source(plan, artifacts, &selected_artifacts, source_evidence_key)
 }
 
 /// Return the direct extern names exposed to one receipt-authorized source root.
@@ -5085,7 +5639,7 @@ fn bake_direct_rustc(
     // output miss, normal consumers prove file shape/containment under their active lease rather than rehash every
     // dependency; externally supplied plans retain the stronger byte-for-byte materialization path.
     let plan = if let Some(plan) = trusted_artifact_plan {
-        trusted_artifact_plan_for_source(plan, artifacts, &selected_artifacts)
+        trusted_artifact_plan_for_source(plan, artifacts, &selected_artifacts, source_evidence_key)?
     } else if trusted_store {
         selected_artifacts.materialize_trusted_store(artifact_root, &receipt.intent)?
     } else {
@@ -5816,6 +6370,30 @@ fn materialize_search_paths(
     Ok(materialized)
 }
 
+/// Validate one complete admitted inventory without reading its files or widening the selected artifact set.
+fn admitted_search_inventory(
+    artifacts: &[OvenRustcSupportingArtifact],
+    expected: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, OvenRustcError> {
+    let mut complete = BTreeMap::new();
+    for artifact in artifacts {
+        let relative = normalized_relative_path(&artifact.relative_path, "leased root inventory")?;
+        if expected.get(&relative).is_some_and(|digest| digest != &artifact.digest) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "composed artifact roots",
+                message: format!("admitted search inventory conflicts with selected artifact `{relative}`"),
+            });
+        }
+        if complete.insert(relative, artifact.digest.clone()).is_some() {
+            return Err(OvenRustcError::InvalidInput {
+                field: "composed artifact roots",
+                message: "complete root inventory repeats an artifact".to_string(),
+            });
+        }
+    }
+    Ok(complete)
+}
+
 /// Verify a selected store-owned search directory without repeating publisher-time closure enumeration.
 ///
 /// Publisher-time materialization verifies every child and its digest. A normal consumer proves the selected
@@ -6469,6 +7047,7 @@ mod tests {
         fs::write(&sealed, b"receipt-bound serde")?;
         fs::write(&selected_copy, b"receipt-bound serde")?;
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: vec![selected.clone()],
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -6527,6 +7106,7 @@ mod tests {
             .status()?;
         assert!(runtime_status.success(), "selected runtime fixture should compile");
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: vec![sealed_dependencies.clone()],
             native_search_paths: Vec::new(),
             externs: vec![("incan_stdlib".to_string(), selected_runtime.clone())],
@@ -7169,6 +7749,7 @@ mod tests {
         fs::write(&consumer_artifact, consumer_bytes)?;
         fs::write(&provider_artifact, provider_bytes)?;
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![("tokio".to_string(), consumer_artifact)],
@@ -7208,6 +7789,7 @@ mod tests {
         fs::write(&consumer_artifact, shared_bytes)?;
         fs::write(&provider_artifact, shared_bytes)?;
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![("tokio".to_string(), consumer_artifact)],
@@ -7248,6 +7830,7 @@ mod tests {
         fs::write(&consumer_artifact, consumer_bytes)?;
         fs::write(&provider_artifact, provider_bytes)?;
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![("tokio".to_string(), consumer_artifact)],
@@ -7622,6 +8205,7 @@ mod tests {
             dependency_search_paths: vec!["../escape".to_string()],
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -7650,6 +8234,7 @@ mod tests {
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -7681,12 +8266,14 @@ mod tests {
                 dependency_search_paths: &search_paths,
                 native_search_paths: &[],
                 supporting_artifacts: &first_fragment,
+                root_inventory: Some(&first_fragment),
             },
             OvenTrustedRustcArtifactRoot {
                 artifact_root: second.path(),
                 dependency_search_paths: &search_paths,
                 native_search_paths: &[],
                 supporting_artifacts: &second_fragment,
+                root_inventory: Some(&second_fragment),
             },
         ];
 
@@ -7821,6 +8408,7 @@ mod tests {
                 engine_extern.clone(),
                 project_shared.clone(),
             ],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![
                 leaf("engine", engine_extern.clone()),
@@ -7851,6 +8439,7 @@ mod tests {
                 relative_path: "target/debug/deps/libincan_stdlib-release.rlib".to_string(),
                 digest: "sha256:release-stdlib".to_string(),
             }],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![leaf("shared", base_shared.clone())],
             registry_sources: vec![registry_source.clone()],
@@ -7958,6 +8547,25 @@ mod tests {
                 .any(|path| path == "target/debug/extension-deps"),
             "the re-rooted directory must join the search paths"
         );
+        let role = &composed.entrypoint_dependency_search_paths["generated-root"];
+        let relocated = role
+            .directories()
+            .find(|directory| directory.relative_path == "target/debug/extension-deps")
+            .ok_or("rerooted source directory missing")?;
+        assert!(relocated.artifacts.iter().any(|artifact| artifact.relative_path
+            == "target/debug/extension-deps/libshared-aaaa.rlib"
+            && artifact.digest == "sha256:project-shared"));
+        assert!(relocated.artifacts.iter().any(|artifact| artifact.relative_path
+            == "target/debug/extension-deps/libshared-aaaa.rmeta"
+            && artifact.digest == "sha256:project-shared-meta"));
+        assert!(
+            role.directories()
+                .filter(|directory| directory.relative_path == "target/debug/deps")
+                .all(|directory| !directory
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.digest == "sha256:project-shared"))
+        );
         // Recomposition is a fixed point: the stored composed plan validates against its base unchanged.
         let recomposed = composed
             .with_release_cohort_from_base(&base, &BTreeSet::new())
@@ -8026,6 +8634,7 @@ mod tests {
                 },
                 engine_extern.clone(),
             ],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![
                 leaf("engine", engine_extern.clone()),
@@ -8059,6 +8668,7 @@ mod tests {
                 relative_path: "target/debug/deps/libincan_stdlib-release.rlib".to_string(),
                 digest: "sha256:release-stdlib".to_string(),
             }],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![leaf(
                 "cfg_ish",
@@ -8172,6 +8782,7 @@ mod tests {
                     digest: "sha256:project-partner".to_string(),
                 },
             ],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -8206,6 +8817,7 @@ mod tests {
                 relative_path: "deps/libincan_stdlib-release.rlib".to_string(),
                 digest: "sha256:release-runtime".to_string(),
             }],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -8390,6 +9002,7 @@ mod tests {
                     digest: "sha256:project-only".to_string(),
                 },
             ],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![leaf(&["derive"], project_serde)],
             registry_sources: vec![registry_source.clone()],
@@ -8419,6 +9032,7 @@ mod tests {
                 },
                 release_serde.clone(),
             ],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![leaf(&["derive"], release_serde.clone())],
             registry_sources: vec![release_registry_source.clone()],
@@ -8577,6 +9191,7 @@ mod tests {
                 },
                 project_libc.clone(),
             ],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![leaf(project_libc.clone())],
             registry_sources: vec![registry_source.clone()],
@@ -8600,6 +9215,7 @@ mod tests {
                 },
                 release_libc.clone(),
             ],
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![leaf(release_libc)],
             registry_sources: vec![registry_source],
@@ -8734,6 +9350,7 @@ mod tests {
             dependency_search_paths: vec!["empty".to_string()],
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -8764,6 +9381,7 @@ mod tests {
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -8955,7 +9573,7 @@ mod tests {
         write_project(project.path())?;
         let receipt = intent(project.path())?;
         let mut legacy = empty_manifest(&receipt);
-        legacy.schema_version = OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION - 1;
+        legacy.schema_version = super::OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION - 1;
         let current = empty_manifest(&receipt);
         let store = OvenStore::new(
             store_root.path(),
@@ -9014,6 +9632,7 @@ mod tests {
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: BTreeMap::new(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -9207,6 +9826,7 @@ mod tests {
         fs::write(&transitive, "receipt-bound child")?;
         let transitive_digest = digest_bytes(b"receipt-bound child");
         let mut plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -9292,6 +9912,7 @@ mod tests {
             prefer_dynamic: false,
         })?;
         let mut consumer_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -9346,6 +9967,7 @@ mod tests {
             prefer_dynamic: false,
         })?;
         let mut replacement_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -9426,6 +10048,7 @@ mod tests {
             prefer_dynamic: true,
         })?;
         let mut consumer_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -9514,6 +10137,7 @@ mod tests {
             prefer_dynamic: false,
         })?;
         let mut consumer_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -9710,6 +10334,7 @@ mod tests {
             digest: "sha256:fixture".to_string(),
         });
         let composed_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -9782,6 +10407,7 @@ mod tests {
             prefer_dynamic: true,
         })?;
         let mut plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -10135,6 +10761,7 @@ mod tests {
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),
@@ -10346,6 +10973,706 @@ mod tests {
         Ok(())
     }
 
+    /// Build a manifest whose normal closure includes a host macro but excludes an unrelated helper cohort.
+    fn source_search_fixture(receipt: &crate::oven::OvenReceipt) -> Result<OvenRustcArtifactManifest, OvenRustcError> {
+        let mut artifacts = empty_manifest(receipt);
+        artifacts.dependency_search_paths = vec!["target".to_string(), "host".to_string(), "helper".to_string()];
+        artifacts.externs = [
+            ("runtime", "target/libruntime.rlib", b"runtime".as_slice()),
+            ("derive", "host/libderive.rlib", b"macro".as_slice()),
+            ("private_helper", "helper/libprivate_helper.rlib", b"helper".as_slice()),
+        ]
+        .into_iter()
+        .map(|(name, path, bytes)| OvenRustcArtifactExtern {
+            crate_name: name.to_string(),
+            relative_path: path.to_string(),
+            digest: digest_bytes(bytes),
+        })
+        .collect();
+        artifacts
+            .entrypoint_externs
+            .insert("generated-root".to_string(), vec!["runtime".to_string()]);
+        artifacts.entrypoint_dependency_search_paths.insert(
+            "generated-root".to_string(),
+            artifacts.capture_source_search_closure(&["target".to_string(), "host".to_string()])?,
+        );
+        Ok(artifacts)
+    }
+
+    #[test]
+    fn source_search_roles_validate_wire_evidence_and_preserve_legacy_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let artifacts = source_search_fixture(&receipt)?;
+        let roundtrip: OvenRustcArtifactManifest = serde_json::from_slice(&serde_json::to_vec(&artifacts)?)?;
+        roundtrip.validate_shape(&receipt.intent)?;
+        assert_eq!(roundtrip, artifacts);
+        let selected = roundtrip.for_source_evidence("generated-root")?;
+        assert_eq!(selected.dependency_search_paths, vec!["host", "target"]);
+        assert_eq!(
+            selected
+                .externs
+                .iter()
+                .map(|entry| entry.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["runtime"]
+        );
+        selected.validate_shape(&receipt.intent)?;
+
+        for invalid_paths in [vec!["../host"], vec!["unlisted"], vec!["target", "target"]] {
+            let mut invalid = artifacts.clone();
+            invalid.entrypoint_dependency_search_paths.insert(
+                "generated-root".to_string(),
+                invalid.capture_source_search_closure(
+                    &invalid_paths.into_iter().map(str::to_string).collect::<Vec<_>>(),
+                )?,
+            );
+            assert!(invalid.for_source_evidence("generated-root").is_err());
+        }
+        for change in 0..4 {
+            let mut invalid = artifacts.clone();
+            let directory = &mut invalid
+                .entrypoint_dependency_search_paths
+                .get_mut("generated-root")
+                .ok_or("missing role")?
+                .publisher_paths[0];
+            match change {
+                0 => directory.artifacts.clear(),
+                1 => directory.artifacts[0].digest = digest_bytes(b"changed"),
+                2 => directory.artifacts[0].relative_path = "helper/libprivate_helper.rlib".to_string(),
+                _ => directory.artifacts.push(directory.artifacts[0].clone()),
+            }
+            assert!(invalid.validate_shape(&receipt.intent).is_err());
+        }
+        assert!(artifacts.source_search_closure("missing-current-role").is_err());
+        let mut missing = artifacts.clone();
+        missing.entrypoint_dependency_search_paths.clear();
+        assert!(missing.for_source_evidence("generated-root").is_err());
+        let mut unknown = artifacts.clone();
+        unknown.schema_version += 1;
+        assert!(matches!(
+            unknown.validate_shape(&receipt.intent),
+            Err(OvenRustcError::UnsupportedSchema { .. })
+        ));
+        let mut legacy = artifacts.clone();
+        legacy.schema_version = super::OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+        assert!(legacy.validate_shape(&receipt.intent).is_err());
+        legacy.entrypoint_dependency_search_paths.clear();
+        legacy.validate_shape(&receipt.intent)?;
+        assert_eq!(
+            legacy.for_source_evidence("generated-root")?.dependency_search_paths,
+            vec!["target"]
+        );
+        let prior = legacy.source_search_closure("generated-root")?;
+        assert!(prior.publisher_paths.is_empty());
+        assert_eq!(prior.legacy_projections.len(), 1);
+        assert_eq!(
+            prior.legacy_projections[0]
+                .dependency_search_paths
+                .iter()
+                .map(|directory| directory.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["target"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_search_roles_compose_current_extension_with_legacy_release_without_baking()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let mut base = empty_manifest(&receipt);
+        base.schema_version = super::OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+        base.dependency_search_paths = vec!["deps".to_string()];
+        base.externs.push(OvenRustcArtifactExtern {
+            crate_name: "incan_stdlib".to_string(),
+            relative_path: "deps/libincan_stdlib-verified.rlib".to_string(),
+            digest: digest_bytes(b"runtime"),
+        });
+        base.entrypoint_externs
+            .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+        let mut current = base.clone();
+        current.schema_version = OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+        current.entrypoint_dependency_search_paths.insert(
+            "generated-root".to_string(),
+            current.capture_source_search_closure(&["deps".to_string()])?,
+        );
+        let original_base = base.clone();
+        let compiled = tempfile::tempdir()?;
+        fs::create_dir(compiled.path().join("deps"))?;
+        let runtime_path = compiled.path().join("deps/libincan_stdlib-verified.rlib");
+        fs::write(&runtime_path, b"runtime")?;
+        let before = fs::read(&runtime_path)?;
+        let composed = current.with_release_cohort_from_base(&base, &BTreeSet::new())?;
+        let materialized = composed.materialize(compiled.path(), &receipt.intent)?;
+        let projected = super::trusted_artifact_plan_for_source_evidence(&materialized, &composed, "generated-root")?;
+        assert_eq!(projected.externs, materialized.externs);
+        assert_eq!(projected.dependency_search_paths, materialized.dependency_search_paths);
+        assert_eq!(fs::read(&runtime_path)?, before);
+        assert_eq!(base, original_base);
+        assert_eq!(composed.externs, current.externs);
+        let expected = base.source_search_closure("generated-root")?;
+        assert_eq!(
+            composed.entrypoint_dependency_search_paths["generated-root"].legacy_projections,
+            expected.legacy_projections
+        );
+        let serialized = serde_json::to_vec(&composed)?;
+        let decoded: OvenRustcArtifactManifest = serde_json::from_slice(&serialized)?;
+        decoded.validate_shape(&receipt.intent)?;
+        let mut invalid = decoded.clone();
+        invalid
+            .entrypoint_dependency_search_paths
+            .get_mut("generated-root")
+            .ok_or("missing role")?
+            .legacy_projections[0]
+            .source_schema_version = 10;
+        assert!(invalid.validate_shape(&receipt.intent).is_err());
+        let mut invalid = decoded.clone();
+        invalid
+            .entrypoint_dependency_search_paths
+            .get_mut("generated-root")
+            .ok_or("missing role")?
+            .legacy_projections[0]
+            .source_manifest_digest = "sha256:forged".to_string();
+        assert!(invalid.validate_shape(&receipt.intent).is_err());
+        let mut invalid = decoded.clone();
+        invalid
+            .entrypoint_dependency_search_paths
+            .get_mut("generated-root")
+            .ok_or("missing role")?
+            .legacy_projections[0]
+            .source_evidence_key
+            .clear();
+        assert!(invalid.validate_shape(&receipt.intent).is_err());
+        let mut invalid = decoded.clone();
+        invalid.dependency_search_paths.push("unowned".to_string());
+        invalid
+            .entrypoint_dependency_search_paths
+            .get_mut("generated-root")
+            .ok_or("missing role")?
+            .legacy_projections[0]
+            .dependency_search_paths
+            .push(super::OvenRustcSourceSearchDirectory {
+                relative_path: "unowned".to_string(),
+                artifacts: Vec::new(),
+            });
+        assert!(invalid.validate_shape(&receipt.intent).is_err());
+        let mut invalid = decoded;
+        invalid
+            .entrypoint_dependency_search_paths
+            .get_mut("generated-root")
+            .ok_or("missing role")?
+            .legacy_projections[0]
+            .dependency_search_paths
+            .push(super::OvenRustcSourceSearchDirectory {
+                relative_path: "../escape".to_string(),
+                artifacts: Vec::new(),
+            });
+        assert!(invalid.validate_shape(&receipt.intent).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn source_search_roles_bind_separate_roots_and_keep_caller_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let artifacts = source_search_fixture(&receipt)?;
+        let first = tempfile::tempdir()?;
+        let first_root = fs::canonicalize(first.path())?;
+        let second = tempfile::tempdir()?;
+        let second_root = fs::canonicalize(second.path())?;
+        let third = tempfile::tempdir()?;
+        let third_root = fs::canonicalize(third.path())?;
+        let roots = [first.path(), second.path(), third.path()];
+        for (root, artifact) in roots.iter().zip(&artifacts.externs) {
+            let path = root.join(&artifact.relative_path);
+            fs::create_dir_all(path.parent().ok_or("fixture artifact has no parent")?)?;
+            let bytes: &[u8] = match artifact.crate_name.as_str() {
+                "runtime" => b"runtime",
+                "derive" => b"macro",
+                _ => b"helper",
+            };
+            fs::write(path, bytes)?;
+        }
+        let members = artifacts
+            .externs
+            .iter()
+            .map(|artifact| {
+                vec![OvenRustcSupportingArtifact {
+                    relative_path: artifact.relative_path.clone(),
+                    digest: artifact.digest.clone(),
+                }]
+            })
+            .collect::<Vec<_>>();
+        let directories = [
+            vec!["target".to_string()],
+            vec!["host".to_string()],
+            vec!["helper".to_string()],
+        ];
+        let fragments = roots
+            .iter()
+            .zip(&members)
+            .zip(&directories)
+            .map(|((root, members), paths)| super::OvenTrustedRustcArtifactRoot {
+                artifact_root: root,
+                dependency_search_paths: paths,
+                native_search_paths: &[],
+                supporting_artifacts: members,
+                root_inventory: Some(members),
+            })
+            .collect::<Vec<_>>();
+        let mut plan = artifacts.materialize_trusted_store_composed(&fragments, &receipt.intent)?;
+        let caller = tempfile::tempdir()?;
+        let caller_root = fs::canonicalize(caller.path())?;
+        plan.dependency_search_paths.push(caller_root.clone());
+        let projected = super::trusted_artifact_plan_for_source_evidence(&plan, &artifacts, "generated-root")?;
+        assert!(projected.dependency_search_paths.contains(&first_root.join("target")));
+        assert!(projected.dependency_search_paths.contains(&second_root.join("host")));
+        assert!(projected.dependency_search_paths.contains(&caller_root.clone()));
+        assert!(!projected.dependency_search_paths.contains(&third_root.join("helper")));
+        let projected_twice =
+            super::trusted_artifact_plan_for_source_evidence(&projected, &artifacts, "generated-root")?;
+        assert_eq!(projected, projected_twice);
+        // This fragment was physically admitted above. An explicit provider dependency may retain its directory
+        // after ordinary source filtering without granting the helper's direct extern name.
+        let retained_fragment = third_root.join("helper");
+        let mut with_provider = projected;
+        with_provider.retain_caller_dependency_search_path(retained_fragment.clone());
+        let repeated = super::trusted_artifact_plan_for_source_evidence(&with_provider, &artifacts, "generated-root")?;
+        assert!(repeated.dependency_search_paths.contains(&retained_fragment));
+        assert_eq!(repeated, with_provider);
+        assert!(!repeated.externs.iter().any(|(name, _)| name == "private_helper"));
+        plan.source_path_projection = None;
+        assert!(super::trusted_artifact_plan_for_source_evidence(&plan, &artifacts, "generated-root").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn source_search_roles_keep_same_spelled_directories_with_their_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let mut legacy = empty_manifest(&receipt);
+        legacy.schema_version = super::OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+        legacy.dependency_search_paths = vec!["target".to_string(), "host".to_string()];
+        legacy.externs = [
+            ("runtime", "target/libruntime.rlib", b"runtime".as_slice()),
+            ("private_helper", "host/libprivate_helper.rlib", b"helper".as_slice()),
+        ]
+        .into_iter()
+        .map(|(name, path, bytes)| OvenRustcArtifactExtern {
+            crate_name: name.to_string(),
+            relative_path: path.to_string(),
+            digest: digest_bytes(bytes),
+        })
+        .collect();
+        legacy
+            .entrypoint_externs
+            .insert("generated-root".to_string(), vec!["runtime".to_string()]);
+        let mut current = empty_manifest(&receipt);
+        current.dependency_search_paths = vec!["host".to_string()];
+        current.externs.push(OvenRustcArtifactExtern {
+            crate_name: "current".to_string(),
+            relative_path: "host/libcurrent.rlib".to_string(),
+            digest: digest_bytes(b"current"),
+        });
+        let mut closure = legacy.source_search_closure("generated-root")?;
+        closure.merge(&current.source_search_closure("generated-root")?);
+        let mut combined = legacy.clone();
+        combined.schema_version = OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+        combined.externs.extend(current.externs.clone());
+        combined.entrypoint_externs.insert(
+            "generated-root".to_string(),
+            vec!["runtime".to_string(), "current".to_string()],
+        );
+        combined
+            .entrypoint_dependency_search_paths
+            .insert("generated-root".to_string(), closure);
+        let combined: OvenRustcArtifactManifest = serde_json::from_slice(&serde_json::to_vec(&combined)?)?;
+        let legacy_members = legacy.composition_artifacts()?;
+        let current_members = current.composition_artifacts()?;
+        // Two relocations retain identical logical paths and original schema-9 provenance.
+        for _ in 0..2 {
+            let first = tempfile::tempdir()?;
+            let first_root = fs::canonicalize(first.path())?;
+            let second = tempfile::tempdir()?;
+            let second_root = fs::canonicalize(second.path())?;
+            for (root, path, bytes) in [
+                (first.path(), "target/libruntime.rlib", b"runtime".as_slice()),
+                (first.path(), "host/libprivate_helper.rlib", b"helper".as_slice()),
+                (second.path(), "host/libcurrent.rlib", b"current".as_slice()),
+            ] {
+                let file = root.join(path);
+                fs::create_dir_all(file.parent().ok_or("fixture has no parent")?)?;
+                fs::write(file, bytes)?;
+            }
+            let roots = [
+                super::OvenTrustedRustcArtifactRoot {
+                    artifact_root: first.path(),
+                    dependency_search_paths: &legacy.dependency_search_paths,
+                    native_search_paths: &[],
+                    supporting_artifacts: &legacy_members,
+                    root_inventory: Some(&legacy_members),
+                },
+                super::OvenTrustedRustcArtifactRoot {
+                    artifact_root: second.path(),
+                    dependency_search_paths: &current.dependency_search_paths,
+                    native_search_paths: &[],
+                    supporting_artifacts: &current_members,
+                    root_inventory: Some(&current_members),
+                },
+            ];
+            let plan = combined.materialize_trusted_store_composed(&roots, &receipt.intent)?;
+            let projected = super::trusted_artifact_plan_for_source_evidence(&plan, &combined, "generated-root")?;
+            assert!(projected.dependency_search_paths.contains(&second_root.join("host")));
+            assert!(
+                !projected.dependency_search_paths.contains(&first_root.join("host")),
+                "the current contributor's host path must not grant the legacy helper owner"
+            );
+            assert!(!projected.externs.iter().any(|(name, _)| name == "private_helper"));
+            assert_eq!(
+                projected,
+                super::trusted_artifact_plan_for_source_evidence(&projected, &combined, "generated-root")?
+            );
+            let mut changed_contract = combined.clone();
+            changed_contract
+                .entrypoint_dependency_search_paths
+                .get_mut("generated-root")
+                .ok_or("missing role")?
+                .publisher_paths
+                .clear();
+            changed_contract.validate_shape(&receipt.intent)?;
+            assert!(
+                super::trusted_artifact_plan_for_source_evidence(&plan, &changed_contract, "generated-root").is_err()
+            );
+            let mut missing_inventory = roots;
+            missing_inventory[1].root_inventory = None;
+            assert!(
+                combined
+                    .materialize_trusted_store_composed(&missing_inventory, &receipt.intent)
+                    .is_err()
+            );
+            // The assigned fragment can be clean while its original physical root also contains an excluded file.
+            fs::write(second_root.join("host/libprivate_helper.rlib"), b"helper")?;
+            let mut co_resident = current_members.clone();
+            co_resident.push(
+                legacy_members
+                    .iter()
+                    .find(|artifact| artifact.relative_path == "host/libprivate_helper.rlib")
+                    .ok_or("missing helper")?
+                    .clone(),
+            );
+            missing_inventory[1].root_inventory = Some(&co_resident);
+            let error = combined
+                .materialize_trusted_store_composed(&missing_inventory, &receipt.intent)
+                .err()
+                .ok_or("co-resident excluded helper was accepted")?;
+            assert!(error.to_string().contains("co-resident"));
+            // An aggregate copy cannot isolate those two contributions either; no fallback republishing is allowed.
+            fs::create_dir_all(second_root.join("target"))?;
+            fs::write(second_root.join("target/libruntime.rlib"), b"runtime")?;
+            assert!(combined.materialize(second.path(), &receipt.intent).is_err());
+            let mut caller = projected;
+            caller.retain_caller_dependency_search_path(first_root.join("host"));
+            let repeated = super::trusted_artifact_plan_for_source_evidence(&caller, &combined, "generated-root")?;
+            assert_eq!(caller, repeated);
+            assert!(!repeated.externs.iter().any(|(name, _)| name == "private_helper"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_search_roles_follow_exact_extension_partition_members() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let mut artifacts = empty_manifest(&receipt);
+        artifacts.dependency_search_paths = vec!["deps".to_string()];
+        artifacts.supporting_artifacts = [
+            ("deps/libbase.rlib", b"base".as_slice()),
+            ("deps/libextension.rlib", b"extension".as_slice()),
+            ("deps/libextension.rmeta", b"metadata".as_slice()),
+        ]
+        .into_iter()
+        .map(|(path, bytes)| OvenRustcSupportingArtifact {
+            relative_path: path.to_string(),
+            digest: digest_bytes(bytes),
+        })
+        .collect();
+        let closure = artifacts.capture_source_search_closure(&artifacts.dependency_search_paths)?;
+        artifacts
+            .entrypoint_externs
+            .insert("generated-root".to_string(), Vec::new());
+        artifacts
+            .entrypoint_dependency_search_paths
+            .insert("generated-root".to_string(), closure);
+        let base_fragment = artifacts.artifact_fragment(&BTreeSet::from(["deps/libbase.rlib".to_string()]))?;
+        let partition = artifacts.partition_against_base(&base_fragment)?;
+        let extension_fragment = artifacts.artifact_fragment(&partition.extension_paths)?;
+        let base_inventory = base_fragment.composition_artifacts()?;
+        let extension_inventory = extension_fragment.composition_artifacts()?;
+        assert_eq!(extension_inventory.len(), 2);
+        let base = tempfile::tempdir()?;
+        let base_root = fs::canonicalize(base.path())?;
+        let extension = tempfile::tempdir()?;
+        let extension_root = fs::canonicalize(extension.path())?;
+        for (root, path, bytes) in [
+            (base.path(), "deps/libbase.rlib", b"base".as_slice()),
+            (extension.path(), "deps/libextension.rlib", b"extension".as_slice()),
+            (extension.path(), "deps/libextension.rmeta", b"metadata".as_slice()),
+        ] {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().ok_or("fixture parent missing")?)?;
+            fs::write(path, bytes)?;
+        }
+        let roots = [
+            super::OvenTrustedRustcArtifactRoot {
+                artifact_root: base.path(),
+                dependency_search_paths: &base_fragment.dependency_search_paths,
+                native_search_paths: &[],
+                supporting_artifacts: &base_inventory,
+                root_inventory: Some(&base_inventory),
+            },
+            super::OvenTrustedRustcArtifactRoot {
+                artifact_root: extension.path(),
+                dependency_search_paths: &extension_fragment.dependency_search_paths,
+                native_search_paths: &[],
+                supporting_artifacts: &extension_inventory,
+                root_inventory: Some(&extension_inventory),
+            },
+        ];
+        let mut base_complete = base_inventory.clone();
+        base_complete.push(
+            extension_inventory
+                .iter()
+                .find(|artifact| artifact.relative_path.ends_with(".rlib"))
+                .ok_or("extension rlib missing")?
+                .clone(),
+        );
+        fs::write(base.path().join("deps/libextension.rlib"), b"extension")?;
+        let mut roots = roots;
+        roots[0].root_inventory = Some(&base_complete);
+        let plan = artifacts.materialize_trusted_store_composed(&roots, &receipt.intent)?;
+        let projected = super::trusted_artifact_plan_for_source_evidence(&plan, &artifacts, "generated-root")?;
+        assert_eq!(
+            projected
+                .dependency_search_paths
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([base_root.join("deps"), extension_root.join("deps")])
+        );
+        assert_eq!(
+            projected,
+            super::trusted_artifact_plan_for_source_evidence(&projected, &artifacts, "generated-root")?
+        );
+        // Canonical extension assignment stays intact when another admitted copy supplies the clean directory.
+        let clean_extension = tempfile::tempdir()?;
+        fs::create_dir_all(clean_extension.path().join("deps"))?;
+        fs::write(clean_extension.path().join("deps/libextension.rlib"), b"extension")?;
+        fs::write(clean_extension.path().join("deps/libextension.rmeta"), b"metadata")?;
+        fs::write(extension.path().join("deps/libexcluded.rlib"), b"excluded")?;
+        let mut extension_complete = extension_inventory.clone();
+        extension_complete.push(OvenRustcSupportingArtifact {
+            relative_path: "deps/libexcluded.rlib".to_string(),
+            digest: digest_bytes(b"excluded"),
+        });
+        roots[1].root_inventory = Some(&extension_complete);
+        let error = artifacts
+            .materialize_trusted_store_composed(&roots, &receipt.intent)
+            .err()
+            .ok_or("co-resident extension helper must refuse without an admitted clean copy")?;
+        assert!(error.to_string().contains("co-resident"));
+        let candidates = [super::OvenTrustedRustcSearchRoot {
+            artifact_root: clean_extension.path(),
+            dependency_search_paths: &extension_fragment.dependency_search_paths,
+            root_inventory: &extension_inventory,
+        }];
+        let plan =
+            artifacts.materialize_trusted_store_composed_with_search_roots(&roots, &candidates, &receipt.intent)?;
+        let projected = super::trusted_artifact_plan_for_source_evidence(&plan, &artifacts, "generated-root")?;
+        assert_eq!(
+            projected.dependency_search_paths.into_iter().collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                base_root.join("deps"),
+                fs::canonicalize(clean_extension.path())?.join("deps")
+            ])
+        );
+        Ok(())
+    }
+
+    /// Compile a tiny publisher unit with the selected Rustc, retaining complete diagnostics on failure.
+    fn compile_source_search_probe(command: &mut Command) -> Result<(), Box<dyn std::error::Error>> {
+        let output = command.output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "source-search publisher failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_search_roles_keep_host_macro_metadata_without_a_direct_macro_grant()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let output = tempfile::tempdir()?;
+        let artifact_root = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let rustc = rustc_path()?;
+        let target = rustc_host_target(&rustc)?;
+        let macro_source = project.path().join("derive.rs");
+        let runtime_source = project.path().join("runtime.rs");
+        let source = project.path().join("consumer.rs");
+        let private_source = project.path().join("private.rs");
+        fs::write(
+            &macro_source,
+            "extern crate proc_macro; use proc_macro::TokenStream; #[proc_macro_derive(Marker)] pub fn marker(_: TokenStream) -> TokenStream { TokenStream::new() }",
+        )?;
+        fs::write(
+            &runtime_source,
+            "#[derive(probe_derive::Marker)] pub struct Item; pub fn answer() -> i32 { 42 }",
+        )?;
+        fs::write(
+            &source,
+            "fn main() { assert_eq!(probe_runtime::answer(), 42); println!(\"42\"); }",
+        )?;
+        fs::write(
+            &private_source,
+            "use probe_derive::Marker; fn main() { assert_eq!(probe_runtime::answer(), 42); }",
+        )?;
+        fs::create_dir(artifact_root.path().join("host"))?;
+        fs::create_dir(artifact_root.path().join("target"))?;
+        let macro_name = format!(
+            "host/{}probe_derive{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        );
+        let macro_output = artifact_root.path().join(&macro_name);
+        let runtime_output = artifact_root.path().join("target/libprobe_runtime.rlib");
+        compile_source_search_probe(
+            Command::new(&rustc)
+                .args([
+                    "--edition=2024",
+                    "--crate-name",
+                    "probe_derive",
+                    "--crate-type",
+                    "proc-macro",
+                ])
+                .arg(&macro_source)
+                .arg("-o")
+                .arg(&macro_output),
+        )?;
+        compile_source_search_probe(
+            Command::new(&rustc)
+                .args([
+                    "--edition=2024",
+                    "--target",
+                    &target,
+                    "--crate-name",
+                    "probe_runtime",
+                    "--crate-type",
+                    "rlib",
+                ])
+                .arg(&runtime_source)
+                .arg("--extern")
+                .arg(format!("probe_derive={}", macro_output.display()))
+                .arg("-o")
+                .arg(&runtime_output),
+        )?;
+        let receipt = import_frozen_project(
+            &OvenImportRequest::new(project.path(), target, rustc_identity(&rustc)?, "release", Vec::new())
+                .with_supplemental_source_digest("generated-root", digest_bytes(&fs::read(&source)?))
+                .with_supplemental_source_digest("private-root", digest_bytes(&fs::read(&private_source)?)),
+        )?;
+        let mut artifacts = empty_manifest(&receipt);
+        artifacts.dependency_search_paths = vec!["target".to_string(), "host".to_string()];
+        artifacts.externs = vec![
+            OvenRustcArtifactExtern {
+                crate_name: "probe_runtime".to_string(),
+                relative_path: "target/libprobe_runtime.rlib".to_string(),
+                digest: digest_bytes(&fs::read(&runtime_output)?),
+            },
+            OvenRustcArtifactExtern {
+                crate_name: "probe_derive".to_string(),
+                relative_path: macro_name,
+                digest: digest_bytes(&fs::read(&macro_output)?),
+            },
+        ];
+        for key in ["generated-root", "private-root"] {
+            artifacts
+                .entrypoint_externs
+                .insert(key.to_string(), vec!["probe_runtime".to_string()]);
+            artifacts.entrypoint_dependency_search_paths.insert(
+                key.to_string(),
+                artifacts.capture_source_search_closure(&artifacts.dependency_search_paths)?,
+            );
+        }
+        let plan = artifacts.materialize(artifact_root.path(), &receipt.intent)?;
+        for (label, trusted) in [("materialized", None), ("trusted", Some(&plan))] {
+            let bake = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
+                receipt: &receipt,
+                artifacts: &artifacts,
+                artifact_root: artifact_root.path(),
+                artifact_plan: trusted,
+                rustc: &rustc,
+                source: &source,
+                output: &output.path().join(label),
+                crate_name: "probe_consumer",
+                edition: "2024",
+                source_evidence_key: "generated-root",
+                features: &[],
+                prefer_dynamic: false,
+            })?;
+            let result = Command::new(&bake.output).output()?;
+            assert!(result.status.success());
+            assert_eq!(result.stdout, b"42\n");
+        }
+        let private = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
+            receipt: &receipt,
+            artifacts: &artifacts,
+            artifact_root: artifact_root.path(),
+            artifact_plan: Some(&plan),
+            rustc: &rustc,
+            source: &private_source,
+            output: &output.path().join("private"),
+            crate_name: "probe_private",
+            edition: "2024",
+            source_evidence_key: "private-root",
+            features: &[],
+            prefer_dynamic: false,
+        });
+        let Err(error) = private else {
+            return Err("host search path granted a direct macro name".into());
+        };
+        assert!(error.to_string().contains("E0432"));
+        let mut legacy = artifacts.clone();
+        legacy.schema_version = super::OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+        legacy.entrypoint_dependency_search_paths.clear();
+        let without_host = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
+            receipt: &receipt,
+            artifacts: &legacy,
+            artifact_root: artifact_root.path(),
+            artifact_plan: Some(&plan),
+            rustc: &rustc,
+            source: &source,
+            output: &output.path().join("legacy"),
+            crate_name: "probe_legacy",
+            edition: "2024",
+            source_evidence_key: "generated-root",
+            features: &[],
+            prefer_dynamic: false,
+        });
+        let Err(error) = without_host else {
+            return Err("legacy projection unexpectedly retained the excluded host directory".into());
+        };
+        assert!(error.to_string().contains("E0463"));
+        Ok(())
+    }
+
     #[test]
     fn trusted_plan_respects_entrypoint_externs_without_dropping_caller_libraries()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -10368,9 +11695,14 @@ mod tests {
         artifacts
             .entrypoint_externs
             .insert("generated-root".to_string(), vec!["runtime".to_string()]);
+        artifacts.entrypoint_dependency_search_paths.insert(
+            "generated-root".to_string(),
+            artifacts.capture_source_search_closure(&["runtime-deps".to_string()])?,
+        );
         let selected_artifacts = artifacts.for_source_evidence("generated-root")?;
         assert_eq!(selected_artifacts.dependency_search_paths, vec!["runtime-deps"]);
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: artifacts.source_search_roles_at_root(Path::new("/immutable"))?,
             dependency_search_paths: vec![
                 PathBuf::from("/immutable/runtime-deps"),
                 PathBuf::from("/immutable/vocab-deps"),
@@ -10395,7 +11727,8 @@ mod tests {
             caller_owned_library_digests: BTreeMap::from([("caller_library".to_string(), digest_bytes(b"caller"))]),
         };
 
-        let projected = super::trusted_artifact_plan_for_source(&plan, &artifacts, &selected_artifacts);
+        let projected =
+            super::trusted_artifact_plan_for_source(&plan, &artifacts, &selected_artifacts, "generated-root")?;
 
         assert_eq!(
             projected
@@ -10442,7 +11775,12 @@ mod tests {
         artifacts
             .entrypoint_externs
             .insert("generated-root".to_string(), vec!["runtime".to_string()]);
+        artifacts.entrypoint_dependency_search_paths.insert(
+            "generated-root".to_string(),
+            artifacts.capture_source_search_closure(&["runtime-deps".to_string()])?,
+        );
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: artifacts.source_search_roles_at_root(Path::new("/immutable"))?,
             dependency_search_paths: vec![
                 PathBuf::from("/immutable/runtime-deps"),
                 PathBuf::from("/immutable/compiler-private"),
