@@ -87,6 +87,8 @@ pub(crate) struct SemanticActivationContext<'a> {
     pub host: &'a str,
     pub target: &'a str,
     pub purpose: SemanticActivationPurpose,
+    /// Whether the producer selected a build-script unit from the original package inputs.
+    pub build_unit_present: bool,
     pub features: &'a BTreeSet<String>,
     pub default_features: bool,
 }
@@ -98,6 +100,7 @@ pub(crate) enum SemanticInactiveReason {
     OptionalNotEnabled,
     TargetConditionFalse,
     DevelopmentExcluded,
+    BuildUnitAbsent,
 }
 
 /// One original slot's checked outcome; inactive declarations remain present without invented selected sources.
@@ -363,9 +366,11 @@ fn validate_inactive_reason(
     reason: SemanticInactiveReason,
     request: &NativeSourceRequirement,
     target_condition: Option<&str>,
+    build_dependency: bool,
     context: &SemanticActivationContext<'_>,
 ) -> Result<(), SemanticProjectionError> {
     let applicable = match reason {
+        SemanticInactiveReason::BuildUnitAbsent => build_dependency && !context.build_unit_present,
         SemanticInactiveReason::OptionalNotEnabled => request.optional,
         SemanticInactiveReason::TargetConditionFalse => target_condition.is_some(),
         SemanticInactiveReason::DevelopmentExcluded => {
@@ -635,6 +640,7 @@ pub(crate) fn digest_rust_source_inputs(
                     *reason,
                     dependency.request,
                     dependency.target_condition,
+                    dependency.build,
                     &inputs.activation,
                 )?;
                 json!({ "inactive": reason })
@@ -801,7 +807,7 @@ fn project_provider(inputs: &ProviderSemanticInputs<'_>) -> Result<String, Seman
             return Err(invalid("provider requirement activation binding"));
         }
         if let ProviderRequirementSelection::Inactive(reason) = &binding.selected {
-            validate_inactive_reason(*reason, request, None, &inputs.activation)?;
+            validate_inactive_reason(*reason, request, None, false, &inputs.activation)?;
             selected_requirements.push(json!({ "inactive": reason }));
             continue;
         }

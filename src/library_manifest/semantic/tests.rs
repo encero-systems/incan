@@ -17,6 +17,7 @@ fn activation(features: &BTreeSet<String>, default_features: bool) -> SemanticAc
         host: "aarch64-apple-darwin",
         target: "aarch64-apple-darwin",
         purpose: SemanticActivationPurpose::Normal,
+        build_unit_present: false,
         features,
         default_features,
     }
@@ -865,6 +866,72 @@ fn provider_edge_features_follow_public_subset_and_private_exact_contracts() -> 
             project_edge(&parent, &child.identity, &selected),
             Err(SemanticProjectionError::Invalid { .. })
         ));
+    }
+    Ok(())
+}
+
+/// An absent checked build unit discharges only build slots and cannot survive a changed activation domain.
+#[test]
+fn absent_build_unit_preserves_declaration_and_refuses_nonbuild_or_present_units() -> TestResult {
+    let request = registry_request();
+    let files = BTreeMap::from([("src/lib.rs".to_string(), digest('2'))]);
+    let features = BTreeSet::new();
+    let configuration = BTreeMap::new();
+    for (build_dependency, build_unit_present, accepted) in
+        [(true, false, true), (false, false, false), (true, true, false)]
+    {
+        let dependencies = [RustSemanticDependency {
+            request: &request,
+            build: build_dependency,
+            target_condition: None,
+        }];
+        let mut context = activation(&features, false);
+        context.build_unit_present = build_unit_present;
+        let mut input = RustSemanticInputs {
+            activation: context,
+            contract: RUST_SEMANTIC_INPUT_CONTRACT,
+            contract_version: 1,
+            package: "parent",
+            version: "1.0.0",
+            crate_name: "parent",
+            crate_kind: NativeSourceCrateKind::Rlib,
+            edition: "2021",
+            entrypoint: "src/lib.rs",
+            source: RustSemanticSource::Path,
+            files: &files,
+            configuration: &configuration,
+            features: &features,
+            default_features: false,
+            dependencies: &dependencies,
+            selections: &[],
+        };
+        let definition = rust_definition_binding_digest(&input)?;
+        let domain = activation_context_digest(&context)?;
+        let selections = [RustSemanticSelection {
+            definition_digest: &definition,
+            activation_digest: &domain,
+            requirement_index: 0,
+            outcome: RustSemanticOutcome::Inactive(SemanticInactiveReason::BuildUnitAbsent),
+        }];
+        input.selections = &selections;
+        let result = digest_rust_source_inputs(&input);
+        if accepted {
+            result?;
+            input.selections = &[];
+            assert!(matches!(
+                digest_rust_source_inputs(&input),
+                Err(SemanticProjectionError::Missing { .. })
+            ));
+            input.selections = &selections;
+            input.activation.build_unit_present = true;
+            assert_ne!(activation_context_digest(&input.activation)?, domain);
+            assert!(matches!(
+                digest_rust_source_inputs(&input),
+                Err(SemanticProjectionError::Invalid { .. })
+            ));
+        } else {
+            assert!(matches!(result, Err(SemanticProjectionError::Invalid { .. })));
+        }
     }
     Ok(())
 }
