@@ -1707,8 +1707,8 @@ fn compose_packaged_provider_plan(
         let root_inventory = extension_fragment.composition_artifacts().map_err(oven_rustc_error)?;
         let mut supporting_artifacts = root_inventory
             .iter()
-            .cloned()
             .filter(|artifact| owned_paths.insert(artifact.relative_path.clone()))
+            .cloned()
             .collect::<Vec<_>>();
         supporting_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         let retains_artifact_below = |search_path: &str| {
@@ -1889,8 +1889,8 @@ fn compose_direct_packaged_provider_plan(
         let root_inventory = plan.artifacts.composition_artifacts().map_err(oven_rustc_error)?;
         let mut supporting_artifacts = root_inventory
             .iter()
-            .cloned()
             .filter(|artifact| owned_paths.insert(artifact.relative_path.clone()))
+            .cloned()
             .collect::<Vec<_>>();
         supporting_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         let retains_artifact_below = |search_path: &str| {
