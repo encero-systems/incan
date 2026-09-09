@@ -55,9 +55,9 @@ pub use lock::lock_project;
 pub use oven::{
     OvenCompilerLibtestsRunCommandOptions, OvenInteropBakeCommandOptions, OvenInteropStageCommandOptions,
     OvenPlanPublishCommandOptions, OvenReceiptInspectCommandOptions, OvenRunCommandOptions, OvenStoreCommandOptions,
-    OvenTestCommandOptions, inspect_oven_receipt, inspect_oven_store, oven_bake_project, oven_interop_bake,
-    oven_interop_stage, oven_publish_direct_rustc_plan, oven_run, oven_run_compiler_libtests, oven_test,
-    prune_oven_store,
+    OvenTestCommandOptions, inspect_oven_receipt, inspect_oven_store, oven_bake_project, oven_install_core_engine,
+    oven_interop_bake, oven_interop_stage, oven_publish_direct_rustc_plan, oven_run, oven_run_compiler_libtests,
+    oven_test, prune_oven_store,
 };
 pub use provider_inspect::{ProviderInspectionFormat, inspect_features, inspect_providers};
 pub use shadow_support::compare_source_observable;

@@ -284,6 +284,13 @@ fi
 [ "$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')" = "2" ] \
   || fail "release package must contain one release core and one debug Oven foundation Loaf"
 
+# Install only the reviewed toolchain-owned selector. The explicit publisher retains original Engine/output owners;
+# a normal compiler command never builds a missing module or takes an executable override from a project.
+core_engine_source="$package_dir/share/incan/oven/core-source"
+stage_tracked_tree "workspaces/oven" "$core_engine_source"
+"$package_dir/bin/incan" oven install-core-engine --toolchain-root "$package_dir" \
+  || fail "could not publish the toolchain core Engine"
+
 sdk_component_count="$(find "$sdk_seed_root/components" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 sdk_payload_bytes="$(find "$sdk_seed_root" -type f -exec wc -c {} + | awk '$2 != "total" { total += $1 } END { print total + 0 }')"
 loaf_count="$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')"

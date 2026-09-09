@@ -1,8 +1,8 @@
 //! Publisher-derived Oven module descriptors and borrowed artifact admission.
 //!
-//! This boundary records an explicit trusted module contract against a completed project output. It does not select a
-//! module, authorize host operations, negotiate host compatibility, or execute the native file. A held store lease
-//! prevents pruning; future execution must still enforce its own integrity, ABI and capability checks.
+//! This boundary records an explicit trusted module contract against a completed project output. It does not select an
+//! arbitrary module or issue host permission. The fixed toolchain installer retains original Engine/output owners;
+//! ordinary admission borrows them, and the caller separately enforces ABI, integrity and capability checks.
 
 use std::path::{Path, PathBuf};
 
@@ -111,7 +111,6 @@ impl EnginePublisherRequest {
 /// Fresh compilation observes this process's executable before checking/emission and verifies it again before
 /// publication. Completed-output reuse keeps the original observation and refuses a legacy output that lacks it.
 /// Returned Engine owners retain their leases; later admission must separately retain each referenced ProjectOutput.
-#[allow(dead_code, reason = "Pending #991: no ordinary command invokes the Engine publisher")]
 pub(crate) fn publish_engine_project(
     project: &Path,
     request: EnginePublisherRequest,
@@ -184,6 +183,21 @@ impl EnginePublisher {
                 "Engine request must name exactly one discovered executable entrypoint",
             ));
         }
+        Ok(())
+    }
+
+    /// Keep only the explicitly declared Engine entrypoint after normal target discovery and validation.
+    pub(super) fn retain_requested_target(
+        &self,
+        root: &Path,
+        targets: &mut Vec<(OvenBakeProjectTarget, PathBuf)>,
+    ) -> CliResult<()> {
+        self.validate_targets(root, targets)?;
+        targets.retain(|(kind, entrypoint)| {
+            *kind == OvenBakeProjectTarget::Executable
+                && project_relative_entrypoint(root, entrypoint).as_deref()
+                    == Some(self.request.entrypoint_relative_path.as_str())
+        });
         Ok(())
     }
 
@@ -630,6 +644,374 @@ impl<'a> AdmittedEngineArtifact<'a> {
     }
 }
 
+const CORE_ENGINE_ROOT: &str = "share/incan/oven/engines/core";
+const CORE_ENGINE_SOURCE: &str = "share/incan/oven/core-source";
+const CORE_ENGINE_ENTRYPOINT: &str = "src/plan_json_main.incn";
+const CORE_ENGINE_INDEX: &str = "installed.json";
+
+/// Toolchain installation selects original content owners; it does not grant host execution permission.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CoreEngineInstallation {
+    schema_version: u32,
+    installing_compiler: CompilerBinaryIdentity,
+    contract: EngineModuleContract,
+    engine_identity: String,
+    output_identity: String,
+    source_authority_digest: String,
+    receipt_identity: String,
+}
+
+/// Exactly selected installed owners, held together through borrowed admission and the complete exchange.
+pub(super) struct InstalledCoreEngine {
+    installation: CoreEngineInstallation,
+    engine: OvenStoreExecutionPayload,
+    output: OvenStoreExecutionPayload,
+}
+
+impl CoreEngineInstallation {
+    /// Reject future versions before decoding fields and require complete content coordinates.
+    fn decode(bytes: &[u8]) -> CliResult<Self> {
+        #[derive(Deserialize)]
+        struct Header {
+            schema_version: u32,
+        }
+        if bytes.len() > DESCRIPTOR_LIMIT {
+            return Err(CliError::failure("installed Engine index exceeds its size limit"));
+        }
+        let header: Header = serde_json::from_slice(bytes)
+            .map_err(|error| CliError::failure(format!("invalid installed Engine header: {error}")))?;
+        if header.schema_version != 1 {
+            return Err(CliError::failure("unsupported installed Engine index version"));
+        }
+        let value: Self = serde_json::from_slice(bytes)
+            .map_err(|error| CliError::failure(format!("invalid installed Engine index: {error}")))?;
+        if value.contract != EngineModuleContract::OvenSourceUnitBatchV3
+            || [
+                &value.installing_compiler.digest,
+                &value.engine_identity,
+                &value.output_identity,
+                &value.source_authority_digest,
+                &value.receipt_identity,
+            ]
+            .into_iter()
+            .any(|value| !is_sha256(value))
+        {
+            return Err(CliError::failure(
+                "installed Engine index has unsupported or incomplete identity bindings",
+            ));
+        }
+        Ok(value)
+    }
+}
+
+impl InstalledCoreEngine {
+    /// Load only the actual canonical executable's installed toolchain, with no environment or project override.
+    pub(super) fn load_current() -> CliResult<Self> {
+        let executable =
+            std::fs::canonicalize(std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?)
+                .map_err(|error| CliError::failure(error.to_string()))?;
+        let binary_directory = executable.parent().filter(|parent| parent.file_name().is_some_and(|name| name == "bin")).ok_or_else(|| CliError::failure("the active compiler has no installed core Engine layout; explicitly publish it through the toolchain installer"))?;
+        let root = binary_directory
+            .parent()
+            .ok_or_else(|| CliError::failure("installed compiler has no toolchain root"))?;
+        let compiler = CompilerBinaryIdentity {
+            digest: digest_file(&executable).map_err(|error| CliError::failure(error.to_string()))?,
+        };
+        Self::load(root, &compiler)
+    }
+
+    /// Read the optional current index without creating a directory or following a redirected component.
+    fn read_index(root: &Path) -> CliResult<Option<(PathBuf, CoreEngineInstallation)>> {
+        use std::io::Read;
+        let root = std::fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+        let component = root.join(CORE_ENGINE_ROOT);
+        match std::fs::symlink_metadata(&component) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(CliError::failure(error.to_string())),
+            Ok(_) => {}
+        }
+        if std::fs::canonicalize(&component).map_err(|error| CliError::failure(error.to_string()))? != component {
+            return Err(CliError::failure(
+                "installed core Engine root must not redirect outside its toolchain",
+            ));
+        }
+        let index = component.join(CORE_ENGINE_INDEX);
+        let metadata = match std::fs::symlink_metadata(&index) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(CliError::failure(error.to_string())),
+            Ok(metadata) => metadata,
+        };
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(CliError::failure(
+                "installed Engine index must be an original regular file",
+            ));
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(&index)
+            .and_then(|file| file.take((DESCRIPTOR_LIMIT + 1) as u64).read_to_end(&mut bytes))
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(Some((component, CoreEngineInstallation::decode(&bytes)?)))
+    }
+
+    /// Select exact installation records once, retaining their original leases without modifying installed files.
+    fn load(root: &Path, compiler: &CompilerBinaryIdentity) -> CliResult<Self> {
+        let (component, installation) =
+            Self::read_index(root)?.ok_or_else(|| CliError::failure("core Engine is not installed"))?;
+        if installation.installing_compiler != *compiler {
+            return Err(CliError::failure(
+                "core Engine installation belongs to a different compiler binary",
+            ));
+        }
+        Self::select_original_owners(&component, installation)
+    }
+
+    /// Retain a previous valid installation throughout replacement, even when the installing compiler has changed.
+    ///
+    /// This protects rollback referents only; it does not grant execution under the current compiler. Ordinary load
+    /// continues to enforce the installation's original compiler binding before owner selection.
+    fn retain_previous(root: &Path) -> CliResult<Option<Self>> {
+        let Some((component, installation)) = Self::read_index(root)? else {
+            return Ok(None);
+        };
+        let previous = Self::select_original_owners(&component, installation)?;
+        previous.with_admitted(|_| Ok(()))?;
+        Ok(Some(previous))
+    }
+
+    /// Select only the two exact records already named by a validated installation index.
+    fn select_original_owners(component: &Path, installation: CoreEngineInstallation) -> CliResult<Self> {
+        let mut selected = crate::oven::store::PublishedOvenStore::new(component.join("store"))
+            .select_payloads_matching_for_execution(|manifest| {
+                manifest.identity == installation.engine_identity || manifest.identity == installation.output_identity
+            })
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if selected.len() != 2 {
+            return Err(CliError::failure(
+                "installed core Engine requires exactly its two original owners",
+            ));
+        }
+        let engine_index = selected
+            .iter()
+            .position(|owner| owner.manifest.identity == installation.engine_identity)
+            .ok_or_else(|| CliError::failure("installed Engine owner is missing"))?;
+        let engine = selected.swap_remove(engine_index);
+        let output = selected
+            .pop()
+            .ok_or_else(|| CliError::failure("installed Engine output owner is missing"))?;
+        Ok(Self {
+            installation,
+            engine,
+            output,
+        })
+    }
+
+    /// Borrow the original installed descriptor/output pair for one command; this callback grants no permission.
+    pub(super) fn with_admitted<T>(
+        &self,
+        consume: impl FnOnce(&AdmittedEngineArtifact<'_>) -> CliResult<T>,
+    ) -> CliResult<T> {
+        let admitted = AdmittedEngineArtifact::borrow(&self.engine, &self.output)?;
+        if admitted.descriptor.module_contract() != self.installation.contract
+            || admitted.descriptor.source_authority_digest() != self.installation.source_authority_digest
+            || admitted.descriptor.receipt().identity != self.installation.receipt_identity
+            || admitted.owner_identities()
+                != (
+                    self.installation.engine_identity.as_str(),
+                    self.installation.output_identity.as_str(),
+                )
+        {
+            return Err(CliError::failure(
+                "installed core Engine record differs from its original admitted owners",
+            ));
+        }
+        consume(&admitted)
+    }
+}
+
+/// Publish the one toolchain-owned core selector and install its original Engine/output owners.
+///
+/// This explicit administrative command accepts no project, executable, contract or plugin selector. Its fixed source
+/// project belongs to the toolchain being staged; normal commands only read the completed installation. The installing
+/// compiler and original compiling compiler identities remain distinct. Archive authenticity belongs to the installer,
+/// not to a content hash or a claim of operating-system isolation.
+pub(crate) fn install_core_engine(toolchain_root: &Path) -> CliResult<()> {
+    let root = std::fs::canonicalize(toolchain_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let current = CompilingBinary::observe_current()?;
+    let installed_compiler =
+        std::fs::canonicalize(root.join("bin").join(if cfg!(windows) { "incan.exe" } else { "incan" }))
+            .map_err(|error| CliError::failure(error.to_string()))?;
+    if std::fs::canonicalize(&current.path).map_err(|error| CliError::failure(error.to_string()))? != installed_compiler
+    {
+        return Err(CliError::failure(
+            "core Engine installation must run through this toolchain's actual compiler",
+        ));
+    }
+    let project = root.join(CORE_ENGINE_SOURCE);
+    let mut engines = publish_engine_project(
+        &project,
+        EnginePublisherRequest::new(EngineModuleContract::OvenSourceUnitBatchV3, CORE_ENGINE_ENTRYPOINT)?,
+    )?
+    .into_iter()
+    .filter(|owner| owner.manifest.intent.profile == "release")
+    .collect::<Vec<_>>();
+    if engines.len() != 1 {
+        return Err(CliError::failure(
+            "core Engine publisher did not produce exactly one release descriptor",
+        ));
+    }
+    let engine_owner = engines
+        .pop()
+        .ok_or_else(|| CliError::failure("core Engine publication is absent"))?;
+    let descriptor = EngineDescriptor::from_json(&engine_owner.payload)?;
+    let source_store = super::open_default_oven_store()?;
+    let mut outputs = source_store
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == descriptor.output.identity)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if outputs.len() != 1 {
+        return Err(CliError::failure("core Engine publisher output owner is unavailable"));
+    }
+    let output_owner = outputs
+        .pop()
+        .ok_or_else(|| CliError::failure("core Engine output is absent"))?;
+    install_core_engine_owners(&root, &source_store, engine_owner, output_owner, &current)
+}
+
+/// Serialize replacement of the component index while its rollback and new Store owners are leased.
+fn lock_core_engine_installation(root: &Path) -> CliResult<std::fs::File> {
+    let mut directory = std::fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+    for component in Path::new(CORE_ENGINE_ROOT).components() {
+        directory.push(component);
+        match std::fs::create_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(CliError::failure(error.to_string())),
+        }
+        let metadata = std::fs::symlink_metadata(&directory).map_err(|error| CliError::failure(error.to_string()))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(CliError::failure(
+                "core Engine installation component is not an original directory",
+            ));
+        }
+    }
+    let path = directory.join(".installation.lock");
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
+            return Err(CliError::failure(
+                "core Engine installation lock is not an original regular file",
+            ));
+        }
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(CliError::failure(error.to_string())),
+        _ => {}
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    file.lock().map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(file)
+}
+
+/// Copy only the genuine publisher's already selected owners, then commit their validated installation index.
+fn install_core_engine_owners(
+    root: &Path,
+    source_store: &OvenStore,
+    engine_owner: OvenStoreExecutionPayload,
+    output_owner: OvenStoreExecutionPayload,
+    current: &CompilingBinary,
+) -> CliResult<()> {
+    use std::io::Write;
+    let admitted = AdmittedEngineArtifact::borrow(&engine_owner, &output_owner)?;
+    if admitted.descriptor().module_contract() != EngineModuleContract::OvenSourceUnitBatchV3 {
+        return Err(CliError::failure(
+            "core Engine installation requires an explicitly published batch version 3 role",
+        ));
+    }
+    let descriptor = admitted.descriptor().clone();
+    current.verify_unchanged()?;
+    let installing_compiler = current.identity.clone();
+    let installation = CoreEngineInstallation {
+        schema_version: 1,
+        installing_compiler: installing_compiler.clone(),
+        contract: EngineModuleContract::OvenSourceUnitBatchV3,
+        engine_identity: engine_owner.manifest.identity.clone(),
+        output_identity: output_owner.manifest.identity.clone(),
+        source_authority_digest: admitted.descriptor.source_authority_digest().to_string(),
+        receipt_identity: descriptor.output.receipt.identity.clone(),
+    };
+    let installation_lock = lock_core_engine_installation(root)?;
+    // Pruning during either new publication must not destroy the index's rollback referents.
+    let previous = InstalledCoreEngine::retain_previous(root)?;
+    let component = root.join(CORE_ENGINE_ROOT);
+    let destination = OvenStore::new(component.join("store"), *source_store.limits());
+    let mut retained = Vec::with_capacity(2);
+    for owner in [output_owner, engine_owner] {
+        let identity = owner.manifest.identity.clone();
+        let kind = owner.manifest.kind;
+        let copied = super::publish_selected_provider_loaf(
+            owner,
+            &destination,
+            &descriptor.output.receipt,
+            &identity,
+            kind,
+            "core Engine installation",
+        )?;
+        if copied.identity != identity {
+            return Err(CliError::failure(
+                "core Engine installation changed an original owner identity",
+            ));
+        }
+        // Publication returns an immutable record, not a lease. Acquire its execution owner before another publish
+        // can prune it; if a concurrent pruner wins this interval, fail while the previous pair is still held.
+        let mut selected = destination
+            .select_payloads_for_execution(&[identity])
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if selected.len() != 1 {
+            return Err(CliError::failure(
+                "new core Engine member is unavailable after publication",
+            ));
+        }
+        retained.push(
+            selected
+                .pop()
+                .ok_or_else(|| CliError::failure("new core Engine owner is absent"))?,
+        );
+    }
+    let engine = retained
+        .pop()
+        .ok_or_else(|| CliError::failure("new core Engine descriptor owner is absent"))?;
+    let output = retained
+        .pop()
+        .ok_or_else(|| CliError::failure("new core Engine output owner is absent"))?;
+    let installed = InstalledCoreEngine {
+        installation: installation.clone(),
+        engine,
+        output,
+    };
+    installed.with_admitted(|_| Ok(()))?;
+    let bytes = serde_json::to_vec(&installation).map_err(|error| CliError::failure(error.to_string()))?;
+    let _ = CoreEngineInstallation::decode(&bytes)?;
+    // The index is the commit point. A failed copy preserves the previous index and its referenced immutable owners.
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(&component).map_err(|error| CliError::failure(error.to_string()))?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    current.verify_unchanged()?;
+    temporary
+        .persist(component.join(CORE_ENGINE_INDEX))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    // Both destination owners and the prior pair remain leased through the successful index commit.
+    drop(installed);
+    drop(previous);
+    drop(installation_lock);
+    Ok(())
+}
+
 // The existing store records executable permissions only on Unix. These are metadata/owner controls, not native module
 // execution tests; a non-Unix publisher cannot currently establish this descriptor's executable-mode fact.
 #[cfg(test)]
@@ -643,14 +1025,15 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use super::super::EngineBootstrapPermit;
     use super::super::engine_exchange::{ExchangeOutcome, ExchangePhase, exchange};
+    use super::super::{EngineBootstrapPermit, EngineCommandAuthority, EngineKernelCeiling, EngineKernelOperation};
     use super::super::{
         OVEN_PROJECT_OUTPUT_ARTIFACT_PATH, OvenBakeProjectTarget, OvenProjectOutputPayload, OvenStoredProjectOutput,
     };
     use super::{
-        AdmittedEngineArtifact, CompilerBinaryIdentity, CompilingBinary, DESCRIPTOR_LIMIT, EngineDescriptor,
-        EngineModuleContract, EnginePublisher, EnginePublisherRequest,
+        AdmittedEngineArtifact, CORE_ENGINE_INDEX, CORE_ENGINE_ROOT, CompilerBinaryIdentity, CompilingBinary,
+        CoreEngineInstallation, DESCRIPTOR_LIMIT, EngineDescriptor, EngineModuleContract, EnginePublisher,
+        EnginePublisherRequest, InstalledCoreEngine, install_core_engine_owners,
     };
     use crate::generated_source::{digest_bytes, digest_file};
     use crate::oven::OvenReceipt;
@@ -737,6 +1120,358 @@ mod tests {
             compiler: None,
             published: Vec::new(),
         })
+    }
+
+    /// Publish a version 3 descriptor through the same completion adapter used by the explicit installer.
+    fn publish_core_fixture(fixture: &Fixture) -> Result<OvenStoreExecutionPayload, Box<dyn std::error::Error>> {
+        let mut publisher = EnginePublisher {
+            request: EnginePublisherRequest::new(EngineModuleContract::OvenSourceUnitBatchV3, "src/main.incn")?,
+            compiler: None,
+            published: Vec::new(),
+        };
+        publisher.publish_if_requested(&fixture.store, &fixture.receipt, &fixture.completed)?;
+        Ok(publisher.published.pop().ok_or("core fixture descriptor missing")?)
+    }
+
+    /// Exact publisher owners survive installation/relocation; host binary drift and redirected indexes refuse.
+    #[test]
+    fn core_engine_installation_preserves_original_owners_and_rejects_substitutions() -> TestResult {
+        let fixture = Fixture::new("core-install", true)?;
+        let root = tempfile::tempdir()?;
+        let current = CompilingBinary::observe_current()?;
+        let owner = publish_core_fixture(&fixture)?;
+        let expected_engine = owner.manifest.identity.clone();
+        let expected_output = fixture.completed.identity.clone();
+        install_core_engine_owners(root.path(), &fixture.store, owner, fixture.output_owner()?, &current)?;
+        let installed = InstalledCoreEngine::load(root.path(), &current.identity)?;
+        installed.with_admitted(|admitted| {
+            assert_eq!(
+                admitted.owner_identities(),
+                (expected_engine.as_str(), expected_output.as_str())
+            );
+            assert_eq!(admitted.descriptor().receipt(), &fixture.receipt);
+            Ok(())
+        })?;
+        let index = root.path().join(CORE_ENGINE_ROOT).join(CORE_ENGINE_INDEX);
+        let bytes = fs::read(&index)?;
+        let changed_compiler = CompilerBinaryIdentity {
+            digest: digest_bytes(b"different-host"),
+        };
+        assert!(InstalledCoreEngine::load(root.path(), &changed_compiler).is_err());
+        let mut changed = CoreEngineInstallation::decode(&bytes)?;
+        changed.source_authority_digest = digest_bytes(b"different-module-source");
+        fs::write(&index, serde_json::to_vec(&changed)?)?;
+        let substituted = InstalledCoreEngine::load(root.path(), &current.identity)?;
+        assert!(substituted.with_admitted(|_| Ok(())).is_err());
+        fs::write(&index, &bytes)?;
+        drop(substituted);
+        drop(installed);
+        let moved = root.path().join("relocated-toolchain");
+        fs::create_dir(&moved)?;
+        fs::rename(root.path().join("share"), moved.join("share"))?;
+        InstalledCoreEngine::load(&moved, &current.identity)?.with_admitted(|_| Ok(()))?;
+        let moved_index = moved.join(CORE_ENGINE_ROOT).join(CORE_ENGINE_INDEX);
+        fs::remove_file(&moved_index)?;
+        let external_index = root.path().join("external-index.json");
+        fs::write(&external_index, bytes)?;
+        symlink(&external_index, &moved_index)?;
+        assert!(InstalledCoreEngine::load(&moved, &current.identity).is_err());
+        Ok(())
+    }
+
+    /// Legacy roles cannot replace an installed core; failed admission leaves the prior index byte-identical.
+    #[test]
+    fn core_engine_installer_keeps_prior_index_on_invalid_original_owner() -> TestResult {
+        let fixture = Fixture::new("core-install-rollback", true)?;
+        let root = tempfile::tempdir()?;
+        let current = CompilingBinary::observe_current()?;
+        install_core_engine_owners(
+            root.path(),
+            &fixture.store,
+            publish_core_fixture(&fixture)?,
+            fixture.output_owner()?,
+            &current,
+        )?;
+        let index = root.path().join(CORE_ENGINE_ROOT).join(CORE_ENGINE_INDEX);
+        let before = fs::read(&index)?;
+        assert!(
+            install_core_engine_owners(
+                root.path(),
+                &fixture.store,
+                fixture.publish_engine()?,
+                fixture.output_owner()?,
+                &current
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(index)?, before);
+        InstalledCoreEngine::load(root.path(), &current.identity)?.with_admitted(|_| Ok(()))?;
+        assert!(CoreEngineInstallation::decode(br#"{"schema_version":99,"invalid_body":true}"#).is_err());
+        Ok(())
+    }
+
+    /// A capacity refusal on the second copy preserves both prior referents and the first new leased owner.
+    #[test]
+    fn core_engine_replacement_pressure_preserves_rollback_owners() -> TestResult {
+        let old = Fixture::new("old_core_pressure", true)?;
+        let new = Fixture::new("new_core_pressure", true)?;
+        let root = tempfile::tempdir()?;
+        let current = CompilingBinary::observe_current()?;
+        let old_engine = publish_core_fixture(&old)?;
+        let old_engine_id = old_engine.manifest.identity.clone();
+        install_core_engine_owners(root.path(), &old.store, old_engine, old.output_owner()?, &current)?;
+        let component = root.path().join(CORE_ENGINE_ROOT);
+        let before = fs::read(component.join(CORE_ENGINE_INDEX))?;
+        let destination = OvenStore::new(component.join("store"), *old.store.limits());
+        let prior = destination.inspect()?;
+        let new_engine = publish_core_fixture(&new)?;
+        let new_engine_id = new_engine.manifest.identity.clone();
+        let new_output = new.output_owner()?;
+        assert_eq!(new_engine.manifest.domain, new_output.manifest.domain);
+        assert!(
+            prior
+                .entries
+                .iter()
+                .all(|entry| entry.manifest.domain == new_engine.manifest.domain)
+        );
+        let output_logical = new_output.manifest.payload.logical_bytes
+            + new_output
+                .manifest
+                .materialized_files
+                .iter()
+                .map(|file| file.logical_bytes)
+                .sum::<u64>();
+        let engine_logical = new_engine.manifest.payload.logical_bytes;
+        assert!(engine_logical > 1);
+        let tight = OvenStore::new(
+            new.store.root(),
+            OvenStoreLimits::new(
+                16 << 20,
+                16 << 20,
+                prior.logical_bytes + output_logical + engine_logical - 1,
+            ),
+        );
+        let error = install_core_engine_owners(root.path(), &tight, new_engine, new_output, &current)
+            .err()
+            .ok_or("second publication unexpectedly passed the tight capacity bound")?;
+        assert!(error.to_string().contains("capacity blocked"), "{error}");
+        assert_eq!(fs::read(component.join(CORE_ENGINE_INDEX))?, before);
+        let entries = destination.inspect()?.entries;
+        assert!(entries.iter().any(|entry| entry.manifest.identity == old_engine_id));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.manifest.identity == old.completed.identity)
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.manifest.identity == new.completed.identity)
+        );
+        assert!(!entries.iter().any(|entry| entry.manifest.identity == new_engine_id));
+        InstalledCoreEngine::load(root.path(), &current.identity)?.with_admitted(|_| Ok(()))?;
+        Ok(())
+    }
+
+    /// Replacement prunes only inactive pressure entries and publishes a complete newly admissible pair.
+    #[test]
+    fn core_engine_replacement_under_pressure_retains_new_pair() -> TestResult {
+        let old = Fixture::new("old_core_success", true)?;
+        let new = Fixture::new("new_core_success", true)?;
+        let root = tempfile::tempdir()?;
+        let current = CompilingBinary::observe_current()?;
+        install_core_engine_owners(
+            root.path(),
+            &old.store,
+            publish_core_fixture(&old)?,
+            old.output_owner()?,
+            &current,
+        )?;
+        let component = root.path().join(CORE_ENGINE_ROOT);
+        let destination = OvenStore::new(component.join("store"), *old.store.limits());
+        let prior_logical = destination.inspect()?.logical_bytes;
+        let new_engine = publish_core_fixture(&new)?;
+        let new_engine_id = new_engine.manifest.identity.clone();
+        let new_output = new.output_owner()?;
+        let pair_logical = new_engine.manifest.payload.logical_bytes
+            + new_output.manifest.payload.logical_bytes
+            + new_output
+                .manifest
+                .materialized_files
+                .iter()
+                .map(|file| file.logical_bytes)
+                .sum::<u64>();
+        let pressure = destination.publish(&OvenArtifactPublishRequest {
+            receipt: new.receipt.clone(),
+            domain: new_engine.manifest.domain.clone(),
+            kind: OvenArtifactKind::ProjectPayload,
+            payload: vec![b'x'; usize::try_from(pair_logical)?],
+            materialized_files: Vec::new(),
+        })?;
+        let tight = OvenStore::new(
+            new.store.root(),
+            OvenStoreLimits::new(16 << 20, 16 << 20, prior_logical + pair_logical),
+        );
+        install_core_engine_owners(root.path(), &tight, new_engine, new_output, &current)?;
+        let installed = InstalledCoreEngine::load(root.path(), &current.identity)?;
+        installed.with_admitted(|admitted| {
+            assert_eq!(
+                admitted.owner_identities(),
+                (new_engine_id.as_str(), new.completed.identity.as_str())
+            );
+            Ok(())
+        })?;
+        let entries = destination.inspect()?.entries;
+        assert!(!entries.iter().any(|entry| entry.manifest.identity == pressure.identity));
+        assert!(entries.iter().any(|entry| entry.manifest.identity == new_engine_id));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.manifest.identity == new.completed.identity)
+        );
+        Ok(())
+    }
+
+    /// The real issuer separates explicit host policy from descriptors, bounds, cancellation and ABI facts.
+    #[test]
+    fn core_engine_permit_requires_command_policy_and_exact_invocation() -> TestResult {
+        let fixture = Fixture::new("core-permit", true)?;
+        let engine_owner = publish_core_fixture(&fixture)?;
+        let output_owner = fixture.output_owner()?;
+        let admitted = AdmittedEngineArtifact::borrow(&engine_owner, &output_owner)?;
+        let scope = fs::canonicalize(fixture.project_root.path())?;
+        let cancelled = AtomicBool::new(false);
+        let authority = EngineCommandAuthority {
+            operation: EngineKernelOperation::SelectProviderSources,
+            ceiling: EngineKernelCeiling::BoundedCoreSelection,
+        };
+        let issue = |authority: &EngineCommandAuthority, target: &str, input: &[u8], deadline| {
+            authority.issue(&admitted, &fixture.receipt, input, &scope, target, deadline, &cancelled)
+        };
+        let target = fixture.receipt.intent.target.as_str();
+        let permit = issue(&authority, target, b"{}", Instant::now() + Duration::from_secs(30))?;
+        assert_eq!(permit.command_receipt.identity, fixture.receipt.identity);
+        assert_eq!(permit.engine_identity, engine_owner.manifest.identity);
+        assert_eq!(permit.request_digest, digest_bytes(b"{}"));
+        assert_eq!(permit.request_limit, 1024 * 1024);
+        let denied = EngineCommandAuthority {
+            operation: EngineKernelOperation::SelectProviderSources,
+            ceiling: EngineKernelCeiling::Denied,
+        };
+        assert!(issue(&denied, target, b"{}", Instant::now() + Duration::from_secs(30)).is_err());
+        let unrelated = EngineCommandAuthority {
+            operation: EngineKernelOperation::PublishModule,
+            ceiling: EngineKernelCeiling::BoundedCoreSelection,
+        };
+        assert!(issue(&unrelated, target, b"{}", Instant::now() + Duration::from_secs(30)).is_err());
+        assert!(
+            issue(
+                &authority,
+                "wrong-host",
+                b"{}",
+                Instant::now() + Duration::from_secs(30)
+            )
+            .is_err()
+        );
+        assert!(
+            issue(
+                &authority,
+                target,
+                &vec![0; 1024 * 1024 + 1],
+                Instant::now() + Duration::from_secs(30)
+            )
+            .is_err()
+        );
+        assert!(issue(&authority, target, b"{}", Instant::now()).is_err());
+        cancelled.store(true, Ordering::Release);
+        assert!(issue(&authority, target, b"{}", Instant::now() + Duration::from_secs(30)).is_err());
+        Ok(())
+    }
+
+    /// An installed module uses the real issuer and preserves exact exchange bytes and terminal diagnostics.
+    #[test]
+    fn core_engine_installed_exchange_persists_exact_result_without_source_receipt_claim() -> TestResult {
+        let fixture = Fixture::with_native(
+            "installed-exchange",
+            true,
+            Some(b"#!/bin/sh\nprintf '{\"schema\":\"fixture\",\"ok\":true}' > \"$2\"\n"),
+        )?;
+        let root = tempfile::tempdir()?;
+        let current = CompilingBinary::observe_current()?;
+        install_core_engine_owners(
+            root.path(),
+            &fixture.store,
+            publish_core_fixture(&fixture)?,
+            fixture.output_owner()?,
+            &current,
+        )?;
+        let installed = InstalledCoreEngine::load(root.path(), &current.identity)?;
+        let scope = fs::canonicalize(root.path())?;
+        let cancelled = AtomicBool::new(false);
+        let authority = EngineCommandAuthority {
+            operation: EngineKernelOperation::SelectProviderSources,
+            ceiling: EngineKernelCeiling::BoundedCoreSelection,
+        };
+        installed.with_admitted(|admitted| {
+            let permit = authority.issue(
+                admitted,
+                &fixture.receipt,
+                b"{}",
+                &scope,
+                &fixture.receipt.intent.target,
+                Instant::now() + Duration::from_secs(30),
+                &cancelled,
+            )?;
+            let report = exchange(admitted, permit, b"{}", &cancelled);
+            assert_eq!(report.outcome, ExchangeOutcome::Completed);
+            assert_eq!(
+                report.response.as_deref(),
+                Some(br#"{"schema":"fixture","ok":true}"#.as_slice())
+            );
+            super::super::persist_engine_exchange_observation(&scope, &report)?;
+            Ok(())
+        })?;
+        let reports = fs::read_dir(scope.join(".incan/engine-exchange"))?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("engine-exchange-"))
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 1);
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(reports[0].path())?)?;
+        assert_eq!(value["kind"], "incan.oven.engine-exchange-observation");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["outcome"], "completed");
+        assert_eq!(
+            value["response_digest"],
+            digest_bytes(br#"{"schema":"fixture","ok":true}"#)
+        );
+        assert_eq!(
+            value["response"],
+            serde_json::to_value(br#"{"schema":"fixture","ok":true}"#.as_slice())?
+        );
+        assert!(value.get("canonical_operation_id").is_none());
+        Ok(())
+    }
+
+    /// Explicit Engine publication filters only its declared entrypoint, avoiding unrelated acceptance targets.
+    #[test]
+    fn core_engine_publisher_keeps_only_its_declared_target() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let publisher = publisher()?;
+        let mut targets = vec![
+            (
+                OvenBakeProjectTarget::Executable,
+                root.path().join("src/acceptance.incn"),
+            ),
+            (OvenBakeProjectTarget::Executable, root.path().join("src/main.incn")),
+            (OvenBakeProjectTarget::Library, root.path().join("src/lib.incn")),
+        ];
+        publisher.retain_requested_target(root.path(), &mut targets)?;
+        assert_eq!(
+            targets,
+            vec![(OvenBakeProjectTarget::Executable, root.path().join("src/main.incn"))]
+        );
+        Ok(())
     }
 
     /// Read a fixture's original admitted payload through the real store selection API.

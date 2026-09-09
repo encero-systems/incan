@@ -1116,6 +1116,12 @@ pub enum CacheCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Publish and install the fixed core Engine through this staged toolchain's actual compiler
+    InstallCoreEngine {
+        /// Staged toolchain root containing bin/incan and the fixed authored core Engine source project
+        #[arg(long, value_name = "PATH")]
+        toolchain_root: PathBuf,
+    },
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
         /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
@@ -1754,6 +1760,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             ),
         },
         Some(Command::Oven { command }) => match command {
+            OvenCommand::InstallCoreEngine { toolchain_root } => commands::oven_install_core_engine(toolchain_root),
             OvenCommand::Bake {
                 project,
                 package_features,

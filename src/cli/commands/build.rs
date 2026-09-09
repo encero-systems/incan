@@ -16,15 +16,271 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// The supported kernel operation is distinct from checked source-language operation identities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EngineKernelOperation {
+    SelectProviderSources,
+    #[allow(
+        dead_code,
+        reason = "This unsupported kernel operation is retained for explicit policy denial controls"
+    )]
+    PublishModule,
+}
+
+/// A command-owned capability ceiling; neither child JSON nor installed metadata can construct the invocation policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EngineKernelCeiling {
+    #[allow(dead_code, reason = "The denied ceiling is exercised by command policy controls")]
+    Denied,
+    BoundedCoreSelection,
+}
+
+/// Explicit host policy for the one supported kernel exchange, not an RFC104 source-operation decision.
+///
+/// The ordinary compiler command may request bounded core selection within its host ceiling. This does not grant
+/// arbitrary project modules, module publication, network access, or authority for subsequent native compilation.
+struct EngineCommandAuthority {
+    operation: EngineKernelOperation,
+    ceiling: EngineKernelCeiling,
+}
+
+impl EngineCommandAuthority {
+    /// Refuse unsupported requests before installed-file access, request-file creation or process supervision.
+    fn require_core_selection(&self) -> CliResult<()> {
+        if self.operation != EngineKernelOperation::SelectProviderSources {
+            return Err(CliError::failure(
+                "kernel capability denied: this operation is not bounded core selection",
+            ));
+        }
+        if self.ceiling != EngineKernelCeiling::BoundedCoreSelection {
+            return Err(CliError::failure(
+                "kernel capability denied: core selection is outside the command ceiling",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Issue a one-use permit only after explicit policy, original module admission and exact invocation checks.
+    #[allow(clippy::too_many_arguments)]
+    fn issue<'a>(
+        &self,
+        admitted: &engine::AdmittedEngineArtifact<'_>,
+        receipt: &'a crate::oven::OvenReceipt,
+        request: &[u8],
+        output_root: &Path,
+        host_target: &str,
+        deadline: Instant,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> CliResult<EngineBootstrapPermit<'a>> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static INVOCATIONS: AtomicU64 = AtomicU64::new(0);
+        self.require_core_selection()?;
+        receipt
+            .verify_identity()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(CliError::failure("core selection invocation is cancelled or expired"));
+        }
+        if admitted.descriptor().module_contract() != engine::EngineModuleContract::OvenSourceUnitBatchV3
+            || admitted.descriptor().native_file_exchange_abi() != 1
+            || admitted.descriptor().receipt().intent.target != host_target
+            || request.is_empty()
+            || request.len() > 1024 * 1024
+        {
+            return Err(CliError::failure(
+                "core selection invocation has an incompatible module, host ABI or input bound",
+            ));
+        }
+        let metadata = fs::symlink_metadata(output_root).map_err(|error| CliError::failure(error.to_string()))?;
+        let scratch_parent = fs::canonicalize(output_root).map_err(|error| CliError::failure(error.to_string()))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() || scratch_parent != output_root {
+            return Err(CliError::failure(
+                "core selection scratch must be the original canonical command output directory",
+            ));
+        }
+        let sequence = INVOCATIONS
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+            .map_err(|_| CliError::failure("kernel invocation sequence exhausted"))?;
+        let invocation_id = format!("incan.kernel.core-selection/1:{}:{sequence}", std::process::id());
+        let (engine_identity, output_identity) = admitted.owner_identities();
+        Ok(EngineBootstrapPermit {
+            permit_id: format!("{invocation_id}:permit"),
+            invocation_id,
+            command_receipt: receipt,
+            engine_identity: engine_identity.to_string(),
+            output_identity: output_identity.to_string(),
+            contract: engine::EngineModuleContract::OvenSourceUnitBatchV3,
+            host_target: host_target.to_string(),
+            request_digest: digest_bytes(request),
+            scratch_parent,
+            deadline,
+            request_limit: 1024 * 1024,
+            response_limit: 1024 * 1024,
+            stdout_limit: 64 * 1024,
+            stderr_limit: 64 * 1024,
+        })
+    }
+}
+
+/// Consume the original selected Store owner and producer map through the installed Incan policy module.
+///
+/// The command permits one bounded core selection; the receipt and selected metadata never issue that permission.
+/// SDK-only commands return before module lookup. Other retained native carrier forms remain explicit until they
+/// expose their original batch candidate owners; a composed manifest alone cannot substitute for those owners.
+#[allow(clippy::too_many_arguments)]
+fn materialize_provider_sources_with_installed_engine(
+    provider_plan: &ProviderPlan,
+    receipt: &crate::oven::OvenReceipt,
+    semantic_identities: &BTreeMap<String, String>,
+    selection: &OvenDirectRustcPlanSelection,
+    rustc: &Path,
+    output_root: &Path,
+    authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
+    if !has_caller_owned_project_libraries(provider_plan) {
+        return Ok(Vec::new());
+    }
+    // This ordinary command owns the bounded core-selection ceiling. Neither installed descriptors nor returned
+    // JSON can change it. Native materialization below consumes its separate original receipt authority.
+    let authority = EngineCommandAuthority {
+        operation: EngineKernelOperation::SelectProviderSources,
+        ceiling: EngineKernelCeiling::BoundedCoreSelection,
+    };
+    authority.require_core_selection()?;
+    let OvenDirectRustcPlanSelection::Stored(stored) = selection else {
+        return Err(CliError::failure(
+            "provider source selection requires an original Store candidate owner; this native carrier has no batch owner ingress yet",
+        ));
+    };
+    let view = stored.native_input_view().map_err(oven_rustc_error)?;
+    // The publisher's provider-specific role wins only when explicitly declared in the original manifest. Legacy
+    // plans keep their original generated-root role; a missing role is rejected by the batch's normal admission.
+    let source_role = if view.artifacts().entrypoint_externs.contains_key("provider-compilation") {
+        "provider-compilation"
+    } else {
+        "generated-root"
+    };
+    let candidates = [ProviderBatchCandidate {
+        owner: ProviderBatchNativeOwner::Store(&view),
+        source_role,
+        receipt: (view.receipt_identity() == Some(receipt.identity.as_str())).then_some(receipt),
+    }];
+    let installed = engine::InstalledCoreEngine::load_current()?;
+    let host_target = rustc_host_target(rustc).map_err(oven_rustc_error)?;
+    let batch = ProviderSourceBatch::new(provider_plan, receipt, semantic_identities, &candidates)?;
+    let output_root = fs::canonicalize(output_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    // The existing process supervisor supports cancellation, but this synchronous command currently supplies only
+    // its deadline. It does not claim integration with a command-wide cancellation token.
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    installed.with_admitted(|admitted| {
+        let permit = authority.issue(
+            admitted,
+            receipt,
+            &batch.request,
+            &output_root,
+            &host_target,
+            deadline,
+            &cancelled,
+        )?;
+        let (report, selected) = batch.exchange(admitted, permit, &cancelled)?;
+        persist_engine_exchange_observation(&output_root, &report)?;
+        selected?.materialize(rustc, &output_root, authority_context)
+    })
+}
+
+/// Persist bounded actual kernel observations even when the child or returned selection failed.
+///
+/// This versioned diagnostic record is not an RFC104 OperationReceipt, execution grant, or restart protocol. The
+/// response and diagnostic prefixes retain their exact bytes and separately recorded digest/overflow meanings.
+fn persist_engine_exchange_observation(
+    output_root: &Path,
+    report: &engine_exchange::EngineExchangeReport,
+) -> CliResult<()> {
+    use engine_exchange::{ExchangeOutcome, ExchangePhase};
+    use std::io::Write;
+    let outcome = |value: ExchangeOutcome| match value {
+        ExchangeOutcome::Completed => "completed",
+        ExchangeOutcome::Refused => "refused",
+        ExchangeOutcome::Failed => "failed",
+        ExchangeOutcome::Cancelled => "cancelled",
+        ExchangeOutcome::TimedOut => "timed_out",
+    };
+    let phases = report
+        .phases
+        .iter()
+        .map(|entry| {
+            let phase = match entry.phase {
+                ExchangePhase::Admission => "admission",
+                ExchangePhase::FileScope => "file_scope",
+                ExchangePhase::RequestFile => "request_file",
+                ExchangePhase::Spawn => "spawn",
+                ExchangePhase::Supervision => "supervision",
+                ExchangePhase::ProcessCleanup => "process_cleanup",
+                ExchangePhase::ResponseRead => "response_read",
+                ExchangePhase::FileCleanup => "file_cleanup",
+            };
+            serde_json::json!({"phase": phase, "outcome": entry.outcome.map(outcome), "detail": entry.detail})
+        })
+        .collect::<Vec<_>>();
+    let observation = serde_json::json!({
+        "schema_version": 1, "kind": "incan.oven.engine-exchange-observation",
+        "permit_id": report.permit_id, "invocation_id": report.invocation_id,
+        "command_receipt_identity": report.command_receipt_identity,
+        "engine_identity": report.engine_identity, "output_identity": report.output_identity,
+        "source_identity": report.source_identity, "compiler_binary_digest": report.compiler_binary_digest,
+        "native_digest": report.native_digest, "contract": report.contract,
+        "native_file_exchange_abi": report.native_file_exchange_abi, "host_target": report.host_target,
+        "limits": {"request": report.request_limit, "response": report.response_limit,
+            "stdout": report.stdout_limit, "stderr": report.stderr_limit},
+        "deadline_remaining_at_start": report.deadline_remaining_at_start,
+        "permitted_request_digest": report.permitted_request_digest,
+        "request_digest": report.request_digest, "response_digest": report.response_digest,
+        "response": report.response,
+        "stdout": {"bytes": report.stdout.bytes, "prefix_digest": report.stdout_prefix_digest,
+            "exceeded": report.stdout.exceeded, "eof": report.stdout.eof},
+        "stderr": {"bytes": report.stderr.bytes, "prefix_digest": report.stderr_prefix_digest,
+            "exceeded": report.stderr.exceeded, "eof": report.stderr.eof},
+        "phases": phases, "outcome": outcome(report.outcome), "detail": report.detail,
+        "child_id": report.child_id,
+        "child_status": report.child_status.map(|status| serde_json::json!({
+            "success": status.success(), "code": status.code(), "display": status.to_string()})),
+        "scratch_path": report.scratch_path, "elapsed": report.elapsed,
+        "deadline_exceeded": report.deadline_exceeded,
+    });
+    let bytes = serde_json::to_vec(&observation).map_err(|error| CliError::failure(error.to_string()))?;
+    // `.incan` is an existing mutable-output exclusion of provider artifact/source identity. Observations must not
+    // become new semantic/native inputs or invalidate a provider merely because it was selected again.
+    let mut directory = output_root.to_path_buf();
+    for component in [".incan", "engine-exchange"] {
+        directory.push(component);
+        match fs::create_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(CliError::failure(error.to_string())),
+        }
+        let metadata = fs::symlink_metadata(&directory).map_err(|error| CliError::failure(error.to_string()))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(CliError::failure(
+                "kernel observation directory is not an original command output directory",
+            ));
+        }
+    }
+    let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(|error| CliError::failure(error.to_string()))?;
+    file.write_all(&bytes)
+        .and_then(|_| file.as_file().sync_all())
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    // The actual invocation ID remains in the record. The content address avoids replacing an earlier attempt.
+    file.persist_noclobber(directory.join(format!("engine-exchange-{}.json", digest_bytes(&bytes))))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(())
+}
+
 /// One-use permission issued by the trusted command boundary for one Engine exchange.
 ///
 /// These private fields are deliberately not deserializable. The exchange module has no issuer or permit construction
 /// path; Rust child-module privacy does not prevent one from being added. A receipt proves provenance only.
-/// Pending #991: ordinary command issuance and module installation remain unwired.
-#[allow(
-    dead_code,
-    reason = "Pending #991: the trusted command permit issuer is not connected"
-)]
+/// The ordinary provider-source command issues this permit after installed-owner admission and explicit host policy.
 pub(crate) struct EngineBootstrapPermit<'a> {
     permit_id: String,
     invocation_id: String,
@@ -231,6 +487,7 @@ struct OvenPreparedProject {
     entrypoint: PathBuf,
     provider_plan: Arc<ProviderPlan>,
     receipt: crate::oven::OvenReceipt,
+    provider_semantic_identities: BTreeMap<String, String>,
     plan_selection: OvenDirectRustcPlanSelection,
     materialization: OvenToolchainMaterialization,
     cargo_process_started: bool,
@@ -337,6 +594,7 @@ struct PreparedLibraryProject {
 
 /// Receipt-selected direct-rustc materialization state for a normal Oven library build.
 struct OvenPreparedLibrary {
+    provider_semantic_identities: BTreeMap<String, String>,
     rustc: PathBuf,
     crate_name: String,
     rust_edition: String,
@@ -5762,29 +6020,13 @@ struct CallerOwnedProviderRegistryClosure {
     dependency_search_paths: Vec<PathBuf>,
 }
 
-impl CallerOwnedProviderRegistryClosure {
-    /// Join the consumer's own authority with every collected provider authority into one lookup surface.
-    ///
-    /// Joining decides only what is *discoverable*; safety against a genuinely diverging shared package is decided
-    /// beforehand by [`caller_owned_provider_registry_conflict`] and per-lookup by `select_sealed_registry_leaf`'s
-    /// existing same-compilation check.
-    fn merged_authority(&self, consumer: Option<OvenRegistryLeafAuthority>) -> Option<OvenRegistryLeafAuthority> {
-        if self.provider_authorities.is_empty() {
-            return consumer;
-        }
-        Some(OvenRegistryLeafAuthority::aggregate(
-            consumer.into_iter().chain(self.provider_authorities.iter().cloned()),
-        ))
-    }
-}
-
 /// Collect the registry-leaf authorities and dependency search closure owned by every caller-owned path-dependency
 /// provider.
 ///
 /// Walks the exact same caller-owned provider graph [`rematerialize_caller_owned_provider_graph`] re-materializes.
 /// The collected authorities feed both the pre-bake conflict decision
-/// ([`caller_owned_provider_registry_conflict`]) and, via
-/// [`CallerOwnedProviderRegistryClosure::merged_authority`], the re-materialization lookup surface.
+/// ([`caller_owned_provider_registry_conflict`]) for already packaged closures. Source-unit rematerialization uses
+/// the original admitted candidate and checked batch edges instead of this legacy lookup surface.
 fn collect_caller_owned_provider_registry_leaf_authority(
     store: &OvenStore,
     provider_plan: &ProviderPlan,
@@ -5948,6 +6190,10 @@ fn rematerialize_caller_owned_libraries_with_authority_context(
     extra_dependency_search_paths: &[PathBuf],
     mut authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
+    // Compiler-owned SDK-only projects, including the explicit core Engine publisher, need no hosted provider batch.
+    if !has_caller_owned_project_libraries(provider_plan) {
+        return Ok(Vec::new());
+    }
     let mut libraries = Vec::new();
     let mut visiting = BTreeSet::new();
     let mut definitions = CallerOwnedProviderSourceDefinitions::new(provider_plan);
@@ -6422,7 +6668,15 @@ fn prepare_oven_project(
         })?;
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let inline_path_dependencies = oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?;
-    let mut oven_build_inputs = oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved)?;
+    let provider_semantic_identities =
+        provider_semantic_identities(&provider_plan, &semantic_sdk_path_dependencies(&project_requirements))
+            .map_err(CliError::failure)?;
+    let mut oven_build_inputs = oven_build_unit_inputs_with_provider_identities(
+        &provider_plan,
+        &project_requirements,
+        &resolved,
+        &provider_semantic_identities,
+    )?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let rustc_target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
     let rustc_toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
@@ -6664,6 +6918,7 @@ fn prepare_oven_project(
         entrypoint: normalized_file_path,
         provider_plan,
         receipt,
+        provider_semantic_identities,
         plan_selection,
         materialization: plan_preparation.materialization,
         cargo_process_started: plan_preparation.cargo_process_started,
@@ -10183,35 +10438,30 @@ fn bake_oven_project(
 ) -> CliResult<crate::oven::rustc::OvenDirectRustcBake> {
     let mut caller_owned_libraries = prepared.caller_owned_libraries.clone();
     let mut re_materialized_package_library_names = BTreeSet::new();
-    let mut registry_authority = registry_leaf_authority_for_plan_selection(&prepared.plan_selection)?;
-    let mut extra_dependency_search_paths = Vec::new();
     if has_caller_owned_project_libraries(&prepared.provider_plan) {
-        let closure = collect_caller_owned_provider_registry_leaf_authority(
-            &open_default_oven_store()?,
-            &prepared.provider_plan,
-            profile,
-        )?;
-        // The conflict decision must cover every selection path -- including an imported packaged-provider closure,
-        // whose composed link carries the SDK base's and the provider's own copies of any shared package exactly
-        // like a re-materialized one does.
-        reject_caller_owned_provider_registry_conflict(
-            registry_authority.as_ref(),
-            &closure,
-            prepared.plan_selection.artifact_plan(),
-        )?;
-        if !prepared.plan_selection.uses_packaged_provider_closure() {
-            extra_dependency_search_paths = closure.dependency_search_paths.clone();
-            registry_authority = closure.merged_authority(registry_authority);
-            let re_materialized = rematerialize_caller_owned_libraries_with_authority_context(
+        if prepared.plan_selection.uses_packaged_provider_closure() {
+            let registry_authority = registry_leaf_authority_for_plan_selection(&prepared.plan_selection)?;
+            let closure = collect_caller_owned_provider_registry_leaf_authority(
+                &open_default_oven_store()?,
                 &prepared.provider_plan,
                 profile,
-                prepared.plan_selection.artifacts(),
-                prepared.plan_selection.output_guard_root(),
+            )?;
+            // The conflict decision must cover every selection path -- including an imported packaged-provider closure,
+            // whose composed link carries the SDK base's and the provider's own copies of any shared package exactly
+            // like a re-materialized one does.
+            reject_caller_owned_provider_registry_conflict(
+                registry_authority.as_ref(),
+                &closure,
                 prepared.plan_selection.artifact_plan(),
+            )?;
+        } else {
+            let re_materialized = materialize_provider_sources_with_installed_engine(
+                &prepared.provider_plan,
+                &prepared.receipt,
+                &prepared.provider_semantic_identities,
+                &prepared.plan_selection,
                 &prepared.rustc,
                 prepared.generator.output_dir(),
-                registry_authority.as_ref(),
-                &extra_dependency_search_paths,
                 authority_context,
             )?;
             re_materialized_package_library_names.extend(
@@ -10232,15 +10482,6 @@ fn bake_oven_project(
     }
     artifact_plan.compile_environment = prepared.generator.native_compile_environment();
     attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries).map_err(oven_rustc_error)?;
-    // Loading a re-materialized caller-owned library's own metadata (for example a query-engine provider linked
-    // above) can require Rustc to locate that library's own further dependencies purely through
-    // `-L dependency=...` search, the same way `rematerialize_caller_owned_provider_graph` already extends that
-    // library's own compile with this same closure. The final consumer binary link needs it too.
-    for directory in &extra_dependency_search_paths {
-        if !artifact_plan.dependency_search_paths.contains(directory) {
-            artifact_plan.dependency_search_paths.push(directory.clone());
-        }
-    }
     bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
         receipt: &prepared.receipt,
         artifacts: prepared.plan_selection.artifacts(),
@@ -10285,34 +10526,29 @@ fn bake_oven_library(
     })?;
     let mut caller_owned_libraries = selected.caller_owned_libraries.clone();
     let mut re_materialized_package_library_names = BTreeSet::new();
-    let mut registry_authority = registry_leaf_authority_for_plan_selection(&selected.plan_selection)?;
-    let mut extra_dependency_search_paths = Vec::new();
     if has_caller_owned_project_libraries(&selected.provider_plan) {
-        let closure = collect_caller_owned_provider_registry_leaf_authority(
-            &open_default_oven_store()?,
-            &selected.provider_plan,
-            profile,
-        )?;
-        // Library outputs have no unified-Cargo fallback, so a conflicted provider closure fails closed on every
-        // selection path, packaged-provider composition included.
-        reject_caller_owned_provider_registry_conflict(
-            registry_authority.as_ref(),
-            &closure,
-            selected.plan_selection.artifact_plan(),
-        )?;
-        if !selected.plan_selection.uses_packaged_provider_closure() {
-            extra_dependency_search_paths = closure.dependency_search_paths.clone();
-            registry_authority = closure.merged_authority(registry_authority);
-            let re_materialized = rematerialize_caller_owned_libraries_with_authority_context(
+        if selected.plan_selection.uses_packaged_provider_closure() {
+            let registry_authority = registry_leaf_authority_for_plan_selection(&selected.plan_selection)?;
+            let closure = collect_caller_owned_provider_registry_leaf_authority(
+                &open_default_oven_store()?,
                 &selected.provider_plan,
                 profile,
-                selected.plan_selection.artifacts(),
-                selected.plan_selection.output_guard_root(),
+            )?;
+            // Library outputs have no unified-Cargo fallback, so a conflicted provider closure fails closed on every
+            // selection path, packaged-provider composition included.
+            reject_caller_owned_provider_registry_conflict(
+                registry_authority.as_ref(),
+                &closure,
                 selected.plan_selection.artifact_plan(),
+            )?;
+        } else {
+            let re_materialized = materialize_provider_sources_with_installed_engine(
+                &selected.provider_plan,
+                &selected.receipt,
+                &oven.provider_semantic_identities,
+                &selected.plan_selection,
                 &oven.rustc,
                 &prepared.out_dir,
-                registry_authority.as_ref(),
-                &extra_dependency_search_paths,
                 authority_context,
             )?;
             re_materialized_package_library_names.extend(
@@ -10333,13 +10569,6 @@ fn bake_oven_library(
     }
     artifact_plan.compile_environment = prepared.generator.native_compile_environment();
     attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries).map_err(oven_rustc_error)?;
-    // See the matching comment in `bake_oven_project`: a re-materialized caller-owned library's own metadata can
-    // require this same dependency search closure to load, not only the library's own re-materialization compile.
-    for directory in &extra_dependency_search_paths {
-        if !artifact_plan.dependency_search_paths.contains(directory) {
-            artifact_plan.dependency_search_paths.push(directory.clone());
-        }
-    }
     let direct = bake_trusted_direct_rustc_library(&OvenTrustedDirectRustcTargetRequest {
         receipt: &selected.receipt,
         artifacts: selected.plan_selection.artifacts(),
@@ -10796,14 +11025,17 @@ fn prepare_library_project(
     record_timing(&mut timings_ms, "library_observe_lock_facts", lock_start);
     // Normal Oven preparation computes this map once. Other library paths may replace requirements through
     // canonical lock resolution above and do not construct native build inputs here.
-    let mut oven_build_inputs = normal_oven
-        .then(|| {
-            let (_, provider_semantic_identities) = semantic_projection()?;
+    let oven_provider_identities = normal_oven
+        .then(|| semantic_projection().map(|(_, identities)| identities))
+        .transpose()?;
+    let mut oven_build_inputs = oven_provider_identities
+        .as_ref()
+        .map(|identities| {
             oven_build_unit_inputs_with_provider_identities(
                 &provider_plan,
                 &project_requirements,
                 &resolved,
-                &provider_semantic_identities,
+                identities,
             )
         })
         .transpose()?;
@@ -11428,6 +11660,9 @@ fn prepare_library_project(
             );
         }
         Some(OvenPreparedLibrary {
+            provider_semantic_identities: oven_provider_identities.ok_or_else(|| {
+                CliError::failure("normal library preparation lost its original semantic provider map")
+            })?,
             rustc,
             crate_name: ProjectGenerator::rust_target_name(&project_name),
             rust_edition: rust_edition.clone(),
@@ -14543,9 +14778,9 @@ fn bake_oven_project_targets_with_engine(
         .to_str()
         .ok_or_else(|| CliError::failure(format!("Oven project path is not valid UTF-8: {}", project.display())))?;
     let project_root = resolve_library_project_root(Some(project))?;
-    let targets = discover_oven_bake_project_targets(&project_root)?;
+    let mut targets = discover_oven_bake_project_targets(&project_root)?;
     if let Some(publisher) = engine_publisher.as_ref() {
-        publisher.validate_targets(&project_root, &targets)?;
+        publisher.retain_requested_target(&project_root, &mut targets)?;
     }
     let dependency_surface_entrypoint = oven_bake_dependency_surface_entrypoint(&targets)
         .ok_or_else(|| CliError::failure("explicit Oven project bake discovered no dependency-surface entrypoint"))?
@@ -18869,6 +19104,32 @@ headers = ["interop/include/bridge.h"]
             .pop()
             .ok_or("native owner absent")?;
         Ok((receipt, owner))
+    }
+
+    /// SDK-only commands preserve their native selection and do not inspect/install/run an Engine.
+    #[test]
+    fn core_engine_empty_provider_command_keeps_existing_native_selection() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (receipt, owner) = provider_batch_store_fixture(&root.path().join("native"))?;
+        let selection = OvenDirectRustcPlanSelection::Stored(Box::new(
+            OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?,
+        ));
+        let before = serde_json::to_vec(selection.artifacts())?;
+        let plan = ProviderPlan::from_resolved_inputs(LibraryManifestIndex::default(), None, None, None, [])?;
+        let output = root.path().join("not-created");
+        let result = super::materialize_provider_sources_with_installed_engine(
+            &plan,
+            &receipt,
+            &BTreeMap::new(),
+            &selection,
+            &root.path().join("not-a-rustc"),
+            &output,
+            None,
+        )?;
+        assert!(result.is_empty());
+        assert!(!output.exists());
+        assert_eq!(serde_json::to_vec(selection.artifacts())?, before);
+        Ok(())
     }
 
     /// Literal one-unit response exercises the host's admission contract without emulating the Incan algorithm.

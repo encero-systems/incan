@@ -2,11 +2,12 @@
 //!
 //! Selection remains authored in Incan. This module neither issues permission nor interprets response policy. Its
 //! filesystem scope and process group are not an OS sandbox: a same-user adversary or a child that creates a new
-//! session is outside this bootstrap containment contract. Ordinary command issuance/installation is still unwired.
+//! session is outside this bootstrap containment contract. Ordinary issuer/installation source is connected by the
+//! parent module; compiled and native acceptance remain pending.
 
 #![allow(
     dead_code,
-    reason = "Pending #991: trusted command issuance and module installation are not connected"
+    reason = "Pending #991: the complete hosted-module lifecycle and receipt replay are not connected"
 )]
 
 use std::fs;

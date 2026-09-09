@@ -106,6 +106,12 @@ const OVEN_COMPILER_TEST_ROOT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// Compiler-owned receipt destination for the full native workspace-test compatibility unit.
 const COMPILER_LIBTEST_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/compiler-libtests-receipt.json";
 
+/// Explicitly install the fixed trusted core Engine; ordinary commands never invoke this publication implicitly.
+pub fn oven_install_core_engine(toolchain_root: PathBuf) -> CliResult<ExitCode> {
+    super::build::engine::install_core_engine(&toolchain_root)?;
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Explicitly select or bake sealed Loafs for the conventional targets in one supported Incan project.
 ///
 /// This is Oven's explicit project publication boundary. It records one generated-project receipt per present

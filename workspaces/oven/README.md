@@ -92,11 +92,11 @@ is unchanged and dispatches both explicit versions through the same decoder; hos
 
 The compiler-side Engine descriptor publisher and borrowed reader now bind an explicitly declared module contract to its original completed output, source authority, receipt, native file and actual compiling Incan executable. Legacy outputs without that compiler observation cannot acquire it during reuse; optional compiler checkout provenance remains unavailable. The descriptor adds no executable copy and retains both original owners during admission. This source checkpoint has not been compiled or tested. It does not select or execute the adapter, grant host operations, or complete the compiler/source/ABI handshake; native file exchange itself provides no process sandbox. Non-Unix executable-mode admission remains unavailable under the current store metadata contract.
 
-A private compiler bridge now implements the host side of file exchange in source. It consumes a separately issued, single-use caller permit and the two original admitted owners, checks the declared ABI and exact request binding, and supervises the original executable with bounded files, diagnostic capture, cancellation and process-group cleanup. Its report distinguishes attempted phases, failures and cleanup from successful exact response bytes. Response decoding and selection remain in Incan; returned handles still need the caller's physical authority checks. Caller permission issuance, ordinary module installation and command wiring are not implemented. This bridge and its store-backed process tests have not been compiled or executed. File scopes and process groups do not supply an OS sandbox.
+A private compiler bridge now implements the host side of file exchange in source. It consumes a separately issued, single-use caller permit and the two original admitted owners, checks the declared ABI and exact request binding, and supervises the original executable with bounded files, diagnostic capture, cancellation and process-group cleanup. Its report distinguishes attempted phases, failures and cleanup from successful exact response bytes. Response decoding and selection remain in Incan; returned handles still need the caller's physical authority checks. The installer/caller increment below connects bounded core permission issuance in source. This bridge and its store-backed process tests have not been executed as current native acceptance. File scopes and process groups do not supply an OS sandbox.
 
 An explicit version 2 Engine publisher declaration records support for the current version 2 selection and batch protocols alongside version 1. Existing version 1 descriptors retain their original version and protocol binding; changing only their role is refused. The private bridge does not infer this declaration from an executable path, environment value, source filename or child response, and it does not turn a descriptor or command receipt into permission to launch.
 
-The bridge's phase report is internal and non-serialized. Versioned kernel receipt encoding, sealing and persistence remain unwired; the report does not complete that receipt contract. The exchange currently contains no permit issuer or construction path. The permit has no JSON decoder or deserialization implementation. Rust child-module access to its parent-owned private fields does not itself prohibit future permit construction code.
+The bridge's phase report remains distinct from a source-language OperationReceipt. The ordinary caller now has source implementation for a version 1 kernel observation record containing actual identities, bounded response/diagnostic bytes, phases and terminal outcome. Complete receipt sealing, denial-before-exchange records and restart replay remain unfinished. The exchange currently contains no permit issuer or construction path. The permit has no JSON decoder or deserialization implementation. Rust child-module access to its parent-owned private fields does not itself prohibit future permit construction code.
 
 
 ## Compiler support source capture (source implementation)
@@ -115,3 +115,40 @@ API rechecks original roles and bytes. The new published-store control exercises
 The new emitter, real artifact-only publisher, selector and published-store controls are source-only and unexecuted.
 The ordinary command grant table and Engine exchange invocation remain to be connected. This slice does not restore
 Cargo preparation or claim complete source authority for external build-script, environment or generated-output inputs.
+
+
+## Trusted core installation and ordinary caller (uncompiled source)
+
+`incan oven install-core-engine --toolchain-root PATH` is an explicit toolchain administration operation. It requires
+that toolchain's actual `bin/incan` executable, reads the fixed authored source project at
+`share/incan/oven/core-source`, and publishes only its declared `src/plan_json_main.incn` target with the explicit
+version 3 Engine role. The release packager stages those tracked sources and invokes this operation after its existing
+foundation publication. The core source has no project-provider dependencies; its SDK/inspection prerequisites remain
+required, while its empty provider graph avoids calling the Engine during its own publication. The existing release
+foundation publisher is not replaced by this increment, and full Cargo-free archive production remains unverified.
+
+The installation index records the installing compiler binary separately from the original compiling binary. It names
+the original Engine and ProjectOutput identities and the original module source/receipt binding. Installation copies
+those exact admitted owners through the existing Store publisher. Replacement holds the previous pair and each
+newly copied destination owner under leases, serializes index updates, and commits only after destination admission. Normal lookup uses the canonical running toolchain, with no executable environment override or project
+fallback. The archive/installer is the trust boundary; directory names and digests alone do not confer host permission.
+
+Ordinary project and library source rematerialization now have a caller connection for an original Store selection.
+They retain the existing producer's semantic map and receipt, borrow the selected original owner once, and invoke the
+Incan batch selector. Warm same-unit Store reuse still lacks an original private-SDK recipe witness when its receipt
+identity differs from the command receipt; this is an open carrier defect, not accepted warm reuse. The host explicitly permits this bounded core operation, then validates returned original IDs
+before native materialization. SDK-only and empty project-provider paths do not require an installed Engine. Already
+packaged provider closures keep their existing conflict checks. Composed extension/bare-Loaf batch owner ingress,
+source-free inspection transport, and active registry/Git/path source slots still require their existing checked owner
+connections. The current workbench application requires registry Rust `regex`; path/Git coverage remains part of the broader source contract.
+
+This command uses a 30-second exchange deadline, 1 MiB request/response ceilings and 64 KiB diagnostic ceilings.
+Command-wide cancellation integration remains unfinished. Every attempted exchange is retained as a versioned kernel
+observation under the generated project's `.incan/engine-exchange` mutable-output directory, even if the child or
+returned selection fails. The record preserves exact response bytes and diagnostic-prefix meanings; it is neither an
+execution grant nor an RFC104 OperationReceipt. File scopes and process groups provide no OS sandbox.
+
+The private tests exercise the real descriptor/Store installer, original-owner relocation and substitution refusals,
+explicit issuer denials, exact bounded process observations, the empty-provider command path, and target filtering.
+Their executable fixtures are process-test data, not native Incan proof. This increment has only source/static checks;
+compilation, real core publication and the plain-provider/facade native acceptance remain pending. #991 stays open.
