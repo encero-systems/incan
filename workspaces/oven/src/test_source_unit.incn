@@ -220,3 +220,98 @@ def fixture() -> JsonValue:
         Err(_) =>
             fail("invalid batch fixture")
             return JsonValue.null()
+
+
+pub def test_exact_batch_keeps_original_grants() -> None:
+    """One exact unit binds the entire batch without replacing original publisher or edge handles."""
+    response = run(fixture_v2())
+    assert text(response, "schema") == "incan.oven.source-unit-batch/2"
+    assert text(response, "status") == "selected"
+    foundation = get(response, "foundation")
+    assert text(foundation, "schema") == "incan.oven.selection/2"
+    selection = get(foundation, "selection")
+    assert text(selection, "candidate_id") == "usable"
+    assert text(selection, "candidate_evidence_id") == "usable-evidence"
+    assert text(selection, "build_unit_identity") == "usable-unit"
+    match get(response, "units").as_array():
+        None => fail("missing whole-batch binding")
+        Some(units) =>
+            assert len(units) == 2
+            assert text(units[0], "definition_id") == "catalog-definition"
+            match get(units[1], "slots").as_array():
+                None => fail("missing original edges")
+                Some(slots) =>
+                    assert text(slots[0], "edge_id") == "public"
+                    assert text(slots[1], "edge_id") == "private"
+
+
+pub def test_exact_batch_requires_verified_surface_and_members() -> None:
+    """Unit equality does not invent provider capabilities, member grants or owner associations."""
+    value = fixture_v2()
+    require_refused(put(value, "grants", JsonValue.array([])), "no_compatible_candidate")
+    foundation = get(value, "foundation")
+    request = get(foundation, "request")
+    for key in ["different", "narrow-unit"]:
+        wrong = put(request, "build_unit_identity", JsonValue.string(key))
+        require_refused(put(value, "foundation", put(foundation, "request", wrong)), "no_compatible_candidate")
+    outside = put(request, "providers", JsonValue.array([]))
+    require_refused(put(value, "foundation", put(foundation, "request", outside)), "no_compatible_candidate")
+    for axis in ["owner_id", "role", "extern_name"]:
+        match get(value, "grants").as_array():
+            None => fail("missing original grants")
+            Some(grants) =>
+                wrong = put(grants[0], axis, JsonValue.string("different"))
+                require_refused(put(value, "grants", JsonValue.array([wrong, grants[1]])), "no_compatible_candidate")
+    match get(value, "grants").as_array():
+        None => fail("missing original grants")
+        Some(grants) =>
+            for axis in ["name", "version", "digest"]:
+                provider = put(get(grants[0], "provider"), axis, JsonValue.string("different"))
+                wrong = put(grants[0], "provider", provider)
+                require_refused(put(value, "grants", JsonValue.array([wrong, grants[1]])), "no_compatible_candidate")
+            features = JsonValue.array([JsonValue.string("different")])
+            provider = put(get(grants[0], "provider"), "feature_projection", features)
+            wrong = put(grants[0], "provider", provider)
+            require_refused(put(value, "grants", JsonValue.array([wrong, grants[1]])), "no_compatible_candidate")
+            duplicate = put(grants[0], "grant_id", JsonValue.string("another-grant"))
+            require_refused(put(value, "grants", JsonValue.array([grants[0], grants[1], duplicate])), "no_compatible_candidate")
+            require_refused(put(value, "grants", JsonValue.array([grants[0], grants[1], grants[0]])), "invalid_input")
+
+
+pub def test_exact_batch_versions_and_losing_contexts_refuse() -> None:
+    """A version-two batch requires its explicit foundation version and validates excluded offers."""
+    value = fixture_v2()
+    foundation = get(value, "foundation")
+    legacy = put(foundation, "schema", JsonValue.string("incan.oven.selection/1"))
+    require_refused(put(value, "foundation", legacy), "invalid_input")
+    require_refused(put(value, "schema", JsonValue.string("incan.oven.source-unit-batch/1")), "invalid_input")
+    for axis in ["target", "toolchain", "profile"]:
+        request = get(foundation, "request")
+        match get(request, "candidates").as_array():
+            None => fail("missing candidates")
+            Some(candidates) =>
+                context = put(get(candidates[0], "context"), axis, JsonValue.string(""))
+                loser = put(candidates[0], "context", context)
+                changed = put(request, "candidates", JsonValue.array([loser, candidates[1]]))
+                require_refused(put(value, "foundation", put(foundation, "request", changed)), "invalid_input")
+
+
+def fixture_v2() -> JsonValue:
+    """Explicitly offer original exact-unit handles with synthetic current request recipe evidence."""
+    value = fixture()
+    foundation = get(value, "foundation")
+    request = get(foundation, "request")
+    mut offered: list[JsonValue] = []
+    match get(request, "candidates").as_array():
+        None => fail("missing candidates")
+        Some(candidates) =>
+            for candidate in candidates:
+                mut exact = candidate
+                exact.remove("runtime")
+                exact.remove("providers")
+                offered.append(put(exact, "evidence", JsonValue.object({"kind": JsonValue.string("exact_build_unit")})))
+    with_key = put(request, "build_unit_identity", JsonValue.string("usable-unit"))
+    changed = put(with_key, "candidates", JsonValue.array(offered))
+    versioned = put(foundation, "schema", JsonValue.string("incan.oven.selection/2"))
+    result = put(value, "foundation", put(versioned, "request", changed))
+    return put(result, "schema", JsonValue.string("incan.oven.source-unit-batch/2"))

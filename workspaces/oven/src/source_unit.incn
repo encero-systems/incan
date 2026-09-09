@@ -13,6 +13,7 @@ from plan import (
     validate_capabilities,
     validate_names as unique,
     covers,
+    candidate_covers,
 )
 
 
@@ -195,6 +196,7 @@ pub def select_source_units(batch: SourceBatch) -> Result[BatchSelection, Select
     filtered = SelectionRequest(
         request_id=original.request_id,
         evidence_id=original.evidence_id,
+        build_unit=original.build_unit,
         context=original.context,
         runtime=original.runtime,
         providers=original.providers,
@@ -297,7 +299,7 @@ def bind_candidate(batch: SourceBatch, candidate: NativeCandidate) -> Option[lis
                         grant.capability,
                         need.capability,
                     ):
-                        if any_capability(candidate.providers, need.capability):
+                        if candidate_covers(batch.foundation, candidate, need.capability):
                             matches.append(grant.grant_id)
                 if len(matches) != 1:
                     return None
@@ -346,14 +348,6 @@ def target_bound(batch: SourceBatch, unit: SourceUnit, edge: CheckedEdge) -> boo
                 edge.target,
             ):
                 return true
-    return false
-
-
-def any_capability(providers: list[ProviderCapability], required: ProviderCapability) -> bool:
-    """Require the selected foundation's actual checked capability, not a free-standing grant."""
-    for provider in providers:
-        if covers(provider, required):
-            return true
     return false
 
 

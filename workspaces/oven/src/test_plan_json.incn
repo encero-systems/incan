@@ -3,7 +3,7 @@
 from std.json import JsonValue
 from std.testing import fail
 from plan_json import decode_request, evaluate
-from plan import SelectionErrorKind
+from plan import SelectionErrorKind, NativeCandidateEvidence
 
 
 pub def test_selection_binding_and_rank() -> None:
@@ -15,7 +15,10 @@ pub def test_selection_binding_and_rank() -> None:
             assert request.context.features == ["feature"]
             assert request.runtime.unknown_input_keys == []
             assert request.providers[0].direct_link
-            assert request.candidates[0].providers[0].modules == ["prelude"]
+            match request.candidates[0].evidence:
+                NativeCandidateEvidence.RuntimeProviderRecipe(_, providers) =>
+                    assert providers[0].modules == ["prelude"]
+                NativeCandidateEvidence.ExactBuildUnit => fail("legacy decoder produced exact-unit evidence")
             assert request.unsupported_intent == []
     response = evaluate(source)
     assert text(response, "status") == "selected"
@@ -269,3 +272,97 @@ def render(value: JsonValue) -> str:
     match value.to_json():
         Ok(source) => return source
         Err(error) => fail(error.message())
+
+
+pub def test_version_two_exact_and_recipe_evidence() -> None:
+    """Both explicit evidence forms retain original publisher bindings in version two."""
+    for exact in [true, false]:
+        response = evaluate(render(envelope_v2(exact)))
+        assert text(response, "schema") == "incan.oven.selection/2"
+        assert text(response, "status") == "selected"
+        selection = get(response, "selection")
+        assert text(selection, "candidate_evidence_id") == "candidate-evidence"
+        assert text(selection, "build_unit_identity") == "unit"
+    value = envelope_v2(true)
+    changed = put(get(value, "request"), "build_unit_identity", JsonValue.string("different"))
+    response = evaluate(render(put(value, "request", changed)))
+    assert text(get(response, "error"), "kind") == "no_compatible_candidate"
+
+
+pub def test_version_two_requires_explicit_key_and_evidence() -> None:
+    """Missing or malformed version-two evidence never falls back to the legacy recipe adapter."""
+    value = envelope_v2(true)
+    mut missing = get(value, "request")
+    missing.remove("build_unit_identity")
+    require_invalid(put(value, "request", missing), ["request", "build_unit_identity"])
+    for key in [JsonValue.string(""), JsonValue.int(1)]:
+        changed = put(get(value, "request"), "build_unit_identity", key)
+        require_invalid(put(value, "request", changed), ["request", "build_unit_identity"])
+    mut without_features = context()
+    without_features.remove("features")
+    missing_features_candidate = put(candidate_v2(true), "context", without_features)
+    missing_features_request = put(get(value, "request"), "candidates", JsonValue.array([missing_features_candidate]))
+    require_invalid(
+        put(value, "request", missing_features_request),
+        ["request", "candidates", "0", "context", "features"],
+    )
+    invalid: list[JsonValue] = [
+        JsonValue.object({}),
+        JsonValue.object({"kind": JsonValue.string("unknown")}),
+        JsonValue.object({"kind": JsonValue.string("exact_build_unit"), "runtime": runtime()}),
+    ]
+    for evidence in invalid:
+        offered = put(candidate_v2(true), "evidence", evidence)
+        changed = put(get(value, "request"), "candidates", JsonValue.array([offered]))
+        response = evaluate(render(put(value, "request", changed)))
+        require_unbound(response)
+        assert text(response, "schema") == "incan.oven.selection/2"
+        assert text(get(response, "error"), "kind") == "invalid_input"
+    legacy = put(request(), "candidates", JsonValue.array([candidate_v2(true)]))
+    response = evaluate(render(put(envelope(), "request", legacy)))
+    require_unbound(response)
+    assert text(response, "schema") == "incan.oven.selection/1"
+
+
+pub def test_version_two_validates_losing_candidates() -> None:
+    """Exact equality cannot conceal malformed contexts or unknown recipe inputs on another offer."""
+    value = envelope_v2(true)
+    for axis in ["target", "toolchain", "profile"]:
+        loser = put(candidate_v2(true), "candidate_id", JsonValue.string("loser"))
+        wrong = put(loser, "context", put(context(), axis, JsonValue.string("")))
+        changed = put(get(value, "request"), "candidates", JsonValue.array([candidate_v2(true), wrong]))
+        response = evaluate(render(put(value, "request", changed)))
+        assert text(get(response, "error"), "kind") == "invalid_input"
+        assert not response.contains_key("selection")
+    unknown = put(runtime(), "unknown_input_keys", JsonValue.array([JsonValue.string("uncovered")]))
+    evidence = JsonValue.object({
+        "kind": JsonValue.string("runtime_provider_recipe"),
+        "runtime": unknown,
+        "providers": JsonValue.array([provider()]),
+    })
+    loser = put(candidate_v2(false), "candidate_id", JsonValue.string("loser"))
+    loser_with_unknown = put(loser, "evidence", evidence)
+    changed = put(get(value, "request"), "candidates", JsonValue.array([candidate_v2(true), loser_with_unknown]))
+    response = evaluate(render(put(value, "request", changed)))
+    assert text(get(response, "error"), "kind") == "unsupported_intent"
+
+
+def candidate_v2(exact: bool) -> JsonValue:
+    """Explicitly construct either wire variant from synthetic fixture facts."""
+    mut value = candidate()
+    value.remove("runtime")
+    value.remove("providers")
+    if exact:
+        return put(value, "evidence", JsonValue.object({"kind": JsonValue.string("exact_build_unit")}))
+    return put(value, "evidence", JsonValue.object({
+        "kind": JsonValue.string("runtime_provider_recipe"),
+        "runtime": runtime(),
+        "providers": JsonValue.array([provider()]),
+    }))
+
+
+def envelope_v2(exact: bool) -> JsonValue:
+    """Supply a synthetic verified-key input; authentication remains a host obligation."""
+    with_key = put(request(), "build_unit_identity", JsonValue.string("unit"))
+    value = put(with_key, "candidates", JsonValue.array([candidate_v2(exact)]))
+    return JsonValue.object({"schema": JsonValue.string("incan.oven.selection/2"), "request": value})

@@ -5,6 +5,8 @@ from plan import (
     NativeContext,
     ProviderCapability,
     NativeCandidate,
+    NativeCandidateEvidence,
+    RequestBuildUnit,
     SelectionRequest,
     CapabilityExcess,
     SelectionErrorKind,
@@ -48,8 +50,7 @@ def candidate(
         plan_identity=f"plan:{name}",
         build_unit_identity=f"unit:{name}",
         context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
-        runtime=runtime(revision),
-        providers=providers,
+        evidence=NativeCandidateEvidence.RuntimeProviderRecipe(runtime(revision), providers),
     )
 
 
@@ -60,6 +61,7 @@ def request(
 ) -> SelectionRequest:
     """Bind required facts separately from offered candidate evidence."""
     return SelectionRequest(
+        build_unit=RequestBuildUnit.LegacyRecipe,
         request_id="request",
         evidence_id="request-evidence",
         context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
@@ -124,6 +126,7 @@ pub def test_malformed_sets_and_unknown_intent_refuse() -> None:
     valid = candidate("valid", [])
     require_error(request([valid, valid], []), SelectionErrorKind.InvalidInput)
     unknown = SelectionRequest(
+        build_unit=RequestBuildUnit.LegacyRecipe,
         request_id="request",
         evidence_id="evidence",
         context=valid.context,
@@ -143,6 +146,7 @@ pub def test_malformed_sets_and_unknown_intent_refuse() -> None:
         unknown_input_keys=["new-runtime-input"],
     )
     unknown_runtime = SelectionRequest(
+        build_unit=RequestBuildUnit.LegacyRecipe,
         request_id="request",
         evidence_id="evidence",
         context=valid.context,
@@ -180,6 +184,7 @@ pub def test_context_and_semantic_owner_mismatch_refuse() -> None:
         features=[],
     ), NativeContext(target="target", toolchain="rustc", profile="release", features=[])]:
         changed = SelectionRequest(
+            build_unit=RequestBuildUnit.LegacyRecipe,
             request_id="request",
             evidence_id="evidence",
             context=context,
@@ -212,6 +217,7 @@ pub def test_each_runtime_field_is_exact() -> None:
             stdlib_source_digest=values[5],
         )
         changed = SelectionRequest(
+            build_unit=RequestBuildUnit.LegacyRecipe,
             request_id="request",
             evidence_id="evidence",
             context=valid.context,
@@ -238,3 +244,118 @@ pub def test_native_features_are_exact_validated_sets() -> None:
     for invalid in invalid_cases:
         duplicate = candidate("duplicate", [], features=invalid)
         require_error(request([duplicate], []), SelectionErrorKind.InvalidInput)
+
+
+def exact_candidate(name: str, unit: str, features: list[str] = []) -> NativeCandidate:
+    """Retain an original Store publisher handle without manufacturing recipe facts."""
+    return NativeCandidate(
+        candidate_id=name,
+        evidence_id=f"publisher:{name}",
+        plan_identity=f"plan:{name}",
+        build_unit_identity=unit,
+        context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
+        evidence=NativeCandidateEvidence.ExactBuildUnit,
+    )
+
+
+def verified_request(
+    candidates: list[NativeCandidate],
+    unit: str = "unit",
+    features: list[str] = [],
+) -> SelectionRequest:
+    """Model synthetic facts supplied from one verified current receipt, not a native authentication proof."""
+    return SelectionRequest(
+        request_id="current-request",
+        evidence_id="current-receipt",
+        build_unit=RequestBuildUnit.VerifiedBuildUnit(unit),
+        context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
+        runtime=runtime(),
+        providers=[provider(["prelude"])],
+        candidates=candidates,
+    )
+
+
+pub def test_exact_unit_preserves_original_publisher() -> None:
+    """Different full publisher/current receipt handles do not prevent equal prepared-unit reuse."""
+    value = verified_request([exact_candidate("stored", "unit")])
+    match select_native(value):
+        Err(error) => fail(error.message())
+        Ok(selected) =>
+            assert selected.candidate_evidence_id == "publisher:stored"
+            assert selected.request_evidence_id == "current-receipt"
+            assert selected.build_unit_identity == "unit"
+            expected = CapabilityExcess(providers=0, modules=0, facets=0, direct_links=0)
+            assert selected.excess == expected
+    require_error(
+        verified_request([exact_candidate("stored", "different-unit")]),
+        SelectionErrorKind.NoCompatibleCandidate,
+    )
+    require_error(
+        verified_request([exact_candidate("stored", "unit", ["different-feature"])]),
+        SelectionErrorKind.NoCompatibleCandidate,
+    )
+
+
+    reordered = verified_request([exact_candidate("stored", "unit", ["beta", "alpha"])], features=["alpha", "beta"])
+    match select_native(reordered):
+        Err(error) => fail(error.message())
+        Ok(selected) => assert selected.candidate_id == "stored"
+    require_error(
+        verified_request([exact_candidate("stored", "unit", ["alpha", "alpha"])]),
+        SelectionErrorKind.InvalidInput,
+    )
+
+
+pub def test_mixed_evidence_preserves_rank_and_ambiguity() -> None:
+    """Nonmatching Store evidence remains represented; equal exact/recipe ranks have no variant preference."""
+    recipe = candidate("loaf", [provider(["prelude"])])
+    mismatch = exact_candidate("stored", "other-unit")
+    match select_native(verified_request([mismatch, recipe])):
+        Err(error) => fail(error.message())
+        Ok(selected) => assert selected.candidate_id == "loaf"
+    exact = exact_candidate("stored", "unit")
+    require_error(verified_request([exact, recipe]), SelectionErrorKind.AmbiguousCandidate)
+    broad = candidate("broad", [provider(["prelude", "extra"])])
+    match select_native(verified_request([broad, exact])):
+        Err(error) => fail(error.message())
+        Ok(selected) => assert selected.candidate_id == "stored"
+
+
+pub def test_exact_equality_never_hides_invalid_intent() -> None:
+    """Validate every losing candidate and unknown request input before opaque-key comparison."""
+    good = exact_candidate("stored", "unit")
+    malformed = exact_candidate("losing", "")
+    require_error(verified_request([good, malformed]), SelectionErrorKind.InvalidInput)
+    require_error(verified_request([good], ""), SelectionErrorKind.InvalidInput)
+    original = verified_request([good])
+    unknown = SelectionRequest(
+        request_id=original.request_id,
+        evidence_id=original.evidence_id,
+        build_unit=original.build_unit,
+        context=original.context,
+        runtime=original.runtime,
+        providers=original.providers,
+        candidates=original.candidates,
+        unsupported_intent=["authored-rust"],
+    )
+    require_error(unknown, SelectionErrorKind.UnsupportedIntent)
+    unknown_runtime = RuntimeCompatibility(
+        compiler_version="compiler",
+        sdk_provider_codegen_revision="7",
+        runtime_lock_digest="lock",
+        core_source_digest="core",
+        derive_source_digest="derive",
+        stdlib_source_digest="stdlib",
+        unknown_input_keys=["unreviewed-runtime"],
+    )
+    unknown_request = SelectionRequest(
+        request_id=original.request_id,
+        evidence_id=original.evidence_id,
+        build_unit=original.build_unit,
+        context=original.context,
+        runtime=unknown_runtime,
+        providers=original.providers,
+        candidates=original.candidates,
+    )
+    require_error(unknown_request, SelectionErrorKind.UnsupportedIntent)
+    require_error(request([good], [provider(["prelude"])]), SelectionErrorKind.InvalidInput)

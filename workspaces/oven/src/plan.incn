@@ -36,23 +36,37 @@ pub model ProviderCapability:
     pub direct_link: bool
 
 
+pub enum NativeCandidateEvidence:
+    """Original admitted Store unit equality or original Loaf recipe facts, never inferred missing data."""
+
+    ExactBuildUnit
+    RuntimeProviderRecipe(RuntimeCompatibility, list[ProviderCapability])
+
+
+pub enum RequestBuildUnit:
+    """Explicit legacy comparison or a key supplied with facts from the same verified current receipt."""
+
+    LegacyRecipe
+    VerifiedBuildUnit(str)
+
+
 pub model NativeCandidate:
-    """Host-authenticated evidence offered for comparison, without a host compatibility decision."""
+    """An original admitted candidate; the host supplies evidence without making the comparison."""
 
     pub candidate_id: str
     pub evidence_id: str
     pub plan_identity: str
     pub build_unit_identity: str
     pub context: NativeContext
-    pub runtime: RuntimeCompatibility
-    pub providers: list[ProviderCapability]
+    pub evidence: NativeCandidateEvidence
 
 
 pub model SelectionRequest:
-    """One bound comparison request; unsupported intent is preserved rather than silently ignored."""
+    """Bound checked facts; verified keys and recipe fields must originate in the same host-verified receipt."""
 
     pub request_id: str
     pub evidence_id: str
+    pub build_unit: RequestBuildUnit
     pub context: NativeContext
     pub runtime: RuntimeCompatibility
     pub providers: list[ProviderCapability]
@@ -116,7 +130,7 @@ pub def select_native(request: SelectionRequest) -> Result[NativeSelection, Sele
     """
     Choose the least excess intact closure from actual supplied facts.
 
-    Runtime/context equality and provider module/facet/direct-link inclusion mirror the bounded Loaf policy. Equally
+    Exact unit equality uses a host-verified request key; recipe equality and provider inclusion mirror Loaf policy. Equally
     ranked distinct candidates refuse rather than invent a physical-path tie-breaker absent from this protocol. The
     host must retain leases, authenticate evidence and supply checked facts in the same compilation session. This
     result does not expose native roots, construct missing units or authorize execution/publication.
@@ -130,10 +144,10 @@ pub def select_native(request: SelectionRequest) -> Result[NativeSelection, Sele
     if len(choices) == 0:
         return Err(SelectionError(kind=SelectionErrorKind.NoCompatibleCandidate, fields=["candidates"]))
     mut best = 0
-    mut rank = excess(request.providers, choices[0].providers)
+    mut rank = candidate_excess(request, choices[0])
     mut tied = false
     for index in range(1, len(choices)):
-        current = excess(request.providers, choices[index].providers)
+        current = candidate_excess(request, choices[index])
         if current.precedes(rank):
             best = index
             rank = current
@@ -162,10 +176,26 @@ pub def validate_selection_request(request: SelectionRequest) -> Result[None, Se
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["request"]))
     if len(request.unsupported_intent) > 0:
         return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=request.unsupported_intent))
+    match request.build_unit:
+        RequestBuildUnit.LegacyRecipe => pass
+        RequestBuildUnit.VerifiedBuildUnit(key) =>
+            if key == "":
+                return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["request", "build_unit_identity"]))
     validate_facts(request.runtime, request.providers)?
     validate_names([candidate.candidate_id for candidate in request.candidates], ["candidates", "candidate_id"])?
     for candidate in request.candidates:
-        validate_facts(candidate.runtime, candidate.providers)?
+        match candidate.evidence:
+            NativeCandidateEvidence.RuntimeProviderRecipe(runtime, providers) => validate_facts(runtime, providers)?
+            NativeCandidateEvidence.ExactBuildUnit =>
+                match request.build_unit:
+                    RequestBuildUnit.LegacyRecipe =>
+                        return Err(
+                            SelectionError(
+                                kind=SelectionErrorKind.InvalidInput,
+                                fields=["candidates", candidate.candidate_id, "evidence"],
+                            ),
+                        )
+                    RequestBuildUnit.VerifiedBuildUnit(_) => pass
         if candidate.evidence_id == "" or candidate.plan_identity == "" or candidate.build_unit_identity == "":
             return Err(
                 SelectionError(
@@ -227,14 +257,56 @@ pub def covers(available: ProviderCapability, required: ProviderCapability) -> b
 
 
 def compatible(request: SelectionRequest, candidate: NativeCandidate) -> bool:
-    """Require exact runtime/context and a provider capability superset."""
-    if request.runtime != candidate.runtime or not same_context(request.context, candidate.context):
+    """Compare exact native context, then the candidate's explicit original evidence form."""
+    if not same_context(request.context, candidate.context):
         return false
-    for required in request.providers:
-        matches = [available for available in candidate.providers if covers(available, required)]
-        if len(matches) != 1:
-            return false
-    return true
+    match candidate.evidence:
+        NativeCandidateEvidence.ExactBuildUnit => return exact_unit_matches(request, candidate)
+        NativeCandidateEvidence.RuntimeProviderRecipe(runtime, providers) =>
+            if request.runtime != runtime:
+                return false
+            for required in request.providers:
+                if not any_capability(providers, required):
+                    return false
+            return true
+
+
+pub def exact_unit_matches(request: SelectionRequest, candidate: NativeCandidate) -> bool:
+    """Use only a verified request key and full context; equality does not create physical member grants."""
+    if not same_context(request.context, candidate.context):
+        return false
+    match request.build_unit:
+        RequestBuildUnit.LegacyRecipe => return false
+        RequestBuildUnit.VerifiedBuildUnit(key) => return key == candidate.build_unit_identity
+
+
+pub def candidate_covers(request: SelectionRequest, candidate: NativeCandidate, need: ProviderCapability) -> bool:
+    """Compare logical capability evidence; callers still require the original selected member grant."""
+    match request.build_unit:
+        RequestBuildUnit.LegacyRecipe => pass
+        RequestBuildUnit.VerifiedBuildUnit(_) =>
+            if not any_capability(request.providers, need):
+                return false
+    match candidate.evidence:
+        NativeCandidateEvidence.ExactBuildUnit =>
+            return exact_unit_matches(request, candidate) and any_capability(request.providers, need)
+        NativeCandidateEvidence.RuntimeProviderRecipe(_, providers) => return any_capability(providers, need)
+
+
+pub def any_capability(providers: list[ProviderCapability], required: ProviderCapability) -> bool:
+    """Require inclusion from one validated semantic provider identity."""
+    for provider in providers:
+        if covers(provider, required):
+            return true
+    return false
+
+
+def candidate_excess(request: SelectionRequest, candidate: NativeCandidate) -> CapabilityExcess:
+    """An already compatible exact unit has zero excess; recipe candidates retain the existing rank."""
+    match candidate.evidence:
+        NativeCandidateEvidence.ExactBuildUnit =>
+            return CapabilityExcess(providers=0, modules=0, facets=0, direct_links=0)
+        NativeCandidateEvidence.RuntimeProviderRecipe(_, providers) => return excess(request.providers, providers)
 
 
 def excess(requested: list[ProviderCapability], available: list[ProviderCapability]) -> CapabilityExcess:

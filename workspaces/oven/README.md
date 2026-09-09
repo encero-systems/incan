@@ -32,7 +32,7 @@ is required, including context `features`, runtime `unknown_input_keys`, and `un
 wrong types are refused at each nested object; array diagnostics use decimal path segments. Duplicate JSON object
 keys retain `std.json` parsing behavior. No stricter duplicate-key guarantee is claimed.
 
-The request is `{"schema":"incan.oven.selection/1","request":...}` with the exact `SelectionRequest` field names.
+The legacy request is `{"schema":"incan.oven.selection/1","request":...}`. Its decoder explicitly constructs the typed legacy recipe mode; it does not accept exact-unit evidence.
 The response repeats `schema`, `request_id`, and `request_evidence_id`, then has either `status: "selected"` and the
 existing `NativeSelection` under `selection`, or `status: "refused"` and `{kind, fields}` under `error`. Decode
 failures use empty binding strings and never contain `selection`; semantic refusals preserve the decoded binding.
@@ -41,7 +41,7 @@ The host must authenticate the original request and candidate evidence, not trus
 `src/plan_json_main.incn` accepts exactly `REQUEST RESPONSE` file paths and performs strict UTF-8 exchange. This is
 source implementation only: scoped formatting and the test module frontend check passed with retained compiler
 `c7d758d4`; the CLI frontend stopped at missing Rust inspection authority. The first native bake stopped during
-dependency preparation before compiling these sources. All eight functions in `test_plan_json.incn` and actual
+dependency preparation before compiling these sources. The original eight adapter assertion functions and actual
 file exchange remain unexecuted. It does not implement the governed host process boundary, catalog integration, root exposure or publication.
 The future host must enforce regular explicit files, 1 MiB request/response limits, bounded diagnostics and deadline,
 response binding, physical artifact validation and leases. The adapter does not itself enforce those host bounds.
@@ -54,6 +54,40 @@ Incan first computes whole-batch bindings for each offered foundation, then call
 
 This first component supports checked public-provider and private SDK associations for one explicit profile. Registry, Git and path requests remain fully represented but active requests refuse; development requests remain inactive for library purpose, and test purpose is unsupported. It does not change ordinary debug/release behavior or claim a complete dual-profile command connection. The host must authenticate candidates and original handles, keep leases, enforce its 1 MiB/process limits, and validate all bindings before physical effects. No graph traversal, Cargo resolution, filesystem lookup or native readiness is granted by the response.
 
-`test_source_unit.incn` contains twelve synthetic batch contracts; eight adapter assertions remain in `test_plan_json.incn`. The selector, batch implementation, JSON adapter and a driver calling all twenty assertions pass typechecking and Rust emission with the retained authoring compiler. Those assertions have not executed natively. Same-session host transport, actual catalog/pricing execution and physical attachment remain pending; synthetic facts are not admitted artifacts.
+`test_source_unit.incn` contains synthetic batch contracts; the existing eight adapter assertions remain in `test_plan_json.incn`. The preserved version 1 extension passed semantic check and emission for its four modules and twenty-call driver; those assertions were not executed. Native authoring, same-session host transport, actual catalog/pricing execution and physical attachment remain pending; synthetic facts are not admitted artifacts.
+
+
+### Explicit native evidence, version 2 (source implementation)
+
+`incan.oven.selection/2` requires the current request's `build_unit_identity` alongside its existing runtime, provider,
+context and binding fields. The host must derive that key and recipe from the **same verified current receipt**.
+The decoder creates `RequestBuildUnit.VerifiedBuildUnit`; it cannot establish that authentication itself.
+Version 1 explicitly creates `LegacyRecipe` and retains its original wire fields and recipe-only behavior.
+
+Every version 2 candidate keeps its original `candidate_id`, `evidence_id`, `plan_identity`, `build_unit_identity`
+and full context, and requires one exact `evidence` object:
+
+- `{"kind":"exact_build_unit"}` represents an originally admitted Store unit. Only equal request/unit keys and
+  equal target, toolchain, profile and feature sets make it compatible; its rank is zero.
+- `{"kind":"runtime_provider_recipe","runtime":...,"providers":[...]}` represents original Loaf recipe facts.
+  Existing runtime equality, provider subset compatibility and excess ranking still apply.
+
+A nonmatching exact candidate cannot fall back to a guessed recipe. Equal exact and recipe ranks remain ambiguous.
+All candidates are validated before filtering, including losing candidates. Unknown runtime or unsupported request
+intent still refuses. Version 1 rejects version 2 evidence rather than inferring a mode from omitted fields.
+
+`incan.oven.source-unit-batch/2` requires a selection/2 foundation; persisted source-unit definitions remain schema1.
+One selection still serves the entire batch for one explicit profile. Required capabilities must be included in the
+verified request recipe. Exact equality provides logical capability evidence only: original candidate-bound member
+grants, owner/provider identities, features, roles, externs and checked edge handles remain independently required.
+Recipe candidates retain their own capability checks. No receipt key creates a grant or public output.
+
+The version 2 modules and private 37-call driver passed semantic check and Rust emission with retained compiler
+`3d0bc8be` and the unchanged generation 7 SDK (complete guarded window: 22.758 seconds). The driver retains the
+original twenty adapter/batch calls, adds the eight existing typed-selector controls and nine new evidence controls.
+The assertions have **not executed natively**. Two earlier failures exposed authored syntax/test errors; their receipts
+remain preserved. Earlier version 1 proof remains historical. Current host transport,
+physical admission, native execution and complete dual-profile operation remain pending. The public file entrypoint
+is unchanged and dispatches both explicit versions through the same decoder; host file/process bounds still apply.
 
 The compiler-side Engine descriptor publisher and borrowed reader now bind an explicitly declared module contract to its original completed output, source authority, receipt, native file and actual compiling Incan executable. Legacy outputs without that compiler observation cannot acquire it during reuse; optional compiler checkout provenance remains unavailable. The descriptor adds no executable copy and retains both original owners during admission. This source checkpoint has not been compiled or tested. It does not select or execute the adapter, grant host operations, or complete the compiler/source/ABI handshake; native file exchange itself provides no process sandbox. Non-Unix executable-mode admission remains unavailable under the current store metadata contract.

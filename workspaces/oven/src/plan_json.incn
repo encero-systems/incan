@@ -6,6 +6,8 @@ from plan import (
     NativeContext,
     ProviderCapability,
     NativeCandidate,
+    NativeCandidateEvidence,
+    RequestBuildUnit,
     SelectionRequest,
     NativeSelection,
     SelectionError,
@@ -32,6 +34,8 @@ from source_unit import (
 
 const BATCH_SCHEMA: str = "incan.oven.source-unit-batch/1"
 const SCHEMA: str = "incan.oven.selection/1"
+const SCHEMA_V2: str = "incan.oven.selection/2"
+const BATCH_SCHEMA_V2: str = "incan.oven.source-unit-batch/2"
 
 
 pub def evaluate(source: str) -> JsonValue:
@@ -45,17 +49,20 @@ pub def evaluate(source: str) -> JsonValue:
         response = evaluate(request_text)
         response_text = response.to_json()?
     """
+    mut response_schema: str = SCHEMA
     if let Ok(document) = parse(source):
         if let Some(schema) = document.get("schema"):
             if let Some(schema_name) = schema.as_str():
-                if schema_name == BATCH_SCHEMA:
+                if schema_name == BATCH_SCHEMA or schema_name == BATCH_SCHEMA_V2:
                     return evaluate_batch(document)
+                if schema_name == SCHEMA_V2:
+                    response_schema = SCHEMA_V2
     match decode_request(source):
-        Err(error) => return refusal("", "", error)
+        Err(error) => return refusal("", "", error, response_schema)
         Ok(request) =>
             match select_native(request):
-                Ok(selection) => return selected(selection)
-                Err(error) => return refusal(request.request_id, request.evidence_id, error)
+                Ok(selection) => return selected(selection, response_schema)
+                Err(error) => return refusal(request.request_id, request.evidence_id, error, response_schema)
 
 
 pub def decode_request(source: str) -> Result[SelectionRequest, SelectionError]:
@@ -63,26 +70,34 @@ pub def decode_request(source: str) -> Result[SelectionRequest, SelectionError]:
     document = parse(source).map_err((_) => SelectionError(kind=SelectionErrorKind.InvalidInput, fields=[]))?
     exact_object(document, ["schema", "request"], [])?
     schema = text_field(document, "schema", [])?
-    if schema != SCHEMA:
+    if schema != SCHEMA and schema != SCHEMA_V2:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["schema"]))
     value = field(document, "request", [])?
     path: list[str] = ["request"]
-    exact_object(
-        value,
-        ["request_id", "evidence_id", "context", "runtime", "providers", "candidates", "unsupported_intent"],
-        path,
-    )?
+    mut names: list[str] = [
+        "request_id", "evidence_id", "context", "runtime", "providers", "candidates", "unsupported_intent",
+    ]
+    if schema == SCHEMA_V2:
+        names.append("build_unit_identity")
+    exact_object(value, names, path)?
+    mut build_unit: RequestBuildUnit = RequestBuildUnit.LegacyRecipe
+    if schema == SCHEMA_V2:
+        key = text_field(value, "build_unit_identity", path)?
+        if key == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + ["build_unit_identity"]))
+        build_unit = RequestBuildUnit.VerifiedBuildUnit(key)
     request_id = text_field(value, "request_id", path)?
     evidence_id = text_field(value, "evidence_id", path)?
     context = decode_context(field(value, "context", path)?, path + ["context"])?
     runtime = decode_runtime(field(value, "runtime", path)?, path + ["runtime"])?
     providers = decode_providers(field(value, "providers", path)?, path + ["providers"])?
-    candidates = decode_candidates(field(value, "candidates", path)?, path + ["candidates"])?
+    candidates = decode_candidates(field(value, "candidates", path)?, path + ["candidates"], schema)?
     unsupported_intent = strings(field(value, "unsupported_intent", path)?, path + ["unsupported_intent"])?
     return Ok(
         SelectionRequest(
             request_id=request_id,
             evidence_id=evidence_id,
+            build_unit=build_unit,
             context=context,
             runtime=runtime,
             providers=providers,
@@ -200,25 +215,26 @@ def boolean(value: JsonValue, path: list[str]) -> Result[bool, SelectionError]:
         None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
 
 
-def decode_candidates(value: JsonValue, path: list[str]) -> Result[list[NativeCandidate], SelectionError]:
-    """Retain offered evidence and capability facts without preselecting a candidate."""
+def decode_candidates(value: JsonValue, path: list[str], schema: str) -> Result[list[NativeCandidate], SelectionError]:
+    """Use explicit versioned adapters; absent runtime fields never imply exact-unit evidence."""
     values = array(value, path)?
     mut candidates: list[NativeCandidate] = []
     for index in range(len(values)):
         item = values[index]
         at = path + [str(index)]
-        exact_object(
-            item,
-            ["candidate_id", "evidence_id", "plan_identity", "build_unit_identity", "context", "runtime", "providers"],
-            at,
-        )?
+        mut names: list[str] = ["candidate_id", "evidence_id", "plan_identity", "build_unit_identity", "context"]
+        if schema == SCHEMA:
+            names.append("runtime")
+            names.append("providers")
+        else:
+            names.append("evidence")
+        exact_object(item, names, at)?
         candidate_id = text_field(item, "candidate_id", at)?
         evidence_id = text_field(item, "evidence_id", at)?
         plan = text_field(item, "plan_identity", at)?
         unit = text_field(item, "build_unit_identity", at)?
         context = decode_context(field(item, "context", at)?, at + ["context"])?
-        runtime = decode_runtime(field(item, "runtime", at)?, at + ["runtime"])?
-        providers = decode_providers(field(item, "providers", at)?, at + ["providers"])?
+        evidence = decode_candidate_evidence(item, at, schema)?
         candidates.append(
             NativeCandidate(
                 candidate_id=candidate_id,
@@ -226,17 +242,37 @@ def decode_candidates(value: JsonValue, path: list[str]) -> Result[list[NativeCa
                 plan_identity=plan,
                 build_unit_identity=unit,
                 context=context,
-                runtime=runtime,
-                providers=providers,
+                evidence=evidence,
             ),
         )
     return Ok(candidates)
 
 
-def refusal(request_id: str, evidence_id: str, error: SelectionError) -> JsonValue:
+def decode_candidate_evidence(item: JsonValue, path: list[str], schema: str) -> Result[NativeCandidateEvidence, SelectionError]:
+    """Schema1 always supplies a recipe; schema2 requires a known exact nested evidence shape."""
+    if schema == SCHEMA:
+        runtime = decode_runtime(field(item, "runtime", path)?, path + ["runtime"])?
+        providers = decode_providers(field(item, "providers", path)?, path + ["providers"])?
+        return Ok(NativeCandidateEvidence.RuntimeProviderRecipe(runtime, providers))
+    evidence = field(item, "evidence", path)?
+    at = path + ["evidence"]
+    kind = text_field(evidence, "kind", at)?
+    if kind == "exact_build_unit":
+        exact_object(evidence, ["kind"], at)?
+        return Ok(NativeCandidateEvidence.ExactBuildUnit)
+    if kind == "runtime_provider_recipe":
+        exact_object(evidence, ["kind", "runtime", "providers"], at)?
+        runtime = decode_runtime(field(evidence, "runtime", at)?, at + ["runtime"])?
+        providers = decode_providers(field(evidence, "providers", at)?, at + ["providers"])?
+        return Ok(NativeCandidateEvidence.RuntimeProviderRecipe(runtime, providers))
+    return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=at + ["kind"]))
+
+
+
+def refusal(request_id: str, evidence_id: str, error: SelectionError, schema: str) -> JsonValue:
     """Encode a refusal without a selection payload or native-effect claim."""
     return JsonValue.object(
-        {"schema": JsonValue.string(SCHEMA), "request_id": JsonValue.string(request_id), "request_evidence_id": JsonValue.string(
+        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(request_id), "request_evidence_id": JsonValue.string(
             evidence_id,
         ), "status": JsonValue.string("refused"), "error": JsonValue.object(
             {"kind": JsonValue.string(error.kind.value()), "fields": JsonValue.array(
@@ -246,11 +282,11 @@ def refusal(request_id: str, evidence_id: str, error: SelectionError) -> JsonVal
     )
 
 
-def selected(selection: NativeSelection) -> JsonValue:
+def selected(selection: NativeSelection, schema: str) -> JsonValue:
     """Serialize the selector's existing result; hashes remain references checked by the host."""
     rank = selection.excess
     return JsonValue.object(
-        {"schema": JsonValue.string(SCHEMA), "request_id": JsonValue.string(selection.request_id), "request_evidence_id": JsonValue.string(
+        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(selection.request_id), "request_evidence_id": JsonValue.string(
             selection.request_evidence_id,
         ), "status": JsonValue.string("selected"), "selection": JsonValue.object(
             {"request_id": JsonValue.string(selection.request_id), "request_evidence_id": JsonValue.string(
@@ -270,13 +306,17 @@ def selected(selection: NativeSelection) -> JsonValue:
 
 pub def evaluate_batch(document: JsonValue) -> JsonValue:
     """Decode the complete batch before performing one atomic foundation selection."""
+    schema = batch_response_schema(document)
     match decode_batch(document):
-        Err(error) => return batch_refusal("", "", error)
+        Err(error) => return batch_refusal("", "", error, schema)
         Ok(batch) =>
             match select_source_units(batch):
-                Err(error) => return batch_refusal(batch.foundation.request_id, batch.foundation.evidence_id, error)
+                Err(error) => return batch_refusal(batch.foundation.request_id, batch.foundation.evidence_id, error, schema)
                 Ok(result) =>
-                    foundation = selected(result.foundation)
+                    mut foundation_schema: str = SCHEMA
+                    if schema == BATCH_SCHEMA_V2:
+                        foundation_schema = SCHEMA_V2
+                    foundation = selected(result.foundation, foundation_schema)
                     units = [JsonValue.object(
                         {"unit_id": JsonValue.string(unit.unit_id), "owner_id": JsonValue.string(unit.owner_id), "definition_id": JsonValue.string(
                             unit.definition_id,
@@ -289,7 +329,7 @@ pub def evaluate_batch(document: JsonValue) -> JsonValue:
                         ), "grant_ids": JsonValue.array([JsonValue.string(value) for value in unit.grant_ids])},
                     ) for unit in result.units]
                     return JsonValue.object(
-                        {"schema": JsonValue.string(BATCH_SCHEMA), "request_id": JsonValue.string(
+                        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(
                             result.foundation.request_id,
                         ), "request_evidence_id": JsonValue.string(result.foundation.request_evidence_id), "status": JsonValue.string(
                             "selected",
@@ -297,10 +337,10 @@ pub def evaluate_batch(document: JsonValue) -> JsonValue:
                     )
 
 
-def batch_refusal(request_id: str, evidence_id: str, error: SelectionError) -> JsonValue:
+def batch_refusal(request_id: str, evidence_id: str, error: SelectionError, schema: str) -> JsonValue:
     """Return no binding payload after malformed input or a whole-batch refusal."""
     return JsonValue.object(
-        {"schema": JsonValue.string(BATCH_SCHEMA), "request_id": JsonValue.string(request_id), "request_evidence_id": JsonValue.string(
+        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(request_id), "request_evidence_id": JsonValue.string(
             evidence_id,
         ), "status": JsonValue.string("refused"), "error": JsonValue.object(
             {"kind": JsonValue.string(error.kind.value()), "fields": JsonValue.array(
@@ -310,12 +350,27 @@ def batch_refusal(request_id: str, evidence_id: str, error: SelectionError) -> J
     )
 
 
+def batch_response_schema(document: JsonValue) -> str:
+    """Preserve a recognized batch wire version even when decoding refuses."""
+    if let Some(value) = document.get("schema"):
+        if let Some(name) = value.as_str():
+            if name == BATCH_SCHEMA_V2:
+                return BATCH_SCHEMA_V2
+    return BATCH_SCHEMA
+
+
 pub def decode_batch(document: JsonValue) -> Result[SourceBatch, SelectionError]:
-    """Preserve existing selection/1 and schema1 definitions inside the batch discriminator."""
+    """Bind each batch version to the same foundation version; persisted source definitions stay schema1."""
     exact_object(document, ["schema", "foundation", "purpose", "units", "edges", "needs", "grants"], [])?
-    if text_field(document, "schema", [])? != BATCH_SCHEMA:
+    schema = text_field(document, "schema", [])?
+    if schema != BATCH_SCHEMA and schema != BATCH_SCHEMA_V2:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["schema"]))
     foundation_json = field(document, "foundation", [])?
+    mut expected_schema: str = SCHEMA
+    if schema == BATCH_SCHEMA_V2:
+        expected_schema = SCHEMA_V2
+    if text_field(foundation_json, "schema", ["foundation"])? != expected_schema:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["foundation", "schema"]))
     foundation_text = foundation_json
         .to_json()
         .map_err((_) => SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["foundation"]))?
