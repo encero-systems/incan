@@ -15,6 +15,7 @@ pub use artifact::*;
 pub use diagnostics::*;
 pub(crate) use inspection::*;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
@@ -49,6 +50,298 @@ pub const OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH: &str = "registry-sources/Cargo
 pub const OVEN_COMPILER_RUNTIME_CRATE_PREFIX: &str = "incan_";
 /// Schema version for caller-owned native-output reuse evidence.
 const OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION: u32 = 3;
+
+/// Original foundation provenance, preserving distinct store receipts and committed Loaf member identities.
+pub(crate) enum OvenNativeInputOrigin<'facts> {
+    /// A stored direct plan retains the exact original content, receipt and reusable build-unit identities.
+    Store {
+        identity: &'facts str,
+        receipt_identity: &'facts str,
+        build_unit_identity: &'facts str,
+    },
+    /// A toolchain member has committed generation/member/build/plan coordinates, not a store receipt.
+    ToolchainLoaf {
+        generation_identity: &'facts str,
+        member: &'facts super::loaf::OvenLoafEnvelopeMember,
+    },
+}
+
+/// The actual selected owner retained through fact queries and physical attachment.
+enum OvenNativeInputOwner<'owner> {
+    Store(&'owner OvenStoreExecutionPayload),
+    ToolchainLoaf(&'owner super::loaf::OvenMaterializedLoafCandidate<'owner>),
+}
+
+/// A command-owned physical view of one admitted foundation, borrowing its actual execution owner.
+///
+/// Store construction validates the original record/files once; Loaf construction borrows an already materialized
+/// candidate. Subsequent fact queries do not touch the filesystem or select compatibility. One Incan batch chooses
+/// the foundation before any source unit attaches inputs through it. Neither origin substitutes consumer receipts.
+pub(crate) struct OvenNativeInputView<'owner> {
+    owner: OvenNativeInputOwner<'owner>,
+    artifacts: Cow<'owner, OvenRustcArtifactManifest>,
+    artifact_root: PathBuf,
+    plan: Cow<'owner, OvenRustcArtifactPlan>,
+}
+
+impl<'owner> OvenNativeInputView<'owner> {
+    /// Borrow an original store payload after its existing record and physical integrity checks succeed.
+    pub(crate) fn from_store_payload(owner: &'owner OvenStoreExecutionPayload) -> Result<Self, OvenRustcError> {
+        if owner.manifest.kind != OvenArtifactKind::DirectRustcPlan {
+            return Err(OvenRustcError::InvalidInput {
+                field: "native input owner",
+                message: "requires an original admitted direct-plan payload".to_string(),
+            });
+        }
+        owner.verify_admitted_payload()?;
+        let artifacts: OvenRustcArtifactManifest =
+            serde_json::from_slice(&owner.payload).map_err(|error| OvenRustcError::InvalidInput {
+                field: "native input owner payload",
+                message: error.to_string(),
+            })?;
+        let artifact_root = canonical_directory(&owner.artifact_root, "native input owner root")?;
+        let plan = artifacts.materialize_trusted_store(&artifact_root, &owner.manifest.intent)?;
+        Ok(Self {
+            owner: OvenNativeInputOwner::Store(owner),
+            artifacts: Cow::Owned(artifacts),
+            artifact_root,
+            plan: Cow::Owned(plan),
+        })
+    }
+
+    /// Borrow an already physically validated committed Loaf without repeating its full artifact walk.
+    pub(crate) fn from_materialized_loaf(
+        owner: &'owner super::loaf::OvenMaterializedLoafCandidate<'owner>,
+    ) -> Result<Self, OvenRustcError> {
+        let candidate = owner.candidate();
+        Ok(Self {
+            owner: OvenNativeInputOwner::ToolchainLoaf(owner),
+            artifacts: Cow::Borrowed(&candidate.metadata().plan),
+            artifact_root: canonical_directory(owner.artifact_root(), "native input Loaf root")?,
+            plan: Cow::Borrowed(owner.artifact_plan()),
+        })
+    }
+
+    /// Return the original typed provenance without manufacturing a store receipt for a toolchain member.
+    pub(crate) fn origin(&self) -> OvenNativeInputOrigin<'_> {
+        match &self.owner {
+            OvenNativeInputOwner::Store(owner) => OvenNativeInputOrigin::Store {
+                identity: &owner.manifest.identity,
+                receipt_identity: &owner.manifest.receipt_identity,
+                build_unit_identity: &owner.manifest.build_unit_identity,
+            },
+            OvenNativeInputOwner::ToolchainLoaf(owner) => {
+                let candidate = owner.candidate();
+                OvenNativeInputOrigin::ToolchainLoaf {
+                    generation_identity: candidate.generation_identity(),
+                    member: candidate.member(),
+                }
+            }
+        }
+    }
+
+    /// Return the original admitted content identity, not a new consumer receipt identity.
+    pub(crate) fn identity(&self) -> &str {
+        match self.origin() {
+            OvenNativeInputOrigin::Store { identity, .. } => identity,
+            OvenNativeInputOrigin::ToolchainLoaf { member, .. } => &member.loaf_identity,
+        }
+    }
+
+    /// Return the original store receipt when this origin has one; toolchain members retain different provenance.
+    pub(crate) fn receipt_identity(&self) -> Option<&str> {
+        match self.origin() {
+            OvenNativeInputOrigin::Store { receipt_identity, .. } => Some(receipt_identity),
+            OvenNativeInputOrigin::ToolchainLoaf { .. } => None,
+        }
+    }
+
+    /// Return the original reusable build-unit identity without recomputing compatibility.
+    pub(crate) fn build_unit_identity(&self) -> &str {
+        match self.origin() {
+            OvenNativeInputOrigin::Store {
+                build_unit_identity, ..
+            } => build_unit_identity,
+            OvenNativeInputOrigin::ToolchainLoaf { member, .. } => &member.build_unit_identity,
+        }
+    }
+
+    /// Return the original target, toolchain, profile and features as facts, without filtering candidates.
+    pub(crate) fn intent(&self) -> &OvenBuildIntent {
+        &self.artifacts.intent
+    }
+
+    /// Require an original declared source role; a caller's newly generated source key grants nothing here.
+    fn require_original_role(&self, source_role: &str) -> Result<(), OvenRustcError> {
+        if !self.artifacts.entrypoint_externs.contains_key(source_role) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "native input source role",
+                message: format!("`{source_role}` is not an original declared role of this foundation"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Expose every recorded registry leaf in publisher order; version and feature choice belongs to Incan.
+    ///
+    /// A handle retains the original source role for later physical membership checks. Enumeration itself neither
+    /// discovers files nor promotes an anonymous supporting artifact to a named dependency.
+    pub(crate) fn registry_candidates(
+        &self,
+        source_role: &str,
+    ) -> Result<Vec<OvenNativeInputCandidate<'_>>, OvenRustcError> {
+        self.require_original_role(source_role)?;
+        Ok(self
+            .artifacts
+            .registry_leaves
+            .iter()
+            .map(|leaf| OvenNativeInputCandidate {
+                view: self,
+                artifact: &leaf.artifact,
+                registry_leaf: Some(leaf),
+                source_role: source_role.to_string(),
+            })
+            .collect())
+    }
+
+    /// Expose only the explicitly named externs of an original source role, in manifest declaration order.
+    pub(crate) fn named_candidates(
+        &self,
+        source_role: &str,
+    ) -> Result<Vec<OvenNativeInputCandidate<'_>>, OvenRustcError> {
+        self.require_original_role(source_role)?;
+        let projected = self.artifacts.for_source_evidence(source_role)?;
+        Ok(self
+            .artifacts
+            .externs
+            .iter()
+            .filter(|artifact| projected.externs.iter().any(|allowed| allowed == *artifact))
+            .map(|artifact| OvenNativeInputCandidate {
+                view: self,
+                artifact,
+                registry_leaf: None,
+                source_role: source_role.to_string(),
+            })
+            .collect())
+    }
+
+    /// Attach response-selected members transactionally, preserving this exact foundation's original source role.
+    ///
+    /// The host's command table must first bind the Incan response to the global batch and each definition. This
+    /// method checks only original owner/role membership, identifiers, artifact bytes and physical collisions; it
+    /// never interprets dependency requirements. Existing role projection owns search/native paths and environment.
+    /// No missing directory is added, no alternative file is sought and no output or child is created.
+    pub(crate) fn attach_for_source(
+        &self,
+        source_role: &str,
+        selected: &[OvenSelectedNativeInput<'_>],
+    ) -> Result<OvenSelectedNativeSourcePlan<'_>, OvenRustcError> {
+        self.require_original_role(source_role)?;
+        let mut plan = trusted_artifact_plan_for_source_evidence(&self.plan, &self.artifacts, source_role)?;
+        let mut aliases = BTreeSet::new();
+        for input in selected {
+            let candidate = &input.candidate;
+            if !std::ptr::eq(candidate.view, self) || candidate.source_role != source_role {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "selected native input",
+                    message: "belongs to a different foundation view or original source role".to_string(),
+                });
+            }
+            if !aliases.insert(input.alias.as_str()) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "selected native input",
+                    message: format!("duplicates selected alias `{}`", input.alias),
+                });
+            }
+            let artifact = candidate.artifact;
+            let output = verified_file(
+                &self.artifact_root,
+                &artifact.relative_path,
+                &artifact.digest,
+                "selected native input",
+            )?;
+            let parent = output.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "selected native input",
+                message: "artifact has no dependency directory".to_string(),
+            })?;
+            if !plan.dependency_search_paths.iter().any(|directory| directory == parent) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "selected native input",
+                    message: format!(
+                        "{} is outside the original source role's dependency directories",
+                        output.display()
+                    ),
+                });
+            }
+            if let Some((_, existing)) = plan.externs.iter().find(|(name, _)| name == &input.alias) {
+                if existing != &output {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected native input",
+                        message: format!("conflicts with existing named extern `{}`", input.alias),
+                    });
+                }
+                continue;
+            }
+            if plan
+                .caller_owned_library_digests
+                .insert(input.alias.clone(), artifact.digest.clone())
+                .is_some()
+            {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "selected native input",
+                    message: format!("conflicts with existing digest evidence for `{}`", input.alias),
+                });
+            }
+            plan.externs.push((input.alias.clone(), output));
+        }
+        Ok(OvenSelectedNativeSourcePlan { plan, _view: self })
+    }
+}
+
+/// One original manifest member; only its borrowed foundation view can construct this physical handle.
+pub(crate) struct OvenNativeInputCandidate<'view> {
+    view: &'view OvenNativeInputView<'view>,
+    artifact: &'view OvenRustcArtifactExtern,
+    registry_leaf: Option<&'view OvenRustcRegistryLeaf>,
+    source_role: String,
+}
+
+impl<'view> OvenNativeInputCandidate<'view> {
+    /// Return recorded registry source/package/version/features, if this is a registry candidate.
+    pub(crate) fn registry_leaf(&self) -> Option<&OvenRustcRegistryLeaf> {
+        self.registry_leaf
+    }
+
+    /// Return the original named artifact declaration, without resolving its filesystem location.
+    pub(crate) fn artifact(&self) -> &OvenRustcArtifactExtern {
+        self.artifact
+    }
+
+    /// Carry the already selected alias; matching that alias to an authored slot remains the Incan batch decision.
+    pub(crate) fn with_alias(self, alias: String) -> Result<OvenSelectedNativeInput<'view>, OvenRustcError> {
+        validate_rust_identifier(&alias)?;
+        Ok(OvenSelectedNativeInput { candidate: self, alias })
+    }
+}
+
+/// A physical member and explicit direct alias selected by the command's bound Incan batch response.
+pub(crate) struct OvenSelectedNativeInput<'view> {
+    candidate: OvenNativeInputCandidate<'view>,
+    alias: String,
+}
+
+/// A source-specific plan whose actual selected foundation owner remains borrowed through its complete use.
+pub(crate) struct OvenSelectedNativeSourcePlan<'owner> {
+    plan: OvenRustcArtifactPlan,
+    _view: &'owner OvenNativeInputView<'owner>,
+}
+
+impl OvenSelectedNativeSourcePlan<'_> {
+    /// Borrow the attached plan while preserving the selected store lease or committed generation lock.
+    pub(crate) fn artifact_plan(&self) -> &OvenRustcArtifactPlan {
+        &self.plan
+    }
+}
 
 /// One registry leaf and the immutable Loaf root that seals its relative artifact path.
 #[derive(Debug, Clone)]
@@ -6299,6 +6592,328 @@ mod tests {
     use crate::oven::{
         OVEN_COMPILER_TEST_PROFILE, OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project,
     };
+
+    /// A real store-selected payload with explicit role, registry and transitive physical records.
+    struct NativeInputFixture {
+        owner: crate::oven::store::OvenStoreExecutionPayload,
+        receipt: crate::oven::OvenReceipt,
+        store: OvenStore,
+        root: tempfile::TempDir,
+    }
+
+    /// Publish fixture bytes through the normal store without invoking a compiler or interpreting dependency requests.
+    fn native_input_fixture(profile: &str) -> Result<NativeInputFixture, Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        write_project(root.path())?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                root.path(),
+                "native_input_fixture",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                profile,
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", root.path().join("fixture.rs")),
+        )?;
+        let source = root.path().join("publisher");
+        let files = [
+            ("release/deps/libruntime.rlib", "runtime bytes"),
+            ("release/deps/libserde_fixture.rlib", "registry bytes"),
+            ("release/deps/libtransitive.rlib", "transitive bytes"),
+            ("helper/libprivate.rlib", "private helper bytes"),
+            ("native/libsupport.a", "native support bytes"),
+            (
+                "registry-sources/fixture/Cargo.toml",
+                "[package]\nname='serde_fixture'\nversion='1.2.3'\n",
+            ),
+            (super::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, "version = 4\n"),
+        ];
+        for (relative, bytes) in files {
+            let path = source.join(relative);
+            fs::create_dir_all(path.parent().ok_or("fixture path missing parent")?)?;
+            fs::write(path, bytes)?;
+        }
+        let mut artifacts = empty_manifest(&receipt);
+        artifacts.dependency_search_paths = vec!["release/deps".to_string(), "helper".to_string()];
+        artifacts.native_search_paths = vec!["native".to_string()];
+        artifacts
+            .compile_environment
+            .insert("CARGO_PKG_NAME".to_string(), "native_input_fixture".to_string());
+        artifacts.externs = vec![
+            OvenRustcArtifactExtern {
+                crate_name: "runtime".to_string(),
+                relative_path: files[0].0.to_string(),
+                digest: digest_bytes(files[0].1.as_bytes()),
+            },
+            OvenRustcArtifactExtern {
+                crate_name: "private".to_string(),
+                relative_path: files[3].0.to_string(),
+                digest: digest_bytes(files[3].1.as_bytes()),
+            },
+        ];
+        artifacts.entrypoint_externs = BTreeMap::from([
+            ("generated-root".to_string(), vec!["runtime".to_string()]),
+            ("compiler-helper".to_string(), vec!["private".to_string()]),
+        ]);
+        artifacts.supporting_artifacts = files
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != 0 && *index != 3)
+            .map(|(_, (relative, bytes))| OvenRustcSupportingArtifact {
+                relative_path: (*relative).to_string(),
+                digest: digest_bytes(bytes.as_bytes()),
+            })
+            .collect();
+        let registry_source = fixture_registry_source();
+        artifacts.registry_sources = vec![OvenRustcRegistrySourcePackage {
+            package: "serde_fixture".to_string(),
+            version: "1.2.3".to_string(),
+            features: vec!["derive".to_string()],
+            source: registry_source.clone(),
+        }];
+        artifacts.registry_leaves = vec![OvenRustcRegistryLeaf {
+            package: "serde_fixture".to_string(),
+            version: "1.2.3".to_string(),
+            crate_name: "serde_fixture".to_string(),
+            features: vec!["derive".to_string()],
+            source: registry_source,
+            artifact: OvenRustcArtifactExtern {
+                crate_name: "serde_fixture".to_string(),
+                relative_path: files[1].0.to_string(),
+                digest: digest_bytes(files[1].1.as_bytes()),
+            },
+        }];
+        let materialized = artifacts
+            .materialized_artifacts(&source, &receipt.intent)?
+            .into_iter()
+            .map(|artifact| crate::oven::store::OvenArtifactMaterializedFile {
+                source_path: artifact.source_path,
+                relative_path: artifact.relative_path,
+            })
+            .collect();
+        let store = OvenStore::new(
+            root.path().join("store"),
+            OvenStoreLimits::new(4 * 1024 * 1024, 4 * 1024 * 1024, 4 * 1024 * 1024),
+        );
+        let published = store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "native-input-view-fixture".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&artifacts)?,
+            materialized_files: materialized,
+        })?;
+        let owner = store
+            .select_payloads_for_execution(&[published.identity])?
+            .pop()
+            .ok_or("selected fixture absent")?;
+        Ok(NativeInputFixture {
+            owner,
+            receipt,
+            store,
+            root,
+        })
+    }
+
+    #[test]
+    fn native_input_view_exposes_original_facts_without_path_profile_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let debug = native_input_fixture("debug")?;
+        let release = native_input_fixture("release")?;
+        for fixture in [&debug, &release] {
+            let view = super::OvenNativeInputView::from_store_payload(&fixture.owner)?;
+            assert_eq!(view.identity(), fixture.owner.manifest.identity);
+            assert_eq!(view.receipt_identity(), Some(fixture.receipt.identity.as_str()));
+            assert_eq!(view.build_unit_identity(), fixture.receipt.build_unit_identity);
+            assert_eq!(view.intent(), &fixture.receipt.intent);
+            let candidates = view.registry_candidates("generated-root")?;
+            let candidate = candidates.first().ok_or("registry candidate absent")?;
+            assert!(candidate.artifact().relative_path.starts_with("release/"));
+            assert_eq!(
+                candidate.registry_leaf().ok_or("registry facts absent")?.version,
+                "1.2.3"
+            );
+            assert!(view.named_candidates("new-consumer-source-key").is_err());
+            let named = view.named_candidates("generated-root")?;
+            assert_eq!(
+                named
+                    .iter()
+                    .map(|item| item.artifact().crate_name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["runtime"]
+            );
+            assert!(named.iter().all(|item| item.registry_leaf().is_none()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_input_view_attaches_selected_alias_and_preserves_role_closure() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = native_input_fixture("debug")?;
+        let view = super::OvenNativeInputView::from_store_payload(&fixture.owner)?;
+        let before = super::trusted_artifact_plan_for_source_evidence(&view.plan, &view.artifacts, "generated-root")?;
+        let chosen = view
+            .registry_candidates("generated-root")?
+            .pop()
+            .ok_or("registry candidate absent")?
+            .with_alias("json_alias".to_string())?;
+        let existing = view
+            .named_candidates("generated-root")?
+            .pop()
+            .ok_or("named runtime absent")?
+            .with_alias("runtime".to_string())?;
+        let attached = view.attach_for_source("generated-root", &[chosen, existing])?;
+        let plan = attached.artifact_plan();
+        assert_eq!(plan.dependency_search_paths, before.dependency_search_paths);
+        assert_eq!(plan.native_search_paths, before.native_search_paths);
+        assert_eq!(plan.compile_environment, before.compile_environment);
+        assert_eq!(plan.externs.len(), 2);
+        assert_eq!(plan.externs[1].0, "json_alias");
+        assert_eq!(
+            plan.caller_owned_library_digests.get("json_alias"),
+            Some(&digest_bytes(b"registry bytes"))
+        );
+        assert!(
+            !plan
+                .externs
+                .iter()
+                .any(|(name, _)| name == "private" || name == "transitive")
+        );
+        assert_eq!(view.plan.externs.len(), 2, "attachment must not mutate the foundation");
+        Ok(())
+    }
+
+    #[test]
+    fn native_input_view_refuses_foreign_foundation_role_and_alias_collision() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let first = native_input_fixture("debug")?;
+        let second = native_input_fixture("debug")?;
+        let view = super::OvenNativeInputView::from_store_payload(&first.owner)?;
+        let other = super::OvenNativeInputView::from_store_payload(&second.owner)?;
+        let foreign = other
+            .registry_candidates("generated-root")?
+            .pop()
+            .ok_or("foreign leaf absent")?
+            .with_alias("dependency".to_string())?;
+        assert!(view.attach_for_source("generated-root", &[foreign]).is_err());
+        let wrong_role = view
+            .named_candidates("compiler-helper")?
+            .pop()
+            .ok_or("helper absent")?
+            .with_alias("dependency".to_string())?;
+        assert!(view.attach_for_source("generated-root", &[wrong_role]).is_err());
+        let colliding = view
+            .registry_candidates("generated-root")?
+            .pop()
+            .ok_or("leaf absent")?
+            .with_alias("runtime".to_string())?;
+        assert!(view.attach_for_source("generated-root", &[colliding]).is_err());
+        let invalid_alias = view.registry_candidates("generated-root")?.pop().ok_or("leaf absent")?;
+        assert!(invalid_alias.with_alias("not an identifier".to_string()).is_err());
+        let excluded = view
+            .registry_candidates("compiler-helper")?
+            .pop()
+            .ok_or("leaf facts absent")?
+            .with_alias("dependency".to_string())?;
+        assert!(
+            view.attach_for_source("compiler-helper", &[excluded]).is_err(),
+            "an excluded physical directory must not be restored"
+        );
+        assert!(!first.root.path().join("output").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn native_input_view_queries_are_read_free_but_attachment_rechecks_selected_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = native_input_fixture("debug")?;
+        let view = super::OvenNativeInputView::from_store_payload(&fixture.owner)?;
+        let original_plan = view.plan.clone();
+        let file = fixture.owner.artifact_root.join("release/deps/libserde_fixture.rlib");
+        fs::write(&file, b"changed after admission")?;
+        let chosen = view
+            .registry_candidates("generated-root")?
+            .pop()
+            .ok_or("facts changed after physical mutation")?
+            .with_alias("dependency".to_string())?;
+        assert!(matches!(
+            view.attach_for_source("generated-root", &[chosen]),
+            Err(OvenRustcError::ArtifactDigestMismatch { .. })
+        ));
+        assert_eq!(view.plan, original_plan);
+        assert!(!fixture.root.path().join("output").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn native_input_view_rejects_mutated_payload_manifest_and_coordinated_retargeting()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut first = native_input_fixture("debug")?;
+        let second = native_input_fixture("debug")?;
+        assert_eq!(first.owner.manifest, second.owner.manifest);
+        assert_eq!(first.owner.payload, second.owner.payload);
+        assert_ne!(first.owner.artifact_root, second.owner.artifact_root);
+        let original_payload = first.owner.payload.clone();
+        first.owner.payload.push(b' ');
+        assert!(super::OvenNativeInputView::from_store_payload(&first.owner).is_err());
+        first.owner.payload = original_payload;
+        let original_manifest = first.owner.manifest.clone();
+        first.owner.manifest.intent.profile = "release".to_string();
+        assert!(super::OvenNativeInputView::from_store_payload(&first.owner).is_err());
+        first.owner.manifest = original_manifest;
+        assert!(super::OvenNativeInputView::from_store_payload(&first.owner).is_ok());
+        first.owner.manifest = second.owner.manifest.clone();
+        first.owner.artifact_root = second.owner.artifact_root.clone();
+        first.owner.payload = second.owner.payload.clone();
+        assert!(
+            super::OvenNativeInputView::from_store_payload(&first.owner).is_err(),
+            "even identical valid records cannot retarget the original selected lease to another root"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_input_view_keeps_real_store_lease_through_attached_plan_use() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = native_input_fixture("debug")?;
+        let bounded = OvenStore::new(
+            fixture.root.path().join("store"),
+            OvenStoreLimits::new(1, 4 * 1024 * 1024, 4 * 1024 * 1024),
+        );
+        let view = super::OvenNativeInputView::from_store_payload(&fixture.owner)?;
+        let attached = view.attach_for_source("generated-root", &[])?;
+        bounded.prune()?;
+        let held = fixture.store.inspect()?;
+        assert_eq!(held.entries.len(), 1);
+        assert_eq!(held.active_lease_physical_bytes, held.physical_bytes);
+        assert!(attached.artifact_plan().externs[0].1.is_file());
+        drop(attached);
+        drop(view);
+        drop(fixture.owner);
+        bounded.prune()?;
+        assert!(bounded.inspect()?.entries.is_empty());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_input_view_refuses_selected_symlink_after_admission() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = native_input_fixture("debug")?;
+        let view = super::OvenNativeInputView::from_store_payload(&fixture.owner)?;
+        let selected = fixture.owner.artifact_root.join("release/deps/libserde_fixture.rlib");
+        let foreign = fixture.root.path().join("foreign.rlib");
+        fs::write(&foreign, b"registry bytes")?;
+        fs::remove_file(&selected)?;
+        std::os::unix::fs::symlink(&foreign, &selected)?;
+        let candidate = view
+            .registry_candidates("generated-root")?
+            .pop()
+            .ok_or("leaf absent")?
+            .with_alias("dependency".to_string())?;
+        assert!(view.attach_for_source("generated-root", &[candidate]).is_err());
+        Ok(())
+    }
 
     fn fixture_registry_source() -> OvenRustcRegistrySource {
         OvenRustcRegistrySource {

@@ -1,0 +1,26 @@
+"""Read one explicit request file and write one JSON selection response for the future governed host."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from plan_json import evaluate
+
+
+def exchange(request_path: str, response_path: str) -> Result[None, str]:
+    """Perform strict UTF-8 file exchange; host-enforced path, size and process bounds remain required."""
+    source = Path(request_path).read_text("utf-8", "strict").map_err((error) => error.message())?
+    response = evaluate(source).to_json().map_err((error) => error.message())?
+    return Path(response_path).write_text(response, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def main() -> None:
+    """Accept exactly a request and response path; IO failure exits without claiming selection."""
+    arguments: list[str] = [argument for argument in args()]
+    if len(arguments) != 3:
+        println("usage: plan_json_main REQUEST RESPONSE")
+        exit(2)
+    match exchange(arguments[1], arguments[2]):
+        Ok(_) => return
+        Err(error) =>
+            println(f"selection exchange failed: {error}")
+            exit(1)

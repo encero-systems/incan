@@ -499,6 +499,175 @@ impl OvenToolchainLoaf {
     }
 }
 
+/// Original compiled-member facts retained for one Incan selection request (#991, #1037).
+///
+/// Intake validates committed metadata and holds its generation lock. It does not compare a caller receipt, select
+/// a profile, rank capabilities, or read native/source trees. The Incan decision and host response binding must
+/// precede materializing any candidate's declared compiler inputs.
+pub(crate) struct OvenNativeLoafCandidates {
+    generation_identity: String,
+    entries: Vec<OvenNativeLoafMetadata>,
+    _generation_lock: OvenLoafGenerationLock,
+}
+
+struct OvenNativeLoafMetadata {
+    member: OvenLoafEnvelopeMember,
+    path: PathBuf,
+    loaf: OvenLoaf,
+}
+
+impl OvenNativeLoafCandidates {
+    /// Read the existing committed envelope without making a native compatibility decision.
+    pub(crate) fn from_committed_envelope(
+        root: &Path,
+        envelope: OvenLoafEnvelope,
+    ) -> Result<Option<Self>, OvenLoafError> {
+        if !root.join("envelope.json").is_file() {
+            return Ok(None);
+        }
+        let generation_lock = acquire_loaf_generation_lock(root)?;
+        let expected_envelope = match envelope {
+            OvenLoafEnvelope::Release => "release",
+            OvenLoafEnvelope::CompilerSuite => "compiler-suite",
+        };
+        let (manifest, manifest_path) = committed_loaf_envelope_manifest(root, expected_envelope)?;
+        let paths = committed_loaf_metadata_paths_for_authority(root, OvenLoafMemberRole::CompiledClosure)?;
+        let mut members = BTreeMap::new();
+        for member in &manifest.loafs {
+            if members.insert(root.join(&member.path), member).is_some() {
+                return Err(OvenLoafError::InvalidLoaf {
+                    path: manifest_path,
+                    message: "committed envelope repeats a member path".to_string(),
+                });
+            }
+        }
+        let mut entries = Vec::with_capacity(paths.len());
+        for path in paths {
+            let member = members.get(&path).copied().ok_or_else(|| OvenLoafError::InvalidLoaf {
+                path: path.clone(),
+                message: "compiled member is absent from the retained envelope".to_string(),
+            })?;
+            let bytes = fs::read(&path).map_err(|source| OvenLoafError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            if digest_bytes(&bytes) != member.loaf_identity {
+                return Err(OvenLoafError::InvalidLoaf {
+                    path,
+                    message: "compiled member metadata changed during intake".to_string(),
+                });
+            }
+            let loaf: OvenLoaf = serde_json::from_slice(&bytes).map_err(|error| OvenLoafError::InvalidLoaf {
+                path: path.clone(),
+                message: format!("invalid compiled member metadata: {error}"),
+            })?;
+            let plan_bytes = serde_json::to_vec(&loaf.plan).map_err(|error| OvenLoafError::InvalidLoaf {
+                path: path.clone(),
+                message: format!("cannot encode compiled member plan: {error}"),
+            })?;
+            if loaf.schema_version != OVEN_LOAF_SCHEMA_VERSION
+                || loaf.build_unit_identity != member.build_unit_identity
+                || loaf.plan.intent.profile != member.profile
+                || digest_bytes(&plan_bytes) != member.plan_identity
+                || loaf.registry_leaves != loaf.plan.registry_leaves
+            {
+                return Err(OvenLoafError::InvalidLoaf {
+                    path,
+                    message: "compiled member disagrees with its committed coordinates".to_string(),
+                });
+            }
+            loaf.plan.validate_shape(&loaf.plan.intent)?;
+            validate_registry_leaf_catalog(&loaf, &path)?;
+            entries.push(OvenNativeLoafMetadata {
+                member: member.clone(),
+                path,
+                loaf,
+            });
+        }
+        Ok(Some(Self {
+            generation_identity: manifest.generation_identity,
+            entries,
+            _generation_lock: generation_lock,
+        }))
+    }
+
+    /// Return the committed generation that owns every offered candidate.
+    pub(crate) fn generation_identity(&self) -> &str {
+        &self.generation_identity
+    }
+
+    /// Offer every compiled member in committed order; native intent and capabilities remain original facts.
+    pub(crate) fn candidates(&self) -> impl Iterator<Item = OvenNativeLoafCandidate<'_>> {
+        (0..self.entries.len()).map(|index| OvenNativeLoafCandidate { owner: self, index })
+    }
+}
+
+/// A candidate handle whose private origin retains the actual generation lock.
+#[derive(Clone, Copy)]
+pub(crate) struct OvenNativeLoafCandidate<'owner> {
+    owner: &'owner OvenNativeLoafCandidates,
+    index: usize,
+}
+
+impl<'owner> OvenNativeLoafCandidate<'owner> {
+    /// Return content-addressed member coordinates, without substituting a caller's receipt identity.
+    pub(crate) fn member(&self) -> &'owner OvenLoafEnvelopeMember {
+        &self.owner.entries[self.index].member
+    }
+
+    /// Return the committed generation whose actual lock remains held by this candidate's owner.
+    pub(crate) fn generation_identity(&self) -> &'owner str {
+        self.owner.generation_identity()
+    }
+
+    /// Return the original intent, runtime inputs, capabilities and declared artifact catalog.
+    pub(crate) fn metadata(&self) -> &'owner OvenLoaf {
+        &self.owner.entries[self.index].loaf
+    }
+
+    /// Validate only this selected member's declared native inputs while retaining its original owner.
+    ///
+    /// This performs physical validation, not caller authorization. The command must first bind the Incan response
+    /// to its original request and this candidate. Missing inputs refuse; this operation never builds or publishes.
+    pub(crate) fn materialize(self) -> Result<OvenMaterializedLoafCandidate<'owner>, OvenLoafError> {
+        let entry = &self.owner.entries[self.index];
+        let root = entry.path.parent().ok_or_else(|| OvenLoafError::InvalidLoaf {
+            path: entry.path.clone(),
+            message: "compiled member has no artifact root".to_string(),
+        })?;
+        let artifact_plan = entry.loaf.plan.materialize(root, &entry.loaf.plan.intent)?;
+        Ok(OvenMaterializedLoafCandidate {
+            candidate: self,
+            artifact_root: root.to_path_buf(),
+            artifact_plan,
+        })
+    }
+}
+
+/// A materialized candidate whose compiler inputs cannot outlive the borrowed committed generation.
+pub(crate) struct OvenMaterializedLoafCandidate<'owner> {
+    candidate: OvenNativeLoafCandidate<'owner>,
+    artifact_root: PathBuf,
+    artifact_plan: OvenRustcArtifactPlan,
+}
+
+impl OvenMaterializedLoafCandidate<'_> {
+    /// Return the original metadata handle paired with these exact materialized inputs.
+    pub(crate) fn candidate(&self) -> OvenNativeLoafCandidate<'_> {
+        self.candidate
+    }
+
+    /// Borrow the original selected root whose declared inputs passed the full materializer.
+    pub(crate) fn artifact_root(&self) -> &Path {
+        &self.artifact_root
+    }
+
+    /// Borrow the verified compiler inputs while the generation remains locked.
+    pub(crate) fn artifact_plan(&self) -> &OvenRustcArtifactPlan {
+        &self.artifact_plan
+    }
+}
+
 /// Explicit runtime capability envelope for a compiler-owned Loaf.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenLoafCompatibility {
@@ -2698,6 +2867,265 @@ mod tests {
             committed_loaf_paths(root.path()),
             Err(OvenLoafError::InvalidLoaf { .. })
         ));
+        Ok(())
+    }
+
+    /// Publish tiny real metadata for two native profiles and one source-only member.
+    fn native_candidate_envelope(root: &Path) -> Result<OvenLoafEnvelopeManifest, Box<dyn std::error::Error>> {
+        drop(acquire_exclusive_loaf_generation_lock(root)?);
+        let generation_identity = digest_bytes(b"native candidate generation");
+        let mut envelope = OvenLoafEnvelopeManifest {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release".to_string(),
+            generation_identity: generation_identity.clone(),
+            evidence: BTreeMap::new(),
+            loafs: Vec::new(),
+        };
+        let receipt = runtime_receipt_for_plan()?;
+        for (label, profile, role) in [
+            ("debug-native", "debug", OvenLoafMemberRole::CompiledClosure),
+            ("release-native", "release", OvenLoafMemberRole::CompiledClosure),
+            ("inspection-only", "debug", OvenLoafMemberRole::SourceAuthority),
+        ] {
+            let mut plan = empty_manifest(&receipt);
+            plan.intent.profile = profile.to_string();
+            plan.dependency_search_paths.push("native".to_string());
+            plan.externs.push(OvenRustcArtifactExtern {
+                crate_name: "fixture".to_string(),
+                relative_path: "native/libfixture.rlib".to_string(),
+                digest: digest_bytes(label.as_bytes()),
+            });
+            plan.entrypoint_externs
+                .insert("generated-root".to_string(), vec!["fixture".to_string()]);
+            let loaf = OvenLoaf {
+                schema_version: OVEN_LOAF_SCHEMA_VERSION,
+                build_unit_identity: digest_bytes(label.as_bytes()),
+                provenance: Default::default(),
+                accounting: Default::default(),
+                compatibility: OvenLoafCompatibility {
+                    runtime_inputs: BTreeMap::from([("original-profile".to_string(), profile.to_string())]),
+                    providers: Vec::new(),
+                },
+                registry_leaves: Vec::new(),
+                plan,
+            };
+            let bytes = serde_json::to_vec_pretty(&loaf)?;
+            let identity = digest_bytes(&bytes);
+            let path = PathBuf::from("generations")
+                .join(
+                    generation_identity
+                        .strip_prefix("sha256:")
+                        .ok_or("fixture generation lacks prefix")?,
+                )
+                .join(format!(
+                    "{}.loaf",
+                    identity.strip_prefix("sha256:").ok_or("fixture loaf lacks prefix")?
+                ))
+                .join("loaf.json");
+            let member_root = root.join(path.parent().ok_or("fixture member lacks parent")?);
+            fs::create_dir_all(member_root.join("native"))?;
+            fs::write(member_root.join("native/libfixture.rlib"), label)?;
+            fs::write(root.join(&path), &bytes)?;
+            envelope.loafs.push(OvenLoafEnvelopeMember {
+                label: label.to_string(),
+                profile: profile.to_string(),
+                action: "build".to_string(),
+                role,
+                build_unit_identity: loaf.build_unit_identity,
+                loaf_identity: identity,
+                plan_identity: digest_bytes(&serde_json::to_vec(&loaf.plan)?),
+                logical_bytes: u64::try_from(bytes.len())?,
+                physical_bytes: 0,
+                path,
+            });
+        }
+        fs::write(root.join("envelope.json"), serde_json::to_vec(&envelope)?)?;
+        Ok(envelope)
+    }
+
+    #[test]
+    fn native_candidate_intake_keeps_original_facts_without_reading_native_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let envelope = native_candidate_envelope(root.path())?;
+        let first_root = root
+            .path()
+            .join(envelope.loafs[0].path.parent().ok_or("fixture parent missing")?);
+        fs::remove_file(first_root.join("native/libfixture.rlib"))?;
+        fs::create_dir_all(root.path().join("generations/unreferenced"))?;
+        fs::write(
+            root.path().join("generations/unreferenced/loaf.json"),
+            b"invalid unreferenced metadata",
+        )?;
+        let catalog = super::OvenNativeLoafCandidates::from_committed_envelope(root.path(), OvenLoafEnvelope::Release)?
+            .ok_or("committed native candidate catalog missing")?;
+        assert_eq!(catalog.generation_identity(), envelope.generation_identity);
+        let candidates = catalog.candidates().collect::<Vec<_>>();
+        assert_eq!(
+            candidates.len(),
+            2,
+            "source-only metadata must not authorize native selection"
+        );
+        assert_eq!(candidates[0].member(), &envelope.loafs[0]);
+        assert_eq!(candidates[1].member(), &envelope.loafs[1]);
+        assert_eq!(candidates[0].metadata().plan.intent.profile, "debug");
+        assert_eq!(candidates[1].metadata().plan.intent.profile, "release");
+        assert_eq!(
+            candidates[1]
+                .metadata()
+                .compatibility
+                .runtime_inputs
+                .get("original-profile"),
+            Some(&"release".to_string()),
+        );
+        assert!(
+            candidates[0].materialize().is_err(),
+            "selected missing bytes must refuse"
+        );
+        let selected = candidates[1].materialize()?;
+        assert_eq!(selected.candidate().member(), &envelope.loafs[1]);
+        assert_eq!(selected.artifact_plan().externs.len(), 1);
+        assert_eq!(selected.artifact_plan().externs[0].0, "fixture");
+        fs::write(&selected.artifact_plan().externs[0].1, "changed after admission")?;
+        assert!(
+            candidates[1].materialize().is_err(),
+            "current selected bytes must still be verified"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_candidate_intake_rejects_envelope_coordinate_substitution() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let envelope = native_candidate_envelope(root.path())?;
+        for coordinate in ["plan", "build", "profile", "path"] {
+            let mut changed = envelope.clone();
+            match coordinate {
+                "plan" => changed.loafs[0].plan_identity = digest_bytes(b"other plan"),
+                "build" => changed.loafs[0].build_unit_identity = digest_bytes(b"other build"),
+                "profile" => changed.loafs[0].profile = "release".to_string(),
+                "path" => changed.loafs.push(changed.loafs[0].clone()),
+                _ => return Err("unknown fixture coordinate".into()),
+            }
+            fs::write(root.path().join("envelope.json"), serde_json::to_vec(&changed)?)?;
+            assert!(
+                matches!(
+                    super::OvenNativeLoafCandidates::from_committed_envelope(root.path(), OvenLoafEnvelope::Release),
+                    Err(OvenLoafError::InvalidLoaf { .. })
+                ),
+                "changed {coordinate} must refuse before providing candidate handles",
+            );
+        }
+        Ok(())
+    }
+
+    /// Preserve the original Loaf owner through attachment and refuse changed or foreign native inputs.
+    #[test]
+    fn native_candidate_view_retains_original_loaf_origin_and_owner() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::oven::rustc::{OvenNativeInputOrigin, OvenNativeInputView};
+
+        let root = tempfile::tempdir()?;
+        let envelope = native_candidate_envelope(root.path())?;
+        let catalog = super::OvenNativeLoafCandidates::from_committed_envelope(root.path(), OvenLoafEnvelope::Release)?
+            .ok_or("committed native candidate catalog missing")?;
+        let mut candidates = catalog.candidates();
+        let selected = candidates
+            .next()
+            .ok_or("first native candidate missing")?
+            .materialize()?;
+        let other = candidates
+            .next()
+            .ok_or("second native candidate missing")?
+            .materialize()?;
+        drop(candidates);
+        let view = OvenNativeInputView::from_materialized_loaf(&selected)?;
+        let other_view = OvenNativeInputView::from_materialized_loaf(&other)?;
+        match view.origin() {
+            OvenNativeInputOrigin::ToolchainLoaf {
+                generation_identity,
+                member,
+            } => {
+                assert_eq!(generation_identity, envelope.generation_identity);
+                assert_eq!(member, &envelope.loafs[0]);
+                assert_eq!(member.plan_identity, selected.candidate().member().plan_identity);
+            }
+            OvenNativeInputOrigin::Store { .. } => return Err("Loaf origin became a synthetic store receipt".into()),
+        }
+        assert_eq!(view.identity(), envelope.loafs[0].loaf_identity);
+        assert_eq!(view.build_unit_identity(), envelope.loafs[0].build_unit_identity);
+        assert_eq!(view.intent(), &selected.candidate().metadata().plan.intent);
+        assert_eq!(view.receipt_identity(), None);
+        let chosen = view
+            .named_candidates("generated-root")?
+            .pop()
+            .ok_or("declared native input missing")?
+            .with_alias("fixture_alias".to_string())?;
+        let attached = view.attach_for_source("generated-root", &[chosen])?;
+        assert_eq!(attached.artifact_plan().externs.len(), 2);
+        assert_eq!(attached.artifact_plan().externs[1].0, "fixture_alias");
+        assert_eq!(
+            attached.artifact_plan().dependency_search_paths,
+            selected.artifact_plan().dependency_search_paths,
+        );
+        let foreign = other_view
+            .named_candidates("generated-root")?
+            .pop()
+            .ok_or("other member input missing")?
+            .with_alias("foreign_member".to_string())?;
+        assert!(view.attach_for_source("generated-root", &[foreign]).is_err());
+
+        let lock_file = fs::File::options()
+            .read(true)
+            .write(true)
+            .open(root.path().join(super::OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
+        assert!(lock_file.try_lock().is_err());
+        assert_eq!(fs::read(&attached.artifact_plan().externs[1].1)?, b"debug-native");
+        drop(attached);
+        drop(other_view);
+        drop(view);
+
+        let selected_file = &selected.artifact_plan().externs[0].1;
+        fs::write(selected_file, b"changed after selected materialization")?;
+        let borrowed = OvenNativeInputView::from_materialized_loaf(&selected)?;
+        let changed = borrowed
+            .named_candidates("generated-root")?
+            .pop()
+            .ok_or("original facts missing after mutation")?
+            .with_alias("changed".to_string())?;
+        assert!(
+            borrowed.attach_for_source("generated-root", &[changed]).is_err(),
+            "the adapter does not repeat a full walk, but selected attachment rechecks bytes",
+        );
+        drop(borrowed);
+        drop(other);
+        drop(selected);
+        drop(catalog);
+        lock_file.try_lock()?;
+        lock_file.unlock()?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_candidate_catalog_retains_generation_lock() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        native_candidate_envelope(root.path())?;
+        let catalog = super::OvenNativeLoafCandidates::from_committed_envelope(root.path(), OvenLoafEnvelope::Release)?
+            .ok_or("committed native candidate catalog missing")?;
+        let candidate = catalog.candidates().next().ok_or("native candidate missing")?;
+        let selected = candidate.materialize()?;
+        let lock_file = fs::File::options()
+            .read(true)
+            .write(true)
+            .open(root.path().join(super::OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
+        assert!(
+            lock_file.try_lock().is_err(),
+            "offered/materialized native inputs retain their actual generation"
+        );
+        assert_eq!(selected.artifact_plan().externs.len(), 1);
+        drop(selected);
+        drop(catalog);
+        lock_file.try_lock()?;
+        lock_file.unlock()?;
         Ok(())
     }
 

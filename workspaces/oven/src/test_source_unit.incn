@@ -1,0 +1,222 @@
+"""Batch wire and selection contracts using synthetic facts, never authenticated native claims."""
+
+from std.json import JsonValue, parse
+from std.testing import fail
+from plan_json import evaluate, decode_batch
+from source_unit import select_source_units
+
+
+pub def test_complete_candidate_wins_atomically() -> None:
+    """A narrower incomplete candidate cannot hide a usable whole-batch foundation."""
+    response = run(fixture())
+    assert text(response, "status") == "selected"
+    foundation = get(get(response, "foundation"), "selection")
+    assert text(foundation, "candidate_id") == "usable"
+    match get(response, "units").as_array():
+        None => fail("missing unit bindings")
+        Some(units) =>
+            assert len(units) == 2
+            assert text(units[0], "definition_id") == "catalog-definition"
+            assert text(units[1], "owner_id") == "pricing-owner"
+            match get(units[1], "slots").as_array():
+                None => fail("missing slots")
+                Some(slots) =>
+                    assert text(slots[0], "alias") == "renamed_catalog"
+                    assert text(slots[0], "edge_id") == "public"
+                    assert text(slots[1], "edge_id") == "private"
+
+
+pub def test_no_complete_foundation_refuses() -> None:
+    """Empty authored catalog requests do not authorize an empty foundation."""
+    require_refused(put(fixture(), "grants", JsonValue.array([])), "no_compatible_candidate")
+    require_refused(put(fixture(), "needs", JsonValue.array([])), "invalid_input")
+
+
+pub def test_private_owner_mismatch_excludes_candidate() -> None:
+    """A same-named grant from another owner cannot satisfy checked private SDK authority."""
+    mut value = fixture()
+    match get(value, "grants").as_array():
+        None => fail("missing grants")
+        Some(grants) =>
+            wrong = put(grants[0], "owner_id", JsonValue.string("other-owner"))
+            value = put(value, "grants", JsonValue.array([wrong, grants[1]]))
+    require_refused(value, "no_compatible_candidate")
+
+
+pub def test_invalid_candidate_cannot_hide_behind_missing_bindings() -> None:
+    """Structural evidence validation runs before whole-batch compatibility filtering."""
+    value = fixture()
+    foundation = get(value, "foundation")
+    mut request = get(foundation, "request")
+    match get(request, "candidates").as_array():
+        None => fail("missing candidates")
+        Some(candidates) =>
+            malformed = put(candidates[0], "evidence_id", JsonValue.string(""))
+            request = put(request, "candidates", JsonValue.array([malformed, candidates[1]]))
+    require_refused(put(value, "foundation", put(foundation, "request", request)), "invalid_input")
+
+
+pub def test_unsupported_purpose_refuses() -> None:
+    """Dev activation is not invented by treating a test batch as a library batch."""
+    require_refused(put(fixture(), "purpose", JsonValue.string("test")), "unsupported_intent")
+
+
+pub def test_missing_batch_fields_refuse_unbound() -> None:
+    """Every batch field is required; malformed requests produce no foundation result."""
+    for key in ["foundation", "purpose", "units", "edges", "needs", "grants"]:
+        mut value = fixture()
+        value.remove(key)
+        response = run(value)
+        assert text(response, "status") == "refused"
+        assert text(response, "request_id") == ""
+        assert not response.contains_key("foundation")
+
+
+pub def test_unknown_definition_version_precedes_body() -> None:
+    """An unknown persisted definition version is refused before schema1 payload interpretation."""
+    mut value = fixture()
+    match get(value, "units").as_array():
+        None => fail("missing units")
+        Some(units) =>
+            wrong = put(units[0], "definition", JsonValue.object({"schema_version": JsonValue.int(99)}))
+            value = put(value, "units", JsonValue.array([wrong, units[1]]))
+    match decode_batch(value):
+        Ok(_) => fail("unknown definition decoded")
+        Err(error) =>
+            expected: list[str] = ["units", "0", "definition", "schema_version"]
+            assert error.fields == expected
+
+
+pub def test_typed_batch_matches_wire_selection() -> None:
+    """The file adapter delegates selection to the same typed batch operation."""
+    match decode_batch(fixture()):
+        Err(error) => fail(error.message())
+        Ok(batch) =>
+            match select_source_units(batch):
+                Err(error) => fail(error.message())
+                Ok(selected) =>
+                    assert selected.foundation.candidate_id == "usable"
+
+
+pub def test_unresolved_sources_are_preserved_and_refused() -> None:
+    """Registry, Git and both path variants remain typed requests, never selected aliases."""
+    sources: list[JsonValue] = [JsonValue.object({"kind": JsonValue.string("registry_request")}), JsonValue.object(
+        {"kind": JsonValue.string("git_request"), "url": JsonValue.string("https://example.invalid/source"), "reference": JsonValue.object(
+            {"kind": JsonValue.string("rev"), "value": JsonValue.string("revision")},
+        )},
+    ), JsonValue.object(
+        {"kind": JsonValue.string("authored_path_request"), "anchor": JsonValue.string("authoring_project"), "path": JsonValue.string(
+            "../source",
+        )},
+    ), JsonValue.object(
+        {"kind": JsonValue.string("unbound_path_request"), "request_key": JsonValue.string("normal:dep"), "reason": JsonValue.string(
+            "portable_source_binding_unavailable",
+        )},
+    )]
+    for source in sources:
+        require_refused(with_requirement_source(fixture(), source), "unsupported_intent")
+
+
+pub def test_nested_unknown_and_missing_features_refuse() -> None:
+    """Every nested source field and required feature list remains strict."""
+    unknown = JsonValue.object({"kind": JsonValue.string("registry_request"), "ignored": JsonValue.bool(true)})
+    require_refused(with_requirement_source(fixture(), unknown), "invalid_input")
+    mut value = fixture()
+    foundation = get(value, "foundation")
+    request = get(foundation, "request")
+    mut context = get(request, "context")
+    context.remove("features")
+    value = put(value, "foundation", put(foundation, "request", put(request, "context", context)))
+    require_refused(value, "invalid_input")
+
+
+pub def test_duplicate_edge_handle_refuses() -> None:
+    """Duplicate original handles cannot create an ambiguous per-unit dependency projection."""
+    mut value = fixture()
+    match get(value, "edges").as_array():
+        None => fail("missing edges")
+        Some(edges) =>
+            value = put(value, "edges", JsonValue.array([edges[0], edges[0]]))
+    require_refused(value, "invalid_input")
+
+
+def with_requirement_source(value: JsonValue, source: JsonValue) -> JsonValue:
+    """Replace one active retained requirement without changing unrelated definition evidence."""
+    match get(value, "units").as_array():
+        None => fail("missing units")
+        Some(units) =>
+            mut definition = get(units[1], "definition")
+            match get(definition, "requirements").as_array():
+                None => fail("missing requirements")
+                Some(requirements) =>
+                    changed = put(requirements[0], "source", source)
+                    definition = put(definition, "requirements", JsonValue.array([changed, requirements[1]]))
+            changed_unit = put(units[1], "definition", definition)
+            return put(value, "units", JsonValue.array([units[0], changed_unit]))
+    return value
+
+
+pub def test_excluded_candidate_context_axes_are_validated() -> None:
+    """Every malformed losing candidate is rejected before slot-based filtering."""
+    for axis in ["target", "toolchain", "profile"]:
+        value = fixture()
+        foundation = get(value, "foundation")
+        mut request = get(foundation, "request")
+        match get(request, "candidates").as_array():
+            None => fail("missing candidates")
+            Some(candidates) =>
+                context = put(get(candidates[0], "context"), axis, JsonValue.string(""))
+                malformed = put(candidates[0], "context", context)
+                request = put(request, "candidates", JsonValue.array([malformed, candidates[1]]))
+        require_refused(put(value, "foundation", put(foundation, "request", request)), "invalid_input")
+
+
+def require_refused(value: JsonValue, kind: str) -> None:
+    """Require a typed refusal and absence of partial unit bindings."""
+    response = run(value)
+    assert text(response, "status") == "refused"
+    assert text(get(response, "error"), "kind") == kind
+    assert not response.contains_key("units")
+
+
+def run(value: JsonValue) -> JsonValue:
+    """Exercise the shared evaluate entrypoint, not an alternate test-only selector."""
+    match value.to_json():
+        Err(_) =>
+            fail("fixture encoding failed")
+            return JsonValue.null()
+        Ok(source) => return evaluate(source)
+
+
+def put(mut value: JsonValue, key: str, item: JsonValue) -> JsonValue:
+    """Replace one fixture field using the existing JsonValue API."""
+    value.set(key, item)
+    return value
+
+
+def get(value: JsonValue, key: str) -> JsonValue:
+    """Read required fixture data and fail on a broken test fixture."""
+    match value.get(key):
+        Some(item) => return item
+        None =>
+            fail("missing fixture field")
+            return JsonValue.null()
+
+
+def text(value: JsonValue, key: str) -> str:
+    """Require a string-valued response field."""
+    match get(value, key).as_str():
+        Some(item) => return item
+        None =>
+            fail("expected string")
+            return ""
+
+
+def fixture() -> JsonValue:
+    """Two source units share one SDK foundation; narrow intentionally lacks physical binding evidence."""
+    source = "{\n  \"schema\": \"incan.oven.source-unit-batch/1\",\n  \"foundation\": {\n    \"schema\": \"incan.oven.selection/1\",\n    \"request\": {\n      \"request_id\": \"request\",\n      \"evidence_id\": \"evidence\",\n      \"context\": {\n        \"target\": \"target\",\n        \"toolchain\": \"rustc\",\n        \"profile\": \"debug\",\n        \"features\": []\n      },\n      \"runtime\": {\n        \"compiler_version\": \"compiler\",\n        \"sdk_provider_codegen_revision\": \"7\",\n        \"runtime_lock_digest\": \"lock\",\n        \"core_source_digest\": \"core\",\n        \"derive_source_digest\": \"derive\",\n        \"stdlib_source_digest\": \"stdlib\",\n        \"unknown_input_keys\": []\n      },\n      \"providers\": [\n        {\n          \"semantic_identity\": \"sdk-semantic\",\n          \"modules\": [\n            \"prelude\"\n          ],\n          \"facets\": [\n            \"runtime\"\n          ],\n          \"direct_link\": true\n        }\n      ],\n      \"candidates\": [\n        {\n          \"candidate_id\": \"narrow\",\n          \"evidence_id\": \"narrow-evidence\",\n          \"plan_identity\": \"narrow-plan\",\n          \"build_unit_identity\": \"narrow-unit\",\n          \"context\": {\n            \"target\": \"target\",\n            \"toolchain\": \"rustc\",\n            \"profile\": \"debug\",\n            \"features\": []\n          },\n          \"runtime\": {\n            \"compiler_version\": \"compiler\",\n            \"sdk_provider_codegen_revision\": \"7\",\n            \"runtime_lock_digest\": \"lock\",\n            \"core_source_digest\": \"core\",\n            \"derive_source_digest\": \"derive\",\n            \"stdlib_source_digest\": \"stdlib\",\n            \"unknown_input_keys\": []\n          },\n          \"providers\": [\n            {\n              \"semantic_identity\": \"sdk-semantic\",\n              \"modules\": [\n                \"prelude\"\n              ],\n              \"facets\": [\n                \"runtime\"\n              ],\n              \"direct_link\": true\n            }\n          ]\n        },\n        {\n          \"candidate_id\": \"usable\",\n          \"evidence_id\": \"usable-evidence\",\n          \"plan_identity\": \"usable-plan\",\n          \"build_unit_identity\": \"usable-unit\",\n          \"context\": {\n            \"target\": \"target\",\n            \"toolchain\": \"rustc\",\n            \"profile\": \"debug\",\n            \"features\": []\n          },\n          \"runtime\": {\n            \"compiler_version\": \"compiler\",\n            \"sdk_provider_codegen_revision\": \"7\",\n            \"runtime_lock_digest\": \"lock\",\n            \"core_source_digest\": \"core\",\n            \"derive_source_digest\": \"derive\",\n            \"stdlib_source_digest\": \"stdlib\",\n            \"unknown_input_keys\": []\n          },\n          \"providers\": [\n            {\n              \"semantic_identity\": \"sdk-semantic\",\n              \"modules\": [\n                \"prelude\",\n                \"extra\"\n              ],\n              \"facets\": [\n                \"runtime\"\n              ],\n              \"direct_link\": true\n            }\n          ]\n        }\n      ],\n      \"unsupported_intent\": []\n    }\n  },\n  \"purpose\": \"library\",\n  \"units\": [\n    {\n      \"unit_id\": \"catalog\",\n      \"owner_id\": \"catalog-owner\",\n      \"identity\": {\n        \"name\": \"catalog\",\n        \"version\": \"1\",\n        \"digest\": \"catalog-digest\",\n        \"feature_projection\": []\n      },\n      \"definition_id\": \"catalog-definition\",\n      \"definition_digest\": \"catalog-definition-digest\",\n      \"definition\": {\n        \"schema_version\": 1,\n        \"package\": {\n          \"name\": \"catalog\",\n          \"version\": \"1\"\n        },\n        \"crate_name\": \"catalog\",\n        \"crate_kind\": \"rlib\",\n        \"edition\": \"2024\",\n        \"authored_source_digest\": \"catalog-authored\",\n        \"entrypoint\": {\n          \"path\": \"src/lib.rs\",\n          \"digest\": \"entry\"\n        },\n        \"source_tree\": {\n          \"path\": \"src\",\n          \"digest\": \"tree\"\n        },\n        \"requirements\": []\n      }\n    },\n    {\n      \"unit_id\": \"pricing\",\n      \"owner_id\": \"pricing-owner\",\n      \"identity\": {\n        \"name\": \"pricing\",\n        \"version\": \"1\",\n        \"digest\": \"pricing-digest\",\n        \"feature_projection\": []\n      },\n      \"definition_id\": \"pricing-definition\",\n      \"definition_digest\": \"pricing-definition-digest\",\n      \"definition\": {\n        \"schema_version\": 1,\n        \"package\": {\n          \"name\": \"pricing\",\n          \"version\": \"1\"\n        },\n        \"crate_name\": \"pricing\",\n        \"crate_kind\": \"rlib\",\n        \"edition\": \"2024\",\n        \"authored_source_digest\": \"pricing-authored\",\n        \"entrypoint\": {\n          \"path\": \"src/lib.rs\",\n          \"digest\": \"entry\"\n        },\n        \"source_tree\": {\n          \"path\": \"src\",\n          \"digest\": \"tree\"\n        },\n        \"requirements\": [\n          {\n            \"role\": \"normal\",\n            \"alias\": \"renamed_catalog\",\n            \"package\": null,\n            \"version_requirement\": null,\n            \"features\": [],\n            \"default_features\": true,\n            \"optional\": false,\n            \"source\": {\n              \"kind\": \"provider_edge\",\n              \"edge_kind\": \"public_package\",\n              \"dependency_key\": \"catalog-edge\"\n            }\n          },\n          {\n            \"role\": \"normal\",\n            \"alias\": \"private_sdk\",\n            \"package\": null,\n            \"version_requirement\": null,\n            \"features\": [],\n            \"default_features\": true,\n            \"optional\": false,\n            \"source\": {\n              \"kind\": \"provider_edge\",\n              \"edge_kind\": \"private_implementation\",\n              \"dependency_key\": \"sdk-edge\"\n            }\n          }\n        ]\n      }\n    }\n  ],\n  \"edges\": [\n    {\n      \"edge_id\": \"public\",\n      \"owner_id\": \"pricing-owner\",\n      \"owner\": {\n        \"name\": \"pricing\",\n        \"version\": \"1\",\n        \"digest\": \"pricing-digest\",\n        \"feature_projection\": []\n      },\n      \"descriptor_index\": 0,\n      \"kind\": \"public_package\",\n      \"dependency_key\": \"catalog-edge\",\n      \"target_owner_id\": \"catalog-owner\",\n      \"target\": {\n        \"name\": \"catalog\",\n        \"version\": \"1\",\n        \"digest\": \"catalog-digest\",\n        \"feature_projection\": []\n      },\n      \"target_unit_id\": \"catalog\",\n      \"requested_features\": [],\n      \"default_features\": true,\n      \"optional\": false\n    },\n    {\n      \"edge_id\": \"private\",\n      \"owner_id\": \"pricing-owner\",\n      \"owner\": {\n        \"name\": \"pricing\",\n        \"version\": \"1\",\n        \"digest\": \"pricing-digest\",\n        \"feature_projection\": []\n      },\n      \"descriptor_index\": 1,\n      \"kind\": \"private_implementation\",\n      \"dependency_key\": \"sdk-edge\",\n      \"target_owner_id\": \"sdk-owner\",\n      \"target\": {\n        \"name\": \"sdk\",\n        \"version\": \"1\",\n        \"digest\": \"sdk-digest\",\n        \"feature_projection\": []\n      },\n      \"target_unit_id\": \"\",\n      \"requested_features\": [],\n      \"default_features\": true,\n      \"optional\": false\n    }\n  ],\n  \"needs\": [\n    {\n      \"need_id\": \"catalog-need\",\n      \"unit_id\": \"catalog\",\n      \"owner_id\": \"sdk-owner\",\n      \"provider\": {\n        \"name\": \"sdk\",\n        \"version\": \"1\",\n        \"digest\": \"sdk-digest\",\n        \"feature_projection\": []\n      },\n      \"capability\": {\n        \"semantic_identity\": \"sdk-semantic\",\n        \"modules\": [\n          \"prelude\"\n        ],\n        \"facets\": [\n          \"runtime\"\n        ],\n        \"direct_link\": true\n      },\n      \"role\": \"source\",\n      \"extern_name\": \"incan_stdlib\"\n    },\n    {\n      \"need_id\": \"pricing-need\",\n      \"unit_id\": \"pricing\",\n      \"owner_id\": \"sdk-owner\",\n      \"provider\": {\n        \"name\": \"sdk\",\n        \"version\": \"1\",\n        \"digest\": \"sdk-digest\",\n        \"feature_projection\": []\n      },\n      \"capability\": {\n        \"semantic_identity\": \"sdk-semantic\",\n        \"modules\": [\n          \"prelude\"\n        ],\n        \"facets\": [\n          \"runtime\"\n        ],\n        \"direct_link\": true\n      },\n      \"role\": \"source\",\n      \"extern_name\": \"incan_stdlib\"\n    }\n  ],\n  \"grants\": [\n    {\n      \"grant_id\": \"catalog-grant\",\n      \"candidate_id\": \"usable\",\n      \"candidate_evidence_id\": \"usable-evidence\",\n      \"plan_identity\": \"usable-plan\",\n      \"need_id\": \"catalog-need\",\n      \"owner_id\": \"sdk-owner\",\n      \"provider\": {\n        \"name\": \"sdk\",\n        \"version\": \"1\",\n        \"digest\": \"sdk-digest\",\n        \"feature_projection\": []\n      },\n      \"capability\": {\n        \"semantic_identity\": \"sdk-semantic\",\n        \"modules\": [\n          \"prelude\"\n        ],\n        \"facets\": [\n          \"runtime\"\n        ],\n        \"direct_link\": true\n      },\n      \"role\": \"source\",\n      \"extern_name\": \"incan_stdlib\"\n    },\n    {\n      \"grant_id\": \"pricing-grant\",\n      \"candidate_id\": \"usable\",\n      \"candidate_evidence_id\": \"usable-evidence\",\n      \"plan_identity\": \"usable-plan\",\n      \"need_id\": \"pricing-need\",\n      \"owner_id\": \"sdk-owner\",\n      \"provider\": {\n        \"name\": \"sdk\",\n        \"version\": \"1\",\n        \"digest\": \"sdk-digest\",\n        \"feature_projection\": []\n      },\n      \"capability\": {\n        \"semantic_identity\": \"sdk-semantic\",\n        \"modules\": [\n          \"prelude\"\n        ],\n        \"facets\": [\n          \"runtime\"\n        ],\n        \"direct_link\": true\n      },\n      \"role\": \"source\",\n      \"extern_name\": \"incan_stdlib\"\n    }\n  ]\n}"
+    match parse(source):
+        Ok(value) => return value
+        Err(_) =>
+            fail("invalid batch fixture")
+            return JsonValue.null()

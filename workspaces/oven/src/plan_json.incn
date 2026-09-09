@@ -1,0 +1,637 @@
+"""Decode the versioned native-selection wire contract and call the pure typed selector."""
+
+from std.json import JsonValue, parse
+from plan import (
+    RuntimeCompatibility,
+    NativeContext,
+    ProviderCapability,
+    NativeCandidate,
+    SelectionRequest,
+    NativeSelection,
+    SelectionError,
+    SelectionErrorKind,
+    select_native,
+)
+from source_unit import (
+    NativeRequirementRole,
+    ProviderEdgeKind,
+    NativePathAnchor,
+    NativeUnboundPathReason,
+    NativeGitReference,
+    NativeRequirementSource,
+    ProviderIdentity,
+    Requirement,
+    SourceUnit,
+    CheckedEdge,
+    ReservedNeed,
+    ReservedGrant,
+    SourceBatch,
+    BatchSelection,
+    select_source_units,
+)
+
+const BATCH_SCHEMA: str = "incan.oven.source-unit-batch/1"
+const SCHEMA: str = "incan.oven.selection/1"
+
+
+pub def evaluate(source: str) -> JsonValue:
+    """
+    Return one selected or refused response for a JSON request.
+
+    Decode failures carry empty binding strings and cannot authorize effects. A decoded request retains its binding
+    even when selection refuses. The caller must authenticate those identifiers and enforce file/process bounds.
+
+    Example:
+        response = evaluate(request_text)
+        response_text = response.to_json()?
+    """
+    if let Ok(document) = parse(source):
+        if let Some(schema) = document.get("schema"):
+            if let Some(schema_name) = schema.as_str():
+                if schema_name == BATCH_SCHEMA:
+                    return evaluate_batch(document)
+    match decode_request(source):
+        Err(error) => return refusal("", "", error)
+        Ok(request) =>
+            match select_native(request):
+                Ok(selection) => return selected(selection)
+                Err(error) => return refusal(request.request_id, request.evidence_id, error)
+
+
+pub def decode_request(source: str) -> Result[SelectionRequest, SelectionError]:
+    """Decode every required wire field; model defaults never supply omitted protocol intent."""
+    document = parse(source).map_err((_) => SelectionError(kind=SelectionErrorKind.InvalidInput, fields=[]))?
+    exact_object(document, ["schema", "request"], [])?
+    schema = text_field(document, "schema", [])?
+    if schema != SCHEMA:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["schema"]))
+    value = field(document, "request", [])?
+    path: list[str] = ["request"]
+    exact_object(
+        value,
+        ["request_id", "evidence_id", "context", "runtime", "providers", "candidates", "unsupported_intent"],
+        path,
+    )?
+    request_id = text_field(value, "request_id", path)?
+    evidence_id = text_field(value, "evidence_id", path)?
+    context = decode_context(field(value, "context", path)?, path + ["context"])?
+    runtime = decode_runtime(field(value, "runtime", path)?, path + ["runtime"])?
+    providers = decode_providers(field(value, "providers", path)?, path + ["providers"])?
+    candidates = decode_candidates(field(value, "candidates", path)?, path + ["candidates"])?
+    unsupported_intent = strings(field(value, "unsupported_intent", path)?, path + ["unsupported_intent"])?
+    return Ok(
+        SelectionRequest(
+            request_id=request_id,
+            evidence_id=evidence_id,
+            context=context,
+            runtime=runtime,
+            providers=providers,
+            candidates=candidates,
+            unsupported_intent=unsupported_intent,
+        ),
+    )
+
+
+def exact_object(value: JsonValue, names: list[str], path: list[str]) -> Result[None, SelectionError]:
+    """Reject non-objects, unknown keys and omissions, including fields with typed defaults."""
+    if not value.is_object():
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+    for key in value.keys():
+        if key not in names:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [key]))
+    for name in names:
+        field(value, name, path)?
+    return Ok(None)
+
+
+def field(value: JsonValue, name: str, path: list[str]) -> Result[JsonValue, SelectionError]:
+    """Read a required field and preserve its literal diagnostic segment."""
+    match value.get(name):
+        Some(item) => return Ok(item)
+        None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [name]))
+
+
+def text_field(value: JsonValue, name: str, path: list[str]) -> Result[str, SelectionError]:
+    """Read a string without coercing null, booleans or numbers."""
+    item = field(value, name, path)?
+    match item.as_str():
+        Some(text) => return Ok(text)
+        None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [name]))
+
+
+def array(value: JsonValue, path: list[str]) -> Result[list[JsonValue], SelectionError]:
+    """Require a JSON array before inspecting its elements."""
+    match value.as_array():
+        Some(values) => return Ok(values)
+        None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+
+
+def strings(value: JsonValue, path: list[str]) -> Result[list[str], SelectionError]:
+    """Decode string elements with decimal array-index diagnostic segments."""
+    values = array(value, path)?
+    mut result: list[str] = []
+    for index in range(len(values)):
+        match values[index].as_str():
+            Some(item) => result.append(item)
+            None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [str(index)]))
+    return Ok(result)
+
+
+def decode_context(value: JsonValue, path: list[str]) -> Result[NativeContext, SelectionError]:
+    """Require all native axes, especially the explicit feature set."""
+    exact_object(value, ["target", "toolchain", "profile", "features"], path)?
+    target = text_field(value, "target", path)?
+    toolchain = text_field(value, "toolchain", path)?
+    profile = text_field(value, "profile", path)?
+    features = strings(field(value, "features", path)?, path + ["features"])?
+    return Ok(NativeContext(target=target, toolchain=toolchain, profile=profile, features=features))
+
+
+def decode_runtime(value: JsonValue, path: list[str]) -> Result[RuntimeCompatibility, SelectionError]:
+    """Retain all runtime evidence and explicit unsupported-input names."""
+    exact_object(
+        value,
+        ["compiler_version", "sdk_provider_codegen_revision", "runtime_lock_digest", "core_source_digest", "derive_source_digest", "stdlib_source_digest", "unknown_input_keys"],
+        path,
+    )?
+    compiler = text_field(value, "compiler_version", path)?
+    revision = text_field(value, "sdk_provider_codegen_revision", path)?
+    lock = text_field(value, "runtime_lock_digest", path)?
+    core = text_field(value, "core_source_digest", path)?
+    derive = text_field(value, "derive_source_digest", path)?
+    stdlib = text_field(value, "stdlib_source_digest", path)?
+    unknown = strings(field(value, "unknown_input_keys", path)?, path + ["unknown_input_keys"])?
+    return Ok(
+        RuntimeCompatibility(
+            compiler_version=compiler,
+            sdk_provider_codegen_revision=revision,
+            runtime_lock_digest=lock,
+            core_source_digest=core,
+            derive_source_digest=derive,
+            stdlib_source_digest=stdlib,
+            unknown_input_keys=unknown,
+        ),
+    )
+
+
+def decode_providers(value: JsonValue, path: list[str]) -> Result[list[ProviderCapability], SelectionError]:
+    """Decode exact provider objects without performing semantic compatibility comparisons."""
+    values = array(value, path)?
+    mut providers: list[ProviderCapability] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(item, ["semantic_identity", "modules", "facets", "direct_link"], at)?
+        identity = text_field(item, "semantic_identity", at)?
+        modules = strings(field(item, "modules", at)?, at + ["modules"])?
+        facets = strings(field(item, "facets", at)?, at + ["facets"])?
+        link = field(item, "direct_link", at)?
+        direct = boolean(link, at + ["direct_link"])?
+        providers.append(
+            ProviderCapability(semantic_identity=identity, modules=modules, facets=facets, direct_link=direct),
+        )
+    return Ok(providers)
+
+
+def boolean(value: JsonValue, path: list[str]) -> Result[bool, SelectionError]:
+    """Require a boolean; numeric and textual truth values are not wire booleans."""
+    match value.as_bool():
+        Some(flag) => return Ok(flag)
+        None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+
+
+def decode_candidates(value: JsonValue, path: list[str]) -> Result[list[NativeCandidate], SelectionError]:
+    """Retain offered evidence and capability facts without preselecting a candidate."""
+    values = array(value, path)?
+    mut candidates: list[NativeCandidate] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(
+            item,
+            ["candidate_id", "evidence_id", "plan_identity", "build_unit_identity", "context", "runtime", "providers"],
+            at,
+        )?
+        candidate_id = text_field(item, "candidate_id", at)?
+        evidence_id = text_field(item, "evidence_id", at)?
+        plan = text_field(item, "plan_identity", at)?
+        unit = text_field(item, "build_unit_identity", at)?
+        context = decode_context(field(item, "context", at)?, at + ["context"])?
+        runtime = decode_runtime(field(item, "runtime", at)?, at + ["runtime"])?
+        providers = decode_providers(field(item, "providers", at)?, at + ["providers"])?
+        candidates.append(
+            NativeCandidate(
+                candidate_id=candidate_id,
+                evidence_id=evidence_id,
+                plan_identity=plan,
+                build_unit_identity=unit,
+                context=context,
+                runtime=runtime,
+                providers=providers,
+            ),
+        )
+    return Ok(candidates)
+
+
+def refusal(request_id: str, evidence_id: str, error: SelectionError) -> JsonValue:
+    """Encode a refusal without a selection payload or native-effect claim."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "request_id": JsonValue.string(request_id), "request_evidence_id": JsonValue.string(
+            evidence_id,
+        ), "status": JsonValue.string("refused"), "error": JsonValue.object(
+            {"kind": JsonValue.string(error.kind.value()), "fields": JsonValue.array(
+                [JsonValue.string(part) for part in error.fields],
+            )},
+        )},
+    )
+
+
+def selected(selection: NativeSelection) -> JsonValue:
+    """Serialize the selector's existing result; hashes remain references checked by the host."""
+    rank = selection.excess
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "request_id": JsonValue.string(selection.request_id), "request_evidence_id": JsonValue.string(
+            selection.request_evidence_id,
+        ), "status": JsonValue.string("selected"), "selection": JsonValue.object(
+            {"request_id": JsonValue.string(selection.request_id), "request_evidence_id": JsonValue.string(
+                selection.request_evidence_id,
+            ), "candidate_id": JsonValue.string(selection.candidate_id), "candidate_evidence_id": JsonValue.string(
+                selection.candidate_evidence_id,
+            ), "plan_identity": JsonValue.string(selection.plan_identity), "build_unit_identity": JsonValue.string(
+                selection.build_unit_identity,
+            ), "excess": JsonValue.object(
+                {"providers": JsonValue.int(rank.providers), "modules": JsonValue.int(rank.modules), "facets": JsonValue.int(
+                    rank.facets,
+                ), "direct_links": JsonValue.int(rank.direct_links)},
+            )},
+        )},
+    )
+
+
+pub def evaluate_batch(document: JsonValue) -> JsonValue:
+    """Decode the complete batch before performing one atomic foundation selection."""
+    match decode_batch(document):
+        Err(error) => return batch_refusal("", "", error)
+        Ok(batch) =>
+            match select_source_units(batch):
+                Err(error) => return batch_refusal(batch.foundation.request_id, batch.foundation.evidence_id, error)
+                Ok(result) =>
+                    foundation = selected(result.foundation)
+                    units = [JsonValue.object(
+                        {"unit_id": JsonValue.string(unit.unit_id), "owner_id": JsonValue.string(unit.owner_id), "definition_id": JsonValue.string(
+                            unit.definition_id,
+                        ), "definition_digest": JsonValue.string(unit.definition_digest), "slots": JsonValue.array(
+                            [JsonValue.object(
+                                {"role": JsonValue.string(slot.role.value()), "alias": JsonValue.string(slot.alias), "edge_id": JsonValue.string(
+                                    slot.edge_id,
+                                )},
+                            ) for slot in unit.slots],
+                        ), "grant_ids": JsonValue.array([JsonValue.string(value) for value in unit.grant_ids])},
+                    ) for unit in result.units]
+                    return JsonValue.object(
+                        {"schema": JsonValue.string(BATCH_SCHEMA), "request_id": JsonValue.string(
+                            result.foundation.request_id,
+                        ), "request_evidence_id": JsonValue.string(result.foundation.request_evidence_id), "status": JsonValue.string(
+                            "selected",
+                        ), "foundation": foundation, "units": JsonValue.array(units)},
+                    )
+
+
+def batch_refusal(request_id: str, evidence_id: str, error: SelectionError) -> JsonValue:
+    """Return no binding payload after malformed input or a whole-batch refusal."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(BATCH_SCHEMA), "request_id": JsonValue.string(request_id), "request_evidence_id": JsonValue.string(
+            evidence_id,
+        ), "status": JsonValue.string("refused"), "error": JsonValue.object(
+            {"kind": JsonValue.string(error.kind.value()), "fields": JsonValue.array(
+                [JsonValue.string(value) for value in error.fields],
+            )},
+        )},
+    )
+
+
+pub def decode_batch(document: JsonValue) -> Result[SourceBatch, SelectionError]:
+    """Preserve existing selection/1 and schema1 definitions inside the batch discriminator."""
+    exact_object(document, ["schema", "foundation", "purpose", "units", "edges", "needs", "grants"], [])?
+    if text_field(document, "schema", [])? != BATCH_SCHEMA:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["schema"]))
+    foundation_json = field(document, "foundation", [])?
+    foundation_text = foundation_json
+        .to_json()
+        .map_err((_) => SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["foundation"]))?
+    foundation = decode_request(foundation_text)?
+    purpose = text_field(document, "purpose", [])?
+    units = decode_units(field(document, "units", [])?, ["units"])?
+    edges = decode_edges(field(document, "edges", [])?, ["edges"])?
+    needs = decode_needs(field(document, "needs", [])?, ["needs"])?
+    grants = decode_grants(field(document, "grants", [])?, ["grants"])?
+    return Ok(SourceBatch(foundation=foundation, purpose=purpose, units=units, edges=edges, needs=needs, grants=grants))
+
+
+def integer(value: JsonValue, path: list[str]) -> Result[int, SelectionError]:
+    """Require a nonnegative JSON integer for an original descriptor index or schema version."""
+    if let Some(number) = value.as_int():
+        if number >= 0:
+            return Ok(number)
+    return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+
+
+def optional_text(value: JsonValue, path: list[str]) -> Result[Option[str], SelectionError]:
+    """Require explicit null or string; an absent field is still rejected by the caller."""
+    if value.is_null():
+        return Ok(None)
+    match value.as_str():
+        Some(text) => return Ok(Some(text))
+        None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+
+
+def decode_identity(value: JsonValue, path: list[str]) -> Result[ProviderIdentity, SelectionError]:
+    """Mirror all four serialized ProviderIdentity fields without substituting stable_key text."""
+    exact_object(value, ["name", "version", "digest", "feature_projection"], path)?
+    name = text_field(value, "name", path)?
+    version = text_field(value, "version", path)?
+    digest = text_field(value, "digest", path)?
+    features = strings(field(value, "feature_projection", path)?, path + ["feature_projection"])?
+    return Ok(ProviderIdentity(name=name, version=version, digest=digest, feature_projection=features))
+
+
+def decode_capability(value: JsonValue, path: list[str]) -> Result[ProviderCapability, SelectionError]:
+    """Use the existing capability decoder for one checked association."""
+    values = decode_providers(JsonValue.array([value]), path)?
+    return Ok(values[0])
+
+
+def decode_edges(value: JsonValue, path: list[str]) -> Result[list[CheckedEdge], SelectionError]:
+    """Decode exact edges records with original handle and owner facts."""
+    values = array(value, path)?
+    mut result: list[CheckedEdge] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(
+            item,
+            ["edge_id", "owner_id", "owner", "descriptor_index", "kind", "dependency_key", "target_owner_id", "target", "target_unit_id", "requested_features", "default_features", "optional"],
+            at,
+        )?
+        edge_id = text_field(item, "edge_id", at)?
+        owner_id = text_field(item, "owner_id", at)?
+        owner = decode_identity(field(item, "owner", at)?, at + ["owner"])?
+        descriptor_index = integer(field(item, "descriptor_index", at)?, at + ["descriptor_index"])?
+        kind = decode_edge_kind(text_field(item, "kind", at)?, at + ["kind"])?
+        dependency_key = text_field(item, "dependency_key", at)?
+        target_owner_id = text_field(item, "target_owner_id", at)?
+        target = decode_identity(field(item, "target", at)?, at + ["target"])?
+        target_unit_id = text_field(item, "target_unit_id", at)?
+        requested_features = strings(field(item, "requested_features", at)?, at + ["requested_features"])?
+        default_features = boolean(field(item, "default_features", at)?, at + ["default_features"])?
+        optional = boolean(field(item, "optional", at)?, at + ["optional"])?
+        result.append(
+            CheckedEdge(
+                edge_id=edge_id,
+                owner_id=owner_id,
+                owner=owner,
+                descriptor_index=descriptor_index,
+                kind=kind,
+                dependency_key=dependency_key,
+                target_owner_id=target_owner_id,
+                target=target,
+                target_unit_id=target_unit_id,
+                requested_features=requested_features,
+                default_features=default_features,
+                optional=optional,
+            ),
+        )
+    return Ok(result)
+
+
+def decode_needs(value: JsonValue, path: list[str]) -> Result[list[ReservedNeed], SelectionError]:
+    """Decode exact needs records with original handle and owner facts."""
+    values = array(value, path)?
+    mut result: list[ReservedNeed] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(item, ["need_id", "unit_id", "owner_id", "provider", "capability", "role", "extern_name"], at)?
+        need_id = text_field(item, "need_id", at)?
+        unit_id = text_field(item, "unit_id", at)?
+        owner_id = text_field(item, "owner_id", at)?
+        provider = decode_identity(field(item, "provider", at)?, at + ["provider"])?
+        capability = decode_capability(field(item, "capability", at)?, at + ["capability"])?
+        role = text_field(item, "role", at)?
+        extern_name = text_field(item, "extern_name", at)?
+        result.append(
+            ReservedNeed(
+                need_id=need_id,
+                unit_id=unit_id,
+                owner_id=owner_id,
+                provider=provider,
+                capability=capability,
+                role=role,
+                extern_name=extern_name,
+            ),
+        )
+    return Ok(result)
+
+
+def decode_grants(value: JsonValue, path: list[str]) -> Result[list[ReservedGrant], SelectionError]:
+    """Decode exact grants records with original handle and owner facts."""
+    values = array(value, path)?
+    mut result: list[ReservedGrant] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(
+            item,
+            ["grant_id", "candidate_id", "candidate_evidence_id", "plan_identity", "need_id", "owner_id", "provider", "capability", "role", "extern_name"],
+            at,
+        )?
+        grant_id = text_field(item, "grant_id", at)?
+        candidate_id = text_field(item, "candidate_id", at)?
+        candidate_evidence_id = text_field(item, "candidate_evidence_id", at)?
+        plan_identity = text_field(item, "plan_identity", at)?
+        need_id = text_field(item, "need_id", at)?
+        owner_id = text_field(item, "owner_id", at)?
+        provider = decode_identity(field(item, "provider", at)?, at + ["provider"])?
+        capability = decode_capability(field(item, "capability", at)?, at + ["capability"])?
+        role = text_field(item, "role", at)?
+        extern_name = text_field(item, "extern_name", at)?
+        result.append(
+            ReservedGrant(
+                grant_id=grant_id,
+                candidate_id=candidate_id,
+                candidate_evidence_id=candidate_evidence_id,
+                plan_identity=plan_identity,
+                need_id=need_id,
+                owner_id=owner_id,
+                provider=provider,
+                capability=capability,
+                role=role,
+                extern_name=extern_name,
+            ),
+        )
+    return Ok(result)
+
+
+def decode_units(value: JsonValue, path: list[str]) -> Result[list[SourceUnit], SelectionError]:
+    """Keep the complete schema1 definition and decode its dependency slots exactly once."""
+    values = array(value, path)?
+    mut result: list[SourceUnit] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(item, ["unit_id", "owner_id", "identity", "definition_id", "definition_digest", "definition"], at)?
+        unit_id = text_field(item, "unit_id", at)?
+        owner_id = text_field(item, "owner_id", at)?
+        identity = decode_identity(field(item, "identity", at)?, at + ["identity"])?
+        definition_id = text_field(item, "definition_id", at)?
+        definition_digest = text_field(item, "definition_digest", at)?
+        definition = field(item, "definition", at)?
+        requirements = decode_definition(definition, identity, at + ["definition"])?
+        result.append(
+            SourceUnit(
+                unit_id=unit_id,
+                owner_id=owner_id,
+                identity=identity,
+                definition_id=definition_id,
+                definition_digest=definition_digest,
+                definition=definition,
+                requirements=requirements,
+            ),
+        )
+    return Ok(result)
+
+
+def decode_definition(
+    value: JsonValue,
+    identity: ProviderIdentity,
+    path: list[str],
+) -> Result[list[Requirement], SelectionError]:
+    """Check schema1 before its body; physical digest/path validity remains the host reader's responsibility."""
+    version = integer(field(value, "schema_version", path)?, path + ["schema_version"])?
+    if version != 1:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + ["schema_version"]))
+    exact_object(
+        value,
+        ["schema_version", "package", "crate_name", "crate_kind", "edition", "authored_source_digest", "entrypoint", "source_tree", "requirements"],
+        path,
+    )?
+    package = field(value, "package", path)?
+    exact_object(package, ["name", "version"], path + ["package"])?
+    name = text_field(package, "name", path + ["package"])?
+    version_name = text_field(package, "version", path + ["package"])?
+    if name != identity.name or version_name != identity.version:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + ["package"]))
+    for key in ["crate_name", "edition", "authored_source_digest"]:
+        if text_field(value, key, path)? == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [key]))
+    kind = text_field(value, "crate_kind", path)?
+    if kind != "rlib" and kind != "proc_macro":
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + ["crate_kind"]))
+    for key in ["entrypoint", "source_tree"]:
+        item = field(value, key, path)?
+        exact_object(item, ["path", "digest"], path + [key])?
+        for member in ["path", "digest"]:
+            if text_field(item, member, path + [key])? == "":
+                return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [key, member]))
+    return decode_requirements(field(value, "requirements", path)?, path + ["requirements"])
+
+
+def decode_requirements(value: JsonValue, path: list[str]) -> Result[list[Requirement], SelectionError]:
+    """Retain nullable package/version intent and every schema1 source variant."""
+    values = array(value, path)?
+    mut result: list[Requirement] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(
+            item,
+            ["role", "alias", "package", "version_requirement", "features", "default_features", "optional", "source"],
+            at,
+        )?
+        role_text = text_field(item, "role", at)?
+        role = decode_role(role_text, at + ["role"])?
+        alias = text_field(item, "alias", at)?
+        if alias == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=at))
+        package = optional_text(field(item, "package", at)?, at + ["package"])?
+        version = optional_text(field(item, "version_requirement", at)?, at + ["version_requirement"])?
+        features = strings(field(item, "features", at)?, at + ["features"])?
+        defaults = boolean(field(item, "default_features", at)?, at + ["default_features"])?
+        optional = boolean(field(item, "optional", at)?, at + ["optional"])?
+        source = field(item, "source", at)?
+        decoded_source = decode_requirement_source(source, at + ["source"])?
+        result.append(
+            Requirement(
+                role=role,
+                alias=alias,
+                package=package,
+                version_requirement=version,
+                features=features,
+                default_features=defaults,
+                optional=optional,
+                source=decoded_source,
+            ),
+        )
+    return Ok(result)
+
+
+def decode_requirement_source(value: JsonValue, path: list[str]) -> Result[NativeRequirementSource, SelectionError]:
+    """Validate tagged unresolved requests without resolving or discarding their coordinates."""
+    kind = text_field(value, "kind", path)?
+    if kind == "provider_edge":
+        exact_object(value, ["kind", "edge_kind", "dependency_key"], path)?
+        edge = decode_edge_kind(text_field(value, "edge_kind", path)?, path + ["edge_kind"])?
+        key = text_field(value, "dependency_key", path)?
+        if key == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+        return Ok(NativeRequirementSource.ProviderEdge(edge, key))
+    elif kind == "registry_request":
+        exact_object(value, ["kind"], path)?
+        return Ok(NativeRequirementSource.RegistryRequest)
+    elif kind == "git_request":
+        exact_object(value, ["kind", "url", "reference"], path)?
+        url = text_field(value, "url", path)?
+        reference = field(value, "reference", path)?
+        exact_object(reference, ["kind", "value"], path + ["reference"])?
+        ref_kind = text_field(reference, "kind", path + ["reference"])?
+        ref_value = text_field(reference, "value", path + ["reference"])?
+        if url == "" or ref_value == "" or ref_kind not in ["branch", "tag", "rev"]:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+        match ref_kind:
+            "branch" => return Ok(NativeRequirementSource.GitRequest(url, NativeGitReference.Branch(ref_value)))
+            "tag" => return Ok(NativeRequirementSource.GitRequest(url, NativeGitReference.Tag(ref_value)))
+            _ => return Ok(NativeRequirementSource.GitRequest(url, NativeGitReference.Rev(ref_value)))
+    elif kind == "authored_path_request":
+        exact_object(value, ["kind", "anchor", "path"], path)?
+        anchor = text_field(value, "anchor", path)?
+        relative = text_field(value, "path", path)?
+        if anchor != "authoring_project" or relative == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+        return Ok(NativeRequirementSource.AuthoredPathRequest(NativePathAnchor.AuthoringProject, relative))
+    elif kind == "unbound_path_request":
+        exact_object(value, ["kind", "request_key", "reason"], path)?
+        key = text_field(value, "request_key", path)?
+        reason = text_field(value, "reason", path)?
+        if key == "" or reason != "portable_source_binding_unavailable":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+        return Ok(
+            NativeRequirementSource.UnboundPathRequest(key, NativeUnboundPathReason.PortableSourceBindingUnavailable),
+        )
+    else:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + ["kind"]))
+
+
+def decode_role(value: str, path: list[str]) -> Result[NativeRequirementRole, SelectionError]:
+    """Decode the closed schema1 role without retaining a second string representation."""
+    match value:
+        "normal" => return Ok(NativeRequirementRole.Normal)
+        "dev" => return Ok(NativeRequirementRole.Dev)
+        _ => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+
+
+def decode_edge_kind(value: str, path: list[str]) -> Result[ProviderEdgeKind, SelectionError]:
+    """Decode the existing public/private descriptor kind at the wire boundary."""
+    match value:
+        "public_package" => return Ok(ProviderEdgeKind.PublicPackage)
+        "private_implementation" => return Ok(ProviderEdgeKind.PrivateImplementation)
+        _ => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))

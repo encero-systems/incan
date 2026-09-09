@@ -205,10 +205,41 @@ pub struct OvenStoreExecutionPayload {
     pub artifact_root: PathBuf,
     /// Verified immutable payload bytes.
     pub payload: Vec<u8>,
+    /// Original selected entry coordinate, retained independently of the public materialized root.
+    admitted_entry_root: PathBuf,
+    /// Original content identity; public record mutation cannot retarget the held lease.
+    admitted_identity: String,
     _lease: OvenStoreLease,
 }
 
 impl OvenStoreExecutionPayload {
+    /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
+    ///
+    /// A lease protects the selected entry from store pruning; it does not authenticate mutable public fields. This
+    /// checks those fields against the original selected coordinate and content identity before a new physical
+    /// consumer borrows them. The existing materialized validator performs the sole full artifact walk.
+    pub(crate) fn verify_admitted_payload(&self) -> Result<(), OvenStoreError> {
+        let manifest = verify_entry_manifest(&self.admitted_entry_root)?;
+        if manifest.identity != self.admitted_identity
+            || manifest != self.manifest
+            || self.artifact_root != self.admitted_entry_root.join(MATERIALIZED_DIRECTORY)
+        {
+            return Err(OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "execution payload no longer matches its original admitted record and root".to_string(),
+            });
+        }
+        if u64::try_from(self.payload.len()).ok() != Some(manifest.payload.logical_bytes)
+            || digest_bytes(&self.payload) != manifest.payload.digest
+        {
+            return Err(OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "execution payload bytes disagree with the original admitted descriptor".to_string(),
+            });
+        }
+        verify_materialized_files(&self.admitted_entry_root, &manifest).map(|_| ())
+    }
+
     /// Verify the complete materialized file closure while retaining this payload's active lease.
     ///
     /// Call before importing the source files. An already admitted destination can reuse its own leased content
@@ -1027,6 +1058,8 @@ impl OvenStore {
             })?;
             touch_entry(&path)?;
             selected.push(OvenStoreExecutionPayload {
+                admitted_entry_root: path.clone(),
+                admitted_identity: manifest.identity.clone(),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -1792,6 +1825,8 @@ where
         selected.push((
             path.clone(),
             OvenStoreExecutionPayload {
+                admitted_entry_root: path.clone(),
+                admitted_identity: manifest.identity.clone(),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,

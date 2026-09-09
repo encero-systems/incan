@@ -125,25 +125,7 @@ pub def select_native(request: SelectionRequest) -> Result[NativeSelection, Sele
         selection = select_native(request)?
         assert selection.request_id == request.request_id
     """
-    if request.request_id == "" or request.evidence_id == "":
-        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["request"]))
-    if len(request.unsupported_intent) > 0:
-        return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=request.unsupported_intent))
-    validate_facts(request.runtime, request.providers)?
-    validate_names([candidate.candidate_id for candidate in request.candidates], ["candidates", "candidate_id"])?
-    for candidate in request.candidates:
-        validate_facts(candidate.runtime, candidate.providers)?
-        if candidate.evidence_id == "" or candidate.plan_identity == "" or candidate.build_unit_identity == "":
-            return Err(
-                SelectionError(
-                    kind=SelectionErrorKind.InvalidInput,
-                    fields=["candidates", candidate.candidate_id, "evidence"],
-                ),
-            )
-    for context in [request.context] + [candidate.context for candidate in request.candidates]:
-        validate_names(context.features, ["context", "features"])?
-        if context.target == "" or context.toolchain == "" or context.profile == "":
-            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["context"]))
+    validate_selection_request(request)?
     choices = [candidate for candidate in request.candidates if compatible(request, candidate)]
     if len(choices) == 0:
         return Err(SelectionError(kind=SelectionErrorKind.NoCompatibleCandidate, fields=["candidates"]))
@@ -174,7 +156,31 @@ pub def select_native(request: SelectionRequest) -> Result[NativeSelection, Sele
     )
 
 
-def validate_names(values: list[str], fields: list[str]) -> Result[None, SelectionError]:
+pub def validate_selection_request(request: SelectionRequest) -> Result[None, SelectionError]:
+    """Validate every offered fact before filtering can hide malformed losing candidates."""
+    if request.request_id == "" or request.evidence_id == "":
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["request"]))
+    if len(request.unsupported_intent) > 0:
+        return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=request.unsupported_intent))
+    validate_facts(request.runtime, request.providers)?
+    validate_names([candidate.candidate_id for candidate in request.candidates], ["candidates", "candidate_id"])?
+    for candidate in request.candidates:
+        validate_facts(candidate.runtime, candidate.providers)?
+        if candidate.evidence_id == "" or candidate.plan_identity == "" or candidate.build_unit_identity == "":
+            return Err(
+                SelectionError(
+                    kind=SelectionErrorKind.InvalidInput,
+                    fields=["candidates", candidate.candidate_id, "evidence"],
+                ),
+            )
+    for context in [request.context] + [candidate.context for candidate in request.candidates]:
+        validate_names(context.features, ["context", "features"])?
+        if context.target == "" or context.toolchain == "" or context.profile == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["context"]))
+    return Ok(None)
+
+
+pub def validate_names(values: list[str], fields: list[str]) -> Result[None, SelectionError]:
     """Reject empty or repeated set members so excess counts represent sets."""
     mut seen: list[str] = []
     for value in values:
@@ -192,6 +198,11 @@ def validate_facts(runtime: RuntimeCompatibility, providers: list[ProviderCapabi
     for value in values:
         if value == "":
             return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime"]))
+    return validate_capabilities(providers)
+
+
+pub def validate_capabilities(providers: list[ProviderCapability]) -> Result[None, SelectionError]:
+    """Validate canonical capability identities and set members for selection and slot evidence."""
     identities = [provider.semantic_identity for provider in providers]
     validate_names(identities, ["providers", "semantic_identity"])?
     for provider in providers:
@@ -200,7 +211,7 @@ def validate_facts(runtime: RuntimeCompatibility, providers: list[ProviderCapabi
     return Ok(None)
 
 
-def covers(available: ProviderCapability, required: ProviderCapability) -> bool:
+pub def covers(available: ProviderCapability, required: ProviderCapability) -> bool:
     """Compare one exact semantic owner without treating broad candidate features as requirements."""
     if available.semantic_identity != required.semantic_identity:
         return false

@@ -1,0 +1,399 @@
+"""Choose one intact foundation for all checked source-unit dependency bindings."""
+
+from std.json import JsonValue
+from plan import (
+    NativeCandidate,
+    NativeSelection,
+    ProviderCapability,
+    SelectionRequest,
+    SelectionError,
+    SelectionErrorKind,
+    select_native,
+    validate_selection_request,
+    validate_capabilities,
+    validate_names as unique,
+    covers,
+)
+
+
+@derive(Eq)
+pub model ProviderIdentity:
+    """Exact provider/plan.rs ProviderIdentity fields; features are a validated set."""
+
+    pub name: str
+    pub version: str
+    pub digest: str
+    pub feature_projection: list[str]
+
+
+pub enum NativeRequirementRole(str):
+    """The two persisted dependency activation roles."""
+
+    Normal = "normal"
+    Dev = "dev"
+
+
+pub enum ProviderEdgeKind(str):
+    """Existing checked provider visibility, separate from Rust request source kinds."""
+
+    PublicPackage = "public_package"
+    PrivateImplementation = "private_implementation"
+
+
+pub enum NativePathAnchor(str):
+    """The sole persisted authored-path coordinate anchor."""
+
+    AuthoringProject = "authoring_project"
+
+
+pub enum NativeUnboundPathReason(str):
+    """The existing schema1 unavailable-source reason."""
+
+    PortableSourceBindingUnavailable = "portable_source_binding_unavailable"
+
+
+pub enum NativeGitReference:
+    """A declared reference, never a resolved checkout."""
+
+    Branch(str)
+    Tag(str)
+    Rev(str)
+
+
+pub enum NativeRequirementSource:
+    """Payload variants mirror native_source.rs without parallel tags or sentinel fields."""
+
+    ProviderEdge(ProviderEdgeKind, str)
+    RegistryRequest
+    GitRequest(str, NativeGitReference)
+    AuthoredPathRequest(NativePathAnchor, str)
+    UnboundPathRequest(str, NativeUnboundPathReason)
+
+
+pub model Requirement:
+    """A schema1 request retained verbatim alongside its checked provider-edge coordinates."""
+
+    pub role: NativeRequirementRole
+    pub alias: str
+    pub package: Option[str]
+    pub version_requirement: Option[str]
+    pub features: list[str]
+    pub default_features: bool
+    pub optional: bool
+    pub source: NativeRequirementSource
+
+
+pub model SourceUnit:
+    """Original owner and definition evidence; the JSON definition is never rewritten."""
+
+    pub unit_id: str
+    pub owner_id: str
+    pub identity: ProviderIdentity
+    pub definition_id: str
+    pub definition_digest: str
+    pub definition: JsonValue
+    pub requirements: list[Requirement]
+
+
+pub model CheckedEdge:
+    """One original checked descriptor association, never a newly resolved dependency."""
+
+    pub edge_id: str
+    pub owner_id: str
+    pub owner: ProviderIdentity
+    pub descriptor_index: int
+    pub kind: ProviderEdgeKind
+    pub dependency_key: str
+    pub target_owner_id: str
+    pub target: ProviderIdentity
+    pub target_unit_id: str
+    pub requested_features: list[str]
+    pub default_features: bool
+    pub optional: bool
+
+
+pub model ReservedNeed:
+    """Checked SDK/compiler policy requirement independent of an offered foundation."""
+
+    pub need_id: str
+    pub unit_id: str
+    pub owner_id: str
+    pub provider: ProviderIdentity
+    pub capability: ProviderCapability
+    pub role: str
+    pub extern_name: str
+
+
+pub model ReservedGrant:
+    """Original receipt/member handle with explicit candidate, owner, role and named authority."""
+
+    pub grant_id: str
+    pub candidate_id: str
+    pub candidate_evidence_id: str
+    pub plan_identity: str
+    pub need_id: str
+    pub owner_id: str
+    pub provider: ProviderIdentity
+    pub capability: ProviderCapability
+    pub role: str
+    pub extern_name: str
+
+
+pub model SourceBatch:
+    """One selected-profile command request with all units and original checked associations."""
+
+    pub foundation: SelectionRequest
+    pub purpose: str
+    pub units: list[SourceUnit]
+    pub edges: list[CheckedEdge]
+    pub needs: list[ReservedNeed]
+    pub grants: list[ReservedGrant]
+
+
+pub model SlotBinding:
+    """One original dependency slot and its checked edge handle."""
+
+    pub role: NativeRequirementRole
+    pub alias: str
+    pub edge_id: str
+
+
+pub model UnitBinding:
+    """Original unit/definition handles plus its exact edge and reserved member handles."""
+
+    pub unit_id: str
+    pub owner_id: str
+    pub definition_id: str
+    pub definition_digest: str
+    pub slots: list[SlotBinding]
+    pub grant_ids: list[str]
+
+
+pub model BatchSelection:
+    """One foundation and complete bindings; no physical paths or native-ready claim."""
+
+    pub foundation: NativeSelection
+    pub units: list[UnitBinding]
+
+
+pub def select_source_units(batch: SourceBatch) -> Result[BatchSelection, SelectionError]:
+    """
+    Filter candidates by whole-batch bindings, then rank once with the existing selector.
+
+    A missing binding excludes a candidate. Invalid evidence refuses the request even when that candidate would lose.
+    The host must authenticate all returned original handles before any physical effect.
+    """
+    validate_selection_request(batch.foundation)?
+    validate_batch(batch)?
+    mut candidates: list[NativeCandidate] = []
+    mut bindings: list[list[UnitBinding]] = []
+    for candidate in batch.foundation.candidates:
+        if let Some(bound) = bind_candidate(batch, candidate):
+            candidates.append(candidate)
+            bindings.append(bound)
+    original = batch.foundation
+    filtered = SelectionRequest(
+        request_id=original.request_id,
+        evidence_id=original.evidence_id,
+        context=original.context,
+        runtime=original.runtime,
+        providers=original.providers,
+        candidates=candidates,
+        unsupported_intent=original.unsupported_intent,
+    )
+    selected = select_native(filtered)?
+    for index in range(len(candidates)):
+        if candidates[index].candidate_id == selected.candidate_id:
+            return Ok(BatchSelection(foundation=selected, units=bindings[index]))
+    return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["selection"]))
+
+
+def validate_batch(batch: SourceBatch) -> Result[None, SelectionError]:
+    """Check all offered associations before candidate filtering can hide malformed facts."""
+    if batch.purpose != "library":
+        return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=["purpose"]))
+    unique([unit.unit_id for unit in batch.units], ["units"])?
+    unique([edge.edge_id for edge in batch.edges], ["edges"])?
+    unique([need.need_id for need in batch.needs], ["needs"])?
+    unique([grant.grant_id for grant in batch.grants], ["grants"])?
+    unique([candidate.candidate_id for candidate in batch.foundation.candidates], ["candidates"])?
+    if len(batch.units) == 0:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units"]))
+    for unit in batch.units:
+        identity_valid(unit.identity)?
+        if unit.owner_id == "" or unit.definition_id == "" or unit.definition_digest == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units", unit.unit_id, "evidence"]))
+        unique(
+            [request.role.value() + ":" + request.alias for request in unit.requirements],
+            ["units", unit.unit_id, "requirements"],
+        )?
+        for request in unit.requirements:
+            unique(request.features, ["requirements", request.alias, "features"])?
+            if request.role == NativeRequirementRole.Normal and not is_provider_edge(request.source):
+                return Err(
+                    SelectionError(
+                        kind=SelectionErrorKind.UnsupportedIntent,
+                        fields=["units", unit.unit_id, "requirements", request.alias],
+                    ),
+                )
+    for edge in batch.edges:
+        if edge.descriptor_index < 0 or edge.dependency_key == "" or edge.target_owner_id == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["edges", edge.edge_id]))
+        identity_valid(edge.owner)?
+        identity_valid(edge.target)?
+        unique(edge.requested_features, ["edges", edge.edge_id, "requested_features"])?
+        mut owner_found = false
+        for unit in batch.units:
+            if unit.owner_id == edge.owner_id and same_identity(unit.identity, edge.owner):
+                owner_found = true
+        if not owner_found:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["edges", edge.edge_id, "owner"]))
+    for index in range(len(batch.edges)):
+        for previous in range(index):
+            left = batch.edges[index]
+            right = batch.edges[previous]
+            if left.owner_id == right.owner_id and left.descriptor_index == right.descriptor_index:
+                return Err(
+                    SelectionError(
+                        kind=SelectionErrorKind.InvalidInput,
+                        fields=["edges", left.edge_id, "descriptor_index"],
+                    ),
+                )
+    for need in batch.needs:
+        identity_valid(need.provider)?
+        validate_capabilities([need.capability])?
+        if need.role != "source" or need.extern_name == "" or need.owner_id == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["needs", need.need_id]))
+        if need.unit_id not in [unit.unit_id for unit in batch.units]:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["needs", need.need_id, "unit_id"]))
+    for grant in batch.grants:
+        identity_valid(grant.provider)?
+        validate_capabilities([grant.capability])?
+        mut bound = false
+        for candidate in batch.foundation.candidates:
+            if candidate.candidate_id == grant.candidate_id and candidate.evidence_id == grant.candidate_evidence_id and candidate.plan_identity == grant.plan_identity:
+                bound = true
+        if not bound or grant.need_id not in [need.need_id for need in batch.needs]:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["grants", grant.grant_id]))
+    return Ok(None)
+
+
+def bind_candidate(batch: SourceBatch, candidate: NativeCandidate) -> Option[list[UnitBinding]]:
+    """Compute complete bindings once for this candidate, including empty-authored foundation requirements."""
+    mut result: list[UnitBinding] = []
+    for unit in batch.units:
+        mut slots: list[SlotBinding] = []
+        mut grant_ids: list[str] = []
+        mut need_count = 0
+        for need in batch.needs:
+            if need.unit_id == unit.unit_id:
+                need_count += 1
+                mut matches: list[str] = []
+                for grant in batch.grants:
+                    if grant.candidate_id == candidate.candidate_id and grant.need_id == need.need_id and grant.owner_id == need.owner_id and same_identity(
+                        grant.provider,
+                        need.provider,
+                    ) and grant.role == need.role and grant.extern_name == need.extern_name and covers(
+                        grant.capability,
+                        need.capability,
+                    ):
+                        if any_capability(candidate.providers, need.capability):
+                            matches.append(grant.grant_id)
+                if len(matches) != 1:
+                    return None
+                grant_ids.append(matches[0])
+        if need_count == 0:
+            return None
+        for request in unit.requirements:
+            if request.role == NativeRequirementRole.Normal:
+                mut matches: list[str] = []
+                for edge in batch.edges:
+                    if edge.owner_id == unit.owner_id and same_identity(edge.owner, unit.identity) and provider_edge_matches(
+                        request.source,
+                        edge,
+                    ) and same_set(edge.requested_features, request.features) and edge.default_features == request.default_features and edge.optional == request.optional:
+                        if target_bound(batch, unit, edge):
+                            matches.append(edge.edge_id)
+                if len(matches) != 1:
+                    return None
+                slots.append(SlotBinding(role=request.role, alias=request.alias, edge_id=matches[0]))
+        result.append(
+            UnitBinding(
+                unit_id=unit.unit_id,
+                owner_id=unit.owner_id,
+                definition_id=unit.definition_id,
+                definition_digest=unit.definition_digest,
+                slots=slots,
+                grant_ids=grant_ids,
+            ),
+        )
+    return Some(result)
+
+
+def target_bound(batch: SourceBatch, unit: SourceUnit, edge: CheckedEdge) -> bool:
+    """Public targets join units; private targets join that unit's checked SDK needs."""
+    if edge.kind == ProviderEdgeKind.PublicPackage:
+        for target in batch.units:
+            if target.unit_id == edge.target_unit_id and target.owner_id == edge.target_owner_id and same_identity(
+                target.identity,
+                edge.target,
+            ):
+                return true
+    if edge.kind == ProviderEdgeKind.PrivateImplementation:
+        for need in batch.needs:
+            if need.unit_id == unit.unit_id and need.owner_id == edge.target_owner_id and same_identity(
+                need.provider,
+                edge.target,
+            ):
+                return true
+    return false
+
+
+def any_capability(providers: list[ProviderCapability], required: ProviderCapability) -> bool:
+    """Require the selected foundation's actual checked capability, not a free-standing grant."""
+    for provider in providers:
+        if covers(provider, required):
+            return true
+    return false
+
+
+def all_present(required: list[str], supplied: list[str]) -> bool:
+    """Set inclusion after duplicate validation."""
+    for value in required:
+        if value not in supplied:
+            return false
+    return true
+
+
+def same_set(left: list[str], right: list[str]) -> bool:
+    """Compare feature sets independently of their serialized order."""
+    return len(left) == len(right) and all_present(left, right)
+
+
+def same_identity(left: ProviderIdentity, right: ProviderIdentity) -> bool:
+    """Compare all four existing ProviderIdentity fields."""
+    return left.name == right.name and left.version == right.version and left.digest == right.digest and same_set(
+        left.feature_projection,
+        right.feature_projection,
+    )
+
+
+def identity_valid(identity: ProviderIdentity) -> Result[None, SelectionError]:
+    """Reject absent identity evidence and duplicate feature projections."""
+    if identity.name == "" or identity.version == "" or identity.digest == "":
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["identity"]))
+    return unique(identity.feature_projection, ["identity", "feature_projection"])
+
+
+def is_provider_edge(source: NativeRequirementSource) -> bool:
+    """Identify the one implemented checked-source variant without string tags."""
+    match source:
+        NativeRequirementSource.ProviderEdge(_, _) => return true
+        _ => return false
+
+
+def provider_edge_matches(source: NativeRequirementSource, edge: CheckedEdge) -> bool:
+    """Join the typed retained descriptor kind and key to an existing checked edge."""
+    match source:
+        NativeRequirementSource.ProviderEdge(kind, key) => return kind == edge.kind and key == edge.dependency_key
+        _ => return false
