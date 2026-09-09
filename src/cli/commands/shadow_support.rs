@@ -15,7 +15,6 @@ use crate::backend::shadow::{
 };
 use crate::cli::prelude::ParsedModule;
 use crate::dependency_resolver::resolve_reachable_dependencies;
-use crate::lockfile::CargoFeatureSelection;
 use crate::oven::loaf::OVEN_LOAF_ENV;
 use crate::provider::{FeatureSelection, ProviderPlan};
 
@@ -164,23 +163,18 @@ fn canonical_oven_build_unit_inputs(
         .flat_map(|module| collect_rust_dependency_uses(module, false))
         .collect::<Vec<_>>();
     inline_imports.retain(|import| import.crate_name != "incan_stdlib" && import.crate_name != "std");
-    let mut resolved = resolve_reachable_dependencies(
-        session.manifest.as_ref(),
-        &inline_imports,
-        true,
-        &CargoFeatureSelection::default(),
-    )
-    .map_err(|errors| {
-        let source_map = build_source_map(modules);
-        let rendered = errors
-            .iter()
-            .map(|error| format_dependency_error(error, &source_map))
-            .collect::<String>();
-        ShadowUnavailable::new(format!(
-            "the legacy comparison provider context could not resolve native dependencies: {}",
-            rendered.trim_end()
-        ))
-    })?;
+    let mut resolved =
+        resolve_reachable_dependencies(session.manifest.as_ref(), &inline_imports, true).map_err(|errors| {
+            let source_map = build_source_map(modules);
+            let rendered = errors
+                .iter()
+                .map(|error| format_dependency_error(error, &source_map))
+                .collect::<String>();
+            ShadowUnavailable::new(format!(
+                "the legacy comparison provider context could not resolve native dependencies: {}",
+                rendered.trim_end()
+            ))
+        })?;
     merge_project_requirement_dependencies(&mut resolved, &requirements).map_err(|error| {
         ShadowUnavailable::new(format!(
             "the legacy comparison provider context could not merge native requirements: {error}"

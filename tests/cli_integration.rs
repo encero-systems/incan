@@ -377,12 +377,10 @@ fn write_locked_oven_interop_plan(root: &Path) -> Result<(), Box<dyn std::error:
     let interop = incan::oven_interop::locked_oven_interop_targets(&manifest)?;
     let lock = incan::lockfile::IncanLock::new_with_semantic(
         "fixture".to_string(),
-        incan::lockfile::CargoFeatureSelection::default(),
         incan::lockfile::SemanticLockState {
             oven: Some(incan::lockfile::LockedOvenState { interop }),
             ..Default::default()
         },
-        String::new(),
     );
     lock.write(&root.join("oven.lock"))?;
     Ok(())
@@ -402,7 +400,6 @@ fn write_locked_workspace_oven_interop_plan(
         .replace('\\', "/");
     let lock = incan::lockfile::IncanLock::new_with_semantic(
         "fixture".to_string(),
-        incan::lockfile::CargoFeatureSelection::default(),
         incan::lockfile::SemanticLockState {
             workspace_members: vec![incan::lockfile::LockedWorkspaceMember {
                 member_root,
@@ -414,7 +411,6 @@ fn write_locked_workspace_oven_interop_plan(
             }],
             ..Default::default()
         },
-        String::new(),
     );
     lock.write(&workspace_root.join("oven.lock"))?;
     Ok(())
@@ -1719,10 +1715,6 @@ itoa = "1"
     let root_lock = root.path().join("oven.lock");
     assert!(root_lock.is_file(), "workspace root lock was not written");
     let lock = incan::lockfile::IncanLock::load(&root_lock)?;
-    assert_eq!(
-        lock.cargo_lock_payload, "version = 4\n",
-        "normal Oven lock publication must retain only the inert legacy Cargo payload"
-    );
     let member_roots = lock
         .semantic
         .workspace_members
@@ -6044,10 +6036,9 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     );
     assert!(lock.contains("deps-fingerprint = \"sha256:"));
     assert!(lock.contains("[cargo]"));
-    let parsed = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
-    assert_eq!(
-        parsed.cargo_lock_payload, "version = 4\n",
-        "normal `incan lock` records semantic Incan state, not a generated Cargo resolution"
+    assert!(
+        !lock.contains("lock-payload"),
+        "normal `incan lock` must not embed a generated Cargo resolution"
     );
 
     let second_output = run_incan(
@@ -6080,8 +6071,8 @@ fn lock_generates_semantic_state_without_starting_cargo() -> Result<(), Box<dyn 
         "normal incan lock must not launch Cargo; stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let lock = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
-    assert_eq!(lock.cargo_lock_payload, "version = 4\n");
+    let lock = fs::read_to_string(tmp.path().join("oven.lock"))?;
+    assert!(!lock.contains("lock-payload"));
     Ok(())
 }
 
@@ -6742,10 +6733,6 @@ bitflags = "=1.3.2"
     assert_success(&first_output, "canonical lock with bitflags 1.3.2");
     let first_bytes = fs::read(tmp.path().join("oven.lock"))?;
     let first = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
-    assert_eq!(
-        first.cargo_lock_payload, "version = 4\n",
-        "normal lock generation must not resolve a Cargo package graph"
-    );
 
     let manifest_path = tmp.path().join("loaf.toml");
     let first_manifest = fs::read_to_string(&manifest_path)?;
@@ -6754,7 +6741,6 @@ bitflags = "=1.3.2"
     assert_success(&second_output, "canonical lock with bitflags 2.11.0");
     let second_bytes = fs::read(tmp.path().join("oven.lock"))?;
     let second = incan::lockfile::IncanLock::load(&tmp.path().join("oven.lock"))?;
-    assert_eq!(second.cargo_lock_payload, "version = 4\n");
     assert_ne!(
         first.deps_fingerprint, second.deps_fingerprint,
         "the semantic dependency fingerprint must change with the declared registry input"

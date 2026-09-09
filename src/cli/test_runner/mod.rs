@@ -968,9 +968,6 @@ struct ActiveUnit {
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
     unit: &ExecutionUnit,
-    cargo_features: &[String],
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     command_context: &Arc<OvenTestCommandContext>,
     no_capture: bool,
     verbose: bool,
@@ -979,9 +976,6 @@ fn run_execution_unit(
     run_file_tests_batch(
         &unit.tests,
         &unit.conftest_files_by_file,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
         command_context,
         TestExecutionOptions {
             no_capture,
@@ -1201,9 +1195,6 @@ fn batch_has_failure(results: &[(TestInfo, TestResult)]) -> bool {
 fn run_scheduled_execution_units(
     units: Vec<ExecutionUnit>,
     jobs: usize,
-    cargo_features: &[String],
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     command_context: Arc<OvenTestCommandContext>,
     stop_on_fail: bool,
     no_capture: bool,
@@ -1213,16 +1204,7 @@ fn run_scheduled_execution_units(
     if jobs <= 1 {
         let mut completed = Vec::new();
         for unit in &units {
-            let results = run_execution_unit(
-                unit,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
-                &command_context,
-                no_capture,
-                verbose,
-                emit_progress,
-            );
+            let results = run_execution_unit(unit, &command_context, no_capture, verbose, emit_progress);
             let failed = batch_has_failure(&results);
             completed.push((unit.index, results));
             if stop_on_fail && failed {
@@ -1254,7 +1236,6 @@ fn run_scheduled_execution_units(
                 break;
             };
             let sender = sender.clone();
-            let cargo_features = cargo_features.to_vec();
             let command_context = Arc::clone(&command_context);
             active.push(ActiveUnit {
                 index: unit.index,
@@ -1265,16 +1246,7 @@ fn run_scheduled_execution_units(
             launched += 1;
             thread::spawn(move || {
                 let unit_index = unit.index;
-                let results = run_execution_unit(
-                    &unit,
-                    &cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    &command_context,
-                    no_capture,
-                    verbose,
-                    emit_progress,
-                );
+                let results = run_execution_unit(&unit, &command_context, no_capture, verbose, emit_progress);
                 let _ = sender.send((unit_index, results));
             });
         }
@@ -1322,9 +1294,6 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         sdk_profile,
         timeout,
         no_capture,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
         workspace_context,
     } = config;
 
@@ -1508,9 +1477,6 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let mut raw_batch_results = run_scheduled_execution_units(
         units,
         jobs,
-        &cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
         command_context,
         stop_on_fail,
         no_capture,
@@ -1741,9 +1707,6 @@ mod tests {
             sdk_profile: None,
             timeout: None,
             no_capture: false,
-            cargo_features: Vec::new(),
-            cargo_no_default_features: false,
-            cargo_all_features: false,
             workspace_context: None,
         }
     }

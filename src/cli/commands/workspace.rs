@@ -141,7 +141,6 @@ fn inspection_report(
         Ok(lock) => json!({
             "status": "present",
             "fingerprint": lock.deps_fingerprint,
-            "cargo_features": lock.cargo_features,
             "semantic": lock.semantic,
         }),
         Err(error) if root_lock_path.exists() => json!({

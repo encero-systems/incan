@@ -13,7 +13,6 @@ use semver::VersionReq;
 
 use crate::frontend::ast::Span;
 use crate::frontend::diagnostics::CompileError;
-use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
 
@@ -71,13 +70,11 @@ pub fn resolve_dependencies(
     manifest: Option<&ProjectManifest>,
     inline_imports: &[InlineRustImport],
     include_dev_dependencies: bool,
-    cargo_features: &CargoFeatureSelection,
 ) -> Result<ResolvedDependencies, Vec<DependencyError>> {
     resolve_dependencies_with_scope(
         manifest,
         inline_imports,
         include_dev_dependencies,
-        cargo_features,
         ManifestDependencyScope::All,
     )
 }
@@ -87,13 +84,11 @@ pub fn resolve_reachable_dependencies(
     manifest: Option<&ProjectManifest>,
     inline_imports: &[InlineRustImport],
     include_dev_dependencies: bool,
-    cargo_features: &CargoFeatureSelection,
 ) -> Result<ResolvedDependencies, Vec<DependencyError>> {
     resolve_dependencies_with_scope(
         manifest,
         inline_imports,
         include_dev_dependencies,
-        cargo_features,
         ManifestDependencyScope::ReachableOnly,
     )
 }
@@ -103,7 +98,6 @@ fn resolve_dependencies_with_scope(
     manifest: Option<&ProjectManifest>,
     inline_imports: &[InlineRustImport],
     include_dev_dependencies: bool,
-    cargo_features: &CargoFeatureSelection,
     scope: ManifestDependencyScope,
 ) -> Result<ResolvedDependencies, Vec<DependencyError>> {
     let mut errors = Vec::new();
@@ -168,13 +162,7 @@ fn resolve_dependencies_with_scope(
     }
 
     if errors.is_empty() {
-        validate_optional_imports(
-            inline_imports,
-            &resolved_deps,
-            &resolved_dev_deps,
-            cargo_features,
-            &mut errors,
-        );
+        validate_optional_imports(inline_imports, &resolved_deps, &resolved_dev_deps, &mut errors);
     }
 
     if errors.is_empty() {
@@ -518,25 +506,21 @@ fn normalize_specs(specs: &mut HashMap<String, DependencySpec>) {
     }
 }
 
-/// Reject an inline `rust::` import of a crate that is declared optional and not enabled for this build.
+/// Reject an inline `rust::` import whose optional dependency has no checked activation result.
 ///
-/// Cargo would fail later with an unresolved-crate error that names neither the import nor the feature that would fix
-/// it. Reporting here attributes the failure to the import's own span, and to the first import of each crate rather
-/// than to every one of them, so a crate used in twenty places produces one diagnostic.
+/// Optional Rust edges are selected by Oven's Incan-authored activation policy. This resolver deliberately has no
+/// fallback feature list: until the checked projection is attached to the dependency slot, the import remains
+/// inactive and fails at its first source span.
 fn validate_optional_imports(
     inline_imports: &[InlineRustImport],
     deps: &HashMap<String, DependencySpec>,
     dev_deps: &HashMap<String, DependencySpec>,
-    cargo_features: &CargoFeatureSelection,
     errors: &mut Vec<DependencyError>,
 ) {
     let mut first_sites: HashMap<String, &InlineRustImport> = HashMap::new();
     for import in inline_imports {
         first_sites.entry(import.crate_name.clone()).or_insert(import);
     }
-
-    let enabled_features: HashSet<&str> = cargo_features.cargo_features.iter().map(|f| f.as_str()).collect();
-    let all_features = cargo_features.cargo_all_features;
 
     for (crate_name, import) in first_sites {
         let spec = matching_dep_spec(deps, &crate_name)
@@ -548,11 +532,6 @@ fn validate_optional_imports(
         if !spec.optional {
             continue;
         }
-        let enabled = all_features || enabled_features.contains(crate_name.as_str());
-        if enabled {
-            continue;
-        }
-
         errors.push(DependencyError {
             file_path: import.file_path.clone(),
             error: CompileError::new(
@@ -563,10 +542,7 @@ fn validate_optional_imports(
                 "The dependency `{}` is declared optional in loaf.toml.",
                 crate_name
             ))
-            .with_hint(format!(
-                "Enable it via `--cargo-features {}` when building/testing.",
-                crate_name
-            )),
+            .with_hint("Select the dependency through the checked Incan Rust activation graph."),
         });
     }
 }
@@ -645,7 +621,6 @@ fn known_good_spec_from_stdlib(crate_name: &str) -> Option<DependencySpec> {
 mod tests {
     use super::*;
     use crate::frontend::ast::Span;
-    use crate::lockfile::CargoFeatureSelection;
     use std::error::Error;
 
     type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -666,10 +641,6 @@ mod tests {
         }
     }
 
-    fn default_cargo_features() -> CargoFeatureSelection {
-        CargoFeatureSelection::default()
-    }
-
     fn parse_manifest(toml_str: &str) -> TestResult<ProjectManifest> {
         ProjectManifest::from_str(toml_str, Path::new(".")).map_err(|err| Box::new(err) as Box<dyn Error>)
     }
@@ -678,9 +649,8 @@ mod tests {
         manifest: Option<&ProjectManifest>,
         inline_imports: &[InlineRustImport],
         include_dev_dependencies: bool,
-        cargo_features: &CargoFeatureSelection,
     ) -> TestResult<ResolvedDependencies> {
-        resolve_dependencies(manifest, inline_imports, include_dev_dependencies, cargo_features)
+        resolve_dependencies(manifest, inline_imports, include_dev_dependencies)
             .map_err(|errors| std::io::Error::other(format!("{errors:?}")).into())
     }
 
@@ -688,9 +658,8 @@ mod tests {
         manifest: Option<&ProjectManifest>,
         inline_imports: &[InlineRustImport],
         include_dev_dependencies: bool,
-        cargo_features: &CargoFeatureSelection,
     ) -> TestResult<ResolvedDependencies> {
-        resolve_reachable_dependencies(manifest, inline_imports, include_dev_dependencies, cargo_features)
+        resolve_reachable_dependencies(manifest, inline_imports, include_dev_dependencies)
             .map_err(|errors| std::io::Error::other(format!("{errors:?}")).into())
     }
 
@@ -715,7 +684,7 @@ mod tests {
             inline("tokio", Some("1.0"), &["macros"], false),
         ];
 
-        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(None, &imports, false)?;
         let tokio = dependency(&resolved.dependencies, "tokio")?;
         assert!(
             tokio.features.contains(&"macros".to_string()),
@@ -732,7 +701,7 @@ mod tests {
             inline("xxhash_rust", Some("0.8"), &["xxh3"], false),
         ];
 
-        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(None, &imports, false)?;
         let md5 = dependency(&resolved.dependencies, "md5")?;
         let xxhash = dependency(&resolved.dependencies, "xxhash_rust")?;
 
@@ -750,7 +719,7 @@ mod tests {
             inline("tokio", Some("2.0"), &[], false),
         ];
 
-        let err = match resolve_dependencies(None, &imports, false, &default_cargo_features()) {
+        let err = match resolve_dependencies(None, &imports, false) {
             Ok(resolved) => {
                 return Err(std::io::Error::other(format!(
                     "expected version conflict, got successful resolution: {resolved:?}"
@@ -777,7 +746,7 @@ serde = "1.0"
         let manifest = parse_manifest(toml_str)?;
         let imports = vec![inline("serde", Some("2.0"), &[], false)];
 
-        let err = match resolve_dependencies(Some(&manifest), &imports, false, &default_cargo_features()) {
+        let err = match resolve_dependencies(Some(&manifest), &imports, false) {
             Ok(resolved) => {
                 return Err(std::io::Error::other(format!(
                     "expected inline annotation to be rejected, got: {resolved:?}"
@@ -808,7 +777,7 @@ serde = "1.0"
         // Import the crate but no version/features annotation
         let imports = vec![inline("serde", None, &[], false)];
 
-        let resolved = resolve_ok(Some(&manifest), &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(Some(&manifest), &imports, false)?;
         let serde = dependency(&resolved.dependencies, "serde")?;
         assert_eq!(serde.version.as_deref(), Some("1.0"));
         Ok(())
@@ -822,7 +791,7 @@ datafusion = "53"
 "#;
         let manifest = parse_manifest(toml_str)?;
 
-        let resolved = resolve_reachable_ok(Some(&manifest), &[], false, &default_cargo_features())?;
+        let resolved = resolve_reachable_ok(Some(&manifest), &[], false)?;
 
         assert!(
             !resolved
@@ -843,7 +812,7 @@ serde = "1.0"
         let manifest = parse_manifest(toml_str)?;
         let imports = vec![inline("serde", None, &[], false)];
 
-        let resolved = resolve_reachable_ok(Some(&manifest), &imports, false, &default_cargo_features())?;
+        let resolved = resolve_reachable_ok(Some(&manifest), &imports, false)?;
         let serde = dependency(&resolved.dependencies, "serde")?;
         assert_eq!(serde.version.as_deref(), Some("1.0"));
         Ok(())
@@ -861,7 +830,7 @@ test_lib = "0.5"
         // Import from production code (is_test_context = false)
         let imports = vec![inline("test_lib", None, &[], false)];
 
-        let err = match resolve_dependencies(Some(&manifest), &imports, true, &default_cargo_features()) {
+        let err = match resolve_dependencies(Some(&manifest), &imports, true) {
             Ok(resolved) => {
                 return Err(std::io::Error::other(format!(
                     "expected dev-only dependency to be rejected, got: {resolved:?}"
@@ -890,7 +859,7 @@ test_lib = "0.5"
         // Import from test code (is_test_context = true)
         let imports = vec![inline("test_lib", None, &[], true)];
 
-        let resolved = resolve_ok(Some(&manifest), &imports, true, &default_cargo_features())?;
+        let resolved = resolve_ok(Some(&manifest), &imports, true)?;
         let test_lib = dependency(&resolved.dev_dependencies, "test_lib")?;
         assert_eq!(test_lib.version.as_deref(), Some("0.5"));
         Ok(())
@@ -902,7 +871,7 @@ test_lib = "0.5"
     fn known_good_default_applied_when_no_version() -> TestResult {
         let imports = vec![inline("serde", None, &[], false)];
 
-        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(None, &imports, false)?;
         let serde = dependency(&resolved.dependencies, "serde")?;
         assert_eq!(serde.version.as_deref(), Some("1.0"));
         assert!(serde.features.contains(&"derive".to_string()));
@@ -913,7 +882,7 @@ test_lib = "0.5"
     fn known_good_default_allows_features_without_inline_version() -> TestResult {
         let imports = vec![inline("tokio", None, &["full"], false)];
 
-        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(None, &imports, false)?;
         let tokio = dependency(&resolved.dependencies, "tokio")?;
         assert_eq!(tokio.version.as_deref(), Some("1"));
         assert!(tokio.features.contains(&"rt-multi-thread".to_string()));
@@ -958,7 +927,7 @@ test_lib = "0.5"
     fn unknown_crate_without_version_is_error() -> TestResult {
         let imports = vec![inline("unknown_crate_xyz", None, &[], false)];
 
-        let err = match resolve_dependencies(None, &imports, false, &default_cargo_features()) {
+        let err = match resolve_dependencies(None, &imports, false) {
             Ok(resolved) => {
                 return Err(std::io::Error::other(format!(
                     "expected unknown crate error, got successful resolution: {resolved:?}"
@@ -994,7 +963,7 @@ test_lib = "0.5"
     fn rust_std_import_does_not_create_dependency() -> TestResult {
         let imports = vec![inline("std", None, &[], false)];
 
-        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(None, &imports, false)?;
         assert!(
             !resolved.dependencies.iter().any(|d| d.crate_name == "std"),
             "rust::std must not be emitted as Cargo dependency"
@@ -1010,7 +979,7 @@ test_lib = "0.5"
     fn incan_stdlib_import_does_not_require_inline_version() -> TestResult {
         let imports = vec![inline("incan_stdlib", None, &[], false)];
 
-        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(None, &imports, false)?;
         assert!(
             !resolved.dependencies.iter().any(|d| d.crate_name == "incan_stdlib"),
             "incan_stdlib should already be provided by generated projects"
@@ -1033,7 +1002,7 @@ serde = { version = "2.0", features = ["custom"] }
         let manifest = parse_manifest(toml_str)?;
         let imports = vec![inline("serde", None, &[], false)];
 
-        let resolved = resolve_ok(Some(&manifest), &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(Some(&manifest), &imports, false)?;
         let serde = dependency(&resolved.dependencies, "serde")?;
         // Should be manifest version, not known-good "1.0"
         assert_eq!(serde.version.as_deref(), Some("2.0"));
@@ -1054,7 +1023,7 @@ my_lib = { git = "https://github.com/example/my_lib.git", branch = "main" }
         let manifest = parse_manifest(toml_str)?;
         let imports: Vec<InlineRustImport> = vec![];
 
-        let resolved = resolve_ok(Some(&manifest), &imports, false, &default_cargo_features())?;
+        let resolved = resolve_ok(Some(&manifest), &imports, false)?;
         let my_lib = dependency(&resolved.dependencies, "my_lib")?;
         assert!(
             matches!(my_lib.source, DependencySource::Git { .. }),
@@ -1074,7 +1043,7 @@ extra_lib = "1.0"
         let manifest = parse_manifest(toml_str)?;
         let imports = vec![inline("extra_lib", None, &[], false)];
 
-        let err = match resolve_dependencies(Some(&manifest), &imports, false, &default_cargo_features()) {
+        let err = match resolve_dependencies(Some(&manifest), &imports, false) {
             Ok(resolved) => {
                 return Err(std::io::Error::other(format!(
                     "expected optional dependency to be rejected, got: {resolved:?}"
@@ -1094,29 +1063,6 @@ extra_lib = "1.0"
     }
 
     #[test]
-    fn optional_dep_with_feature_flag_is_ok() -> TestResult {
-        let toml_str = r#"
-[rust-dependencies.optional]
-extra_lib = "1.0"
-"#;
-        let manifest = parse_manifest(toml_str)?;
-        let imports = vec![inline("extra_lib", None, &[], false)];
-
-        let features = CargoFeatureSelection {
-            cargo_features: vec!["extra_lib".to_string()],
-            cargo_no_default_features: false,
-            cargo_all_features: false,
-        };
-
-        let resolved = resolve_ok(Some(&manifest), &imports, false, &features)?;
-        assert!(
-            resolved.dependencies.iter().any(|d| d.crate_name == "extra_lib"),
-            "expected extra_lib in resolved deps"
-        );
-        Ok(())
-    }
-
-    #[test]
     fn rust_import_declared_in_library_dependencies_emits_migration_error() -> TestResult {
         let toml_str = r#"
 [dependencies]
@@ -1125,7 +1071,7 @@ legacy_rust = { path = "../legacy_rust" }
         let manifest = parse_manifest(toml_str)?;
         let imports = vec![inline("legacy_rust", None, &[], false)];
 
-        let err = match resolve_dependencies(Some(&manifest), &imports, false, &default_cargo_features()) {
+        let err = match resolve_dependencies(Some(&manifest), &imports, false) {
             Ok(resolved) => {
                 return Err(std::io::Error::other(format!(
                     "expected migration diagnostic, got successful resolution: {resolved:?}"
@@ -1172,7 +1118,7 @@ legacy_rust = { path = "../legacy_rust" }
     #[test]
     fn invalid_inline_version_produces_error() -> TestResult {
         let imports = vec![inline("my_crate", Some("banana"), &[], false)];
-        let result = resolve_dependencies(None, &imports, false, &default_cargo_features());
+        let result = resolve_dependencies(None, &imports, false);
         let errors = match result {
             Ok(resolved) => {
                 return Err(std::io::Error::other(format!(

@@ -3,6 +3,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod oven {
+    use sha2::{Digest, Sha256};
+
+    pub use incan::oven::OvenBuildIntent;
+
+    pub(crate) fn digest_bytes(content: &[u8]) -> String {
+        format!("sha256:{}", hex::encode(Sha256::digest(content)))
+    }
+}
+
 #[allow(dead_code)]
 #[path = "../src/oven/compiler_suite_env.rs"]
 mod compiler_suite_env;

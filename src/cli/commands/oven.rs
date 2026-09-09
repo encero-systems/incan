@@ -15,7 +15,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -36,11 +35,10 @@ use crate::oven::interop::{
     write_interop_execution_receipt,
 };
 use crate::oven::loaf::{
-    LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
-    OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
-    acquire_committed_loaf_generation, digest_runtime_crate_source, loaf_directory_byte_counts,
-    loaf_envelope_specifications, loaf_raw_disk_bytes, retire_unreferenced_loaf_generations,
-    validate_stored_loaf_for_reuse,
+    LoafTemporaryDirectory, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope, OvenLoafEnvelopeManifest,
+    OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation, acquire_committed_loaf_generation,
+    digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_specifications, loaf_raw_disk_bytes,
+    retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
 };
 use crate::oven::native_contract::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
@@ -55,7 +53,7 @@ use crate::oven::native_test::{
     OvenNativeTestCommandTiming, OvenNativeTestRequest, run_native_test_batch_all_for_request, run_native_tests,
     run_native_tests_exact_in_directory_with_timeout,
 };
-use crate::oven::progress::{PhaseProgress, announce as announce_oven_progress, elapsed_detail};
+use crate::oven::progress::{PhaseProgress, announce as announce_oven_progress};
 use crate::oven::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenStoredDirectRustcRunRequest,
     OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot,
@@ -73,13 +71,10 @@ use crate::oven::{
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
     DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES, OVEN_COMPILER_TEST_PROFILE,
-    OvenBuildIntent, OvenCompilerSuiteRequest, OvenReceipt, default_receipt_path, digest_bytes,
-    receipt_native_compiler_suite, write_receipt,
+    OvenBuildIntent, OvenCompilerSuiteRequest, OvenReceipt, digest_bytes, receipt_native_compiler_suite,
 };
 use crate::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use crate::provider::FeatureSelection;
-#[cfg(feature = "rust_inspect")]
-use crate::rust_inspect::{OvenInspectionRegistrySource, write_sealed_oven_inspection_source_authority};
 use crate::version::INCAN_VERSION;
 
 /// Environment override for aggregate physical allocation policy.
@@ -201,10 +196,8 @@ pub fn oven_publish_direct_rustc_plan(options: OvenPlanPublishCommandOptions) ->
 struct OvenInteropBakeReport {
     /// Selected locked target triple.
     target: String,
-    /// The pre-interop runtime receipt selected directly or prepared by this command.
+    /// The caller-selected pre-interop runtime receipt.
     base_receipt: PathBuf,
-    /// Whether this invocation prepared its pre-interop Rust closure instead of receiving `--base-receipt`.
-    bootstrap_prepared: bool,
     /// Project-local selected execution receipt written only after final plan publication succeeds.
     execution_receipt: PathBuf,
     /// Selected-execution identity bound into the final direct-rustc build unit.
@@ -220,7 +213,7 @@ struct OvenInteropBakeReport {
     bundles: Vec<String>,
     /// Whether this command reused an existing verified interop plan without starting a native tool.
     reused: bool,
-    /// Whether an automatic base bootstrap invoked the named compatibility publisher.
+    /// The explicit base-receipt route does not invoke Cargo.
     cargo_process_started: bool,
 }
 
@@ -248,28 +241,11 @@ struct OvenInteropStageReport {
 /// Select declared native tools, bake locked C/C++ inputs, and publish one receipt-bound direct-rustc plan.
 ///
 /// This is an explicit Oven publisher, not a normal command fallback. It consumes only the canonical package lock,
-/// selected tool/SDK evidence, a sealed runtime receipt, and declared package files. When no base receipt is supplied,
-/// the command first invokes the named compatibility publisher for the Rust-only closure; it never uses Cargo to
-/// discover native inputs. `pkg-config` and ambient include or link path discovery are intentionally absent.
+/// selected tool/SDK evidence, a sealed runtime receipt, and declared package files. `pkg-config` and ambient include
+/// or link path discovery are intentionally absent.
 pub fn oven_interop_bake(options: OvenInteropBakeCommandOptions) -> CliResult<ExitCode> {
     let locked = locked_interop_plan_target(&options.project, &options.target)?;
-    if options.base_receipt.is_none() && !options.store.is_ordinary_default() {
-        return Err(CliError::failure(
-            "automatic interop bootstrap uses the ordinary compiler-owned Oven store; set INCAN_HOME for that store or provide --base-receipt when selecting an explicit --store or storage policy",
-        ));
-    }
-    let (base_receipt, base_receipt_path, bootstrap_prepared, cargo_process_started) =
-        match options.base_receipt.as_ref() {
-            Some(path) => (read_receipt(path)?, path.clone(), false, false),
-            None => {
-                let (receipt, path, cargo_process_started) =
-                    crate::cli::commands::build::prepare_oven_interop_bootstrap(
-                        &locked.project_root,
-                        &locked.target.target,
-                    )?;
-                (receipt, path, true, cargo_process_started)
-            }
-        };
+    let base_receipt = read_receipt(&options.base_receipt)?;
     let toolchain = selected_compiler_capability(&locked.target, &options)?;
     let sdk = selected_sdk_capability(&locked.target, &options)?;
     let execution_receipt = receipt_interop_execution(&locked.target, toolchain, sdk).map_err(CliError::failure)?;
@@ -291,8 +267,7 @@ pub fn oven_interop_bake(options: OvenInteropBakeCommandOptions) -> CliResult<Ex
     write_interop_execution_receipt(&execution_receipt, &receipt_path).map_err(CliError::failure)?;
     let report = OvenInteropBakeReport {
         target: locked.target.target,
-        base_receipt: base_receipt_path,
-        bootstrap_prepared,
+        base_receipt: options.base_receipt,
         execution_receipt: receipt_path,
         execution_receipt_identity: execution_receipt.identity,
         plan_identity: baked.plan_identity,
@@ -300,7 +275,7 @@ pub fn oven_interop_bake(options: OvenInteropBakeCommandOptions) -> CliResult<Ex
         archives: baked.archive_names,
         bundles: baked.bundle_names,
         reused: baked.reused,
-        cargo_process_started,
+        cargo_process_started: false,
     };
     match options.format {
         OvenOutputFormat::Text => println!("{}", interop_bake_terminal_message(&report)),
@@ -312,15 +287,10 @@ pub fn oven_interop_bake(options: OvenInteropBakeCommandOptions) -> CliResult<Ex
 /// Render process-authority evidence for one explicit native interop bake.
 fn interop_bake_terminal_message(report: &OvenInteropBakeReport) -> String {
     format!(
-        "{} Oven interop target {} direct-rustc plan {}{}.",
+        "{} Oven interop target {} direct-rustc plan {} without invoking Cargo.",
         if report.reused { "Reused" } else { "Baked" },
         report.target,
         report.plan_identity,
-        if report.cargo_process_started {
-            " after preparing its Rust-only base through the named compatibility publisher"
-        } else {
-            " without invoking Cargo"
-        }
     )
 }
 
@@ -4346,8 +4316,15 @@ fn compiler_libtests_receipt(
     let target = rustc_host_target(rustc).map_err(oven_error)?;
     let toolchain = rustc_identity(rustc).map_err(oven_error)?;
     let features = compiler_root_feature_selection(compiler_root, requested_features)?;
-    let mut request =
-        OvenCompilerSuiteRequest::new(compiler_root, target, toolchain, OVEN_COMPILER_TEST_PROFILE, features);
+    let mut request = OvenCompilerSuiteRequest::new(
+        compiler_root,
+        "incan",
+        INCAN_VERSION,
+        target,
+        toolchain,
+        OVEN_COMPILER_TEST_PROFILE,
+        features,
+    );
     if let Some(loaf_root) = loaf_root {
         let compatibility_identity =
             crate::oven::loaf::committed_loaf_envelope_compatibility_identity(loaf_root, "compiler-suite")
@@ -4708,11 +4685,10 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn interop_bake_text_evidence_distinguishes_automatic_bootstrap_cargo() -> Result<(), Box<dyn std::error::Error>> {
+    fn interop_bake_text_evidence_records_the_explicit_cargo_free_route() -> Result<(), Box<dyn std::error::Error>> {
         let report = super::OvenInteropBakeReport {
             target: "aarch64-apple-darwin".to_string(),
             base_receipt: PathBuf::from("base-receipt.json"),
-            bootstrap_prepared: true,
             execution_receipt: PathBuf::from("execution-receipt.json"),
             execution_receipt_identity: "sha256:execution".to_string(),
             plan_identity: "sha256:plan".to_string(),
@@ -4720,14 +4696,13 @@ mod tests {
             archives: Vec::new(),
             bundles: Vec::new(),
             reused: false,
-            cargo_process_started: true,
+            cargo_process_started: false,
         };
 
         let message = interop_bake_terminal_message(&report);
 
-        assert!(message.contains("named compatibility publisher"));
-        assert!(!message.contains("without invoking Cargo"));
-        assert_eq!(serde_json::to_value(&report)?["cargo_process_started"], true);
+        assert!(message.contains("without invoking Cargo"));
+        assert_eq!(serde_json::to_value(&report)?["cargo_process_started"], false);
         Ok(())
     }
 
@@ -6044,6 +6019,8 @@ mod tests {
         let rustc = resolve_active_rustc()?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "shard_fixture",
+            "0.1.0",
             rustc_host_target(&rustc)?,
             crate::oven::rustc::rustc_identity(&rustc)?,
             "debug",
@@ -6209,6 +6186,8 @@ mod tests {
         let rustc = resolve_active_rustc()?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "workspace_dag_fixture",
+            "0.1.0",
             rustc_host_target(&rustc)?,
             crate::oven::rustc::rustc_identity(&rustc)?,
             "debug",
@@ -6821,6 +6800,8 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
 
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "suite_fixture",
+            "0.1.0",
             rustc_host_target(&rustc)?,
             rustc_identity(&rustc)?,
             "debug",

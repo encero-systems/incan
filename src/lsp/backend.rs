@@ -63,8 +63,6 @@ use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
     ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
-#[cfg(feature = "rust_inspect")]
-use crate::lockfile::CargoFeatureSelection;
 use crate::lsp::call_site_type_args;
 use crate::lsp::diagnostics::{
     RelatedDeclarationSource, RelatedDeclarationSources, compile_error_to_diagnostic_with_phase,
@@ -871,8 +869,7 @@ fn resolved_rust_inspect_dependencies(
         inline_imports.extend(collect_inline_rust_imports(module, false));
     }
 
-    let cargo_features = CargoFeatureSelection::default();
-    let mut resolved = resolve_dependencies(manifest, &inline_imports, true, &cargo_features).map_err(|errors| {
+    let mut resolved = resolve_dependencies(manifest, &inline_imports, true).map_err(|errors| {
         let sources = build_source_map(modules);
         let mut msg = String::new();
         for err in errors {

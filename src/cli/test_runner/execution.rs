@@ -26,20 +26,20 @@ use crate::frontend::module::logical_module_segments_from_file;
 use crate::frontend::testing_markers::{TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind};
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
-use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::DependencySpec;
 use crate::oven::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, runtime_build_unit_inputs};
 use crate::oven::native_test::{OvenNativeTestRequest, run_native_test_batch};
 use crate::oven::rustc::{
     OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_test,
-    materialize_declared_rust_libraries_with_selected_path_authority, resolve_active_rustc, rustc_host_target,
-    rustc_identity,
+    resolve_active_rustc, rustc_host_target, rustc_identity,
 };
 use crate::oven::{
     OvenGeneratedProjectRequest, default_receipt_path, digest_dependency_specs, receipt_generated_project,
     write_receipt,
 };
-use crate::provider::{FeatureSelection, ProviderPlan};
+#[cfg(test)]
+use crate::provider::FeatureSelection;
+use crate::provider::ProviderPlan;
 use sha2::{Digest, Sha256};
 
 use super::infer_test_project_root_without_manifest;
@@ -135,7 +135,6 @@ pub(super) fn validate_test_canonical_lock(
         .as_ref()
         .map(|manifest| manifest.project_root().to_path_buf())
         .unwrap_or(inferred_project_root);
-    let cargo_features = CargoFeatureSelection::default().normalized();
     let resolution =
         crate::cli::commands::lock::resolve_lock_context(crate::cli::commands::lock::LockResolutionRequest {
             project_root: &project_root,
@@ -146,7 +145,6 @@ pub(super) fn validate_test_canonical_lock(
                 dev_dependencies: Vec::new(),
             },
             project_requirements: &ProjectRequirements::default(),
-            cargo_features: &cargo_features,
             semantic: None,
             package_features: Some(package_features),
             sdk_profile_override,
@@ -2127,21 +2125,10 @@ fn map_batch_results(
 pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
-    cargo_features: &[String],
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     command_context: &Arc<OvenTestCommandContext>,
     options: TestExecutionOptions,
 ) -> Vec<(TestInfo, TestResult)> {
-    run_file_tests_batch_oven(
-        tests,
-        conftest_files_by_file,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-        command_context,
-        options,
-    )
+    run_file_tests_batch_oven(tests, conftest_files_by_file, command_context, options)
 }
 
 /// Execute one Oven Alpha test unit without starting Cargo or reading a generated Cargo target directory.
@@ -2152,9 +2139,6 @@ pub(super) fn run_file_tests_batch(
 fn run_file_tests_batch_oven(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
-    cargo_features: &[String],
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     command_context: &Arc<OvenTestCommandContext>,
     options: TestExecutionOptions,
 ) -> Vec<(TestInfo, TestResult)> {
@@ -2171,12 +2155,6 @@ fn run_file_tests_batch_oven(
             .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), message.clone())))
             .collect::<Vec<_>>()
     };
-    if cargo_no_default_features || cargo_all_features || !cargo_features.is_empty() {
-        return failure(
-            "Oven Alpha normal test execution does not accept Cargo feature controls; use Incan package features instead"
-                .to_string(),
-        );
-    }
     let mut source_parts = Vec::new();
     let mut batch_parse_sources = Vec::new();
     let mut sources_by_file = Vec::new();
@@ -2301,20 +2279,18 @@ fn run_file_tests_batch_oven(
         Ok(requirements) => requirements,
         Err(error) => return failure(error.message),
     };
-    let feature_selection = CargoFeatureSelection::default().normalized();
-    let mut resolved =
-        match resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &feature_selection) {
-            Ok(resolved) => resolved,
-            Err(errors) => {
-                let sources = common::build_source_map(&dependency_modules);
-                return failure(
-                    errors
-                        .iter()
-                        .map(|error| common::format_dependency_error(error, &sources))
-                        .collect::<String>(),
-                );
-            }
-        };
+    let mut resolved = match resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true) {
+        Ok(resolved) => resolved,
+        Err(errors) => {
+            let sources = common::build_source_map(&dependency_modules);
+            return failure(
+                errors
+                    .iter()
+                    .map(|error| common::format_dependency_error(error, &sources))
+                    .collect::<String>(),
+            );
+        }
+    };
     let provider_plan = match session.provider_plan_for_modules(&dependency_modules) {
         Ok(plan) => plan,
         Err(error) => return failure(error.message),
@@ -2339,10 +2315,6 @@ fn run_file_tests_batch_oven(
         .as_ref()
         .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
         .unwrap_or_else(|| "incan_test".to_string());
-    let project_version = manifest
-        .as_ref()
-        .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.version.clone()))
-        .unwrap_or_else(|| "0.1.0".to_string());
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
     let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &project_root);
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
@@ -2625,10 +2597,8 @@ fn run_file_tests_batch_oven(
     };
     let selection_elapsed = selection_start.elapsed();
 
-    // Classify caller declarations against the source projection, while retaining full-plan path authority for an
-    // exact compiler-owned dependency. The complete plan may include private compiler helpers whose names overlap
-    // ordinary caller dependencies such as serde_json.
-    let full_artifact_plan = plan_selection.artifact_plan();
+    // Classify caller declarations against the source projection. Path and Git declarations remain unavailable
+    // until the checked RFC 123 source-unit projection supplies them.
     let artifact_plan = plan_selection.source_artifact_plan("generated-root");
     let artifact_plan = match artifact_plan {
         Ok(plan) => plan,
@@ -2639,10 +2609,6 @@ fn run_file_tests_batch_oven(
             &inline_path_dependencies,
             &artifact_plan,
         );
-
-    let registry_authority = plan_selection.registry_leaf_authority();
-    let selected_path_authority =
-        crate::cli::commands::build::compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
 
     if crate::cli::commands::build::has_caller_owned_project_libraries(&provider_plan)
         && !plan_selection.uses_packaged_provider_closure()
@@ -2667,23 +2633,11 @@ fn run_file_tests_batch_oven(
         }
     }
 
-    let inline_libraries = match materialize_declared_rust_libraries_with_selected_path_authority(
-        &generated_root.join("oven").join("inline-rust"),
-        &rustc,
-        &receipt.intent.target,
-        "debug",
-        &inline_libraries_to_materialize,
-        registry_authority.as_ref(),
-        selected_path_authority.as_ref(),
-    ) {
-        Ok(libraries) => libraries,
-        Err(error) => {
-            return failure(format!(
-                "Oven direct-Rustc Rust dependency materialization failed: {error}"
-            ));
-        }
-    };
-    caller_owned_libraries.extend(inline_libraries);
+    if let Err(error) =
+        crate::cli::commands::build::require_checked_oven_rust_source_units(&inline_libraries_to_materialize)
+    {
+        return failure(error.message);
+    }
     caller_owned_libraries.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
     if caller_owned_libraries
         .windows(2)
@@ -2948,7 +2902,7 @@ def captured_resource() -> int:
     }
 
     #[test]
-    fn oven_test_seed_compatibility_records_only_used_sdk_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+    fn oven_test_build_unit_inputs_refuse_unprojected_provider_semantics() -> Result<(), Box<dyn std::error::Error>> {
         let sdk = ProviderRecord {
             identity: ProviderIdentity {
                 name: "incan_stdlib_testing".to_string(),
@@ -2969,49 +2923,22 @@ def captured_resource() -> int:
             artifact: None,
             implementation_facets: Vec::new(),
         };
-        let project = ProviderRecord {
-            identity: ProviderIdentity {
-                name: "json_provider".to_string(),
-                version: "0.1.0".to_string(),
-                digest: "sha256:project-json".to_string(),
-                feature_projection: BTreeSet::new(),
-            },
-            provenance: ProviderProvenance::ProjectDependency {
-                dependency_key: "json_provider".to_string(),
-                manifest_path: PathBuf::from("json_provider.incnlib"),
-            },
-            authority: NamespaceAuthority::ProjectDependency {
-                dependency_key: "json_provider".to_string(),
-            },
-            namespace_claims: BTreeSet::from([vec!["pub".to_string(), "json_provider".to_string()]]),
-            available: true,
-            enabled: true,
-            manifest: Some(Arc::new(LibraryManifest::new("json_provider", "0.1.0"))),
-            artifact: None,
-            implementation_facets: Vec::new(),
-        };
-        let project_identity = project.identity.stable_key();
         let provider_plan = ProviderPlan::new(
             LibraryManifestIndex::default(),
-            vec![sdk, project],
+            vec![sdk],
             [vec!["std".to_string(), "testing".to_string()]],
         )?;
-        let inputs = oven_test_build_unit_inputs(
+        let error = oven_test_build_unit_inputs(
             &provider_plan,
             &ProjectRequirements::default(),
             &ResolvedDependencies {
                 dependencies: Vec::new(),
                 dev_dependencies: Vec::new(),
             },
-        )?;
-        let records = inputs
-            .build_unit_inputs
-            .get("providers")
-            .ok_or("test receipt has no provider records")?;
-
-        assert!(records.contains("incan_stdlib_testing"));
-        assert!(!records.contains("json_provider"));
-        assert!(inputs.provider_semantic_identities.contains_key(&project_identity));
+        )
+        .err()
+        .ok_or("test build inputs accepted provider semantics without checked Oven source evidence")?;
+        assert!(error.contains("checked Oven Rust source projection"));
         Ok(())
     }
 

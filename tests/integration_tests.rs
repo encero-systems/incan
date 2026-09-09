@@ -13173,13 +13173,6 @@ def main() -> None:
                 .is_file()),
             "a successful bake must retire every exact Cargo bootstrap workspace to direct inspection: {inspection_workspaces:?}"
         );
-        assert!(
-            inspection_workspaces.iter().all(|workspace| !workspace
-                .join(incan::rust_inspect::OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER)
-                .exists()),
-            "ordinary consumers must not inherit a completed bake's Cargo inspection capability: {inspection_workspaces:?}"
-        );
-
         let mut build = super::incan_command();
         build
             .args(["build", "--locked"])
@@ -20330,10 +20323,6 @@ def main() -> None:
             "expected the semantic lock to retain a SHA-256 dependency fingerprint, got: {}",
             initial_lock.deps_fingerprint
         );
-        assert_eq!(
-            initial_lock.cargo_lock_payload, "version = 4\n",
-            "normal Oven lock files retain an inert legacy Cargo payload"
-        );
         assert!(
             !project_root.join("target/incan_lock/Cargo.toml").exists(),
             "normal Oven locking must not recreate a Cargo workspace projection"
@@ -20348,10 +20337,6 @@ def main() -> None:
             String::from_utf8_lossy(&refreshed_lock_output.stderr)
         );
         let refreshed_lock = incan::lockfile::IncanLock::load(&lock_path)?;
-        assert_eq!(
-            refreshed_lock.cargo_lock_payload, "version = 4\n",
-            "normal Oven lock files retain an inert legacy Cargo payload"
-        );
         assert_ne!(
             initial_lock.deps_fingerprint, refreshed_lock.deps_fingerprint,
             "provider requirements must participate in the semantic lock fingerprint"

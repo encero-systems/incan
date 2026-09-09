@@ -15,8 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::library_manifest::digest_cargo_path_source_tree_with_cache;
-use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
+use crate::manifest::{DependencySource, DependencySpec, GitReference};
 
 pub(crate) mod compiler_suite_env;
 pub(crate) mod interop;
@@ -30,12 +29,11 @@ pub mod store;
 
 /// Digest the portable dependency facts that select a native Oven closure.
 ///
-/// Registry and Git specifications are represented by their declared immutable selection facts. Path dependencies add
-/// only a source-tree digest, never the machine-local path. This keeps compatible clean worktrees reusable while a
-/// changed local runtime or declared dependency source necessarily selects a different build unit.
+/// Registry and Git specifications are represented by their declared immutable selection facts. Local Rust packages
+/// require a checked Oven source-unit identity and are rejected here until that identity has been projected; a Cargo
+/// path and an ad hoc filesystem digest are not valid native authority.
 pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String, OvenError> {
     let mut records = Vec::with_capacity(dependencies.len());
-    let mut resolved_path_packages = BTreeMap::new();
     for dependency in dependencies {
         let mut features = dependency.features.clone();
         features.sort();
@@ -47,18 +45,14 @@ pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String
                 GitReference::Tag(tag) => format!("git:{url}:tag:{tag}"),
                 GitReference::Rev(revision) => format!("git:{url}:rev:{revision}"),
             },
-            // A path dependency is selected by its recursive Cargo-semantic source closure, not by compiler output
-            // or unrelated repository files. Sharing the package memo also avoids rescanning a common sibling reached
-            // through several top-level dependencies.
             DependencySource::Path { path } => {
-                let digest =
-                    digest_cargo_path_source_tree_with_cache(path, &mut resolved_path_packages).map_err(|error| {
-                        OvenError::InvalidProjectSource {
-                            path: path.clone(),
-                            message: error.to_string(),
-                        }
-                    })?;
-                format!("path-tree:{digest}")
+                return Err(OvenError::InvalidProjectSource {
+                    path: path.clone(),
+                    message: format!(
+                        "Rust path dependency `{}` has no checked Oven source-unit identity; local Rust packages must be admitted as Loaf units",
+                        dependency.crate_name
+                    ),
+                });
             }
         };
         records.push(format!(
@@ -153,6 +147,7 @@ pub(crate) struct OvenGeneratedProjectSourceEvidence {
 #[derive(Debug, Clone)]
 pub struct OvenCompilerSuiteRequest {
     project_root: PathBuf,
+    project: OvenProjectIdentity,
     target: String,
     toolchain: String,
     profile: String,
@@ -226,6 +221,8 @@ impl OvenCompilerSuiteRequest {
     #[must_use]
     pub fn new(
         project_root: impl AsRef<Path>,
+        name: impl Into<String>,
+        version: impl Into<String>,
         target: impl Into<String>,
         toolchain: impl Into<String>,
         profile: impl Into<String>,
@@ -233,6 +230,10 @@ impl OvenCompilerSuiteRequest {
     ) -> Self {
         Self {
             project_root: project_root.as_ref().to_path_buf(),
+            project: OvenProjectIdentity {
+                name: name.into(),
+                version: version.into(),
+            },
             target: target.into(),
             toolchain: toolchain.into(),
             profile: profile.into(),
@@ -253,7 +254,7 @@ impl OvenCompilerSuiteRequest {
     }
 }
 
-/// Stable package identity shared by the imported Cargo package and optional Incan project declaration.
+/// Stable package identity supplied by the selected project declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenProjectIdentity {
     /// Package/distribution name.
@@ -608,8 +609,7 @@ pub fn receipt_native_compiler_suite(request: &OvenCompilerSuiteRequest) -> Resu
     let cargo_lock_path = request.project_root.join("Cargo.lock");
     let cargo_manifest = read_required_input(&cargo_manifest_path, "Cargo.toml")?;
     let cargo_lock = read_required_input(&cargo_lock_path, "Cargo.lock")?;
-    let project = parse_cargo_package(&cargo_manifest_path, &cargo_manifest)?;
-    validate_cargo_lock(&cargo_lock_path, &cargo_lock)?;
+    let project = request.project.clone();
     let lib_root = request.project_root.join("src/lib.rs");
     let cargo_manifest_digest = digest_content(&cargo_manifest);
     let cargo_lock_digest = digest_content(&cargo_lock);
@@ -712,35 +712,6 @@ fn read_required_input(path: &Path, file_name: &'static str) -> Result<String, O
             source,
         }),
     }
-}
-
-/// Resolve one root package field, including explicit Cargo workspace-package inheritance.
-fn package_string_field(
-    path: &Path,
-    package: &toml::map::Map<String, toml::Value>,
-    workspace_package: Option<&toml::map::Map<String, toml::Value>>,
-    field: &'static str,
-) -> Result<String, OvenError> {
-    if let Some(value) = package.get(field).and_then(toml::Value::as_str) {
-        return normalized_value(value, field);
-    }
-    let inherits_workspace_value = package
-        .get(field)
-        .and_then(toml::Value::as_table)
-        .and_then(|value| value.get("workspace"))
-        .and_then(toml::Value::as_bool)
-        .unwrap_or(false);
-    if inherits_workspace_value
-        && let Some(value) = workspace_package
-            .and_then(|workspace| workspace.get(field))
-            .and_then(toml::Value::as_str)
-    {
-        return normalized_value(value, field);
-    }
-    Err(OvenError::UnsupportedCargoPackage {
-        path: path.to_path_buf(),
-        message: format!("must declare [package].{field} as a string or inherit it from [workspace.package].{field}"),
-    })
 }
 
 /// Normalize explicit target, toolchain, profile, and feature inputs shared by imported and generated receipts.
@@ -1313,115 +1284,32 @@ mod tests {
     }
 
     #[test]
-    fn path_dependency_identity_ignores_mutable_project_output_but_tracks_authored_files()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let project = tempfile::tempdir()?;
-        fs::create_dir_all(project.path().join("src"))?;
-        fs::write(
-            project.path().join("Cargo.toml"),
-            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
-        )?;
-        fs::write(project.path().join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")?;
+    fn path_dependency_identity_requires_checked_oven_source_unit() -> Result<(), Box<dyn std::error::Error>> {
         let dependency = DependencySpec {
-            crate_name: "fixture".to_string(),
+            crate_name: "local_helper".to_string(),
             version: None,
             features: Vec::new(),
             default_features: true,
             source: DependencySource::Path {
-                path: project.path().to_path_buf(),
+                path: std::path::PathBuf::from("local-helper"),
             },
             optional: false,
             package: None,
         };
-        let initial = super::digest_dependency_specs(std::slice::from_ref(&dependency))?;
 
-        fs::write(
-            project.path().join("target"),
-            "an authored file, not an output directory",
-        )?;
-        assert_ne!(
-            initial,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency))?
-        );
-        fs::remove_file(project.path().join("target"))?;
-
-        for directory in [".git", ".incan/oven", ".ralph-cache/loafs", "target/debug"] {
-            fs::create_dir_all(project.path().join(directory))?;
-            fs::write(project.path().join(directory).join("mutable"), "not authored")?;
-        }
-        assert_eq!(
-            initial,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency))?
-        );
-
-        fs::write(project.path().join("native-schema.json"), "{\"version\": 1}\n")?;
-        assert_ne!(
-            initial,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency))?
-        );
-        fs::remove_file(project.path().join("native-schema.json"))?;
-
-        fs::write(project.path().join("src/lib.rs"), "pub fn value() -> i32 { 2 }\n")?;
-        assert_ne!(initial, super::digest_dependency_specs(&[dependency])?);
-        Ok(())
-    }
-
-    #[test]
-    fn path_dependency_identity_tracks_recursive_sibling_path_source() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        let first = temp.path().join("source-a");
-        let second = temp.path().join("source-b");
-        let write_packages = |workspace: &Path| -> Result<(), Box<dyn std::error::Error>> {
-            let foo = workspace.join("foo");
-            let bar = workspace.join("bar");
-            for package in [&foo, &bar] {
-                fs::create_dir_all(package.join("src"))?;
+        let error = super::digest_dependency_specs(std::slice::from_ref(&dependency))
+            .err()
+            .ok_or("local Rust path dependency produced an identity without checked Oven evidence")?;
+        match error {
+            super::OvenError::InvalidProjectSource { path, message } => {
+                assert_eq!(path, Path::new("local-helper"));
+                assert_eq!(
+                    message,
+                    "Rust path dependency `local_helper` has no checked Oven source-unit identity; local Rust packages must be admitted as Loaf units"
+                );
             }
-            fs::write(
-                foo.join("Cargo.toml"),
-                "[package]\nname = \"foo\"\nversion = \"0.1.0\"\n\n[dependencies]\nbar = { path = \"../bar\" }\n",
-            )?;
-            fs::write(foo.join("src/lib.rs"), "pub fn value() -> i32 { bar::value() }\n")?;
-            fs::write(
-                bar.join("Cargo.toml"),
-                "[package]\nname = \"bar\"\nversion = \"0.1.0\"\n",
-            )?;
-            fs::write(bar.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")?;
-            fs::write(bar.join("native-schema.json"), "{\"version\": 1}\n")?;
-            Ok(())
-        };
-        write_packages(&first)?;
-        write_packages(&second)?;
-        let dependency = |workspace: &Path| DependencySpec {
-            crate_name: "foo".to_string(),
-            version: None,
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Path {
-                path: workspace.join("foo"),
-            },
-            optional: false,
-            package: None,
-        };
-        let first_dependency = dependency(&first);
-        let second_dependency = dependency(&second);
-        let stable = super::digest_dependency_specs(std::slice::from_ref(&first_dependency))?;
-        assert_eq!(
-            stable,
-            super::digest_dependency_specs(std::slice::from_ref(&second_dependency))?
-        );
-
-        let second_bar = second.join("bar");
-        fs::write(second_bar.join("native-schema.json"), "{\"version\": 2}\n")?;
-        let source_changed = super::digest_dependency_specs(std::slice::from_ref(&second_dependency))?;
-        assert_ne!(stable, source_changed);
-
-        fs::create_dir_all(second_bar.join("target/debug"))?;
-        fs::write(second_bar.join("target/debug/cache"), "mutable output")?;
-        assert_eq!(
-            source_changed,
-            super::digest_dependency_specs(std::slice::from_ref(&second_dependency))?
-        );
+            other => return Err(format!("unexpected local Rust dependency error: {other}").into()),
+        }
         Ok(())
     }
 
@@ -1573,6 +1461,8 @@ mod tests {
         let request = || {
             OvenCompilerSuiteRequest::new(
                 project.path(),
+                "oven_fixture",
+                "0.1.0",
                 "aarch64-apple-darwin",
                 "rustc 1.96.0",
                 "debug",

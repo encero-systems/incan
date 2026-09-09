@@ -167,9 +167,6 @@ pub struct TestRunConfig<'a> {
     pub sdk_profile: Option<String>,
     pub timeout: Option<&'a str>,
     pub no_capture: bool,
-    pub cargo_features: Vec<String>,
-    pub cargo_no_default_features: bool,
-    pub cargo_all_features: bool,
     /// Compiler-owned workspace identity attached to every observable test result for a fan-out invocation.
     pub workspace_context: Option<WorkspaceTestContext>,
 }

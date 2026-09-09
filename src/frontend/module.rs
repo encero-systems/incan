@@ -300,7 +300,7 @@ fn effective_source_root(base_dir: &Path, source_root: Option<&Path>) -> Option<
 /// Infer a source root from conventional project layout when no manifest-driven root is available.
 fn discover_source_root_from_layout(base_dir: &Path) -> PathBuf {
     let mut project_root = base_dir.to_path_buf();
-    while !project_root.join("Cargo.toml").exists() && !project_root.join("src").exists() {
+    while !project_root.join("src").exists() {
         if !project_root.pop() {
             break;
         }

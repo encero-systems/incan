@@ -9,17 +9,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "cli")]
-use std::sync::RwLock;
 
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
-#[cfg(feature = "cli")]
-use crate::generated_cache::GeneratedCacheLease;
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use incan_core::lang::{rust_keywords, stdlib};
-use sha2::{Digest as _, Sha256};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
 
@@ -59,48 +54,6 @@ pub(super) fn is_sdk_provider_build() -> bool {
     std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
 }
 
-/// Render a path-independent dependency identity for generated root-artifact naming.
-fn dependency_spec_identity(dependency: &DependencySpec) -> String {
-    let mut features = dependency.features.clone();
-    features.sort();
-    features.dedup();
-    let source = match &dependency.source {
-        DependencySource::Registry => "registry".to_string(),
-        DependencySource::Git { url, reference } => format!("git:{url}:{reference:?}"),
-        // Root naming excludes delivery coordinates. Native reuse separately requires the selected source and
-        // dependency evidence; this name alone never establishes that a path dependency is unchanged.
-        DependencySource::Path { .. } => "path".to_string(),
-    };
-    format!(
-        "{}\0{}\0{}\0{}\0{}\0{}\0{}",
-        dependency.crate_name,
-        dependency.version.as_deref().unwrap_or_default(),
-        features.join("\u{1f}"),
-        dependency.default_features,
-        source,
-        dependency.optional,
-        dependency.package.as_deref().unwrap_or_default(),
-    )
-}
-
-/// Hash sorted logical records under one domain label.
-fn hash_logical_records(hasher: &mut Sha256, label: &[u8], mut records: Vec<String>) {
-    records.sort();
-    hasher.update(label);
-    for record in records {
-        hasher.update(record.as_bytes());
-        hasher.update(b"\0");
-    }
-}
-
-/// Render compiled-artifact metadata without its checkout- or cache-root paths.
-fn artifact_metadata_identity(metadata: &LibraryArtifactMetadata) -> String {
-    format!(
-        "{}\0{}\0{:?}",
-        metadata.dependency_key, metadata.manifest_name, metadata.kind
-    )
-}
-
 /// Project generator for creating runnable Rust projects from Incan code.
 pub struct ProjectGenerator {
     /// Output directory for the generated project
@@ -125,12 +78,6 @@ pub struct ProjectGenerator {
     pub(super) dev_dependencies: Vec<DependencySpec>,
     /// Whether dev dependencies should be emitted.
     pub(super) include_dev_dependencies: bool,
-    /// Active-use lease for the generated native output domain.
-    #[cfg(feature = "cli")]
-    pub(super) generated_cache_lease: RwLock<Option<GeneratedCacheLease>>,
-    /// Compatibility-domain identity used to validate project-local run publications.
-    #[cfg(feature = "cli")]
-    pub(super) generated_cache_identity: Option<String>,
     /// Optional Rust edition override.
     pub(super) rust_edition: Option<String>,
     /// Profile used when building the generated crate for `incan run`.
@@ -186,10 +133,6 @@ impl ProjectGenerator {
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
             include_dev_dependencies: false,
-            #[cfg(feature = "cli")]
-            generated_cache_lease: RwLock::new(None),
-            #[cfg(feature = "cli")]
-            generated_cache_identity: None,
             rust_edition: None,
             run_profile: RunProfile::Debug,
             compiled_sdk_modules: CompiledSdkModules::default(),
@@ -314,49 +257,6 @@ impl ProjectGenerator {
         self.companion_library_target = true;
     }
 
-    /// Retain the active-use lease for this generator's selected output domain.
-    #[cfg(feature = "cli")]
-    pub(crate) fn set_generated_cache_context(&mut self, lease: Option<GeneratedCacheLease>, identity: Option<String>) {
-        *self
-            .generated_cache_lease
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = lease;
-        self.generated_cache_identity = identity;
-    }
-
-    /// Release a managed output lease once native work and local publication are complete.
-    #[cfg(feature = "cli")]
-    pub(super) fn finish_generated_cache_lease(&self) -> io::Result<()> {
-        let lease = self
-            .generated_cache_lease
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        if let Some(lease) = lease {
-            lease.finish()?;
-        }
-        Ok(())
-    }
-
-    /// Keep non-CLI library builds independent from cache-management implementation details.
-    #[cfg(not(feature = "cli"))]
-    pub(super) fn finish_generated_cache_lease(&self) -> io::Result<()> {
-        Ok(())
-    }
-
-    /// Return the managed compatibility identity, when the CLI selected one.
-    #[cfg(test)]
-    pub(super) fn generated_cache_identity(&self) -> Option<&str> {
-        #[cfg(feature = "cli")]
-        {
-            self.generated_cache_identity.as_deref()
-        }
-        #[cfg(not(feature = "cli"))]
-        {
-            None
-        }
-    }
-
     /// Select the Rust edition for emitted native source.
     pub fn set_rust_edition(&mut self, edition: Option<String>) {
         self.rust_edition = edition;
@@ -417,11 +317,6 @@ impl ProjectGenerator {
         }
     }
 
-    /// Configure immutable compiled-library SDK projections for helper Cargo workspaces that do not retain a plan.
-    pub(crate) fn set_sdk_dependency_rebindings(&mut self, rebindings: Vec<SdkDependencyRebinding>) {
-        self.sdk_dependency_rebindings = rebindings;
-    }
-
     /// Configure active path-backed SDK/toolchain dependencies for helper workspaces that do not retain a plan.
     pub(crate) fn set_sdk_path_dependencies(&mut self, dependencies: Vec<DependencySpec>) {
         self.sdk_path_dependencies.extend(
@@ -451,11 +346,6 @@ impl ProjectGenerator {
         self.sdk_path_dependencies.dedup();
     }
 
-    /// Configure the complete compiled-artifact closure for helper workspaces that do not retain a provider plan.
-    pub(crate) fn set_sdk_artifact_projections(&mut self, projections: Vec<SdkArtifactProjection>) {
-        self.sdk_artifact_projections = projections;
-    }
-
     /// Return the generated Rust project directory.
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
@@ -467,17 +357,6 @@ impl ProjectGenerator {
             self.output_dir.join("src").join("main.rs")
         } else {
             self.output_dir.join("src").join("lib.rs")
-        }
-    }
-
-    /// Resolve the cargo target directory for a generated project.
-    pub(super) fn resolve_target_dir(target_dir: PathBuf) -> PathBuf {
-        if target_dir.is_absolute() {
-            target_dir
-        } else if let Ok(cwd) = std::env::current_dir() {
-            cwd.join(target_dir)
-        } else {
-            target_dir
         }
     }
 
@@ -506,33 +385,6 @@ impl ProjectGenerator {
             target_name.insert(0, '_');
         }
         target_name
-    }
-
-    /// Return a filesystem-safe name for a shared cargo target directory.
-    pub(super) fn shared_target_safe_name(name: &str, root_identity: &str) -> String {
-        let mut normalized = name
-            .chars()
-            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-            .collect::<String>();
-        if normalized.is_empty() {
-            normalized.push_str("incan_project");
-        }
-        if !normalized
-            .as_bytes()
-            .first()
-            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
-        {
-            normalized.insert(0, '_');
-        }
-
-        let mut hasher = Sha256::new();
-        hasher.update(name.as_bytes());
-        hasher.update(b"\0");
-        hasher.update(root_identity.as_bytes());
-        let digest_bytes = hasher.finalize();
-        let digest = hex::encode(&digest_bytes[..8]);
-
-        format!("{normalized}_{digest}")
     }
 
     /// Ensure the generated `src/` directory exists.

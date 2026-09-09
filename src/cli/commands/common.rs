@@ -8,9 +8,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::backend::c_abi::{CAbiVerificationPlan, ClangToolchain, verify_checked_c_binding};
@@ -38,31 +36,24 @@ use crate::frontend::testing_markers::{
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
-use crate::library_manifest::{
-    LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderModuleClaim,
-    digest_provider_artifact,
-};
-use crate::lockfile::CargoFeatureSelection;
+use crate::library_manifest::{LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource};
 use crate::manifest::{
-    CARGO_MANIFEST_FILENAME, DiscoveredManifest, INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV,
-    LOAF_MANIFEST_FILENAME, ManifestError, ProjectManifest, discovered_manifest_kind,
+    CARGO_MANIFEST_FILENAME, DiscoveredManifest, LOAF_MANIFEST_FILENAME, ManifestError, ProjectManifest,
+    discovered_manifest_kind,
 };
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 use crate::provider::{
     BackendImplementationRequirement, FeatureSelection, PackageFeatureGraph, PackageFeaturePlan,
     ProviderModuleResolution, ProviderPlan, ProviderProvenance, ResolvedSdkComponents, SDK_INVENTORY_FILE,
-    SDK_PROVIDER_BUILD_ENV, SDK_SOURCE_CATALOG_FILE, SdkArtifactProjection, SdkComponent, SdkComponentSelection,
-    SdkDependencyRebinding, SdkInventory, SdkProviderDescriptor, SdkResolutionError, SdkSourceCatalog,
+    SDK_PROVIDER_BUILD_ENV, SDK_SOURCE_CATALOG_FILE, SdkArtifactProjection, SdkComponentSelection,
+    SdkDependencyRebinding, SdkInventory, SdkResolutionError, SdkSourceCatalog,
 };
-#[cfg(feature = "rust_inspect")]
-use crate::rust_inspect::{Inspector, InspectorConfig};
 use crate::workspace::WorkspaceGraph;
 use incan_core::lang::{
     stdlib::{self, StdlibExtraCrateDep, StdlibExtraCrateSource},
     surface::result_methods,
 };
-use sha2::{Digest, Sha256};
 
 use super::vocab_extraction::collect_library_vocab_metadata_for_parser;
 
@@ -70,10 +61,6 @@ use super::vocab_extraction::collect_library_vocab_metadata_for_parser;
 ///
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
-static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<String>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
 /// Project roots already told that their `Cargo.toml` is ignored, so one command warns once.
 ///
 /// Oven prepares a project more than once per command — once per selected profile, and again for a caller-owned
@@ -85,19 +72,6 @@ static IGNORED_CARGO_MANIFESTS_REPORTED: LazyLock<Mutex<HashSet<PathBuf>>> =
 /// Shared immutable provider projections indexed by the canonical modules an invocation uses.
 type ProviderPlanCache = Arc<Mutex<BTreeMap<BTreeSet<Vec<String>>, Arc<ProviderPlan>>>>;
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
-/// Internal marker for a nested `pub::` dependency library build.
-///
-/// Unlike artifact-only mode, an Oven direct-rustc dependency build must emit caller-owned rlibs. It still targets
-/// exactly the dependency project selected by the parent, even if that project is the root of a larger workspace.
-pub(crate) const INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV: &str = "INCAN_INTERNAL_LIBRARY_DEPENDENCY_PREPARATION";
-/// Optional external directory for SDK publication timing evidence.
-const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
-/// Internal provider-store override used by isolated compiler and packaging tests.
-const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
-/// Internal file through which release packaging receives the exact immutable SDK provider root.
-const INTERNAL_SDK_PROVIDER_PATH_FILE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE";
-/// Internal SDK distribution profile used by release packaging to omit component payloads physically.
-const INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV: &str = "INCAN_INTERNAL_SDK_DISTRIBUTION_PROFILE";
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
 pub(crate) const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
 
@@ -263,936 +237,6 @@ pub(crate) struct ProjectRequirements {
     pub sdk_artifact_projections: Vec<SdkArtifactProjection>,
 }
 
-/// Select the Incan CLI executable that prepares SDK provider artifacts.
-///
-/// Cargo integration tests and development utilities do not run inside the `incan` CLI. Tests receive the real binary
-/// through `CARGO_BIN_EXE_incan`; utility binaries use the sibling CLI built in the same target directory. Returning an
-/// error is important: executing a generator with CLI arguments can exit successfully without publishing an artifact.
-fn sdk_provider_builder_executable(
-    cargo_test_binary: Option<PathBuf>,
-    current_executable: PathBuf,
-) -> CliResult<PathBuf> {
-    if let Some(executable) = cargo_test_binary.as_ref().filter(|path| path.is_file()) {
-        return Ok(executable.clone());
-    }
-
-    let binary_dir = current_executable.parent().unwrap_or_else(|| Path::new("."));
-    let mut sibling = binary_dir.join("incan");
-    sibling.set_extension(std::env::consts::EXE_EXTENSION);
-    if sibling.is_file() {
-        return Ok(sibling);
-    }
-
-    let mut parent_sibling = binary_dir.parent().unwrap_or_else(|| Path::new(".")).join("incan");
-    parent_sibling.set_extension(std::env::consts::EXE_EXTENSION);
-    if parent_sibling.is_file() {
-        return Ok(parent_sibling);
-    }
-
-    let supplied = cargo_test_binary
-        .as_deref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "unset".to_string());
-    Err(CliError::failure(format!(
-        "SDK provider publication requires the incan CLI executable at {} or {}; CARGO_BIN_EXE_incan={supplied}, current executable={}; build that binary before running compiler-backed utilities",
-        sibling.display(),
-        parent_sibling.display(),
-        current_executable.display(),
-    )))
-}
-
-/// Keep the bootstrap artifact lock alive for the whole preparation/publish transaction.
-///
-/// The compiler cannot call its own Incan `std.fs` artifact before that artifact exists. This is therefore a
-/// deliberately narrow native bootstrap boundary, mirroring RFC 112's advisory-lock contract while the compiler
-/// produces the first Incan-owned stdlib artifact.
-struct SdkProviderStoreLock {
-    _file: fs::File,
-}
-
-/// Acquire the artifact-store lock that serializes all bootstrap builds and publications.
-fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<SdkProviderStoreLock> {
-    fs::create_dir_all(store_root).map_err(|error| {
-        CliError::failure(format!(
-            "failed to create SDK provider store {}: {error}",
-            store_root.display()
-        ))
-    })?;
-    let lock_path = store_root.join(".incan.lock");
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|error| CliError::failure(format!("failed to open artifact lock {}: {error}", lock_path.display())))?;
-    file.lock().map_err(|error| {
-        CliError::failure(format!(
-            "failed to acquire artifact lock {}: {error}",
-            lock_path.display()
-        ))
-    })?;
-    Ok(SdkProviderStoreLock { _file: file })
-}
-
-/// Hash one sorted provider source subtree while excluding generated build output.
-fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
-    let mut entries = fs::read_dir(current)
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to read stdlib source directory {}: {error}",
-                current.display()
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to enumerate stdlib source directory {}: {error}",
-                current.display()
-            ))
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let relative = path.strip_prefix(root).map_err(|error| {
-            CliError::failure(format!(
-                "failed to make stdlib source path {} relative: {error}",
-                path.display()
-            ))
-        })?;
-        if relative.components().any(|component| component.as_os_str() == "target") {
-            continue;
-        }
-        let file_type = entry.file_type().map_err(|error| {
-            CliError::failure(format!(
-                "failed to inspect stdlib source path {}: {error}",
-                path.display()
-            ))
-        })?;
-        hasher.update(relative.to_string_lossy().as_bytes());
-        hasher.update([0]);
-        if file_type.is_dir() {
-            hasher.update(b"directory\0");
-            hash_sdk_provider_source_tree(root, &path, hasher)?;
-        } else if file_type.is_file() {
-            hasher.update(b"file\0");
-            let bytes = fs::read(&path).map_err(|error| {
-                CliError::failure(format!("failed to read stdlib source file {}: {error}", path.display()))
-            })?;
-            hasher.update(bytes);
-        } else if file_type.is_symlink() {
-            hasher.update(b"symlink\0");
-            let target = fs::read_link(&path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to read stdlib source symlink {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(target.to_string_lossy().as_bytes());
-        }
-        hasher.update([0xff]);
-    }
-    Ok(())
-}
-
-/// Derive the immutable provider-store identity from every input that can change generated Rust or its dependency
-/// closure. The identity is content based, so a stale provider set is never accepted because a directory exists.
-///
-/// Development binaries are rebuilt when test-only Rust changes, and their raw bytes are not a stable description of
-/// compiler behavior. A checkout therefore contributes its compiler source closure; an installed toolchain, which has
-/// no source closure to inspect, uses the executable digest. Checkout hashing includes the compiler's bootstrap
-/// Cargo.lock bytes as compiler inputs; no separately discovered Cargo lock authorizes SDK dependency selection.
-fn sdk_provider_store_identity(stdlib_root: &Path, executable: &Path, distribution_profile: &str) -> CliResult<String> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-provider-store-v4\0");
-    hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
-    hasher.update(b"compiler-version\0");
-    hasher.update(crate::version::INCAN_VERSION.as_bytes());
-    hasher.update(b"distribution-profile\0");
-    hasher.update(distribution_profile.as_bytes());
-
-    let executable = fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
-    if let Some(checkout_root) = sdk_provider_compiler_checkout_root(stdlib_root) {
-        hasher.update(b"compiler-source-closure\0");
-        hash_sdk_provider_compiler_source_tree(&checkout_root, &checkout_root, &mut hasher)?;
-    } else {
-        hasher.update(b"compiler-executable-content\0");
-        hasher.update(sdk_provider_compiler_digest(&executable)?);
-    }
-
-    Ok(hex::encode(hasher.finalize()))
-}
-
-/// Return the compiler-owned SDK provider identity for one source checkout.
-///
-/// This is intentionally exposed only to repository automation after it has built the matching CLI. The cache key
-/// must follow the same source closure as provider publication; hashing development executable bytes would make
-/// identical source checkouts miss after unrelated test builds.
-pub(crate) fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> CliResult<String> {
-    let stdlib_root = fs::canonicalize(compiler_root.join("crates/incan_stdlib/stdlib")).map_err(|error| {
-        CliError::failure(format!(
-            "failed to canonicalize built-in stdlib source directory below {}: {error}",
-            compiler_root.display()
-        ))
-    })?;
-    let executable = env::current_exe()
-        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
-    let executable = sdk_provider_builder_executable(None, executable)?;
-    let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
-        .ok()
-        .filter(|profile| !profile.is_empty())
-        .unwrap_or_else(|| "full".to_string());
-    sdk_provider_store_identity(&stdlib_root, &executable, &distribution_profile)
-}
-
-/// Resolve the source checkout that owns a discovered SDK tree, if this is a development layout.
-fn sdk_provider_compiler_checkout_root(stdlib_root: &Path) -> Option<PathBuf> {
-    let explicit = env::var_os("INCAN_SOURCE_ROOT")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    explicit
-        .into_iter()
-        .chain(stdlib_root.ancestors().map(Path::to_path_buf))
-        .find(|candidate| is_sdk_provider_compiler_checkout(candidate, stdlib_root))
-}
-
-/// Check the exact source layout before treating a directory tree as compiler authority.
-fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bool {
-    if !candidate.join("Cargo.toml").is_file() || !candidate.join("src").is_dir() {
-        return false;
-    }
-    let expected_stdlib_root = candidate.join("crates/incan_stdlib/stdlib");
-    fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
-}
-
-/// Hash only compiler-authoritative checkout inputs, excluding generated output and test-only trees.
-fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
-    let mut entries = fs::read_dir(current)
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to read compiler source directory {}: {error}",
-                current.display()
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to enumerate compiler source directory {}: {error}",
-                current.display()
-            ))
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let relative = path.strip_prefix(root).map_err(|error| {
-            CliError::failure(format!(
-                "failed to make compiler source path {} relative: {error}",
-                path.display()
-            ))
-        })?;
-        let file_type = entry.file_type().map_err(|error| {
-            CliError::failure(format!(
-                "failed to inspect compiler source path {}: {error}",
-                path.display()
-            ))
-        })?;
-        if file_type.is_dir()
-            && relative.components().any(|component| {
-                matches!(
-                    component.as_os_str().to_str(),
-                    Some(
-                        ".agents"
-                            | ".git"
-                            | ".incan"
-                            | "benches"
-                            | "docs"
-                            | "examples"
-                            | "target"
-                            | "tests"
-                            | "workspaces"
-                    )
-                )
-            })
-        {
-            continue;
-        }
-
-        hasher.update(relative.to_string_lossy().as_bytes());
-        hasher.update([0]);
-        if file_type.is_dir() {
-            hasher.update(b"directory\0");
-            hash_sdk_provider_compiler_source_tree(root, &path, hasher)?;
-        } else if file_type.is_file() {
-            hasher.update(b"file\0");
-            let bytes = fs::read(&path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to read compiler source file {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(bytes);
-        } else if file_type.is_symlink() {
-            hasher.update(b"symlink\0");
-            let target = fs::read_link(&path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to read compiler source symlink {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(target.to_string_lossy().as_bytes());
-        }
-        hasher.update([0xff]);
-    }
-    Ok(())
-}
-
-/// Hash the running compiler once per process with BLAKE3's optimized implementation, independent of its path.
-fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
-    if let Some(digest) = SDK_PROVIDER_COMPILER_DIGESTS
-        .lock()
-        .map_err(|_| CliError::failure("failed to lock the compiler-content digest cache"))?
-        .get(executable)
-        .copied()
-    {
-        return Ok(digest);
-    }
-
-    let mut executable_file = fs::File::open(executable).map_err(|error| {
-        CliError::failure(format!(
-            "failed to read compiler executable {}: {error}",
-            executable.display()
-        ))
-    })?;
-    let mut hasher = blake3::Hasher::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = executable_file.read(&mut buffer).map_err(|error| {
-            CliError::failure(format!(
-                "failed to read compiler executable {}: {error}",
-                executable.display()
-            ))
-        })?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    let digest = *hasher.finalize().as_bytes();
-    SDK_PROVIDER_COMPILER_DIGESTS
-        .lock()
-        .map_err(|_| CliError::failure("failed to lock the compiler-content digest cache"))?
-        .insert(executable.to_path_buf(), digest);
-    Ok(digest)
-}
-
-/// Select one user-shared development cache instead of duplicating identical provider artifacts in every checkout.
-fn default_sdk_provider_store(
-    stdlib_root: &Path,
-    incan_home: Option<std::ffi::OsString>,
-    user_home: Option<std::ffi::OsString>,
-) -> PathBuf {
-    incan_home
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            user_home
-                .filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".incan"))
-        })
-        .map(|root| root.join("cache").join("providers").join("sdk-v2"))
-        .unwrap_or_else(|| stdlib_root.join("target").join("incan_sdk_components"))
-}
-
-/// Flush every staged artifact file and directory before atomic publication.
-fn sync_sdk_provider_tree(path: &Path) -> CliResult<()> {
-    let mut entries = fs::read_dir(path)
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to read staged artifact directory {}: {error}",
-                path.display()
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to enumerate staged artifact directory {}: {error}",
-                path.display()
-            ))
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let entry_path = entry.path();
-        let file_type = entry.file_type().map_err(|error| {
-            CliError::failure(format!(
-                "failed to inspect staged artifact path {}: {error}",
-                entry_path.display()
-            ))
-        })?;
-        if file_type.is_dir() {
-            sync_sdk_provider_tree(&entry_path)?;
-        } else if file_type.is_file() {
-            fs::File::open(&entry_path)
-                .and_then(|file| file.sync_all())
-                .map_err(|error| {
-                    CliError::failure(format!(
-                        "failed to synchronize staged artifact file {}: {error}",
-                        entry_path.display()
-                    ))
-                })?;
-        }
-    }
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to synchronize staged artifact directory {}: {error}",
-                path.display()
-            ))
-        })
-}
-
-/// Flush the artifact store after publishing a new immutable artifact directory.
-fn sync_sdk_provider_store(store_root: &Path) -> CliResult<()> {
-    fs::File::open(store_root)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to synchronize artifact store {}: {error}",
-                store_root.display()
-            ))
-        })
-}
-
-/// Allocate a unique private staging directory for one artifact identity.
-fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> CliResult<PathBuf> {
-    let elapsed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| CliError::failure(format!("system clock predates Unix epoch: {error}")))?;
-    Ok(store_root.join(format!(
-        ".staging-{identity}-{}-{}",
-        std::process::id(),
-        elapsed.as_nanos()
-    )))
-}
-
-/// Build and atomically publish every SDK component provider from the source catalog.
-fn prepare_sdk_provider_inventory() -> CliResult<Arc<SdkInventory>> {
-    prepare_sdk_provider_inventory_in_store(None, None)
-}
-
-/// Build SDK providers into a publisher-owned store rather than the normal SDK cache.
-///
-/// This is for the explicitly named Oven `legacy_cargo` transition only. The caller is responsible for copying the
-/// resulting immutable inventory into its receipt-bound artifact before the private publisher root is reclaimed.
-pub(crate) fn prepare_sdk_provider_inventory_in_store(
-    publisher_store_root: Option<&Path>,
-    source_root_override: Option<&Path>,
-) -> CliResult<Arc<SdkInventory>> {
-    let stdlib_root = match source_root_override {
-        Some(source_root) => source_root.join("crates/incan_stdlib/stdlib"),
-        None => crate::cli::prelude::find_stdlib_dir().ok_or_else(|| {
-            CliError::failure("cannot locate built-in stdlib sources needed to prepare SDK component providers")
-        })?,
-    };
-    let stdlib_root = fs::canonicalize(&stdlib_root).map_err(|error| {
-        CliError::failure(format!(
-            "failed to canonicalize built-in stdlib source directory {}: {error}",
-            stdlib_root.display()
-        ))
-    })?;
-    let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    catalog
-        .validate_compiler_version(crate::version::INCAN_VERSION)
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let current_exe = env::current_exe()
-        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
-    let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    let executable = sdk_provider_builder_executable(cargo_test_binary, current_exe)?;
-    let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
-        .ok()
-        .filter(|profile| !profile.is_empty())
-        .unwrap_or_else(|| "full".to_string());
-    let store_root = publisher_store_root.map(Path::to_path_buf).unwrap_or_else(|| {
-        env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV)
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                if cfg!(test) {
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store")
-                } else {
-                    default_sdk_provider_store(
-                        &stdlib_root,
-                        env::var_os("INCAN_HOME"),
-                        env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")),
-                    )
-                }
-            })
-    });
-    let identity = sdk_provider_store_identity(&stdlib_root, &executable, &distribution_profile)?;
-    let _lock = acquire_sdk_provider_store_lock(&store_root)?;
-    let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
-        .filter(|path| !path.is_empty())
-        .map(|path| SdkBuildReports::new(Path::new(&path), &store_root, &identity))
-        .transpose()?;
-    let artifact_root = store_root.join(&identity);
-    let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
-    if inventory_path.is_file() {
-        let inventory =
-            SdkInventory::read_from_path(&inventory_path).map_err(|error| CliError::failure(error.to_string()))?;
-        inventory
-            .validate_compiler_compatibility(
-                crate::version::INCAN_VERSION,
-                crate::version::SDK_PROVIDER_CODEGEN_REVISION,
-            )
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        record_sdk_provider_root(&artifact_root)?;
-        if let Some(reports) = &mut build_reports {
-            reports.finish("cache_hit");
-        }
-        return Ok(Arc::new(inventory));
-    }
-    if artifact_root.exists() {
-        return Err(CliError::failure(format!(
-            "compiled SDK component artifact at {} is incomplete; refusing to overwrite an already published identity",
-            artifact_root.display()
-        )));
-    }
-
-    let staging_root = staged_sdk_provider_root(&store_root, &identity)?;
-    let staged_inventory = match build_sdk_components_into_staging(
-        &catalog,
-        &executable,
-        &staging_root,
-        &distribution_profile,
-        source_root_override.map(|source_root| (source_root, stdlib_root.as_path())),
-        build_reports.as_ref(),
-    ) {
-        Ok(inventory) => inventory,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&staging_root);
-            return Err(error);
-        }
-    };
-    sync_sdk_provider_tree(&staging_root)?;
-    fs::rename(&staging_root, &artifact_root).map_err(|error| {
-        CliError::failure(format!(
-            "failed to publish compiled SDK components from {} to {}: {error}",
-            staging_root.display(),
-            artifact_root.display()
-        ))
-    })?;
-    sync_sdk_provider_store(&store_root)?;
-    let published_inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
-    let published = SdkInventory::read_from_path(&published_inventory_path).map_err(|error| {
-        CliError::failure(format!(
-            "failed to load published SDK component inventory for {}: {error}",
-            staged_inventory.identity()
-        ))
-    })?;
-    record_sdk_provider_root(&artifact_root)?;
-    if let Some(reports) = &mut build_reports {
-        reports.finish("published");
-    }
-    Ok(Arc::new(published))
-}
-
-/// Optional operational evidence kept outside the immutable provider store.
-struct SdkBuildReports {
-    directory: PathBuf,
-    identity: String,
-    started: std::time::Instant,
-    completed: bool,
-}
-
-impl SdkBuildReports {
-    /// Require an existing external directory before creating a unique publication report session.
-    fn new(directory: &Path, store: &Path, identity: &str) -> CliResult<Self> {
-        let directory = fs::canonicalize(directory).map_err(|error| {
-            CliError::failure(format!(
-                "SDK build report directory must already exist: {}: {error}",
-                directory.display()
-            ))
-        })?;
-        let store = fs::canonicalize(store).map_err(|error| CliError::failure(error.to_string()))?;
-        if directory.starts_with(&store) || store.starts_with(&directory) {
-            return Err(CliError::failure(
-                "SDK build report directory must be separate from the provider store",
-            ));
-        }
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| CliError::failure(error.to_string()))?
-            .as_nanos();
-        let directory = directory.join(format!("sdk-build-{}-{nonce}", std::process::id()));
-        fs::create_dir(&directory).map_err(|error| CliError::failure(error.to_string()))?;
-        let reports = Self {
-            directory,
-            identity: identity.to_string(),
-            started: std::time::Instant::now(),
-            completed: false,
-        };
-        reports.summary("preparing");
-        Ok(reports)
-    }
-
-    /// Persist telemetry without changing the compiler's publication result or original failure diagnostic.
-    fn write(&self, name: &str, value: &serde_json::Value) {
-        let result = serde_json::to_vec_pretty(value)
-            .map_err(std::io::Error::other)
-            .and_then(|bytes| fs::write(self.directory.join(name), bytes));
-        if let Err(error) = result {
-            eprintln!("warning: SDK build timing report unavailable: {error}");
-        }
-    }
-
-    /// Describe work after acquiring the store lock; source identity calculation and lock waiting precede this scope.
-    fn summary(&self, status: &str) {
-        self.write(
-            "summary.json",
-            &serde_json::json!({
-                "schema_version": 1, "status": status, "sdk_store_identity": self.identity,
-                "elapsed_scope": "after_store_lock",
-                "elapsed_ms": self.started.elapsed().as_millis()
-            }),
-        );
-    }
-
-    /// Mark a successfully validated cache acquisition or completed publication.
-    fn finish(&mut self, status: &str) {
-        self.summary(status);
-        self.completed = true;
-    }
-
-    /// Select a component-specific child output; the SDK environment helper disables descendant report sessions.
-    fn configure(&self, command: &mut Command, component: &str) {
-        command
-            .args(["--report", "json", "--report-output"])
-            .arg(self.directory.join(format!("{component}.build.json")));
-    }
-
-    /// Retain bounded successful phase data and an explicit unavailable reason on missing or malformed child output.
-    fn component(&self, component: &str, elapsed: std::time::Duration, output: &std::process::Output) {
-        let path = self.directory.join(format!("{component}.build.json"));
-        let parsed = (|| -> Result<serde_json::Value, String> {
-            let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
-            if metadata.len() > 4 * 1024 * 1024 {
-                return Err("child report exceeds 4 MiB".to_string());
-            }
-            let bytes = fs::read(&path).map_err(|error| error.to_string())?;
-            let report: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-            let timings = report
-                .get("timings_ms")
-                .and_then(serde_json::Value::as_object)
-                .filter(|timings| !timings.is_empty() && timings.values().all(|value| value.as_u64().is_some()))
-                .ok_or("child report has no valid timings_ms")?;
-            Ok(serde_json::Value::Object(timings.clone()))
-        })();
-        let (status, timings, reason) = match parsed {
-            Ok(timings) => ("available", timings, None),
-            Err(reason) => ("unavailable", serde_json::Value::Null, Some(reason)),
-        };
-        self.write(
-            &format!("{component}.timing.json"),
-            &serde_json::json!({
-                "schema_version": 1, "component": component, "elapsed_ms": elapsed.as_millis(),
-                "success": output.status.success(), "exit_code": output.status.code(),
-                "report_status": status, "timings_ms": timings, "unavailable_reason": reason,
-                "timings_semantics": "inclusive_nested_scopes"
-            }),
-        );
-    }
-}
-
-impl Drop for SdkBuildReports {
-    fn drop(&mut self) {
-        if !self.completed {
-            self.summary("failed");
-        }
-    }
-}
-
-/// Report the exact immutable provider root to release packaging when requested.
-fn record_sdk_provider_root(artifact_root: &Path) -> CliResult<()> {
-    let Some(path_file) = env::var_os(INTERNAL_SDK_PROVIDER_PATH_FILE_ENV).filter(|path| !path.is_empty()) else {
-        return Ok(());
-    };
-    fs::write(&path_file, format!("{}\n", artifact_root.display())).map_err(|error| {
-        CliError::failure(format!(
-            "failed to record SDK provider root in {}: {error}",
-            PathBuf::from(path_file).display()
-        ))
-    })
-}
-
-/// Build source components in dependency order while exposing only already-published providers to each producer.
-fn build_sdk_components_into_staging(
-    catalog: &SdkSourceCatalog,
-    executable: &Path,
-    staging_root: &Path,
-    distribution_profile: &str,
-    toolchain_source: Option<(&Path, &Path)>,
-    build_reports: Option<&SdkBuildReports>,
-) -> CliResult<SdkInventory> {
-    fs::create_dir_all(staging_root).map_err(|error| {
-        CliError::failure(format!(
-            "failed to create SDK component staging directory {}: {error}",
-            staging_root.display()
-        ))
-    })?;
-    let mut inventory = source_catalog_inventory(catalog, staging_root);
-    let inventory_path = staging_root.join(SDK_INVENTORY_FILE);
-    let mut built_any = false;
-
-    for component in catalog.publication_order() {
-        let output_root = staging_root.join("components").join(&component.id);
-        let manifest = ProjectManifest::discover(&component.project_root)
-            .map_err(|error| CliError::failure(error.to_string()))?
-            .ok_or_else(|| {
-                CliError::failure(format!(
-                    "SDK component `{}` has no loaf.toml at {}",
-                    component.id,
-                    component.project_root.display()
-                ))
-            })?;
-        let provider_name = manifest
-            .project
-            .as_ref()
-            .and_then(|project| project.name.clone())
-            .ok_or_else(|| CliError::failure(format!("SDK component `{}` has no project name", component.id)))?;
-        eprintln!(
-            "Preparing SDK component `{}` with `incan build --lib` in {}",
-            component.id,
-            component.project_root.display()
-        );
-        let mut command = Command::new(executable);
-        command
-            .current_dir(&component.project_root)
-            .args(["build", "--lib", "."])
-            .arg(&output_root)
-            .arg("--all-features");
-        configure_sdk_provider_build_environment(&mut command, &component.id, toolchain_source);
-        if built_any {
-            inventory
-                .write_to_path(&inventory_path)
-                .map_err(|error| CliError::failure(error.to_string()))?;
-            command.env(SDK_INVENTORY_OVERRIDE_ENV, &inventory_path);
-        } else {
-            command.env_remove(SDK_INVENTORY_OVERRIDE_ENV);
-        }
-        if let Some(reports) = build_reports {
-            reports.configure(&mut command, &component.id);
-        }
-        let component_started = std::time::Instant::now();
-        let output = command.output().map_err(|error| {
-            CliError::failure(format!(
-                "failed to run SDK component build for `{}` at {}: {error}",
-                component.id,
-                component.project_root.display()
-            ))
-        })?;
-        if let Some(reports) = build_reports {
-            reports.component(&component.id, component_started.elapsed(), &output);
-        }
-        if !output.status.success() {
-            return Err(nested_sdk_component_build_error(
-                component.id.as_str(),
-                &component.project_root,
-                &output,
-            ));
-        }
-        let manifest_path = output_root.join(format!("{provider_name}.incnlib"));
-        let provider_manifest = LibraryManifest::read_from_path(&manifest_path).map_err(|error| {
-            CliError::failure(format!(
-                "failed to read SDK component `{}` manifest {}: {error}",
-                component.id,
-                manifest_path.display()
-            ))
-        })?;
-        let namespace_claims = sdk_component_namespace_claims(
-            &component.id,
-            &component.namespace_roots,
-            &provider_manifest.contract_metadata.provider.namespace_claims,
-        )?;
-        let digest = digest_provider_artifact(&output_root).map_err(|error| {
-            CliError::failure(format!(
-                "failed to hash SDK component `{}` artifact {}: {error}",
-                component.id,
-                output_root.display()
-            ))
-        })?;
-        let inventory_component = inventory.components.get_mut(&component.id).ok_or_else(|| {
-            CliError::failure(format!(
-                "SDK source catalog lost component `{}` while publishing",
-                component.id
-            ))
-        })?;
-        inventory_component.available = true;
-        inventory_component.providers = vec![SdkProviderDescriptor {
-            name: provider_manifest.name,
-            version: provider_manifest.version,
-            digest,
-            namespace_claims,
-            manifest_path: Some(manifest_path),
-            crate_root: Some(output_root),
-        }];
-        built_any = true;
-    }
-    restrict_staged_sdk_profile(catalog, distribution_profile, staging_root, &mut inventory)?;
-    inventory
-        .write_to_path(&inventory_path)
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    Ok(inventory)
-}
-
-/// Isolate component compilation under its exact SDK namespace and compiler source inputs.
-fn configure_sdk_provider_build_environment(
-    command: &mut Command,
-    component_id: &str,
-    toolchain_source: Option<(&Path, &Path)>,
-) {
-    command
-        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
-        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-        .env_remove(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
-        .env(SDK_PROVIDER_BUILD_ENV, component_id)
-        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
-    if let Some((source_root, stdlib_root)) = toolchain_source {
-        command
-            .env("INCAN_SOURCE_ROOT", source_root)
-            .env("INCAN_STDLIB", stdlib_root);
-    }
-}
-
-/// Validate producer claims against the namespace grant before publishing them into the SDK inventory.
-fn sdk_component_namespace_claims(
-    component_id: &str,
-    namespace_roots: &BTreeSet<String>,
-    claims: &[ProviderModuleClaim],
-) -> CliResult<BTreeSet<Vec<String>>> {
-    let unauthorized = claims
-        .iter()
-        .filter(|claim| {
-            claim
-                .module_path
-                .first()
-                .is_none_or(|root| !namespace_roots.contains(root))
-        })
-        .map(|claim| claim.module_path.join("."))
-        .collect::<Vec<_>>();
-    if !unauthorized.is_empty() {
-        return Err(CliError::failure(format!(
-            "SDK component `{component_id}` claims module(s) {} outside its granted namespace roots [{}]",
-            unauthorized.join(", "),
-            namespace_roots.iter().cloned().collect::<Vec<_>>().join(", ")
-        )));
-    }
-
-    Ok(claims
-        .iter()
-        .map(|claim| {
-            let mut path = vec![stdlib::STDLIB_ROOT.to_string()];
-            path.extend(claim.module_path.iter().cloned());
-            path
-        })
-        .collect())
-}
-
-/// Remove provider payloads outside one release distribution profile while retaining their catalog records.
-fn restrict_staged_sdk_profile(
-    catalog: &SdkSourceCatalog,
-    distribution_profile: &str,
-    staging_root: &Path,
-    inventory: &mut SdkInventory,
-) -> CliResult<()> {
-    if !catalog.profiles.contains_key(distribution_profile) {
-        return Err(CliError::failure(format!(
-            "unknown SDK distribution profile `{distribution_profile}`"
-        )));
-    }
-    let resolved = inventory
-        .resolve_catalog(&SdkComponentSelection {
-            profile: distribution_profile.to_string(),
-            components: BTreeSet::new(),
-            exclude_components: BTreeSet::new(),
-        })
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    for component in inventory.components.values_mut() {
-        if resolved.enabled.contains(&component.id) {
-            continue;
-        }
-        component.available = false;
-        for provider in &mut component.providers {
-            provider.manifest_path = None;
-            provider.crate_root = None;
-        }
-        let component_root = staging_root.join("components").join(&component.id);
-        if component_root.exists() {
-            fs::remove_dir_all(&component_root).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to exclude SDK component payload {}: {error}",
-                    component_root.display()
-                ))
-            })?;
-        }
-    }
-    Ok(())
-}
-
-/// Create the unavailable installation catalog before component publication begins.
-fn source_catalog_inventory(catalog: &SdkSourceCatalog, root: &Path) -> SdkInventory {
-    let components = catalog
-        .components
-        .iter()
-        .map(|(id, component)| {
-            (
-                id.clone(),
-                SdkComponent {
-                    id: id.clone(),
-                    version: catalog.sdk_version.clone(),
-                    mandatory: component.mandatory,
-                    available: false,
-                    dependencies: component.dependencies.clone(),
-                    providers: Vec::new(),
-                },
-            )
-        })
-        .collect();
-    SdkInventory {
-        root: root.to_path_buf(),
-        sdk_id: catalog.sdk_id.clone(),
-        sdk_version: catalog.sdk_version.clone(),
-        compiler_requirement: catalog.compiler_requirement.clone(),
-        provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
-        components,
-        profiles: catalog.profiles.clone(),
-    }
-}
-
-/// Preserve nested compiler stdout and stderr when one component publication fails.
-fn nested_sdk_component_build_error(component: &str, project_root: &Path, output: &std::process::Output) -> CliError {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let diagnostics = [stderr.trim(), stdout.trim()]
-        .into_iter()
-        .filter(|message| !message.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    CliError::failure(format!(
-        "failed to prepare SDK component `{component}` at {}{}",
-        project_root.display(),
-        if diagnostics.is_empty() {
-            String::new()
-        } else {
-            format!("\n{diagnostics}")
-        }
-    ))
-}
-
 /// Enforce the project-level `requires-incan` constraint for a project-aware command.
 pub(crate) fn enforce_project_toolchain_constraint(manifest: &ProjectManifest) -> CliResult<()> {
     enforce_toolchain_constraints(&ToolchainConstraintSet::from_project_manifest(manifest))
@@ -1203,22 +247,6 @@ pub(crate) fn enforce_toolchain_constraints(constraints: &ToolchainConstraintSet
     constraints
         .enforce_current()
         .map_err(|error| CliError::failure(error.to_string()))
-}
-
-/// Resolve one boolean policy input with CLI enable/disable flags over env defaults.
-fn resolve_cli_env_flag(env_default: bool, cli_enable: bool, cli_disable: bool) -> bool {
-    if cli_enable {
-        true
-    } else if cli_disable {
-        false
-    } else {
-        env_default
-    }
-}
-
-/// Parse a boolean RFC 020 environment flag value.
-fn env_flag_value(value: Option<&str>) -> bool {
-    value.is_some_and(|value| matches!(value, "1" | "true" | "TRUE" | "on" | "ON"))
 }
 
 /// Discover the active component-aware SDK relative to the selected toolchain or an explicit override.
@@ -1261,23 +289,6 @@ pub(crate) fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInvento
         )
         .map_err(|error| CliError::failure(error.to_string()))?;
     Ok(Some(Arc::new(inventory)))
-}
-
-/// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
-pub(crate) fn prepare_or_discover_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
-    if let Some(inventory) = discover_active_sdk_inventory()? {
-        return Ok(Some(inventory));
-    }
-    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
-        return Ok(None);
-    }
-    let has_source_catalog =
-        crate::cli::prelude::find_stdlib_dir().is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file());
-    if has_source_catalog {
-        prepare_sdk_provider_inventory().map(Some)
-    } else {
-        Ok(None)
-    }
 }
 
 /// Reject explicit component-aware selection when the active toolchain exposes only the legacy monolithic SDK.
@@ -1835,10 +846,9 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
-        Self::discover_with_dependency_mode_and_sdk_source(
+        Self::discover_with_dependency_mode(
             entry_path,
-            DependencyManifestMode::FullArtifacts,
-            SdkInventorySource::PrepareLegacyCargoIfAbsent,
+            DependencyManifestMode::OvenArtifacts,
             feature_selection,
             sdk_profile_override,
         )
@@ -1866,10 +876,9 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
-        Self::discover_with_dependency_mode_and_sdk_source(
+        Self::discover_with_dependency_mode(
             entry_path,
             DependencyManifestMode::ParserOnly,
-            SdkInventorySource::DiscoverOnly,
             feature_selection,
             sdk_profile_override,
         )
@@ -1884,20 +893,18 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
-        Self::discover_with_dependency_mode_and_sdk_source(
+        Self::discover_with_dependency_mode(
             entry_path,
             DependencyManifestMode::OvenArtifacts,
-            SdkInventorySource::DiscoverOnly,
             feature_selection,
             sdk_profile_override,
         )
     }
 
-    /// Discover project context with either full dependency artifacts or parser-only dependency metadata.
-    fn discover_with_dependency_mode_and_sdk_source(
+    /// Discover project context with either admitted Oven artifacts or parser-only dependency metadata.
+    fn discover_with_dependency_mode(
         entry_path: &Path,
         dependency_mode: DependencyManifestMode,
-        sdk_source: SdkInventorySource,
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
@@ -1908,10 +915,7 @@ impl CompilationSession {
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
-        let sdk_inventory = match sdk_source {
-            SdkInventorySource::PrepareLegacyCargoIfAbsent => prepare_or_discover_sdk_inventory()?,
-            SdkInventorySource::DiscoverOnly => discover_active_sdk_inventory()?,
-        };
+        let sdk_inventory = discover_active_sdk_inventory()?;
         let package_feature_plan = manifest
             .as_ref()
             .map(|manifest| {
@@ -1936,14 +940,9 @@ impl CompilationSession {
             .map(|graph| graph.declared_features().map(str::to_string).collect())
             .unwrap_or_default();
         if let Some(manifest) = manifest.as_ref()
-            && let Some(preparation) = dependency_mode.library_dependency_preparation()
+            && dependency_mode.uses_materialized_library_index()
         {
-            prepare_library_dependency_artifacts(
-                manifest,
-                package_feature_plan.as_ref(),
-                &active_dependencies,
-                preparation,
-            )?;
+            require_library_dependency_artifacts(manifest, package_feature_plan.as_ref(), &active_dependencies)?;
         }
         let mut library_manifest_index = match (manifest.as_ref(), dependency_mode) {
             (Some(manifest), mode) if mode.uses_materialized_library_index() && !active_dependencies.is_empty() => {
@@ -2305,45 +1304,16 @@ impl CompilationSession {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DependencyManifestMode {
-    /// Prepare a legacy source-compatible dependency manifest without baking a native library.
-    FullArtifacts,
     /// Materialize direct-Rustc caller-owned libraries for a normal Oven consumer.
     OvenArtifacts,
     ParserOnly,
 }
 
 impl DependencyManifestMode {
-    /// Return the caller-owned library artifact policy for this dependency preparation mode.
-    fn library_dependency_preparation(self) -> Option<LibraryDependencyPreparation> {
-        match self {
-            Self::FullArtifacts => Some(LibraryDependencyPreparation::LegacyManifestOnly),
-            Self::OvenArtifacts => Some(LibraryDependencyPreparation::OvenDirectRustc),
-            Self::ParserOnly => None,
-        }
-    }
-
     /// Return whether this mode needs the checked library index after preparation.
     fn uses_materialized_library_index(self) -> bool {
-        matches!(self, Self::FullArtifacts | Self::OvenArtifacts)
+        matches!(self, Self::OvenArtifacts)
     }
-}
-
-/// Specify which owned artifact a local `pub::` dependency preparation must provide to its caller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LibraryDependencyPreparation {
-    /// Preserve the legacy preparation behavior used by commands that only require dependency metadata.
-    LegacyManifestOnly,
-    /// Produce metadata and profile-specific caller-owned rlibs through normal Oven direct-rustc library execution.
-    OvenDirectRustc,
-}
-
-/// Decide whether session construction is inside the explicitly named legacy-Cargo provider publisher.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SdkInventorySource {
-    /// Existing compatibility behavior for commands that still explicitly own legacy artifact preparation.
-    PrepareLegacyCargoIfAbsent,
-    /// Oven consumer mode: read an installed/prepared inventory only and never create Cargo state on a cache miss.
-    DiscoverOnly,
 }
 
 /// Build a parser-only dependency manifest index for formatting and other collection-only entrypoints.
@@ -2438,12 +1408,14 @@ fn parser_only_library_manifest_entry(
     })
 }
 
-/// Ensure clean check/format/test entrypoints see the same public dependency manifests as warmed worktrees.
-fn prepare_library_dependency_artifacts(
+/// Require every selected local library dependency to have an admitted Oven artifact.
+///
+/// Session discovery is read-only. A missing or stale dependency artifact is a producer obligation and never
+/// authorizes the compiler to spawn itself, synthesize a Cargo project, or mutate the dependency checkout.
+fn require_library_dependency_artifacts(
     manifest: &ProjectManifest,
     feature_plan: Option<&PackageFeaturePlan>,
     active_dependencies: &BTreeSet<String>,
-    preparation: LibraryDependencyPreparation,
 ) -> CliResult<()> {
     if active_dependencies.is_empty() {
         return Ok(());
@@ -2453,7 +1425,6 @@ fn prepare_library_dependency_artifacts(
         manifest,
         active_dependencies.iter().map(String::as_str),
     );
-    let mut required = Vec::new();
     for dependency_key in active_dependencies {
         let Some(dependency) = manifest.library_dependencies().get(dependency_key) else {
             continue;
@@ -2463,7 +1434,7 @@ fn prepare_library_dependency_artifacts(
             .map(|package| package.features.active_features.clone())
             .unwrap_or_default();
         let has_source_manifest = dependency.path.join(LOAF_MANIFEST_FILENAME).is_file();
-        let needs_build = match initial_index.get(dependency_key) {
+        let unavailable = match initial_index.get(dependency_key) {
             Some(LibraryManifestIndexEntry::Loaded {
                 manifest: artifact_manifest,
                 metadata,
@@ -2478,8 +1449,7 @@ fn prepare_library_dependency_artifacts(
                     )));
                 }
                 actual_features != &expected_features
-                    || matches!(preparation, LibraryDependencyPreparation::OvenDirectRustc)
-                        && has_source_manifest
+                    || has_source_manifest
                         && !oven_library_dependency_has_verified_profile_receipts(&dependency.path)
                         && !super::build::oven_library_dependency_declares_package_loaf(&dependency.path)
             }
@@ -2488,20 +1458,13 @@ fn prepare_library_dependency_artifacts(
             }
             None => false,
         };
-        if needs_build && has_source_manifest {
-            required.push((dependency_key.clone(), dependency.path.clone(), expected_features));
-        }
-    }
-
-    for (dependency_key, dependency_root, active_features) in required {
-        if matches!(preparation, LibraryDependencyPreparation::OvenDirectRustc) {
+        if unavailable && has_source_manifest {
             return Err(CliError::failure(format!(
-                "Oven Alpha requires a baked package Loaf for pub::{dependency_key} at {}; run `incan oven bake --project {}` in that provider before preparing this consumer. Normal build, run, test, lock, and consumer bake will not compile the provider or invoke Cargo on its behalf",
-                dependency_root.display(),
-                dependency_root.display()
+                "Oven requires a baked package Loaf for pub::{dependency_key} at {}; run `incan oven bake --project {}` in that provider before preparing this consumer. Session discovery will not compile or mutate a dependency on the consumer's behalf",
+                dependency.path.display(),
+                dependency.path.display()
             )));
         }
-        prepare_library_dependency_artifact(&dependency_key, &dependency_root, &active_features, preparation)?;
     }
 
     Ok(())
@@ -2511,7 +1474,7 @@ fn prepare_library_dependency_artifacts(
 ///
 /// A legacy generated artifact is not enough: consumers re-materialize the provider source through their selected
 /// direct-Rustc cohort, which requires an identity-verified producer receipt for the debug and release profiles.
-/// A local source manifest permits the existing nested Oven build to refresh either missing or malformed receipt.
+/// A local source manifest identifies the producer project but does not authorize a consumer to rebuild it.
 fn oven_library_dependency_has_verified_profile_receipts(dependency_root: &Path) -> bool {
     let release = crate::oven::default_receipt_path(dependency_root);
     let debug = release.with_file_name("library-debug-receipt.json");
@@ -2521,81 +1484,6 @@ fn oven_library_dependency_has_verified_profile_receipts(dependency_root: &Path)
             .and_then(|bytes| serde_json::from_slice::<crate::oven::OvenReceipt>(&bytes).ok())
             .is_some_and(|receipt| receipt.verify_identity().is_ok())
     })
-}
-
-/// Prepare one missing `pub::` dependency artifact through the existing library-mode compiler path.
-fn prepare_library_dependency_artifact(
-    dependency_key: &str,
-    dependency_root: &Path,
-    active_features: &BTreeSet<String>,
-    preparation: LibraryDependencyPreparation,
-) -> CliResult<()> {
-    let canonical_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
-    {
-        let prepared = PREPARED_LIBRARY_DEPENDENCIES
-            .lock()
-            .map_err(|_| CliError::failure("failed to lock prepared library dependency set"))?;
-        if prepared.get(&canonical_root) == Some(active_features) {
-            return Ok(());
-        }
-    }
-
-    let preparation_label = match preparation {
-        LibraryDependencyPreparation::LegacyManifestOnly => "metadata artifact",
-        LibraryDependencyPreparation::OvenDirectRustc => "Oven direct-rustc library",
-    };
-    // A parent `--report json` reserves stdout for exactly one machine-readable document. The internal compiler
-    // child inherits no report options, so route its progress through stderr before it can corrupt the parent's
-    // aggregate report. The normal human command retains the existing concise progress line below.
-    eprintln!(
-        "Preparing missing pub::{dependency_key} {preparation_label} with `incan build --lib` in {}",
-        dependency_root.display()
-    );
-    let current_exe = env::current_exe()
-        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
-    let mut command = Command::new(current_exe);
-    command
-        .args(["build", "--lib", "--no-default-features"])
-        .current_dir(dependency_root)
-        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
-        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-        .env(INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV, "1")
-        .stdout(Stdio::null());
-    match preparation {
-        LibraryDependencyPreparation::LegacyManifestOnly => {
-            command.env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
-        }
-        LibraryDependencyPreparation::OvenDirectRustc => {
-            // An inherited preparation flag would silently turn this child back into metadata-only output, leaving
-            // the normal Oven consumer without a caller-owned rlib. Clear only that internal flag: the child keeps
-            // the suite's sealed SDK inventory and direct-rustc selection context.
-            command.env_remove(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV);
-        }
-    }
-    if !active_features.is_empty() {
-        command
-            .arg("--features")
-            .arg(active_features.iter().cloned().collect::<Vec<_>>().join(","));
-    }
-    let status = command.status().map_err(|error| {
-        CliError::failure(format!(
-            "failed to run `incan build --lib` for pub::{dependency_key} dependency at {}: {error}",
-            dependency_root.display()
-        ))
-    })?;
-
-    if !status.success() {
-        return Err(CliError::failure(format!(
-            "failed to prepare pub::{dependency_key} dependency artifact at {}",
-            dependency_root.display()
-        )));
-    }
-
-    let mut prepared = PREPARED_LIBRARY_DEPENDENCIES
-        .lock()
-        .map_err(|_| CliError::failure("failed to lock prepared library dependency set"))?;
-    prepared.insert(canonical_root, active_features.clone());
-    Ok(())
 }
 
 /// Collect a unified set of project requirements from source imports and loaded provider manifests.
@@ -3060,14 +1948,6 @@ pub(crate) fn mark_oven_direct_rust_inspection(manifest_dir: &Path) -> CliResult
             marker.display()
         ))
     })
-}
-
-#[cfg(feature = "rust_inspect")]
-/// Return whether this generated manifest carries the direct-Oven rust-inspect marker.
-fn oven_direct_rust_inspection_marked(manifest_dir: &Path) -> bool {
-    manifest_dir
-        .join(crate::rust_inspect::OVEN_DIRECT_INSPECTION_MARKER)
-        .is_file()
 }
 
 /// Resolve the source path for a stdlib module path (e.g. `["std", "testing"]`).
@@ -4413,7 +3293,7 @@ fn typecheck_warning_diagnostics(module: &ParsedModule, warnings: &[diagnostics:
 mod tests {
     use super::*;
     use crate::frontend::typechecker::{self, IdentKind};
-    use crate::library_manifest::{LibraryManifest, ProviderFeatureMetadata, ProviderModuleClaim, VocabExports};
+    use crate::library_manifest::{LibraryManifest, ProviderFeatureMetadata, VocabExports};
     use incan_core::lang::c_abi::LinkCapabilityId;
     use std::path::Path;
 
@@ -4487,149 +3367,6 @@ mod tests {
     }
 
     #[test]
-    fn sdk_build_reports_reject_store_paths_and_distinguish_cache_hits() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        let store = root.path().join("store");
-        let reports_root = root.path().join("reports");
-        fs::create_dir_all(store.join("artifact"))?;
-        fs::create_dir(&reports_root)?;
-        assert!(SdkBuildReports::new(&store.join("artifact"), &store, "identity").is_err());
-        let mut reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
-        reports.finish("cache_hit");
-        let summary: serde_json::Value = serde_json::from_slice(&fs::read(reports.directory.join("summary.json"))?)?;
-        assert_eq!(summary["status"], "cache_hit");
-        assert_eq!(summary["elapsed_scope"], "after_store_lock");
-        assert_eq!(fs::read_dir(&reports.directory)?.count(), 1);
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn sdk_build_reports_transport_mock_children_without_replacing_failures() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let root = tempfile::tempdir()?;
-        let store = root.path().join("store");
-        let reports_root = root.path().join("reports");
-        fs::create_dir(&store)?;
-        fs::create_dir(&reports_root)?;
-        let reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
-        let mut child = Command::new("sh");
-        child.args([
-            "-c",
-            r#"printf '%s' '{"timings_ms":{"library_prepare_total":7}}' > "$4""#,
-            "mock",
-        ]);
-        configure_sdk_provider_build_environment(&mut child, "stdlib-data", None);
-        reports.configure(&mut child, "stdlib-data");
-        assert!(
-            child
-                .get_envs()
-                .any(|(name, value)| name == INTERNAL_SDK_BUILD_REPORT_DIR_ENV && value.is_none())
-        );
-        let output = child.output()?;
-        assert!(output.status.success());
-        assert!(output.stdout.is_empty());
-        reports.component("stdlib-data", std::time::Duration::from_millis(11), &output);
-        let value: serde_json::Value =
-            serde_json::from_slice(&fs::read(reports.directory.join("stdlib-data.timing.json"))?)?;
-        assert_eq!(value["report_status"], "available");
-        assert_eq!(value["timings_semantics"], "inclusive_nested_scopes");
-        assert_eq!(value["timings_ms"]["library_prepare_total"], 7);
-        let failed = Command::new("sh")
-            .args(["-c", "printf original-diagnostic >&2; exit 9"])
-            .output()?;
-        reports.component("missing", std::time::Duration::ZERO, &failed);
-        fs::write(reports.directory.join("malformed.build.json"), "not-json")?;
-        reports.component("malformed", std::time::Duration::ZERO, &output);
-        for component in ["missing", "malformed"] {
-            let value: serde_json::Value =
-                serde_json::from_slice(&fs::read(reports.directory.join(format!("{component}.timing.json")))?)?;
-            assert_eq!(value["report_status"], "unavailable");
-            assert!(value["timings_ms"].is_null());
-        }
-        assert_eq!(failed.status.code(), Some(9));
-        assert_eq!(failed.stderr, b"original-diagnostic");
-        assert!(
-            nested_sdk_component_build_error("missing", root.path(), &failed)
-                .to_string()
-                .contains("original-diagnostic")
-        );
-        let directory = reports.directory.clone();
-        drop(reports);
-        let summary: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("summary.json"))?)?;
-        assert_eq!(summary["status"], "failed");
-        Ok(())
-    }
-
-    #[test]
-    fn sdk_provider_builder_selects_the_real_cli_for_tests_and_utilities() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = tempfile::tempdir()?;
-        let cargo_cli = temp_dir.path().join("incan-cli");
-        fs::write(&cargo_cli, "test binary")?;
-        assert_eq!(
-            sdk_provider_builder_executable(Some(cargo_cli.clone()), PathBuf::from("/tmp/integration-test"),)?,
-            cargo_cli
-        );
-
-        let target_dir = temp_dir.path().join("target/debug");
-        fs::create_dir_all(&target_dir)?;
-        let mut sibling_cli = target_dir.join("incan");
-        sibling_cli.set_extension(std::env::consts::EXE_EXTENSION);
-        fs::write(&sibling_cli, "cli binary")?;
-        assert_eq!(
-            sdk_provider_builder_executable(None, target_dir.join("generate_feature_inventory"))?,
-            sibling_cli
-        );
-
-        let direct_cli = temp_dir.path().join("incan");
-        fs::write(&direct_cli, "installed cli")?;
-        assert_eq!(
-            sdk_provider_builder_executable(Some(PathBuf::from("/tmp/stale-incan-cli")), direct_cli.clone(),)?,
-            direct_cli
-        );
-
-        let deps_dir = target_dir.join("deps");
-        fs::create_dir_all(&deps_dir)?;
-        assert_eq!(
-            sdk_provider_builder_executable(None, deps_dir.join("incan-abc123"))?,
-            sibling_cli
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn sdk_provider_builder_rejects_a_utility_without_a_sibling_cli() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = tempfile::tempdir()?;
-        let utility = temp_dir.path().join("generate_feature_inventory");
-        fs::write(&utility, "utility binary")?;
-
-        let error = match sdk_provider_builder_executable(None, utility) {
-            Err(error) => error,
-            Ok(path) => return Err(format!("missing sibling CLI unexpectedly resolved to {}", path.display()).into()),
-        };
-        assert!(error.message.contains("requires the incan CLI executable"));
-        Ok(())
-    }
-
-    #[test]
-    fn sdk_provider_build_pins_an_explicit_compiler_source_tree() {
-        let mut command = Command::new("incan");
-        let compiler_root = Path::new("/compiler");
-        let stdlib_root = Path::new("/compiler/crates/incan_stdlib/stdlib");
-        configure_sdk_provider_build_environment(&mut command, "stdlib-core", Some((compiler_root, stdlib_root)));
-        let source_root = command
-            .get_envs()
-            .find_map(|(name, value)| (name == "INCAN_SOURCE_ROOT").then_some(value))
-            .flatten();
-        let configured_stdlib = command
-            .get_envs()
-            .find_map(|(name, value)| (name == "INCAN_STDLIB").then_some(value))
-            .flatten();
-        assert_eq!(source_root, Some(compiler_root.as_os_str()));
-        assert_eq!(configured_stdlib, Some(stdlib_root.as_os_str()));
-    }
-
-    #[test]
     fn explicit_sdk_selection_rejects_legacy_inventoryless_toolchains() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         let manifest_path = project.path().join("loaf.toml");
@@ -4682,221 +3419,6 @@ mod tests {
             rendered.contains("current command's `--sdk-profile` override"),
             "expected transient profile provenance, got: {rendered}"
         );
-        Ok(())
-    }
-
-    #[test]
-    fn sdk_provider_store_identity_tracks_installed_inputs_without_adjacent_cargo_authority()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = tempfile::tempdir()?;
-        let stdlib_root = temp_dir.path().join("stdlib");
-        fs::create_dir_all(stdlib_root.join("nested"))?;
-        fs::write(stdlib_root.join("loaf.toml"), "[project]\nname = \"stdlib\"\n")?;
-        fs::write(
-            stdlib_root.join("nested").join("module.incn"),
-            "pub def value() -> int:\n  return 1\n",
-        )?;
-        let workspace_lock = temp_dir.path().join("Cargo.lock");
-        fs::write(&workspace_lock, "first lock closure")?;
-        let executable = temp_dir.path().join("compiler-a");
-        fs::write(&executable, "compiler payload")?;
-
-        let initial = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
-        let relocated_executable = temp_dir.path().join("relocated").join("compiler-b");
-        fs::create_dir_all(
-            relocated_executable
-                .parent()
-                .ok_or("relocated compiler had no parent")?,
-        )?;
-        fs::copy(&executable, &relocated_executable)?;
-        let relocated = sdk_provider_store_identity(&stdlib_root, &relocated_executable, "full")?;
-        assert_eq!(
-            initial, relocated,
-            "identical compiler bytes must reuse provider artifacts across paths"
-        );
-        let changed_executable = temp_dir.path().join("compiler-changed");
-        fs::write(&changed_executable, "different compiler payload")?;
-        let compiler_changed = sdk_provider_store_identity(&stdlib_root, &changed_executable, "full")?;
-        assert_ne!(
-            initial, compiler_changed,
-            "changing compiler bytes must invalidate provider artifacts"
-        );
-        fs::write(
-            stdlib_root.join("nested").join("module.incn"),
-            "pub def value() -> int:\n  return 2\n",
-        )?;
-        let source_changed = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
-        assert_ne!(
-            initial, source_changed,
-            "changing a stdlib source must invalidate its artifact identity"
-        );
-
-        fs::write(&workspace_lock, "second lock closure")?;
-        let lock_changed = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
-        assert_eq!(
-            source_changed, lock_changed,
-            "an adjacent Cargo lock is not consumed by an installed compiler or its SDK sources"
-        );
-        let minimal = sdk_provider_store_identity(&stdlib_root, &executable, "minimal")?;
-        assert_ne!(
-            lock_changed, minimal,
-            "distribution profiles must not share provider-store identities"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn sdk_provider_store_identity_ignores_rebuilt_development_executable_bytes()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = tempfile::tempdir()?;
-        let checkout = temp_dir.path().join("checkout");
-        let stdlib_root = checkout.join("crates/incan_stdlib/stdlib");
-        fs::create_dir_all(checkout.join("src"))?;
-        fs::create_dir_all(stdlib_root.join("components"))?;
-        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-        fs::write(checkout.join("Cargo.lock"), "first lock closure")?;
-        fs::write(checkout.join("src/compiler.rs"), "pub fn compile() {}\n")?;
-        fs::write(
-            stdlib_root.join("components/core.incn"),
-            "pub def core() -> int:\n  return 1\n",
-        )?;
-        let executable = checkout.join("target/debug/incan");
-        fs::create_dir_all(executable.parent().ok_or("compiler executable had no parent")?)?;
-        fs::write(&executable, "first development compiler bytes")?;
-
-        let initial = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
-        let rebuilt_executable = checkout.join("target/rebuilt/incan");
-        fs::create_dir_all(
-            rebuilt_executable
-                .parent()
-                .ok_or("rebuilt compiler executable had no parent")?,
-        )?;
-        fs::write(&rebuilt_executable, "rebuilt development compiler bytes")?;
-        let rebuilt_executable = sdk_provider_store_identity(&stdlib_root, &rebuilt_executable, "full")?;
-        assert_eq!(
-            initial, rebuilt_executable,
-            "a rebuilt development executable with unchanged compiler source must reuse SDK providers"
-        );
-
-        fs::create_dir_all(checkout.join("tests"))?;
-        fs::write(checkout.join("tests/only_test.rs"), "#[test]\nfn regression() {}\n")?;
-        let changed_test = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
-        assert_eq!(
-            initial, changed_test,
-            "test-only source must not republish SDK providers"
-        );
-
-        fs::write(checkout.join("Cargo.lock"), "changed compiler bootstrap lock")?;
-        let changed_bootstrap_lock = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
-        assert_ne!(
-            initial, changed_bootstrap_lock,
-            "the compiler checkout's consumed bootstrap lock bytes remain an input",
-        );
-        let outside_lock = temp_dir.path().join("Cargo.lock");
-        fs::write(&outside_lock, "unconsumed adjacent lock")?;
-        assert_eq!(
-            changed_bootstrap_lock,
-            sdk_provider_store_identity(&stdlib_root, &executable, "full")?,
-            "a lock outside the exact compiler checkout is not an additional source authority",
-        );
-
-        fs::write(
-            checkout.join("src/compiler.rs"),
-            "pub fn compile() { let changed = true; }\n",
-        )?;
-        let changed_source = sdk_provider_store_identity(&stdlib_root, &executable, "full")?;
-        assert_ne!(
-            changed_bootstrap_lock, changed_source,
-            "a compiler source change must still invalidate SDK provider artifacts"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn restricted_sdk_profile_retains_unavailable_provider_catalog_facts() -> Result<(), Box<dyn std::error::Error>> {
-        let catalog_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("crates/incan_stdlib/stdlib")
-            .join(SDK_SOURCE_CATALOG_FILE);
-        let catalog = SdkSourceCatalog::read_from_path(&catalog_path)?;
-        let tmp = tempfile::tempdir()?;
-        let staging_root = tmp.path().join("sdk");
-        let component_root = staging_root.join("components/stdlib-system");
-        fs::create_dir_all(&component_root)?;
-        let mut inventory = source_catalog_inventory(&catalog, &staging_root);
-        let system = inventory
-            .components
-            .get_mut("stdlib-system")
-            .ok_or("missing stdlib-system component")?;
-        system.available = true;
-        system.providers.push(SdkProviderDescriptor {
-            name: "incan_stdlib_system".to_string(),
-            version: "0.5.0".to_string(),
-            digest: "sha256:fixture".to_string(),
-            namespace_claims: BTreeSet::from([vec!["std".to_string(), "fs".to_string(), "path".to_string()]]),
-            manifest_path: Some(component_root.join("incan_stdlib_system.incnlib")),
-            crate_root: Some(component_root.clone()),
-        });
-
-        restrict_staged_sdk_profile(&catalog, "minimal", &staging_root, &mut inventory)?;
-
-        let system = inventory
-            .components
-            .get("stdlib-system")
-            .ok_or("missing restricted stdlib-system component")?;
-        let provider = system
-            .providers
-            .first()
-            .ok_or("missing unavailable provider descriptor")?;
-        assert!(!system.available);
-        assert!(provider.manifest_path.is_none());
-        assert!(provider.crate_root.is_none());
-        assert!(
-            provider
-                .namespace_claims
-                .contains(&vec!["std".to_string(), "fs".to_string(), "path".to_string(),])
-        );
-        assert!(!component_root.exists());
-        Ok(())
-    }
-
-    #[test]
-    fn sdk_provider_store_defaults_to_the_shared_incan_cache() {
-        let stdlib_root = Path::new("/workspace/stdlib");
-        assert_eq!(
-            default_sdk_provider_store(stdlib_root, Some("/opt/incan-home".into()), Some("/home/user".into())),
-            Path::new("/opt/incan-home/cache/providers/sdk-v2")
-        );
-        assert_eq!(
-            default_sdk_provider_store(stdlib_root, None, Some("/home/user".into())),
-            Path::new("/home/user/.incan/cache/providers/sdk-v2")
-        );
-        assert_eq!(
-            default_sdk_provider_store(stdlib_root, None, None),
-            Path::new("/workspace/stdlib/target/incan_sdk_components")
-        );
-    }
-
-    #[test]
-    fn sdk_component_publication_rejects_namespace_claims_outside_its_grant() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let claims = vec![
-            ProviderModuleClaim {
-                module_path: vec!["json".to_string()],
-                required_features: BTreeSet::new(),
-            },
-            ProviderModuleClaim {
-                module_path: vec!["web".to_string(), "routing".to_string()],
-                required_features: BTreeSet::new(),
-            },
-        ];
-
-        let error = sdk_component_namespace_claims("stdlib-data", &BTreeSet::from(["json".to_string()]), &claims)
-            .err()
-            .ok_or("unauthorized namespace claim should fail SDK component publication")?;
-
-        assert!(error.message.contains("stdlib-data"));
-        assert!(error.message.contains("web.routing"));
-        assert!(error.message.contains("outside its granted namespace roots"));
         Ok(())
     }
 
@@ -6485,20 +5007,7 @@ def main() -> None:
     }
 
     #[test]
-    fn oven_dependency_discovery_materializes_while_legacy_preparation_remains_metadata_only() {
-        assert_eq!(
-            DependencyManifestMode::FullArtifacts.library_dependency_preparation(),
-            Some(LibraryDependencyPreparation::LegacyManifestOnly)
-        );
-        assert_eq!(
-            DependencyManifestMode::OvenArtifacts.library_dependency_preparation(),
-            Some(LibraryDependencyPreparation::OvenDirectRustc)
-        );
-        assert_eq!(
-            DependencyManifestMode::ParserOnly.library_dependency_preparation(),
-            None
-        );
-        assert!(DependencyManifestMode::FullArtifacts.uses_materialized_library_index());
+    fn dependency_manifest_modes_separate_parser_from_admitted_artifacts() {
         assert!(DependencyManifestMode::OvenArtifacts.uses_materialized_library_index());
         assert!(!DependencyManifestMode::ParserOnly.uses_materialized_library_index());
     }

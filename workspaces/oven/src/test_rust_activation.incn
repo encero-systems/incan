@@ -1,0 +1,294 @@
+"""Local activation contracts; source admission and selected child bindings remain separate."""
+
+from rust_source import read_dependency_catalog
+from rust_activation import (
+    activate_unit,
+    version_matches,
+    ActivationContext,
+    ActivationPurpose,
+    CfgSnapshot,
+    TargetConfiguration,
+    SlotActivation,
+    InactiveReason,
+    DependencyDomain,
+)
+from manifest_errors import IntakeError, IntakeErrorKind
+from std.fs import Path
+from std.testing import fail, fail_t
+
+
+def require_ok[T](result: Result[T, IntakeError]) -> T:
+    """Keep successful fixture setup shallow while reporting the original intake diagnostic on failure."""
+    match result:
+        Ok(value) => return value
+        Err(error) => return fail_t[T](error.message())
+
+
+def read_regex_manifest() -> str:
+    """Read the declared format fixture as strict UTF-8; it does not select a registry source."""
+    match Path("tests/fixtures/rust-source/regex-1.12.3.toml").read_text("utf-8", "strict"):
+        Ok(source) => return source
+        Err(error) => return fail_t[str](error.message())
+
+
+def linux() -> TargetConfiguration:
+    """An explicit test-owned cfg snapshot, not a discovered sysroot or native candidate."""
+    snapshot = CfgSnapshot(
+        flags=["unix"],
+        values={"target_arch": ["x86_64"], "target_family": ["unix"], "target_os": ["linux"], "target_env": ["gnu"], "target_pointer_width": ["64"], "target_endian": ["little"], "target_feature": ["sse2"], "target_has_atomic": ["8", "16", "32", "64", "ptr"]},
+    )
+    return TargetConfiguration(triple="x86_64-unknown-linux-gnu", cfg=Some(snapshot))
+
+
+def windows() -> TargetConfiguration:
+    """A different supplied target domain proves host and target conditions are not conflated."""
+    snapshot = CfgSnapshot(flags=["windows"], values={"target_family": ["windows"], "target_os": ["windows"]})
+    return TargetConfiguration(triple="x86_64-pc-windows-msvc", cfg=Some(snapshot))
+
+
+def context(features: list[str], defaults: bool, purpose: ActivationPurpose, build_unit: bool) -> ActivationContext:
+    """Keep every effective activation choice explicit in one original producer context."""
+    return ActivationContext(
+        host=linux(),
+        target=windows(),
+        purpose=purpose,
+        requested_features=features,
+        default_features=defaults,
+        build_unit_present=build_unit,
+    )
+
+
+pub def test_weak_feature_is_applied_after_later_optional_activation() -> None:
+    """Weak forwarding encountered first still reaches the dependency activated later in the closure."""
+    source = "\n    [dependencies]\n    cache={version='1', optional=true, features=['base'], default-features=false}\n    [features]\n    default=['outer']\n    outer=['cache?/serde','activate']\n    activate=['dep:cache']\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    result = require_ok(activate_unit(catalog, context([], true, ActivationPurpose.Normal, false), "Cargo.toml"))
+    assert result.effective_features == ["activate", "default", "outer"]
+    match result.slots[0].activation:
+        SlotActivation.Active(features, defaults, domain) =>
+            assert features == ["base", "serde"]
+            assert not defaults
+            assert domain == DependencyDomain.Target
+        _ => fail("activated optional dependency remained inactive")
+
+
+pub def test_weak_feature_alone_does_not_select_optional_dependency() -> None:
+    """An inactive optional slot remains in the output with its original index."""
+    source = "\n    [dependencies]\n    cache={version='1', optional=true}\n    required='1'\n    [features]\n    inspect=['cache?/serde']\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    result = require_ok(
+        activate_unit(catalog, context(["inspect"], false, ActivationPurpose.Normal, false), "Cargo.toml"),
+    )
+    assert len(result.slots) == 2
+    assert result.slots[0].index == 0
+    match result.slots[0].activation:
+        SlotActivation.Inactive(reason) =>
+            assert reason == InactiveReason.OptionalNotEnabled
+        _ => fail("weak request selected an optional dependency")
+    match result.slots[1].activation:
+        SlotActivation.Active(features, defaults, _) =>
+            assert features == []
+            assert defaults
+        _ => fail("required declaration was dropped")
+
+
+pub def test_strong_dependency_feature_enables_existing_local_alias_feature() -> None:
+    """Strong forwarding preserves the local optional feature when it exists in the feature namespace."""
+    source = "\n    [dependencies]\n    cache={version='1', optional=true}\n    [features]\n    use=['cache/serde']\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    result = require_ok(activate_unit(catalog, context(["use"], false, ActivationPurpose.Normal, false), "Cargo.toml"))
+    assert result.effective_features == ["cache", "use"]
+
+
+pub def test_dep_suppresses_implicit_feature_but_not_strong_dependency_demand() -> None:
+    """Hidden optional aliases are not invented as local features by strong forwarding."""
+    source = "\n    [dependencies]\n    cache={version='1', optional=true}\n    [features]\n    hidden=['dep:cache']\n    use=['cache/serde']\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    match activate_unit(catalog, context(["cache"], false, ActivationPurpose.Normal, false), "Cargo.toml"):
+        Ok(_) => fail("dep-hidden implicit feature was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+    result = require_ok(activate_unit(catalog, context(["use"], false, ActivationPurpose.Normal, false), "Cargo.toml"))
+    assert result.effective_features == ["use"]
+    match result.slots[0].activation:
+        SlotActivation.Active(features, _, _) =>
+            assert features == ["serde"]
+        _ => fail("strong dependency demand was lost")
+
+
+pub def test_feature_cycles_terminate_and_default_flag_is_not_guessed() -> None:
+    """Named feature cycles form a finite set; omitted default selection stays off."""
+    source = "\n    [features]\n    default=['a']\n    a=['b']\n    b=['a']\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    without_defaults = require_ok(
+        activate_unit(catalog, context([], false, ActivationPurpose.Normal, false), "Cargo.toml"),
+    )
+    assert without_defaults.effective_features == []
+    with_defaults = require_ok(activate_unit(catalog, context([], true, ActivationPurpose.Normal, false), "Cargo.toml"))
+    assert with_defaults.effective_features == ["a", "b", "default"]
+
+
+pub def test_host_target_dev_and_absent_build_unit_keep_separate_outcomes() -> None:
+    """Identical aliases in target and host tables retain distinct contexts and original slots."""
+    source = "\n    [dev-dependencies]\n    helper='1'\n    [target.'cfg(unix)'.dependencies]\n    shared={version='1', features=['target']}\n    [target.'cfg(unix)'.build-dependencies]\n    shared={version='1', features=['host']}\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Normal, true), "Cargo.toml"))
+    assert len(result.slots) == 3
+    match result.slots[0].activation:
+        SlotActivation.Inactive(reason) =>
+            assert reason == InactiveReason.DevelopmentExcluded
+        _ => fail("normal build activated a dev slot")
+    match result.slots[1].activation:
+        SlotActivation.Inactive(reason) =>
+            assert reason == InactiveReason.TargetConditionFalse
+        _ => fail("target request used the host cfg")
+    match result.slots[2].activation:
+        SlotActivation.Active(features, _, domain) =>
+            assert features == ["host"]
+            assert domain == DependencyDomain.Host
+        _ => fail("host build request used the target cfg")
+    test_result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Test, false), "Cargo.toml"))
+    match test_result.slots[0].activation:
+        SlotActivation.Active(_, _, _) => None
+        _ => fail("test purpose dropped its dev slot")
+    match test_result.slots[2].activation:
+        SlotActivation.Inactive(reason) =>
+            assert reason == InactiveReason.BuildUnitAbsent
+        _ => fail("missing build unit activated a host dependency")
+
+
+pub def test_cfg_uses_actual_supplied_values_and_exact_target_triple() -> None:
+    """Evaluate nested cfg values and exact triple selectors through the declared domain."""
+    source = "\n    [target.'cfg(all(unix, target_arch = \"x86_64\", target_has_atomic = \"ptr\", not(target_os = \"windows\")))'.build-dependencies]\n    yes='1'\n    [target.x86_64-pc-windows-msvc.dependencies]\n    yes='1'\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Normal, true), "Cargo.toml"))
+    for slot in result.slots:
+        match slot.activation:
+            SlotActivation.Active(_, _, _) => None
+            _ => fail("explicit matching target fact was not used")
+
+
+pub def test_missing_cfg_and_disallowed_feature_predicate_refuse() -> None:
+    """Missing target evidence and unsupported package-feature predicates are never false target claims."""
+    source = "\n    [target.'cfg(unix)'.dependencies]\n    p='1'\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    mut missing = context([], false, ActivationPurpose.Normal, false)
+    missing.target = TargetConfiguration(triple="x86_64-pc-windows-msvc", cfg=None)
+    match activate_unit(catalog, missing, "Cargo.toml"):
+        Ok(_) => fail("missing cfg facts were interpreted as false")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Missing
+    disallowed = "\n    [target.'cfg(any(windows, feature = \"hidden\"))'.dependencies]\n    p='1'\n    "
+    disallowed_catalog = require_ok(read_dependency_catalog(disallowed, "Cargo.toml"))
+    match activate_unit(disallowed_catalog, context([], false, ActivationPurpose.Normal, false), "Cargo.toml"):
+        Ok(_) => fail("true branch hid an unsupported predicate")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Unsupported
+
+
+pub def test_missing_feature_alias_or_inherited_source_refuses() -> None:
+    """An unknown alias or unresolved workspace owner cannot produce complete demands."""
+    for source in ["\n        [features]\n        x=['missing/std']\n        ", "\n        [features]\n        x=['dep:missing']\n        ", "\n        [dependencies]\n        x={workspace=true}\n        "]:
+        catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+        match activate_unit(catalog, context([], false, ActivationPurpose.Normal, false), "Cargo.toml"):
+            Ok(_) => fail("unbound declaration entered activation")
+            Err(_) => None
+
+
+pub def test_real_regex_default_demands_keep_every_dev_slot_inactive() -> None:
+    """Real normalized regex features activate the four normal declarations without selecting their versions."""
+    source = read_regex_manifest()
+    catalog = require_ok(read_dependency_catalog(source, "fixture/regex/Cargo.toml"))
+    result = require_ok(
+        activate_unit(catalog, context([], true, ActivationPurpose.Normal, false), "fixture/regex/Cargo.toml"),
+    )
+    assert len(result.slots) == 9
+    for index in range(4):
+        match result.slots[index].activation:
+            SlotActivation.Active(_, _, _) => None
+            _ => fail("default regex normal dependency was dropped")
+    for index in range(4, 9):
+        match result.slots[index].activation:
+            SlotActivation.Inactive(reason) =>
+                assert reason == InactiveReason.DevelopmentExcluded
+            _ => fail("regex dev dependency was selected for normal use")
+
+
+pub def test_semver_requirement_checks_do_not_select_a_source() -> None:
+    """Use the existing semver crate for bounds, including prerelease and malformed input behavior."""
+    assert require_ok(version_matches("1", "1.12.3", "request"))
+    assert not require_ok(version_matches("1", "2.0.0", "request"))
+    assert not require_ok(version_matches("1", "1.12.3-alpha.1", "request"))
+    match version_matches("not-a-range", "1.0.0", "request"):
+        Ok(_) => fail("malformed version requirement was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+
+
+pub def test_target_inactive_strong_forwarding_does_not_enable_local_alias() -> None:
+    """An optional dependency in an inactive target cannot enable extra local features through forwarding."""
+    source = "\n    [target.'cfg(unix)'.dependencies]\n    cache={version='1', optional=true}\n    [features]\n    use=['cache/serde']\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    result = require_ok(activate_unit(catalog, context(["use"], false, ActivationPurpose.Normal, false), "Cargo.toml"))
+    assert result.effective_features == ["use"]
+    match result.slots[0].activation:
+        SlotActivation.Inactive(reason) =>
+            assert reason == InactiveReason.TargetConditionFalse
+        _ => fail("inactive target acquired a child request")
+
+
+pub def test_explicit_alias_feature_replaces_implicit_optional_activation() -> None:
+    """An explicitly empty feature with the optional alias's name does not itself activate that dependency."""
+    source = "\n    [dependencies]\n    cache={version='1', optional=true}\n    [features]\n    cache=[]\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    result = require_ok(activate_unit(catalog, context(["cache"], false, ActivationPurpose.Normal, false), "Cargo.toml"))
+    assert result.effective_features == ["cache"]
+    match result.slots[0].activation:
+        SlotActivation.Inactive(reason) =>
+            assert reason == InactiveReason.OptionalNotEnabled
+        _ => fail("explicit local feature inherited implicit dependency activation")
+
+
+pub def test_cfg_named_fields_use_supplied_snapshot_without_builtin_target_lookup() -> None:
+    """Exercise external struct-variant patterns and cfg-expr evaluation on explicit custom facts."""
+    source = "\n    [target.'cfg(all(custom, custom_key = \"enabled\"))'.dependencies]\n    p='1'\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    mut selected = context([], false, ActivationPurpose.Normal, false)
+    selected.target = TargetConfiguration(
+        triple="custom-target",
+        cfg=Some(CfgSnapshot(flags=["custom"], values={"custom_key": ["enabled"]})),
+    )
+    result = require_ok(activate_unit(catalog, selected, "Cargo.toml"))
+    match result.slots[0].activation:
+        SlotActivation.Active(_, _, _) => None
+        _ => fail("supplied custom target facts were not evaluated")
+
+
+pub def test_inactive_invalid_version_and_malformed_cfg_refuse() -> None:
+    """Inactive declarations still undergo structural and version validation."""
+    for source in ["\n        [dev-dependencies]\n        p='not-a-range'\n        ", "\n        [target.'cfg(unix'.dependencies]\n        p='1'\n        "]:
+        catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+        match activate_unit(catalog, context([], false, ActivationPurpose.Normal, false), "Cargo.toml"):
+            Ok(_) => fail("inactive invalid declaration was silently dropped")
+            Err(error) =>
+                assert error.kind == IntakeErrorKind.Invalid
+
+
+pub def test_duplicate_requests_and_shared_feature_paths_keep_sorted_demands() -> None:
+    """Duplicate queue arrivals and roots produce one sorted demand without mutating authored features."""
+    source = "\n    [dependencies]\n    cache={version='1', optional=true, features=['base','base'], default-features=false}\n    [features]\n    default=['right','left','right']\n    left=['dep:cache','leaf','cache?/serde','cache?/serde']\n    right=['leaf','left']\n    leaf=[]\n    "
+    catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
+    for requested in [["right", "left", "right"], ["left", "right"]]:
+        result = require_ok(
+            activate_unit(catalog, context(requested, true, ActivationPurpose.Normal, false), "Cargo.toml"),
+        )
+        assert result.effective_features == ["default", "leaf", "left", "right"]
+        assert len(result.slots) == 1
+        assert result.slots[0].index == 0
+        match result.slots[0].activation:
+            SlotActivation.Active(features, defaults, domain) =>
+                assert features == ["base", "serde"]
+                assert not defaults
+                assert domain == DependencyDomain.Target
+            _ => fail("duplicate feature paths lost the active optional dependency")
+        assert catalog.dependencies[0].features == ["base", "base"]

@@ -1,10 +1,10 @@
 //! Project-inspection authority payloads.
 //!
 //! The sealed description of what a project's inspection authority covers -- its sources, constituents, root and
-//! test dependencies, and generated output directory -- as recorded for one schema version.
+//! test dependencies -- as recorded for one schema version.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 use super::super::OvenReceipt;
 use super::super::store::{OvenArtifactKind, OvenStoreExecutionPayload, OvenStoreLease};
@@ -12,7 +12,7 @@ use super::artifact::OvenRustcRegistrySourcePackage;
 use serde::{Deserialize, Serialize};
 
 /// Wire schema for one project-level Rust inspection authority.
-pub(crate) const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 1;
+pub(crate) const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 2;
 
 /// Exact immutable source owner named by a project inspection authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,27 +120,6 @@ pub(crate) struct OvenProjectInspectionAuthorityPayload {
     pub constituents: Vec<OvenProjectInspectionConstituent>,
     #[serde(default)]
     pub registry_sources: Vec<OvenProjectInspectionSource>,
-    /// Build-script output directories the explicit bake sealed below this authority's artifact root.
-    ///
-    /// Generated Rust such as prost's `include!`d modules exists as files only where the bake's Cargo bootstrap
-    /// wrote its `OUT_DIR`s. A normal command never runs Cargo, so the authority carries those files itself and a
-    /// direct inspection workspace reads them the way it would read a Cargo `OUT_DIR`.
-    #[serde(default)]
-    pub generated_out_dirs: Vec<OvenProjectInspectionGeneratedOutDir>,
-}
-
-/// One sealed build-script output directory, laid out as `generated-out-dirs/build/<crate>-<hash>/out` so the
-/// generated-code route recognizes it like a Cargo target directory.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OvenProjectInspectionGeneratedOutDir {
-    /// Cargo package whose build script produced the directory.
-    pub crate_name: String,
-    /// Directory below the authority's artifact root holding the sealed `*.rs` output.
-    pub relative_root: String,
-    /// Exact package version whose build script wrote the directory, when the bake knew it. A closure can hold
-    /// several build units of one package, and a consumer reads only the unit built from the version it inspects.
-    #[serde(default)]
-    pub version: Option<String>,
 }
 
 /// Exact authority entry named by a source-current completed project output.
@@ -153,15 +132,37 @@ pub(crate) struct OvenProjectInspectionAuthorityRef {
 
 /// Source-current singular project authority with every bounded-store constituent leased in one batch.
 pub(crate) struct OvenLoadedProjectInspectionAuthority {
-    pub(crate) identity: String,
-    pub(crate) artifact_root: PathBuf,
+    source_owner: OvenStoreExecutionPayload,
     pub(crate) payload: OvenProjectInspectionAuthorityPayload,
     pub(crate) stored_constituents: Vec<OvenStoreExecutionPayload>,
-    pub(super) _authority_lease: OvenStoreLease,
     pub(super) lineage_leases: Vec<OvenStoreLease>,
 }
 
 impl OvenLoadedProjectInspectionAuthority {
+    /// Retain one validated authority owner together with every store-owned constituent it names.
+    pub(super) fn new(
+        source_owner: OvenStoreExecutionPayload,
+        payload: OvenProjectInspectionAuthorityPayload,
+        stored_constituents: Vec<OvenStoreExecutionPayload>,
+    ) -> Self {
+        Self {
+            source_owner,
+            payload,
+            stored_constituents,
+            lineage_leases: Vec::new(),
+        }
+    }
+
+    /// Return the immutable Store identity that owns the authority payload and materialized files.
+    pub(crate) fn identity(&self) -> &str {
+        &self.source_owner.manifest.identity
+    }
+
+    /// Return the materialized root derived from the retained authority owner.
+    pub(crate) fn artifact_root(&self) -> &Path {
+        &self.source_owner.artifact_root
+    }
+
     /// Retain completed-output leases for the complete inspection command.
     pub(crate) fn retain_lineage_leases(&mut self, leases: Vec<OvenStoreLease>) {
         self.lineage_leases = leases;

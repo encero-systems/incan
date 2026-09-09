@@ -1675,7 +1675,7 @@ mod tests {
         bake_stored_direct_rustc_test, rustc_host_target,
     };
     use crate::oven::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits};
-    use crate::oven::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
+    use crate::oven::{OvenGeneratedProjectRequest, receipt_generated_project};
 
     #[test]
     fn native_runner_rejects_missing_exact_test_and_runs_verified_test_without_cargo()

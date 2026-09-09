@@ -53,7 +53,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::binding_inspect::BindingInspectionFormat;
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
-use commands::common::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
+use commands::common::INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV;
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
@@ -349,24 +349,6 @@ impl NativeInvocationConstraintInputs {
     }
 }
 
-/// Reject retired Cargo command inputs independently from unimplemented native invocation constraints.
-fn refuse_retired_cargo_inputs(passthrough: &[String], environment: Option<OsString>) -> CliResult<()> {
-    let supplied = [
-        ("Cargo passthrough after --", !passthrough.is_empty()),
-        ("INCAN_CARGO_ARGS", environment.is_some()),
-    ]
-    .into_iter()
-    .filter_map(|(name, present)| present.then_some(name))
-    .collect::<Vec<_>>();
-    if supplied.is_empty() {
-        return Ok(());
-    }
-    Err(CliError::failure(format!(
-        "retired Cargo input is unsupported by native Oven commands: {}",
-        supplied.join(", "),
-    )))
-}
-
 /// Check raw native-command inputs before discovery, workspace fan-out or debug-file effects.
 fn validate_native_command_inputs(
     command: Option<&Command>,
@@ -380,7 +362,6 @@ fn validate_native_command_inputs(
             no_offline,
             frozen,
             no_frozen,
-            cargo_passthrough,
             ..
         }
         | Command::Run {
@@ -390,7 +371,6 @@ fn validate_native_command_inputs(
             no_offline,
             frozen,
             no_frozen,
-            cargo_passthrough,
             ..
         }
         | Command::Test {
@@ -400,7 +380,6 @@ fn validate_native_command_inputs(
             no_offline,
             frozen,
             no_frozen,
-            cargo_passthrough,
             ..
         },
     ) = command
@@ -417,8 +396,7 @@ fn validate_native_command_inputs(
         ..NativeInvocationConstraintInputs::default()
     }
     .capture_environment(&mut lookup)
-    .require_invocation_control()?;
-    refuse_retired_cargo_inputs(cargo_passthrough, lookup("INCAN_CARGO_ARGS"))
+    .require_invocation_control()
 }
 
 #[derive(Subcommand, Debug)]
@@ -458,18 +436,6 @@ pub enum Command {
         /// Request disabling INCAN_FROZEN (invocation control is currently unavailable)
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
-        cargo_features: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-no-default-features", hide = true)]
-        cargo_no_default_features: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-all-features", hide = true)]
-        cargo_all_features: bool,
-        /// Retired generated-Cargo target override; normal Oven commands reject it
-        #[arg(long = "generated-cargo-target-dir", value_name = "PATH", hide = true)]
-        generated_cargo_target_dir: Option<PathBuf>,
         /// Explicitly request the release build profile. This is the default for `incan build` and exists for
         /// first-contact command symmetry.
         #[arg(long)]
@@ -500,9 +466,6 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path; may be repeated
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Retired Cargo passthrough surface; normal Oven commands reject it
-        #[arg(last = true, hide = true)]
-        cargo_passthrough: Vec<String>,
     },
 
     /// Type check a file or project entrypoint
@@ -573,15 +536,6 @@ pub enum Command {
         /// Request disabling INCAN_FROZEN (invocation control is currently unavailable)
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
-        cargo_features: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-no-default-features", hide = true)]
-        cargo_no_default_features: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-all-features", hide = true)]
-        cargo_all_features: bool,
         /// Build and run with the optimized Oven release profile
         #[arg(long)]
         release: bool,
@@ -591,9 +545,6 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Retired Cargo passthrough surface; normal Oven commands reject it
-        #[arg(last = true, hide = true)]
-        cargo_passthrough: Vec<String>,
     },
 
     /// Format Incan source files
@@ -759,24 +710,12 @@ pub enum Command {
         /// Request disabling INCAN_FROZEN (invocation control is currently unavailable)
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
-        cargo_features: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-no-default-features", hide = true)]
-        cargo_no_default_features: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-all-features", hide = true)]
-        cargo_all_features: bool,
         /// Select every member in the active workspace
         #[arg(long, conflicts_with = "members")]
         workspace: bool,
         /// Select one workspace member by name or root-relative path; may be repeated
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Retired Cargo passthrough surface; normal Oven commands reject it
-        #[arg(last = true, hide = true)]
-        cargo_passthrough: Vec<String>,
     },
 
     /// Create a new Incan project directory
@@ -846,15 +785,6 @@ pub enum Command {
         /// Select a non-persistent SDK profile for the locked graph
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Cargo features to enable (comma-separated)
-        #[arg(long = "cargo-features", value_delimiter = ',')]
-        cargo_features: Vec<String>,
-        /// Disable Cargo default features
-        #[arg(long = "cargo-no-default-features")]
-        cargo_no_default_features: bool,
-        /// Enable all Cargo features
-        #[arg(long = "cargo-all-features")]
-        cargo_all_features: bool,
     },
 }
 
@@ -1134,13 +1064,6 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
-    /// Emit the compiler-owned SDK provider source identity for repository automation.
-    #[command(hide = true)]
-    SdkProviderStoreIdentity {
-        /// Compiler source checkout that owns the built-in standard library
-        #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
-        compiler_root: PathBuf,
-    },
     /// Bake locked C/C++ interop shims and static inputs into one receipt-bound direct-rustc plan
     Interop {
         #[command(subcommand)]
@@ -1281,10 +1204,9 @@ pub enum OvenInteropCommand {
         /// Exact locked target triple to bake
         #[arg(long, value_name = "TRIPLE")]
         target: String,
-        /// Existing pre-interop Oven receipt used to select the sealed base Loaf plan; omit to prepare the exact debug
-        /// base
+        /// Existing pre-interop Oven receipt used to select the sealed base Loaf plan
         #[arg(long = "base-receipt", value_name = "PATH")]
-        base_receipt: Option<PathBuf>,
+        base_receipt: PathBuf,
         /// Explicit selected C compiler for a declared C shim or toolchain requirement
         #[arg(long = "c-compiler", value_name = "PATH")]
         c_compiler: Option<PathBuf>,
@@ -1483,10 +1405,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             output_dir,
             package_features,
             sdk_profile,
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
-            generated_cargo_target_dir,
             release: _,
             backend,
             shadow,
@@ -1504,10 +1422,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 options: commands::build::BuildCommandOptions {
                     package_features: package_features.into(),
                     sdk_profile: sdk_profile.sdk_profile,
-                    cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    generated_cargo_target_dir,
                     backend: commands::build::BackendSelectionOptions {
                         requested: backend
                             .map(Into::into)
@@ -1609,9 +1523,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             command,
             package_features,
             sdk_profile,
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
             release,
             workspace,
             members,
@@ -1621,9 +1532,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             RunOptions {
                 package_features: package_features.into(),
                 sdk_profile: sdk_profile.sdk_profile,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
                 release,
             },
             workspace,
@@ -1658,9 +1566,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             shuffle,
             seed,
             run_xfail,
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
             workspace,
             members,
             ..
@@ -1688,9 +1593,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 run_xfail,
                 package_features: package_features.into(),
                 sdk_profile: sdk_profile.sdk_profile,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
             },
             workspace,
             members,
@@ -1766,11 +1668,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 package_features,
                 format,
             } => commands::oven_bake_project(project, package_features.into(), format),
-            OvenCommand::SdkProviderStoreIdentity { compiler_root } => {
-                let identity = commands::sdk_provider_store_identity_for_compiler_root(&compiler_root)?;
-                println!("{identity}");
-                Ok(ExitCode::SUCCESS)
-            }
             OvenCommand::Interop { command } => match command {
                 OvenInteropCommand::Bake {
                     project,
@@ -1958,17 +1855,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             file,
             package_features,
             sdk_profile,
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
-        }) => commands::lock_project(
-            file.as_ref(),
-            &package_features.into(),
-            sdk_profile.profile(),
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
-        ),
+        }) => commands::lock_project(file.as_ref(), &package_features.into(), sdk_profile.profile()),
         None => {
             // Default: type check the file if provided
             if let Some(file) = cli.file {
@@ -2062,13 +1949,9 @@ impl BuildCommandRequest {
 
 /// Return whether this build should resolve and fan out an RFC 077 workspace scope.
 ///
-/// Compiler-spawned dependency library builds target one dependency project even when it owns a workspace.
-///
-/// Artifact-only children and Oven direct-rustc children differ in what they emit, but neither may rediscover the
-/// default member scope: that would make a root package also build unrelated workspace members. Ordinary library and
-/// executable builds retain workspace selection semantics.
-fn build_uses_workspace_scope(lib_mode: bool, artifact_only: bool, dependency_preparation: bool) -> bool {
-    !lib_mode || !(artifact_only || dependency_preparation)
+/// Artifact-only bootstrap children target one exact project and cannot rediscover a workspace member scope.
+fn build_uses_workspace_scope(lib_mode: bool, artifact_only: bool) -> bool {
+    !lib_mode || !artifact_only
 }
 
 /// Attach compiler-owned workspace context to either a freshly prepared or sealed completed-output report.
@@ -2095,9 +1978,7 @@ fn execute_build(
     member_selectors: Vec<String>,
 ) -> CliResult<ExitCode> {
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
-    let dependency_preparation =
-        env::var_os(INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV).is_some_and(|value| value == "1");
-    if !build_uses_workspace_scope(request.lib_mode, artifact_only, dependency_preparation) {
+    if !build_uses_workspace_scope(request.lib_mode, artifact_only) {
         return request.run_single();
     }
 
@@ -2481,9 +2362,6 @@ struct TestCommandOptions {
     run_xfail: bool,
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
 }
 
 impl TestCommandOptions {
@@ -2517,9 +2395,6 @@ impl TestCommandOptions {
             shuffle: self.shuffle,
             seed: self.seed,
             run_xfail: self.run_xfail,
-            cargo_features: self.cargo_features.clone(),
-            cargo_no_default_features: self.cargo_no_default_features,
-            cargo_all_features: self.cargo_all_features,
             workspace_context,
         })
     }
@@ -2681,9 +2556,6 @@ struct RunInput {
 struct RunOptions {
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     release: bool,
 }
 
@@ -2785,9 +2657,6 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
             &code,
             opts.package_features.clone(),
             opts.sdk_profile.clone(),
-            opts.cargo_features.clone(),
-            opts.cargo_no_default_features,
-            opts.cargo_all_features,
             opts.release,
         )
     // ---- Context: file execution (`incan run path/to/file.incn`) ----
@@ -2797,9 +2666,6 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
             &file.to_string_lossy(),
             opts.package_features,
             opts.sdk_profile,
-            opts.cargo_features,
-            opts.cargo_no_default_features,
-            opts.cargo_all_features,
             opts.release,
         )
     }
@@ -2997,41 +2863,6 @@ mod tests {
     }
 
     #[test]
-    fn retired_cargo_inputs_refuse_independently_of_native_constraints() -> Result<(), Box<dyn std::error::Error>> {
-        for command in ["build", "run", "test"] {
-            let cli = parse_cli([
-                "incan",
-                command,
-                "missing-retired-input-fixture.incn",
-                "--",
-                "--timings",
-            ])?;
-            let Err(error) = validate_native_command_inputs(cli.command.as_ref(), |_| None) else {
-                return Err(format!("{command} accepted retired Cargo passthrough").into());
-            };
-            assert!(error.message.contains("retired Cargo input"));
-            assert!(error.message.contains("Cargo passthrough after --"));
-            assert!(!error.message.contains("invocation-control"));
-            assert!(!error.message.contains("missing-retired-input-fixture"));
-
-            let cli = parse_cli(["incan", command, "missing-retired-input-fixture.incn"])?;
-            for value in ["", "--timings"] {
-                let Err(error) = validate_native_command_inputs(cli.command.as_ref(), |name| {
-                    (name == "INCAN_CARGO_ARGS").then(|| OsString::from(value))
-                }) else {
-                    return Err(format!("{command} ignored retired INCAN_CARGO_ARGS={value:?}").into());
-                };
-                assert!(error.message.contains("retired Cargo input"));
-                assert!(error.message.contains("INCAN_CARGO_ARGS"));
-                assert!(!error.message.contains("invocation-control"));
-                assert!(!error.message.contains("missing-retired-input-fixture"));
-            }
-            validate_native_command_inputs(cli.command.as_ref(), |_| None)?;
-        }
-        Ok(())
-    }
-
-    #[test]
     fn removed_cargo_options_refuse_during_parsing() -> Result<(), Box<dyn std::error::Error>> {
         for command in ["build", "run", "test"] {
             for flag in ["--cargo-args", "--cargo-args=--timings"] {
@@ -3148,21 +2979,6 @@ mod tests {
         };
         assert_eq!(project, PathBuf::from("examples/library"));
         assert_eq!(format, OvenOutputFormat::Json);
-
-        let provider_identity = parse_cli([
-            "incan",
-            "oven",
-            "sdk-provider-store-identity",
-            "--compiler-root",
-            "compiler-source",
-        ])?;
-        let Some(Command::Oven {
-            command: OvenCommand::SdkProviderStoreIdentity { compiler_root },
-        }) = provider_identity.command
-        else {
-            return Err(expected_command("oven sdk-provider-store-identity"));
-        };
-        assert_eq!(compiler_root, PathBuf::from("compiler-source"));
 
         let compiler_suite = parse_cli([
             "incan",
@@ -3344,11 +3160,10 @@ mod tests {
     }
 
     #[test]
-    fn internal_library_preparation_bypasses_workspace_scope_issue908() {
-        assert!(!build_uses_workspace_scope(true, true, false));
-        assert!(!build_uses_workspace_scope(true, false, true));
-        assert!(build_uses_workspace_scope(true, false, false));
-        assert!(build_uses_workspace_scope(false, true, true));
+    fn internal_artifact_only_library_bypasses_workspace_scope_issue908() {
+        assert!(!build_uses_workspace_scope(true, true));
+        assert!(build_uses_workspace_scope(true, false));
+        assert!(build_uses_workspace_scope(false, true));
     }
 
     #[test]
@@ -3372,58 +3187,6 @@ mod tests {
         assert!(!no_offline);
         assert!(!no_locked);
         assert!(!no_frozen);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_keeps_incan_and_cargo_feature_flags_separate() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "build",
-            "test.incn",
-            "--features",
-            "json,http",
-            "--no-default-features",
-            "--cargo-features",
-            "serde,tokio",
-        ])?;
-        let Some(Command::Build {
-            package_features,
-            cargo_features,
-            cargo_no_default_features,
-            ..
-        }) = cli.command
-        else {
-            return Err(expected_command("build"));
-        };
-        assert_eq!(package_features.features, ["json", "http"]);
-        assert!(package_features.no_default_features);
-        assert!(!package_features.all_features);
-        assert_eq!(cargo_features, ["serde", "tokio"]);
-        assert!(!cargo_no_default_features);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_build_generated_cargo_target_dir() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "build",
-            "--lib",
-            "--generated-cargo-target-dir",
-            "target/generated-shared",
-        ])?;
-        let Some(Command::Build {
-            generated_cargo_target_dir,
-            ..
-        }) = cli.command
-        else {
-            return Err(expected_command("build"));
-        };
-        assert_eq!(
-            generated_cargo_target_dir,
-            Some(PathBuf::from("target/generated-shared"))
-        );
         Ok(())
     }
 
@@ -3523,16 +3286,6 @@ mod tests {
             return Err(expected_command("run"));
         };
         assert!(release, "run --release should enable release profile");
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_run_cargo_passthrough_args() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "run", "test.incn", "--", "--timings", "--color=always"])?;
-        let Some(Command::Run { cargo_passthrough, .. }) = cli.command else {
-            return Err(expected_command("run"));
-        };
-        assert_eq!(cargo_passthrough, vec!["--timings", "--color=always"]);
         Ok(())
     }
 

@@ -1160,7 +1160,7 @@ mod tests {
     use crate::cli::commands::build::{BuildCommandOptions, build_library};
     use crate::cli::commands::build_report::BuildReportOptions;
     use crate::frontend::api_metadata::ApiDeclaration;
-    use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
+    use crate::lockfile::{IncanLock, compute_deps_fingerprint};
 
     #[test]
     fn registry_selector_accepts_package_qualified_and_module_local_identities() {
@@ -1474,9 +1474,8 @@ def private_function() -> None:
 
     /// Publish the fixture's empty dependency selection without importing the compiler's Cargo lock.
     fn write_test_incan_lock(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let features = CargoFeatureSelection::default();
-        let fingerprint = compute_deps_fingerprint(&[], &[], &features, Some(project_root));
-        IncanLock::new(fingerprint, features).write(&project_root.join("oven.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], Some(project_root));
+        IncanLock::new(fingerprint).write(&project_root.join("oven.lock"))?;
         Ok(())
     }
 

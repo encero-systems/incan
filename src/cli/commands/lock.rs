@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "rust_inspect")]
@@ -18,8 +18,8 @@ use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, LOCK_FILENAME, PublicationLock, SemanticLockState,
-    compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
+    IncanLock, LOCK_FILENAME, PublicationLock, SemanticLockState, compute_resolved_fingerprint_with_sdk_paths,
+    semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
 #[cfg(feature = "rust_inspect")]
@@ -128,9 +128,6 @@ pub fn lock_project(
     entry_file: Option<&PathBuf>,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
 ) -> CliResult<ExitCode> {
     let start_dir = entry_file
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -140,16 +137,9 @@ pub fn lock_project(
         .ok_or_else(|| CliError::failure("No loaf.toml found (run `incan init`)"))?;
     enforce_project_toolchain_constraint(&manifest)?;
 
-    let cargo_features = CargoFeatureSelection {
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-    }
-    .normalized();
     let _ = collect_and_publish_project_lock(
         &manifest,
         entry_file.map(PathBuf::as_path),
-        &cargo_features,
         package_features,
         sdk_profile_override,
     )?;
@@ -162,7 +152,6 @@ pub fn lock_project(
 fn collect_and_publish_project_lock(
     manifest: &ProjectManifest,
     entry_file: Option<&Path>,
-    cargo_features: &CargoFeatureSelection,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
 ) -> CliResult<ProjectLockContext> {
@@ -173,40 +162,27 @@ fn collect_and_publish_project_lock(
         let publication_lock = crate::lockfile::acquire_publication_lock(&lock_path).map_err(|error| {
             CliError::failure(format!("failed to acquire workspace lock publication guard: {error}"))
         })?;
-        let context = collect_workspace_lock_context(
-            &workspace,
-            entry_file,
-            cargo_features,
-            package_features,
-            sdk_profile_override,
-            None,
-        )?;
+        let context =
+            collect_workspace_lock_context(&workspace, entry_file, package_features, sdk_profile_override, None)?;
         generate_oven_lockfile(
             workspace.root(),
             &context.resolved,
             &context.project_requirements,
-            cargo_features,
             &context.semantic,
             Some(&publication_lock),
         )?;
         return Ok(context);
     }
 
-    let context = collect_project_lock_context(
-        manifest,
-        entry_file,
-        cargo_features,
-        package_features,
-        sdk_profile_override,
-        None,
-        None,
-    )?
-    .ok_or_else(|| CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry"))?;
+    let context =
+        collect_project_lock_context(manifest, entry_file, package_features, sdk_profile_override, None, None)?
+            .ok_or_else(|| {
+                CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry")
+            })?;
     generate_oven_lockfile(
         manifest.project_root(),
         &context.resolved,
         &context.project_requirements,
-        cargo_features,
         &context.semantic,
         None,
     )?;
@@ -223,7 +199,6 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub manifest: Option<&'a ProjectManifest>,
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
-    pub cargo_features: &'a CargoFeatureSelection,
     pub semantic: Option<&'a SemanticLockState>,
     pub package_features: Option<&'a FeatureSelection>,
     pub sdk_profile_override: Option<&'a str>,
@@ -329,9 +304,6 @@ pub(crate) struct PreparedOvenProjectRegistrySourceAuthorities {
     authority: OvenLoadedProjectInspectionAuthority,
     sources: Vec<crate::rust_inspect::OvenInspectionRegistrySource>,
     registry_lock_source: Option<PathBuf>,
-    /// Build-script output directories the explicit bake sealed below the authority root, with their package
-    /// versions where the bake recorded them.
-    generated_out_dirs: Vec<crate::rust_inspect::SealedGeneratedOutDir>,
     test_dependency_plan: Option<crate::cli::commands::build::OvenDirectRustcPlanSelection>,
     _release_loafs: Vec<OvenToolchainLoaf>,
 }
@@ -632,7 +604,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
     for source in &authority.payload.registry_sources {
         let (root, catalog) = match source.owner {
             OvenProjectInspectionSourceOwner::Authority => {
-                (authority.artifact_root.as_path(), std::slice::from_ref(&source.package))
+                (authority.artifact_root(), std::slice::from_ref(&source.package))
             }
             OvenProjectInspectionSourceOwner::Constituent { index } => {
                 let owner = owners.get(index).ok_or_else(|| {
@@ -662,7 +634,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
     let registry_lock_source = if sources.is_empty() {
         None
     } else {
-        let path = authority.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
+        let path = authority.artifact_root().join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             CliError::failure(format!(
                 "project inspection authority lacks its sealed Cargo.lock at {}: {error}",
@@ -677,17 +649,6 @@ pub(crate) fn prepare_project_registry_source_authorities(
         }
         Some(path)
     };
-    // The explicit bake sealed its Cargo bootstrap's build-script output below the authority root; those files are
-    // the only Cargo-free source of generated Rust (prost modules, for one) a direct inspection workspace can read.
-    let generated_out_dirs = authority
-        .payload
-        .generated_out_dirs
-        .iter()
-        .map(|dir| crate::rust_inspect::SealedGeneratedOutDir {
-            out_dir: authority.artifact_root.join(&dir.relative_root),
-            version: dir.version.clone(),
-        })
-        .collect::<Vec<_>>();
     let test_dependency_plan = if let Some(stored_index) = test_dependency_stored_index {
         let constituent_index = authority
             .payload
@@ -727,7 +688,6 @@ pub(crate) fn prepare_project_registry_source_authorities(
         authority,
         sources,
         registry_lock_source,
-        generated_out_dirs,
         test_dependency_plan,
         _release_loafs: release_loafs,
     }))
@@ -778,7 +738,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
 
     /// Bind generated test receipts to the exact project authority selected once for this command.
     pub(crate) fn authority_identity(&self) -> &str {
-        &self.authority.identity
+        self.authority.identity()
     }
 
     /// Project the one complete exact authority for one generated test batch.
@@ -799,9 +759,6 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
         }
         crate::rust_inspect::write_sealed_oven_inspection_source_authority(manifest_dir, self.sources.clone())
             .map_err(|error| CliError::failure(format!("failed to install Oven Rust source authority: {error}")))?;
-        crate::rust_inspect::write_oven_generated_out_dirs(manifest_dir, &self.generated_out_dirs).map_err(
-            |error| CliError::failure(format!("failed to install Oven generated output directories: {error}")),
-        )?;
         if let Some(lock) = self.registry_lock_source.as_deref() {
             install_oven_registry_lock(lock, &manifest_dir.join("Cargo.lock"))?;
         }
@@ -905,7 +862,6 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         manifest,
         resolved,
         project_requirements,
-        cargo_features,
         semantic,
         package_features,
         sdk_profile_override,
@@ -947,7 +903,6 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         let context = collect_workspace_lock_context(
             workspace,
             entry_file,
-            cargo_features,
             package_features,
             sdk_profile_override,
             command_session,
@@ -957,7 +912,6 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         let context = collect_project_lock_context(
             manifest,
             entry_file,
-            cargo_features,
             package_features,
             sdk_profile_override,
             None,
@@ -975,7 +929,6 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         canonical_root,
         &context.resolved,
         &context.project_requirements,
-        cargo_features,
         &context.semantic,
     );
     let lock_path = canonical_root.join(LOCK_FILENAME);
@@ -1070,9 +1023,7 @@ pub(crate) fn publish_oven_project_lock(
         .map_err(|error| CliError::failure(error.to_string()))?
         .ok_or_else(|| CliError::failure("explicit Oven project bake requires an loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
-    let cargo_features = CargoFeatureSelection::default().normalized();
-    let context =
-        collect_and_publish_project_lock(&manifest, Some(entrypoint), &cargo_features, package_features, None)?;
+    let context = collect_and_publish_project_lock(&manifest, Some(entrypoint), package_features, None)?;
     Ok(PublishedOvenProjectLock {
         dependency_surface: context.resolved,
     })
@@ -1085,7 +1036,6 @@ pub(crate) fn publish_oven_project_lock(
 fn collect_workspace_lock_context(
     workspace: &WorkspaceGraph,
     entry_file: Option<&Path>,
-    cargo_features: &CargoFeatureSelection,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
     command_session: Option<&CompilationSession>,
@@ -1121,7 +1071,6 @@ fn collect_workspace_lock_context(
         let Some(member_context) = collect_project_lock_context(
             &manifest,
             member_entry,
-            cargo_features,
             package_features,
             sdk_profile_override,
             Some(workspace),
@@ -1387,7 +1336,6 @@ fn project_roots_match(left: &Path, right: &Path) -> bool {
 fn collect_project_lock_context(
     manifest: &ProjectManifest,
     explicit_entry_file: Option<&Path>,
-    cargo_features: &CargoFeatureSelection,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
     workspace: Option<&WorkspaceGraph>,
@@ -1500,8 +1448,8 @@ fn collect_project_lock_context(
     )
     .map_err(CliError::failure)?;
 
-    let mut resolved = resolve_reachable_dependencies(Some(session_manifest), &inline_imports, true, cargo_features)
-        .map_err(|errors| {
+    let mut resolved =
+        resolve_reachable_dependencies(Some(session_manifest), &inline_imports, true).map_err(|errors| {
             let mut msg = String::new();
             let sources = build_source_map(&project_requirement_modules);
             for err in errors {
@@ -1522,19 +1470,17 @@ fn checked_oven_lock(
     project_root: &Path,
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
-    cargo_features: &CargoFeatureSelection,
     semantic: &SemanticLockState,
 ) -> IncanLock {
     let semantic_sdk_paths = semantic_sdk_path_dependencies(project_requirements);
     let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved.dependencies,
         &resolved.dev_dependencies,
-        cargo_features,
         Some(project_root),
         semantic,
         &semantic_sdk_paths,
     );
-    IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone())
+    IncanLock::new_with_semantic(fingerprint, semantic.clone())
 }
 
 /// Publish the supplied checked dependency and provider facts as the canonical semantic `oven.lock`.
@@ -1545,7 +1491,6 @@ fn generate_oven_lockfile(
     project_root: &Path,
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
-    cargo_features: &CargoFeatureSelection,
     semantic: &SemanticLockState,
     publication_lock: Option<&PublicationLock>,
 ) -> CliResult<IncanLock> {
@@ -1559,7 +1504,7 @@ fn generate_oven_lockfile(
         None
     };
     let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
-    let lock = checked_oven_lock(project_root, resolved, project_requirements, cargo_features, semantic);
+    let lock = checked_oven_lock(project_root, resolved, project_requirements, semantic);
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
     lock.write_while_locked(&lock_path, publication_lock)
@@ -1742,7 +1687,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_lock_merge_unifies_cargo_features_without_permitting_identity_drift()
+    fn workspace_lock_merge_unifies_rust_dependency_features_without_permitting_identity_drift()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut first = registry_dependency("serde");
         first.features = vec!["alloc".to_string()];
@@ -1900,7 +1845,6 @@ mod tests {
             temp_dir.path(),
             &empty_resolved(),
             &empty_project_requirements(),
-            &CargoFeatureSelection::default(),
             &SemanticLockState::default(),
             None,
         )?;
@@ -2057,7 +2001,6 @@ regex = "1"
             "[project]\nname = \"semantic_lock_demo\"\nversion = \"0.1.0\"\n",
         )?;
         fs::write(&entry_path, "def main() -> None:\n  pass\n")?;
-        let features = CargoFeatureSelection::default();
         let package_features = FeatureSelection::default();
         let session = CompilationSession::discover_for_oven(&entry_path, &package_features, None)?;
         let collect = |session: &CompilationSession| {
@@ -2071,7 +2014,6 @@ regex = "1"
                 manifest: Some(manifest),
                 resolved: &empty_resolved(),
                 project_requirements: &empty_project_requirements(),
-                cargo_features: &features,
                 semantic: None,
                 package_features: Some(&package_features),
                 sdk_profile_override: None,
@@ -2159,7 +2101,6 @@ members = ["first", "second"]
             dev_dependencies: Vec::new(),
         };
         let requirements = ProjectRequirements::default();
-        let cargo_features = CargoFeatureSelection::default();
         let collect = |entry_file: &Path| {
             resolve_lock_context(LockResolutionRequest {
                 project_root: manifest.project_root(),
@@ -2167,7 +2108,6 @@ members = ["first", "second"]
                 manifest: Some(manifest),
                 resolved: &caller_dependencies,
                 project_requirements: &requirements,
-                cargo_features: &cargo_features,
                 semantic: None,
                 package_features: Some(&feature_selection),
                 sdk_profile_override: None,

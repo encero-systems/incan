@@ -33,7 +33,7 @@ use super::native_contract::{
     OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
 };
 use super::process::{isolate_process_group, terminate_process_group};
-use super::{OVEN_COMPILER_TEST_PROFILE, OvenBuildIntent, OvenReceipt, digest_bytes, digest_source_tree};
+use super::{OVEN_COMPILER_TEST_PROFILE, OvenBuildIntent, OvenReceipt, digest_bytes};
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::oven::store::{
     OvenArtifactKind, OvenArtifactManifest, OvenStore, OvenStoreError, OvenStoreExecutionPayload, OvenStoreLease,
@@ -609,223 +609,8 @@ struct ResolvedSealedRegistryLeaf {
     dependency_search_paths: Vec<PathBuf>,
 }
 
-/// Exact scheduler-selected path artifacts that a caller-owned direct-Rustc closure may reuse.
-///
-/// This authority is deliberately narrower than a path allowlist. A dependency must both reside below a
-/// scheduler-owned immutable root and use a crate name that the selected plan already exposes. The artifact and
-/// metadata search paths then come from that plan, rather than from the dependency's Cargo manifest or an ambient
-/// Cargo target directory. This permits a caller-owned library to link a compiler-runtime dependency such as
-/// `incan_stdlib` without re-materializing that runtime crate or interpreting its Cargo feature table.
-#[derive(Debug, Clone)]
-pub(crate) struct OvenSelectedPathRustcAuthority {
-    owned_roots: Vec<PathBuf>,
-    externs: BTreeMap<String, PathBuf>,
-    dependency_search_paths: Vec<PathBuf>,
-}
-
-impl OvenSelectedPathRustcAuthority {
-    /// Construct the authority from a scheduler-selected, already verified direct-Rustc plan.
-    #[must_use]
-    pub(crate) fn new(owned_roots: &[PathBuf], artifact_plan: &OvenRustcArtifactPlan) -> Self {
-        let mut owned_roots = owned_roots.to_vec();
-        owned_roots.sort();
-        owned_roots.dedup();
-        let mut dependency_search_paths = artifact_plan.dependency_search_paths.clone();
-        dependency_search_paths.sort();
-        dependency_search_paths.dedup();
-        Self {
-            owned_roots,
-            externs: artifact_plan.externs.iter().cloned().collect(),
-            dependency_search_paths,
-        }
-    }
-
-    /// Return the selected artifact only for an exact compiler-runtime dependency under a leased scheduler root.
-    fn resolve(&self, dependency: &DependencySpec) -> Option<PathBuf> {
-        let DependencySource::Path { path } = &dependency.source else {
-            return None;
-        };
-        let path = fs::canonicalize(path).ok()?;
-        if !self.owned_roots.iter().any(|root| path.starts_with(root)) {
-            return None;
-        }
-        self.externs.get(&dependency.crate_name.replace('-', "_")).cloned()
-    }
-
-    /// Return only the verified dependency directories paired with the selected externs.
-    fn dependency_search_paths(&self) -> &[PathBuf] {
-        &self.dependency_search_paths
-    }
-
-    /// Prefer an equivalent sealed registry artifact already present in this selected plan.
-    ///
-    /// A compatible Loaf catalog may live in the read-only toolchain envelope while the normal command has copied
-    /// the same direct-Rustc closure into its actively leased Oven store. Linking the catalog copy as an additional
-    /// `--extern` would expose Rustc to two physical copies of one StableCrateId. The caller has already validated
-    /// the package, version, features, and digest against the sealed catalog; this method merely reuses the same
-    /// metadata-bearing artifact name in one of the selected plan's verified dependency directories. Cargo can emit
-    /// byte-distinct rlibs for the same compilation identity when separate publishers retain different non-semantic
-    /// payload details; the sealed leaf resolver uses the same filename criterion when choosing equivalent catalog
-    /// copies.
-    fn matching_sealed_registry_artifact(&self, sealed_artifact: &Path) -> Option<PathBuf> {
-        let filename = sealed_artifact.file_name()?;
-        let mut matches = self
-            .dependency_search_paths
-            .iter()
-            .filter_map(|directory| {
-                let candidate = verified_regular_file(&directory.join(filename), "selected registry artifact").ok()?;
-                Some(candidate)
-            })
-            .collect::<Vec<_>>();
-        matches.sort();
-        matches.dedup();
-        matches.into_iter().next()
-    }
-}
-
-/// Compile declared narrow Rust library closures with direct `rustc`, never with Cargo.
-///
-/// This bounded caller-dependency seam builds manifest-declared local path libraries and links registry leaves only
-/// from a selected immutable Loaf catalog. It recursively follows only path-to-path edges and incorporates
-/// each child output digest into its parent output identity. Git, optional/feature-driven roots, build scripts, and
-/// unsealed registry closures remain explicit unsupported inputs.
-#[cfg(test)]
-pub(crate) fn materialize_declared_rust_libraries(
-    output_root: &Path,
-    rustc: &Path,
-    target: &str,
-    profile: &str,
-    dependencies: &[DependencySpec],
-    registry_authority: Option<&OvenRegistryLeafAuthority>,
-) -> Result<Vec<OvenCallerOwnedRustcLibrary>, OvenRustcError> {
-    materialize_declared_rust_libraries_with_selected_path_authority(
-        output_root,
-        rustc,
-        target,
-        profile,
-        dependencies,
-        registry_authority,
-        None,
-    )
-}
-
-/// Materialize caller-owned libraries while allowing a scheduler-selected path dependency to remain plan-owned.
-///
-/// Ordinary callers pass no selected-path authority and therefore keep the conservative manifest-shaped behavior.
-/// The compiler-suite scheduler alone supplies this additional authority after leasing the immutable data roots.
-pub(crate) fn materialize_declared_rust_libraries_with_selected_path_authority(
-    output_root: &Path,
-    rustc: &Path,
-    target: &str,
-    profile: &str,
-    dependencies: &[DependencySpec],
-    registry_authority: Option<&OvenRegistryLeafAuthority>,
-    selected_path_authority: Option<&OvenSelectedPathRustcAuthority>,
-) -> Result<Vec<OvenCallerOwnedRustcLibrary>, OvenRustcError> {
-    if dependencies.is_empty() {
-        return Ok(Vec::new());
-    }
-    fs::create_dir_all(output_root).map_err(|source| OvenRustcError::Io {
-        path: output_root.to_path_buf(),
-        source,
-    })?;
-    let mut state = PathRustcMaterializationState::default();
-    let mut names = BTreeSet::new();
-    let mut dependencies = dependencies.to_vec();
-    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-    for dependency in dependencies {
-        let crate_name = direct_rustc_crate_name(&dependency.crate_name)?;
-        if !names.insert(crate_name.clone()) {
-            return Err(OvenRustcError::InvalidInput {
-                field: "Oven direct-rustc Rust dependency",
-                message: format!("declares duplicate crate `{crate_name}`"),
-            });
-        }
-        if dependency.optional {
-            return Err(OvenRustcError::InvalidInput {
-                field: "Oven direct-rustc Rust dependency",
-                message: format!(
-                    "`{}` is optional; prepare an explicit Oven-native closure",
-                    dependency.crate_name
-                ),
-            });
-        }
-        if !matches!(dependency.source, DependencySource::Registry) && !dependency.features.is_empty() {
-            return Err(OvenRustcError::InvalidInput {
-                field: "Oven direct-rustc Rust dependency",
-                message: format!(
-                    "`{}` explicitly enables path-package Cargo features; prepare an explicit Oven-native closure",
-                    dependency.crate_name
-                ),
-            });
-        }
-        if matches!(dependency.source, DependencySource::Registry) && !dependency.default_features {
-            return Err(OvenRustcError::InvalidInput {
-                field: "Oven direct-rustc Rust dependency",
-                message: format!(
-                    "`{}` disables registry default features; prepare an explicit Oven-native closure",
-                    dependency.crate_name
-                ),
-            });
-        }
-        let package_root = match &dependency.source {
-            DependencySource::Path { path } => {
-                if selected_path_authority
-                    .and_then(|authority| authority.resolve(&dependency))
-                    .is_some()
-                {
-                    // The final direct-Rustc plan already attaches this selected compiler-runtime extern. Keeping it
-                    // out of caller-owned outputs avoids a second `--extern` with the same name.
-                    continue;
-                }
-                path.clone()
-            }
-            DependencySource::Registry => {
-                let sealed = resolve_sealed_registry_leaf(&dependency, registry_authority, profile)?;
-                let output = selected_path_authority
-                    .and_then(|authority| authority.matching_sealed_registry_artifact(&sealed))
-                    .unwrap_or(sealed);
-                let digest = digest_regular_file(&output, "sealed registry Rust dependency")?;
-                state.record_extern(crate_name, output, digest)?;
-                continue;
-            }
-            DependencySource::Git { .. } => {
-                return Err(OvenRustcError::InvalidInput {
-                    field: "Oven direct-rustc Rust dependency",
-                    message: format!(
-                        "`{}` is a Git package; prepare an explicit Oven-native closure",
-                        dependency.crate_name
-                    ),
-                });
-            }
-        };
-        let output = materialize_path_rust_library(
-            &package_root,
-            output_root,
-            rustc,
-            target,
-            profile,
-            registry_authority,
-            selected_path_authority,
-            &dependency,
-            &mut state,
-        )?;
-        let digest = digest_regular_file(&output, "materialized path Rust library")?;
-        state.record_extern(crate_name, output, digest)?;
-    }
-    Ok(state
-        .externs
-        .into_iter()
-        .map(|(crate_name, (output, digest))| OvenCallerOwnedRustcLibrary {
-            crate_name,
-            output,
-            digest,
-            expose_extern: true,
-        })
-        .collect())
-}
-
 /// Resolve one registry dependency from the selected Loaf's sealed catalog.
+#[cfg(test)]
 fn resolve_sealed_registry_leaf(
     dependency: &DependencySpec,
     authority: Option<&OvenRegistryLeafAuthority>,
@@ -1118,549 +903,6 @@ fn safe_artifact_path(
         });
     }
     Ok(artifact)
-}
-
-#[derive(Default)]
-struct PathRustcMaterializationState {
-    outputs: BTreeMap<PathBuf, PathBuf>,
-    externs: BTreeMap<String, (PathBuf, String)>,
-    active: BTreeSet<PathBuf>,
-}
-
-impl PathRustcMaterializationState {
-    /// Retain every direct dependency under the name its Rust source uses.
-    ///
-    /// Rust metadata for an outer rlib names its local path dependencies too, so the final consumer must receive
-    /// their explicit `--extern` bindings as well as the top-level import. A name may repeat only when it resolves
-    /// to the exact same already-materialized artifact.
-    fn record_extern(&mut self, crate_name: String, output: PathBuf, digest: String) -> Result<(), OvenRustcError> {
-        match self.externs.get(&crate_name) {
-            Some((existing_output, existing_digest)) if existing_output == &output && existing_digest == &digest => {
-                Ok(())
-            }
-            Some((existing_output, _)) => Err(OvenRustcError::InvalidInput {
-                field: "path Rust dependency",
-                message: format!(
-                    "resolves Rust crate `{crate_name}` to both {} and {}",
-                    existing_output.display(),
-                    output.display()
-                ),
-            }),
-            None => {
-                self.externs.insert(crate_name, (output, digest));
-                Ok(())
-            }
-        }
-    }
-}
-
-/// Compile one Cargo-manifest-shaped local Rust library using only explicitly supplied direct artifacts.
-#[allow(clippy::too_many_arguments)]
-fn materialize_path_rust_library(
-    package_root: &Path,
-    output_root: &Path,
-    rustc: &Path,
-    target: &str,
-    profile: &str,
-    registry_authority: Option<&OvenRegistryLeafAuthority>,
-    selected_path_authority: Option<&OvenSelectedPathRustcAuthority>,
-    requested_dependency: &DependencySpec,
-    state: &mut PathRustcMaterializationState,
-) -> Result<PathBuf, OvenRustcError> {
-    let package_root = canonical_directory(package_root, "path Rust dependency")?;
-    if let Some(output) = state.outputs.get(&package_root) {
-        return Ok(output.clone());
-    }
-    if !state.active.insert(package_root.clone()) {
-        return Err(OvenRustcError::InvalidInput {
-            field: "path Rust dependency",
-            message: format!("contains a cyclic path dependency at {}", package_root.display()),
-        });
-    }
-    let result = materialize_path_rust_library_inner(
-        &package_root,
-        output_root,
-        rustc,
-        target,
-        profile,
-        registry_authority,
-        selected_path_authority,
-        requested_dependency,
-        state,
-    );
-    state.active.remove(&package_root);
-    let output = result?;
-    state.outputs.insert(package_root, output.clone());
-    Ok(output)
-}
-
-/// Materialize one manifest-backed path library after its caller has established cycle and output ownership state.
-#[allow(clippy::too_many_arguments)]
-fn materialize_path_rust_library_inner(
-    package_root: &Path,
-    output_root: &Path,
-    rustc: &Path,
-    target: &str,
-    profile: &str,
-    registry_authority: Option<&OvenRegistryLeafAuthority>,
-    selected_path_authority: Option<&OvenSelectedPathRustcAuthority>,
-    requested_dependency: &DependencySpec,
-    state: &mut PathRustcMaterializationState,
-) -> Result<PathBuf, OvenRustcError> {
-    let manifest_path = package_root.join("Cargo.toml");
-    let manifest_bytes = fs::read(&manifest_path).map_err(|source| OvenRustcError::Io {
-        path: manifest_path.clone(),
-        source,
-    })?;
-    let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|error| OvenRustcError::InvalidInput {
-        field: "path Rust dependency Cargo.toml",
-        message: format!("{} is not UTF-8: {error}", manifest_path.display()),
-    })?;
-    let manifest = toml::from_str::<toml::Value>(manifest_text).map_err(|error| OvenRustcError::InvalidInput {
-        field: "path Rust dependency Cargo.toml",
-        message: format!("{} is invalid TOML: {error}", manifest_path.display()),
-    })?;
-    if manifest.get("target").is_some() {
-        return Err(OvenRustcError::InvalidInput {
-            field: "path Rust dependency Cargo.toml",
-            message: format!(
-                "{} declares target-conditional dependencies; prepare an explicit Oven-native closure",
-                manifest_path.display()
-            ),
-        });
-    }
-    let package =
-        manifest
-            .get("package")
-            .and_then(toml::Value::as_table)
-            .ok_or_else(|| OvenRustcError::InvalidInput {
-                field: "path Rust dependency Cargo.toml",
-                message: format!("{} has no [package] table", manifest_path.display()),
-            })?;
-    let package_name =
-        package
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .ok_or_else(|| OvenRustcError::InvalidInput {
-                field: "path Rust dependency Cargo.toml",
-                message: format!("{} has no package name", manifest_path.display()),
-            })?;
-    let lib = manifest.get("lib").and_then(toml::Value::as_table);
-    let is_proc_macro = lib
-        .and_then(|lib| lib.get("proc-macro"))
-        .map(|value| {
-            value.as_bool().ok_or_else(|| OvenRustcError::InvalidInput {
-                field: "path Rust dependency Cargo.toml",
-                message: format!(
-                    "{} has a non-boolean lib.proc-macro declaration",
-                    manifest_path.display()
-                ),
-            })
-        })
-        .transpose()?
-        .unwrap_or(false);
-    if lib
-        .and_then(|lib| lib.get("crate-type"))
-        .and_then(toml::Value::as_array)
-        .is_some_and(|types| {
-            types.iter().any(|kind| {
-                !(matches!(kind.as_str(), Some("lib" | "rlib"))
-                    || (is_proc_macro && matches!(kind.as_str(), Some("proc-macro"))))
-            })
-        })
-    {
-        return Err(OvenRustcError::InvalidInput {
-            field: "path Rust dependency Cargo.toml",
-            message: format!(
-                "{} requests an unsupported crate type; prepare an explicit Oven-native closure",
-                manifest_path.display()
-            ),
-        });
-    }
-    let crate_name = direct_rustc_crate_name(
-        lib.and_then(|lib| lib.get("name"))
-            .and_then(toml::Value::as_str)
-            .unwrap_or(package_name),
-    )?;
-    let source_relative = lib
-        .and_then(|lib| lib.get("path"))
-        .and_then(toml::Value::as_str)
-        .unwrap_or("src/lib.rs");
-    let source = package_root.join(source_relative);
-    let source = verified_regular_file(&source, "path Rust library source")?;
-    let edition = package.get("edition").and_then(toml::Value::as_str).unwrap_or("2018");
-    if !matches!(edition, "2018" | "2021" | "2024") {
-        return Err(OvenRustcError::InvalidInput {
-            field: "path Rust dependency Cargo.toml",
-            message: format!("{} has unsupported edition `{edition}`", manifest_path.display()),
-        });
-    }
-    if manifest.get("build").is_some() || package.get("build").is_some_and(|build| build.as_bool() != Some(false)) {
-        return Err(OvenRustcError::InvalidInput {
-            field: "path Rust dependency Cargo.toml",
-            message: format!(
-                "{} declares a build script; prepare an explicit Oven-native closure",
-                manifest_path.display()
-            ),
-        });
-    }
-    validate_inactive_path_dependency_features(&manifest_path, &manifest, requested_dependency)?;
-
-    let mut child_dependencies = Vec::new();
-    let mut child_dependency_search_paths = BTreeSet::new();
-    if let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) {
-        for (name, specification) in dependencies {
-            let Some(dependency) = path_rust_manifest_dependency(&manifest_path, package_root, name, specification)?
-            else {
-                continue;
-            };
-            let selected_path_artifact = selected_path_authority.and_then(|authority| authority.resolve(&dependency));
-            let output = match &dependency.source {
-                DependencySource::Path { path } => {
-                    if let Some(output) = selected_path_artifact.clone() {
-                        if let Some(authority) = selected_path_authority {
-                            child_dependency_search_paths.extend(authority.dependency_search_paths().iter().cloned());
-                        }
-                        output
-                    } else {
-                        materialize_path_rust_library(
-                            path,
-                            output_root,
-                            rustc,
-                            target,
-                            profile,
-                            registry_authority,
-                            selected_path_authority,
-                            &dependency,
-                            state,
-                        )?
-                    }
-                }
-                DependencySource::Registry => {
-                    let resolved =
-                        resolve_sealed_registry_leaf_with_search_paths(&dependency, registry_authority, profile)?;
-                    if let Some(output) = selected_path_authority
-                        .and_then(|authority| authority.matching_sealed_registry_artifact(&resolved.artifact))
-                    {
-                        if let Some(authority) = selected_path_authority {
-                            child_dependency_search_paths.extend(authority.dependency_search_paths().iter().cloned());
-                        }
-                        output
-                    } else {
-                        child_dependency_search_paths.extend(resolved.dependency_search_paths);
-                        resolved.artifact
-                    }
-                }
-                DependencySource::Git { .. } => unreachable!("path manifest parser rejects Git dependencies"),
-            };
-            let child_name = direct_rustc_crate_name(name)?;
-            if selected_path_artifact.is_none() {
-                let digest = digest_regular_file(&output, "path Rust library dependency")?;
-                state.record_extern(child_name.clone(), output.clone(), digest)?;
-            }
-            child_dependencies.push((child_name, output));
-        }
-    }
-    child_dependencies.sort_by(|left, right| left.0.cmp(&right.0));
-
-    let source_digest = digest_source_tree(package_root).map_err(|error| OvenRustcError::InvalidInput {
-        field: "path Rust dependency",
-        message: error.to_string(),
-    })?;
-    let child_digest_records = child_dependencies
-        .iter()
-        .map(|(name, output)| {
-            let bytes = fs::read(output).map_err(|source| OvenRustcError::Io {
-                path: output.clone(),
-                source,
-            })?;
-            Ok(format!("{name}|{}", digest_bytes(&bytes)))
-        })
-        .collect::<Result<Vec<_>, OvenRustcError>>()?;
-    let toolchain = rustc_identity(rustc)?;
-    let identity = digest_bytes(
-        format!(
-            "{source_digest}\n{target}\n{profile}\n{toolchain}\n{}",
-            child_digest_records.join("\n")
-        )
-        .as_bytes(),
-    );
-    let output_directory = output_root.join(identity.strip_prefix("sha256:").unwrap_or(identity.as_str()));
-    let extension = if is_proc_macro {
-        std::env::consts::DLL_SUFFIX
-    } else {
-        ".rlib"
-    };
-    let output = output_directory.join(format!("lib{crate_name}{extension}"));
-    if output.is_file() {
-        return verified_regular_file(&output, "materialized path Rust library");
-    }
-    fs::create_dir_all(&output_directory).map_err(|source| OvenRustcError::Io {
-        path: output_directory.clone(),
-        source,
-    })?;
-    let temporary = output_directory.join(format!(".lib{crate_name}.{}.tmp", std::process::id()));
-    let mut command = Command::new(rustc);
-    command
-        .arg("--target")
-        .arg(target)
-        .arg(format!("--edition={edition}"))
-        .arg("--crate-name")
-        .arg(&crate_name)
-        .arg("--error-format=json")
-        .arg(&source)
-        .arg("-o")
-        .arg(&temporary);
-    if is_proc_macro {
-        command.args(["--crate-type", "proc-macro", "--extern", "proc_macro"]);
-    } else {
-        command.args(["--crate-type", "lib"]);
-    }
-    apply_oven_profile(&mut command, profile);
-    clear_inherited_cargo_environment(&mut command);
-    for dependency_search_path in &child_dependency_search_paths {
-        command
-            .arg("-L")
-            .arg(format!("dependency={}", dependency_search_path.display()));
-    }
-    for (child_name, child_output) in &child_dependencies {
-        command
-            .arg("--extern")
-            .arg(format!("{child_name}={}", child_output.display()));
-    }
-    let output_result = command.output().map_err(|source_error| OvenRustcError::Io {
-        path: rustc.to_path_buf(),
-        source: source_error,
-    })?;
-    if !output_result.status.success() {
-        return Err(OvenRustcError::CompilationFailed {
-            report: parse_rustc_diagnostics(&output_result.stdout, &output_result.stderr).with_invocation(&command),
-        });
-    }
-    verified_regular_file(&temporary, "materialized path Rust library")?;
-    fs::rename(&temporary, &output).map_err(|source| OvenRustcError::Io {
-        path: output.clone(),
-        source,
-    })?;
-    Ok(output)
-}
-
-/// Parse one unconditional local-manifest dependency into the same receipt-bound direct-Rustc representation used by
-/// top-level caller dependencies. Optional dependencies are inactive because activated path features remain rejected;
-/// registry dependencies must be satisfied by the supplied sealed authority, never Cargo.
-fn path_rust_manifest_dependency(
-    manifest_path: &Path,
-    package_root: &Path,
-    name: &str,
-    specification: &toml::Value,
-) -> Result<Option<DependencySpec>, OvenRustcError> {
-    let invalid = |message: String| OvenRustcError::InvalidInput {
-        field: "path Rust dependency Cargo.toml",
-        message,
-    };
-    let dependency = match specification {
-        toml::Value::String(version) => DependencySpec {
-            crate_name: name.to_string(),
-            version: Some(version.clone()),
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: None,
-        },
-        toml::Value::Table(table) => {
-            if table.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
-                return Err(invalid(format!(
-                    "{} dependency `{name}` inherits a Cargo workspace declaration; prepare an explicit Oven-native closure",
-                    manifest_path.display()
-                )));
-            }
-            if table.get("git").is_some() {
-                return Err(invalid(format!(
-                    "{} dependency `{name}` is Git-sourced; prepare an explicit Oven-native closure",
-                    manifest_path.display()
-                )));
-            }
-            let optional = table
-                .get("optional")
-                .map(|value| {
-                    value.as_bool().ok_or_else(|| {
-                        invalid(format!(
-                            "{} dependency `{name}` has a non-boolean optional declaration",
-                            manifest_path.display()
-                        ))
-                    })
-                })
-                .transpose()?
-                .unwrap_or(false);
-            if optional {
-                return Ok(None);
-            }
-            let features = table
-                .get("features")
-                .map(|value| {
-                    value
-                        .as_array()
-                        .ok_or_else(|| {
-                            invalid(format!(
-                                "{} dependency `{name}` has a non-array feature declaration",
-                                manifest_path.display()
-                            ))
-                        })?
-                        .iter()
-                        .map(|feature| {
-                            feature.as_str().map(str::to_string).ok_or_else(|| {
-                                invalid(format!(
-                                    "{} dependency `{name}` has a non-string feature",
-                                    manifest_path.display()
-                                ))
-                            })
-                        })
-                        .collect::<Result<Vec<_>, OvenRustcError>>()
-                })
-                .transpose()?
-                .unwrap_or_default();
-            let default_features = table
-                .get("default-features")
-                .map(|value| {
-                    value.as_bool().ok_or_else(|| {
-                        invalid(format!(
-                            "{} dependency `{name}` has a non-boolean default-features declaration",
-                            manifest_path.display()
-                        ))
-                    })
-                })
-                .transpose()?
-                .unwrap_or(true);
-            let package = table
-                .get("package")
-                .map(|value| {
-                    value.as_str().map(str::to_string).ok_or_else(|| {
-                        invalid(format!(
-                            "{} dependency `{name}` has a non-string package alias",
-                            manifest_path.display()
-                        ))
-                    })
-                })
-                .transpose()?;
-            let version = table
-                .get("version")
-                .map(|value| {
-                    value.as_str().map(str::to_string).ok_or_else(|| {
-                        invalid(format!(
-                            "{} dependency `{name}` has a non-string version",
-                            manifest_path.display()
-                        ))
-                    })
-                })
-                .transpose()?;
-            let source = match table.get("path") {
-                Some(path) => {
-                    if !features.is_empty() {
-                        return Err(invalid(format!(
-                            "{} path dependency `{name}` explicitly enables Cargo features; prepare an explicit Oven-native closure",
-                            manifest_path.display()
-                        )));
-                    }
-                    let path = path.as_str().ok_or_else(|| {
-                        invalid(format!(
-                            "{} dependency `{name}` has a non-string path",
-                            manifest_path.display()
-                        ))
-                    })?;
-                    DependencySource::Path {
-                        path: package_root.join(path),
-                    }
-                }
-                None => {
-                    if !default_features {
-                        return Err(invalid(format!(
-                            "{} registry dependency `{name}` disables default features; prepare an explicit Oven-native closure",
-                            manifest_path.display()
-                        )));
-                    }
-                    if version.is_none() {
-                        return Err(invalid(format!(
-                            "{} registry dependency `{name}` has no version requirement",
-                            manifest_path.display()
-                        )));
-                    }
-                    DependencySource::Registry
-                }
-            };
-            DependencySpec {
-                crate_name: name.to_string(),
-                version,
-                features,
-                default_features,
-                source,
-                optional: false,
-                package,
-            }
-        }
-        _ => {
-            return Err(invalid(format!(
-                "{} dependency `{name}` has an unsupported Cargo manifest shape",
-                manifest_path.display()
-            )));
-        }
-    }
-    .normalized();
-    Ok(Some(dependency))
-}
-
-/// Permit a path package only when the requested direct-Rustc configuration activates no Cargo feature.
-///
-/// `default-features = false` is not itself a feature activation: Cargo would compile the dependency without any
-/// `feature=...` cfg values. That is exactly the direct-Rustc configuration Oven emits, so accepting it avoids
-/// rejecting generated SDK components whose projection disables an empty/default feature set. Explicit features and
-/// non-empty default feature groups still need an Oven-native feature closure and remain fail-closed.
-fn validate_inactive_path_dependency_features(
-    manifest_path: &Path,
-    manifest: &toml::Value,
-    dependency: &DependencySpec,
-) -> Result<(), OvenRustcError> {
-    if !dependency.features.is_empty() {
-        return Err(OvenRustcError::InvalidInput {
-            field: "path Rust dependency Cargo.toml",
-            message: format!(
-                "{} path dependency `{}` explicitly enables Cargo features; prepare an explicit Oven-native closure",
-                manifest_path.display(),
-                dependency.crate_name
-            ),
-        });
-    }
-    if !dependency.default_features {
-        return Ok(());
-    }
-    let Some(features) = manifest.get("features") else {
-        return Ok(());
-    };
-    let features = features.as_table().ok_or_else(|| OvenRustcError::InvalidInput {
-        field: "path Rust dependency Cargo.toml",
-        message: format!("{} has a non-table [features] declaration", manifest_path.display()),
-    })?;
-    let Some(default) = features.get("default") else {
-        return Ok(());
-    };
-    let default = default.as_array().ok_or_else(|| OvenRustcError::InvalidInput {
-        field: "path Rust dependency Cargo.toml",
-        message: format!(
-            "{} has a non-array default feature declaration",
-            manifest_path.display()
-        ),
-    })?;
-    if default.is_empty() {
-        return Ok(());
-    }
-    Err(OvenRustcError::InvalidInput {
-        field: "path Rust dependency Cargo.toml",
-        message: format!(
-            "{} path dependency `{}` activates default Cargo features; prepare an explicit Oven-native closure",
-            manifest_path.display(),
-            dependency.crate_name
-        ),
-    })
 }
 
 /// Normalize a declared package name to the direct-rustc crate identifier it exposes.
@@ -2038,6 +1280,9 @@ pub enum OvenRustcError {
     /// Artifact plan intent differs from the selected Oven receipt.
     #[error("Oven direct-rustc artifact intent differs from the selected receipt")]
     IntentMismatch,
+    /// A project inspection authority uses a wire schema this executable cannot interpret.
+    #[error("unsupported Oven project inspection authority schema version {found}; expected {expected}")]
+    UnsupportedProjectInspectionAuthoritySchema { found: u32, expected: u32 },
     /// A request field is blank or does not obey the narrow Alpha spelling contract.
     #[error("invalid Oven direct-rustc {field}: {message}")]
     InvalidInput { field: &'static str, message: String },
@@ -4563,6 +3808,42 @@ pub fn select_direct_rustc_plan_identity(store: &OvenStore, receipt: &OvenReceip
         })
 }
 
+/// Minimal project-inspection header decoded before any version-specific authority fields.
+#[derive(Deserialize)]
+struct OvenProjectInspectionAuthorityHeader {
+    schema_version: u32,
+}
+
+/// Reject an unknown project-inspection wire version before decoding its version-specific body.
+fn preflight_project_inspection_authority_schema(identity: &str, bytes: &[u8]) -> Result<(), OvenRustcError> {
+    let header = serde_json::from_slice::<OvenProjectInspectionAuthorityHeader>(bytes).map_err(|error| {
+        OvenRustcError::InvalidStoredPlan {
+            identity: identity.to_string(),
+            message: format!("payload has no valid project inspection authority header: {error}"),
+        }
+    })?;
+    if header.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION {
+        return Err(OvenRustcError::UnsupportedProjectInspectionAuthoritySchema {
+            found: header.schema_version,
+            expected: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
+        });
+    }
+    Ok(())
+}
+
+/// Decode one current project inspection authority after its schema and physical owner have been validated.
+fn decode_project_inspection_authority(
+    identity: &str,
+    bytes: &[u8],
+) -> Result<OvenProjectInspectionAuthorityPayload, OvenRustcError> {
+    serde_json::from_slice::<OvenProjectInspectionAuthorityPayload>(bytes).map_err(|error| {
+        OvenRustcError::InvalidStoredPlan {
+            identity: identity.to_string(),
+            message: format!("payload is not a project inspection authority: {error}"),
+        }
+    })
+}
+
 /// Load the one project inspection authority named by a source-current completed output.
 ///
 /// Selection never searches by dependency compatibility. The authority entry is exact, and all of its store-owned
@@ -4575,8 +3856,8 @@ pub(crate) fn load_project_inspection_authority(
     source_authority_digest: &str,
     compiler_version: &str,
 ) -> Result<OvenLoadedProjectInspectionAuthority, OvenRustcError> {
-    let (manifest, artifact_root, bytes, authority_lease) = store
-        .select_payload_for_execution(&authority_ref.identity)
+    let mut selected = store
+        .select_payloads_for_execution(std::slice::from_ref(&authority_ref.identity))
         .map_err(|error| OvenRustcError::PlanSelection {
             receipt_identity: authority_ref.receipt_identity.clone(),
             message: format!(
@@ -4584,35 +3865,41 @@ pub(crate) fn load_project_inspection_authority(
                 authority_ref.identity
             ),
         })?;
-    if manifest.kind != OvenArtifactKind::ProjectInspectionAuthority
+    let source_owner = selected.pop().ok_or_else(|| OvenRustcError::PlanSelection {
+        receipt_identity: authority_ref.receipt_identity.clone(),
+        message: format!(
+            "source-current project output could not retain exact project inspection authority `{}`",
+            authority_ref.identity
+        ),
+    })?;
+    let manifest = &source_owner.manifest;
+    if manifest.identity != authority_ref.identity
+        || manifest.kind != OvenArtifactKind::ProjectInspectionAuthority
         || manifest.receipt_identity != authority_ref.receipt_identity
         || manifest.build_unit_identity != authority_ref.build_unit_identity
     {
         return Err(OvenRustcError::InvalidStoredPlan {
-            identity: manifest.identity,
+            identity: manifest.identity.clone(),
             message: "project inspection authority differs from its exact kind, receipt, or build-unit reference"
                 .to_string(),
         });
     }
-    let payload = serde_json::from_slice::<OvenProjectInspectionAuthorityPayload>(&bytes).map_err(|error| {
-        OvenRustcError::InvalidStoredPlan {
-            identity: manifest.identity.clone(),
-            message: format!("payload is not a project inspection authority: {error}"),
-        }
-    })?;
+    preflight_project_inspection_authority_schema(&manifest.identity, &source_owner.payload)?;
+    source_owner.verify_materialized_files()?;
+    let payload = decode_project_inspection_authority(&manifest.identity, &source_owner.payload)?;
     validate_project_inspection_authority_payload(&payload)?;
     if payload.project_identity != project_identity
         || payload.source_authority_digest != source_authority_digest
         || payload.compiler_version != compiler_version
     {
         return Err(OvenRustcError::InvalidStoredPlan {
-            identity: manifest.identity,
+            identity: manifest.identity.clone(),
             message: "project inspection authority does not match the selected output's project, source, or compiler evidence"
                 .to_string(),
         });
     }
     if !payload.registry_sources.is_empty() {
-        let lock = artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
+        let lock = source_owner.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
         let lock_bytes = fs::read(&lock).map_err(|source| OvenRustcError::Io {
             path: lock.clone(),
             source,
@@ -4716,14 +4003,11 @@ pub(crate) fn load_project_inspection_authority(
             }
         }
     }
-    Ok(OvenLoadedProjectInspectionAuthority {
-        identity: manifest.identity,
-        artifact_root,
+    Ok(OvenLoadedProjectInspectionAuthority::new(
+        source_owner,
         payload,
         stored_constituents,
-        _authority_lease: authority_lease,
-        lineage_leases: Vec::new(),
-    })
+    ))
 }
 
 /// Return whether one stored inspection constituent is authorized by its receiving project receipt.
@@ -6716,13 +6000,12 @@ mod tests {
         OvenProjectInspectionTestDependencyRoot, OvenRegistryLeafAuthority, OvenRustcArtifactExtern,
         OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTarget, OvenRustcError,
         OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-        OvenSelectedPathRustcAuthority, OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest,
-        OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest,
-        apply_oven_profile, attach_caller_owned_rustc_libraries, bake_direct_rustc_test, bake_stored_direct_rustc_run,
+        OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
+        OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, apply_oven_profile,
+        attach_caller_owned_rustc_libraries, bake_direct_rustc_test, bake_stored_direct_rustc_run,
         bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
         bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test,
         combined_process_output, is_host_native_unix_target, load_project_inspection_authority,
-        materialize_declared_rust_libraries, materialize_declared_rust_libraries_with_selected_path_authority,
         project_inspection_authority_supports_dependencies, project_inspection_constituent_matches_receipt,
         project_inspection_test_dependency_envelope_supports_dependencies, resolve_sealed_registry_leaf,
         run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target,
@@ -7191,409 +6474,6 @@ mod tests {
     }
 
     #[test]
-    fn materializes_recursive_path_rust_libraries_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = tempfile::tempdir()?;
-        let helper = workspace.path().join("helper");
-        let wrapper = workspace.path().join("wrapper");
-        fs::create_dir_all(helper.join("src"))?;
-        fs::create_dir_all(wrapper.join("src"))?;
-        fs::write(
-            helper.join("Cargo.toml"),
-            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        fs::write(helper.join("src/lib.rs"), "pub fn value() -> i64 { 41 }\n")?;
-        fs::write(
-            wrapper.join("Cargo.toml"),
-            "[package]\nname = \"wrapper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nhelper = { path = \"../helper\" }\n",
-        )?;
-        fs::write(
-            wrapper.join("src/lib.rs"),
-            "pub fn value() -> i64 { helper::value() + 1 }\n",
-        )?;
-        let rustc = rustc_path()?;
-        let target = rustc_host_target(&rustc)?;
-        let libraries = materialize_declared_rust_libraries(
-            &workspace.path().join("oven-output"),
-            &rustc,
-            &target,
-            "debug",
-            &[DependencySpec {
-                crate_name: "wrapper".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path { path: wrapper.clone() },
-                optional: false,
-                package: None,
-            }],
-            None,
-        )?;
-        assert_eq!(libraries.len(), 2, "the direct closure should retain the nested helper");
-        assert!(libraries.iter().all(|library| library.output.is_file()));
-        let consumer_source = workspace.path().join("consumer.rs");
-        let consumer_output = workspace.path().join("consumer");
-        fs::write(&consumer_source, "fn main() { assert_eq!(wrapper::value(), 42); }\n")?;
-        let mut command = Command::new(&rustc);
-        command.arg("--edition=2021");
-        for library in &libraries {
-            command
-                .arg("--extern")
-                .arg(format!("{}={}", library.crate_name, library.output.display()));
-            let parent = library.output.parent().ok_or("materialized library has no parent")?;
-            command.arg("-L").arg(format!("dependency={}", parent.display()));
-        }
-        let status = command.arg(&consumer_source).arg("-o").arg(&consumer_output).status()?;
-        assert!(
-            status.success(),
-            "direct-rustc consumer should link the materialized path crate"
-        );
-        assert!(Command::new(consumer_output).status()?.success());
-        Ok(())
-    }
-
-    #[test]
-    fn selected_path_authority_prefers_a_compilation_equivalent_sealed_registry_artifact()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = tempfile::tempdir()?;
-        let catalog = workspace.path().join("catalog");
-        let selected = workspace.path().join("selected/deps");
-        fs::create_dir_all(&catalog)?;
-        fs::create_dir_all(&selected)?;
-        let sealed = catalog.join("libserde-verified.rlib");
-        let selected_copy = selected.join("libserde-verified.rlib");
-        fs::write(&sealed, b"receipt-bound serde")?;
-        fs::write(&selected_copy, b"receipt-bound serde")?;
-        let plan = OvenRustcArtifactPlan {
-            dependency_search_paths: vec![selected.clone()],
-            native_search_paths: Vec::new(),
-            externs: Vec::new(),
-            compile_environment: BTreeMap::new(),
-            caller_owned_library_digests: BTreeMap::new(),
-        };
-        let authority = OvenSelectedPathRustcAuthority::new(&[], &plan);
-
-        assert_eq!(
-            authority.matching_sealed_registry_artifact(&sealed),
-            Some(selected_copy)
-        );
-        fs::write(selected.join("libserde-verified.rlib"), b"different serde")?;
-        assert_eq!(
-            authority.matching_sealed_registry_artifact(&sealed),
-            Some(selected.join("libserde-verified.rlib"))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn materializes_a_path_library_with_a_selected_compiler_runtime_child_without_reparsing_features()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = tempfile::tempdir()?;
-        let runtime_root = workspace.path().join("leased-runtime");
-        let runtime = runtime_root.join("incan_stdlib");
-        let wrapper = workspace.path().join("caller-wrapper");
-        let sealed_dependencies = workspace.path().join("selected-plan/deps");
-        fs::create_dir_all(runtime.join("src"))?;
-        fs::create_dir_all(wrapper.join("src"))?;
-        fs::create_dir_all(&sealed_dependencies)?;
-        fs::write(
-            runtime.join("Cargo.toml"),
-            "[package]\nname = \"incan_stdlib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\nfull = []\n",
-        )?;
-        fs::write(runtime.join("src/lib.rs"), "pub fn value() -> i64 { 41 }\n")?;
-        fs::write(
-            wrapper.join("Cargo.toml"),
-            "[package]\nname = \"caller_wrapper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_stdlib = { path = \"../leased-runtime/incan_stdlib\" }\n",
-        )?;
-        fs::write(
-            wrapper.join("src/lib.rs"),
-            "pub fn value() -> i64 { incan_stdlib::value() + 1 }\n",
-        )?;
-        let rustc = rustc_path()?;
-        let target = rustc_host_target(&rustc)?;
-        let selected_runtime = sealed_dependencies.join("libincan_stdlib.rlib");
-        let runtime_status = Command::new(&rustc)
-            .args(["--crate-type", "lib", "--crate-name", "incan_stdlib"])
-            .arg("--target")
-            .arg(&target)
-            .arg("--edition=2021")
-            .arg(runtime.join("src/lib.rs"))
-            .arg("-o")
-            .arg(&selected_runtime)
-            .status()?;
-        assert!(runtime_status.success(), "selected runtime fixture should compile");
-        let plan = OvenRustcArtifactPlan {
-            dependency_search_paths: vec![sealed_dependencies.clone()],
-            native_search_paths: Vec::new(),
-            externs: vec![("incan_stdlib".to_string(), selected_runtime.clone())],
-            compile_environment: BTreeMap::new(),
-            caller_owned_library_digests: BTreeMap::new(),
-        };
-        let authority = OvenSelectedPathRustcAuthority::new(&[fs::canonicalize(&runtime_root)?], &plan);
-        let libraries = materialize_declared_rust_libraries_with_selected_path_authority(
-            &workspace.path().join("oven-output"),
-            &rustc,
-            &target,
-            "debug",
-            &[DependencySpec {
-                crate_name: "caller_wrapper".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path { path: wrapper },
-                optional: false,
-                package: None,
-            }],
-            None,
-            Some(&authority),
-        )?;
-        assert_eq!(libraries.len(), 1, "the selected runtime remains plan-owned");
-        assert_eq!(libraries[0].crate_name, "caller_wrapper");
-
-        let consumer_source = workspace.path().join("consumer.rs");
-        let consumer_output = workspace.path().join("consumer");
-        fs::write(
-            &consumer_source,
-            "fn main() { assert_eq!(caller_wrapper::value(), 42); }\n",
-        )?;
-        let wrapper_output = &libraries[0].output;
-        let wrapper_parent = wrapper_output.parent().ok_or("wrapper output parent")?;
-        let status = Command::new(&rustc)
-            .arg("--edition=2021")
-            .arg("-L")
-            .arg(format!("dependency={}", wrapper_parent.display()))
-            .arg("-L")
-            .arg(format!("dependency={}", sealed_dependencies.display()))
-            .arg("--extern")
-            .arg(format!("caller_wrapper={}", wrapper_output.display()))
-            .arg("--extern")
-            .arg(format!("incan_stdlib={}", selected_runtime.display()))
-            .arg(&consumer_source)
-            .arg("-o")
-            .arg(&consumer_output)
-            .status()?;
-        assert!(
-            status.success(),
-            "direct-rustc consumer should link the selected runtime"
-        );
-        assert!(Command::new(consumer_output).status()?.success());
-        Ok(())
-    }
-
-    #[test]
-    fn materializes_a_path_library_that_disables_default_features_without_enabling_any_feature()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = tempfile::tempdir()?;
-        let component = workspace.path().join("component");
-        let wrapper = workspace.path().join("wrapper");
-        fs::create_dir_all(component.join("src"))?;
-        fs::create_dir_all(wrapper.join("src"))?;
-        fs::write(
-            component.join("Cargo.toml"),
-            "[package]\nname = \"feature_component\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = [\"unavailable\"]\nunavailable = []\n",
-        )?;
-        fs::write(
-            component.join("src/lib.rs"),
-            "#[cfg(feature = \"unavailable\")] compile_error!(\"default Cargo feature must stay disabled\");\npub fn value() -> i64 { 41 }\n",
-        )?;
-        fs::write(
-            wrapper.join("Cargo.toml"),
-            "[package]\nname = \"feature_wrapper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nfeature_component = { path = \"../component\", default-features = false }\n",
-        )?;
-        fs::write(
-            wrapper.join("src/lib.rs"),
-            "pub fn value() -> i64 { feature_component::value() + 1 }\n",
-        )?;
-        let rustc = rustc_path()?;
-        let target = rustc_host_target(&rustc)?;
-        let libraries = materialize_declared_rust_libraries(
-            &workspace.path().join("oven-output"),
-            &rustc,
-            &target,
-            "debug",
-            &[DependencySpec {
-                crate_name: "feature_wrapper".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path { path: wrapper.clone() },
-                optional: false,
-                package: None,
-            }],
-            None,
-        )?;
-        assert_eq!(
-            libraries.len(),
-            2,
-            "the feature-disabled component remains a direct Rustc dependency"
-        );
-        let consumer_source = workspace.path().join("consumer.rs");
-        let consumer_output = workspace.path().join("consumer");
-        fs::write(
-            &consumer_source,
-            "fn main() { assert_eq!(feature_wrapper::value(), 42); }\n",
-        )?;
-        let mut command = Command::new(&rustc);
-        command.arg("--edition=2021");
-        for library in &libraries {
-            command
-                .arg("--extern")
-                .arg(format!("{}={}", library.crate_name, library.output.display()));
-            let parent = library.output.parent().ok_or("materialized library has no parent")?;
-            command.arg("-L").arg(format!("dependency={}", parent.display()));
-        }
-        let status = command.arg(&consumer_source).arg("-o").arg(&consumer_output).status()?;
-        assert!(
-            status.success(),
-            "direct-rustc consumer should link a default-feature-disabled component"
-        );
-        assert!(Command::new(consumer_output).status()?.success());
-
-        let error = match materialize_declared_rust_libraries(
-            &workspace.path().join("default-feature-output"),
-            &rustc,
-            &target,
-            "debug",
-            &[DependencySpec {
-                crate_name: "feature_component".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path { path: component },
-                optional: false,
-                package: None,
-            }],
-            None,
-        ) {
-            Ok(_) => return Err("a default Cargo feature activation remains unsupported".into()),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("activates default Cargo features"));
-        Ok(())
-    }
-
-    #[test]
-    fn materializes_a_path_proc_macro_with_a_sealed_registry_child_without_cargo()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = tempfile::tempdir()?;
-        let registry = workspace.path().join("registry");
-        let macro_package = workspace.path().join("macro-package");
-        let registry_deps = registry.join("target/aarch64-apple-darwin/debug/deps");
-        fs::create_dir_all(&registry_deps)?;
-        fs::create_dir_all(macro_package.join("src"))?;
-        let rustc = rustc_path()?;
-        let target = rustc_host_target(&rustc)?;
-        let registry_base_source = registry.join("registry_base.rs");
-        let registry_base_artifact = registry_deps.join("libregistry_base.rlib");
-        fs::write(&registry_base_source, "pub fn marker() {}\n")?;
-        let registry_base_status = Command::new(&rustc)
-            .args(["--crate-type", "lib", "--crate-name", "registry_base"])
-            .arg("--target")
-            .arg(&target)
-            .arg("--edition=2021")
-            .arg(&registry_base_source)
-            .arg("-o")
-            .arg(&registry_base_artifact)
-            .status()?;
-        assert!(
-            registry_base_status.success(),
-            "fixture registry transitive leaf should compile"
-        );
-        let registry_source = registry.join("registry_helper.rs");
-        let registry_artifact = registry_deps.join("libregistry_helper.rlib");
-        fs::write(&registry_source, "pub fn marker() { registry_base::marker(); }\n")?;
-        let registry_status = Command::new(&rustc)
-            .args(["--crate-type", "lib", "--crate-name", "registry_helper"])
-            .arg("--target")
-            .arg(&target)
-            .arg("--edition=2021")
-            .arg("-L")
-            .arg(format!("dependency={}", registry_deps.display()))
-            .arg("--extern")
-            .arg(format!("registry_base={}", registry_base_artifact.display()))
-            .arg(&registry_source)
-            .arg("-o")
-            .arg(&registry_artifact)
-            .status()?;
-        assert!(registry_status.success(), "fixture registry leaf should compile");
-        fs::write(
-            macro_package.join("Cargo.toml"),
-            "[package]\nname = \"proc_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nproc-macro = true\n\n[dependencies]\nregistry_helper = \"1\"\n",
-        )?;
-        fs::write(
-            macro_package.join("src/lib.rs"),
-            "use proc_macro::{Literal, TokenStream, TokenTree};\nuse registry_helper::marker;\n#[proc_macro]\npub fn answer(_input: TokenStream) -> TokenStream { marker(); TokenStream::from(TokenTree::Literal(Literal::u32_unsuffixed(42))) }\n",
-        )?;
-        let registry_relative = "target/aarch64-apple-darwin/debug/deps/libregistry_helper.rlib";
-        let authority = OvenRegistryLeafAuthority::new_with_trusted_dependency_search_paths(
-            registry.clone(),
-            vec![OvenRustcRegistryLeaf {
-                package: "registry_helper".to_string(),
-                version: "1.0.0".to_string(),
-                crate_name: "registry_helper".to_string(),
-                features: Vec::new(),
-                source: fixture_registry_source(),
-                artifact: OvenRustcArtifactExtern {
-                    crate_name: "registry_helper".to_string(),
-                    relative_path: registry_relative.to_string(),
-                    digest: digest_bytes(&fs::read(&registry_artifact)?),
-                },
-            }],
-            vec![registry_deps],
-        );
-        let libraries = materialize_declared_rust_libraries(
-            &workspace.path().join("oven-output"),
-            &rustc,
-            &target,
-            "debug",
-            &[DependencySpec {
-                crate_name: "proc_fixture".to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path {
-                    path: macro_package.clone(),
-                },
-                optional: false,
-                package: None,
-            }],
-            Some(&authority),
-        )?;
-        let proc_macro = libraries
-            .iter()
-            .find(|library| library.crate_name == "proc_fixture")
-            .ok_or("materialized proc macro")?;
-        assert_eq!(
-            proc_macro.output.extension().and_then(|extension| extension.to_str()),
-            Some(std::env::consts::DLL_SUFFIX.trim_start_matches('.'))
-        );
-        let consumer_source = workspace.path().join("consumer.rs");
-        let consumer_output = workspace.path().join("consumer");
-        fs::write(
-            &consumer_source,
-            "use proc_fixture::answer;\nfn main() { assert_eq!(answer!(), 42); }\n",
-        )?;
-        let status = Command::new(&rustc)
-            .arg("--edition=2021")
-            .arg("--extern")
-            .arg(format!("proc_fixture={}", proc_macro.output.display()))
-            .arg("-L")
-            .arg(format!(
-                "dependency={}",
-                proc_macro.output.parent().ok_or("proc macro parent")?.display()
-            ))
-            .arg(&consumer_source)
-            .arg("-o")
-            .arg(&consumer_output)
-            .status()?;
-        assert!(
-            status.success(),
-            "direct-rustc consumer should load the materialized proc macro"
-        );
-        assert!(Command::new(consumer_output).status()?.success());
-        Ok(())
-    }
-
-    #[test]
     fn selects_the_highest_sealed_registry_leaf_matching_the_declared_requirement()
     -> Result<(), Box<dyn std::error::Error>> {
         let registry = tempfile::tempdir()?;
@@ -7623,46 +6503,31 @@ mod tests {
                 },
             });
         }
-        let rustc = rustc_path()?;
-        let target = rustc_host_target(&rustc)?;
         let authority = OvenRegistryLeafAuthority::new(registry.path().to_path_buf(), leaves);
-        let libraries = materialize_declared_rust_libraries(
-            &registry.path().join("output"),
-            &rustc,
-            &target,
-            "debug",
-            &[DependencySpec {
-                crate_name: "itoa".to_string(),
-                version: Some("1".to_string()),
-                features: vec!["std".to_string()],
-                default_features: true,
-                source: DependencySource::Registry,
-                optional: false,
-                package: None,
-            }],
-            Some(&authority),
-        )?;
-        assert_eq!(libraries.len(), 1);
+        let dependency = DependencySpec {
+            crate_name: "itoa".to_string(),
+            version: Some("1".to_string()),
+            features: vec!["std".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let selected = resolve_sealed_registry_leaf(&dependency, Some(&authority), "debug")?;
         assert_eq!(
-            libraries[0].output.file_name().and_then(|name| name.to_str()),
+            selected.file_name().and_then(|name| name.to_str()),
             Some("libitoa-1.0.18.rlib")
         );
-        let unavailable_feature = materialize_declared_rust_libraries(
-            &registry.path().join("output"),
-            &rustc,
-            &target,
-            "debug",
-            &[DependencySpec {
-                crate_name: "itoa".to_string(),
-                version: Some("1".to_string()),
-                features: vec!["alloc".to_string()],
-                default_features: true,
-                source: DependencySource::Registry,
-                optional: false,
-                package: None,
-            }],
-            Some(&authority),
-        );
+        let unavailable_dependency = DependencySpec {
+            crate_name: "itoa".to_string(),
+            version: Some("1".to_string()),
+            features: vec!["alloc".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let unavailable_feature = resolve_sealed_registry_leaf(&unavailable_dependency, Some(&authority), "debug");
         assert!(matches!(unavailable_feature, Err(OvenRustcError::InvalidInput { .. })));
         Ok(())
     }
@@ -9695,7 +8560,6 @@ mod tests {
                 base_loaf_identity: None,
             }],
             registry_sources: Vec::new(),
-            generated_out_dirs: Vec::new(),
         };
         let authority = store.publish(&OvenArtifactPublishRequest {
             receipt: second_receipt.clone(),
@@ -11010,7 +9874,6 @@ mod tests {
                 package: source,
                 owner: OvenProjectInspectionSourceOwner::Constituent { index: 0 },
             }],
-            generated_out_dirs: Vec::new(),
         };
         validate_project_inspection_authority_payload(&payload)?;
 
@@ -11103,20 +9966,13 @@ mod tests {
                 .contains("inconsistent identity, kind, or base evidence")
         );
 
-        let path_package = tempfile::tempdir()?;
-        fs::write(
-            path_package.path().join("Cargo.toml"),
-            "[package]\nname = \"dev_fixture\"\nversion = \"0.1.0\"\n",
-        )?;
-        fs::create_dir(path_package.path().join("src"))?;
-        fs::write(path_package.path().join("src/lib.rs"), "pub fn fixture() {}\n")?;
         let path_dependency = DependencySpec {
             crate_name: "dev_fixture".to_string(),
             version: Some("0.1.0".to_string()),
             features: vec!["test-support".to_string()],
             default_features: false,
             source: DependencySource::Path {
-                path: path_package.path().to_path_buf(),
+                path: PathBuf::from("legacy-path-dependency"),
             },
             optional: false,
             package: None,
@@ -11129,18 +9985,18 @@ mod tests {
             .insert(
                 "dev_fixture".to_string(),
                 OvenProjectInspectionTestDependencyRoot::Path {
-                    dependency_digest: crate::oven::digest_dependency_specs(std::slice::from_ref(&path_dependency))?,
+                    dependency_digest: "sha256:legacy-path-envelope".to_string(),
                 },
             );
-        assert!(project_inspection_test_dependency_envelope_supports_dependencies(
+        let Err(error) = project_inspection_test_dependency_envelope_supports_dependencies(
             &payload,
-            std::slice::from_ref(&path_dependency)
-        )?);
-        fs::write(path_package.path().join("src/lib.rs"), "pub fn changed() {}\n")?;
-        assert!(!project_inspection_test_dependency_envelope_supports_dependencies(
-            &payload,
-            &[path_dependency]
-        )?);
+            std::slice::from_ref(&path_dependency),
+        ) else {
+            return Err(
+                "persisted Cargo path envelope authorized execution without checked Oven source evidence".into(),
+            );
+        };
+        assert!(error.to_string().contains("has no checked Oven source-unit identity"));
 
         payload
             .test_dependency_envelope

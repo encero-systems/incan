@@ -23,12 +23,8 @@ use incan_vocab::{
     DslSurface, KeywordRegistration as VocabKeywordRegistration, LibraryManifest as VocabProviderManifest,
 };
 
+pub(crate) use artifact::digest_provider_source_inputs;
 pub use artifact::{ProviderArtifactDigestError, digest_provider_artifact};
-pub(crate) use artifact::{
-    ProviderSemanticToolchainDependency, digest_cargo_path_source_tree_with_cache,
-    digest_provider_semantic_artifact_with_context_and_cache, digest_provider_source_inputs,
-    digest_toolchain_source_tree_with_cache,
-};
 pub use model::*;
 pub use native_source::{
     NATIVE_SOURCE_UNIT_PATH, NATIVE_SOURCE_UNIT_SCHEMA_VERSION, NativeCompilerSupport,

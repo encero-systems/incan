@@ -5,3 +5,7 @@ version = "0.1.0"
 [project.scripts]
 core_engine = "src/plan_json_main.incn"
 acceptance = "src/acceptance.incn"
+
+[rust-dependencies]
+cfg_expr = { package = "cfg-expr", version = "=0.15.8", default-features = false }
+semver = "=1.0.27"

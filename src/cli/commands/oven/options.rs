@@ -24,16 +24,6 @@ pub struct OvenStoreCommandOptions {
     pub max_domain_logical_bytes: Option<u64>,
 }
 
-impl OvenStoreCommandOptions {
-    /// Whether a command will resolve the ordinary compiler-owned Oven store without caller-specific policy.
-    pub(super) fn is_ordinary_default(&self) -> bool {
-        self.root.is_none()
-            && self.max_physical_bytes.is_none()
-            && self.max_domain_physical_bytes.is_none()
-            && self.max_domain_logical_bytes.is_none()
-    }
-}
-
 /// Inputs for `incan inspect oven` receipt and build-unit inspection.
 #[derive(Debug, Clone)]
 pub struct OvenReceiptInspectCommandOptions {
@@ -106,11 +96,7 @@ pub struct OvenInteropBakeCommandOptions {
     /// Exact locked target triple to select and bake.
     pub target: String,
     /// Runtime-only receipt that selects the existing sealed direct-rustc Loaf plan.
-    ///
-    /// When omitted, Oven prepares an exact debug Rust-only base for a conventional executable before it selects and
-    /// seals the declared native inputs. The bootstrap cannot emit a caller-visible binary and never discovers a
-    /// native toolchain outside this command.
-    pub base_receipt: Option<PathBuf>,
+    pub base_receipt: PathBuf,
     /// Explicit selected C compiler for a declared toolchain requirement or C shim.
     pub c_compiler: Option<PathBuf>,
     /// Explicit selected C++ compiler for a declared C++ shim.
