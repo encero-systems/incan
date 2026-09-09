@@ -361,6 +361,7 @@ nav:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
           - A Cargo-free toolchain for Incan and Rust: whitepapers/incan_oven_positioning.md
+          - "Ship the loaf, not the recipe: why Incan and Rust need incan.pub": whitepapers/incan_pub_ship_the_loaf.md
       - Roadmap:
           - Overview: roadmap.md
           - Incan 0.6 delivery: project/v0_6_delivery.md
