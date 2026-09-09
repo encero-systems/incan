@@ -7,6 +7,11 @@ mod artifact;
 mod model;
 mod native_source;
 pub mod published_layout;
+#[allow(
+    dead_code,
+    reason = "#1037: pure projection awaits original selected-source producer wiring"
+)]
+pub(crate) mod semantic;
 #[cfg(test)]
 mod tests;
 mod type_projection;
