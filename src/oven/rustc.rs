@@ -6017,7 +6017,9 @@ mod tests {
         OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
     };
     use crate::oven::native_test::run_native_test_batch_all;
-    use crate::oven::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits};
+    use crate::oven::store::{
+        OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits,
+    };
     use crate::oven::{
         OVEN_COMPILER_TEST_PROFILE, OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project,
     };
@@ -8594,7 +8596,7 @@ mod tests {
         let loaded = load_project_inspection_authority(
             &store,
             &OvenProjectInspectionAuthorityRef {
-                identity: authority.identity,
+                identity: authority.identity.clone(),
                 receipt_identity: second_receipt.identity.clone(),
                 build_unit_identity: second_receipt.build_unit_identity.clone(),
             },
@@ -8602,7 +8604,201 @@ mod tests {
             source_authority_digest,
             compiler_version,
         )?;
+        assert_eq!(loaded.identity(), authority.identity);
+        assert_eq!(
+            loaded.artifact_root(),
+            store.select(&authority.identity)?.0.materialized_root()
+        );
         assert_eq!(loaded.payload, authority_payload);
+        Ok(())
+    }
+
+    #[test]
+    fn project_inspection_authority_rejects_unknown_schema_before_decoding_its_body()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let store_root = tempfile::tempdir()?;
+        let materialized = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let evidence = materialized.path().join("future-evidence.txt");
+        fs::write(&evidence, b"future evidence")?;
+        let store = OvenStore::new(
+            store_root.path(),
+            OvenStoreLimits::new(128 * 1024, 128 * 1024, 64 * 1024),
+        );
+        let future_schema = OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION + 1;
+        let authority = store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "future-project-inspection-authority".to_string(),
+            kind: OvenArtifactKind::ProjectInspectionAuthority,
+            payload: serde_json::to_vec(&serde_json::json!({
+                "schema_version": future_schema,
+                "generated_out_dirs": [{"crate_name": 42}],
+            }))?,
+            materialized_files: vec![OvenArtifactMaterializedFile {
+                source_path: evidence,
+                relative_path: "authority/future-evidence.txt".to_string(),
+            }],
+        })?;
+        let (entry, lease) = store.select(&authority.identity)?;
+        drop(lease);
+        let stored_evidence = entry.materialized_root().join("authority/future-evidence.txt");
+        fs::remove_file(&stored_evidence)?;
+        fs::write(stored_evidence, b"corrupt evidence")?;
+
+        let result = load_project_inspection_authority(
+            &store,
+            &OvenProjectInspectionAuthorityRef {
+                identity: authority.identity,
+                receipt_identity: receipt.identity,
+                build_unit_identity: receipt.build_unit_identity,
+            },
+            "unused-project-identity",
+            "unused-source-authority",
+            "unused-compiler-version",
+        );
+        assert!(matches!(
+            result,
+            Err(OvenRustcError::UnsupportedProjectInspectionAuthoritySchema {
+                found,
+                expected: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
+            }) if found == future_schema
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn project_inspection_authority_binds_the_requested_store_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let store_root = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let store = OvenStore::new(
+            store_root.path(),
+            OvenStoreLimits::new(128 * 1024, 128 * 1024, 64 * 1024),
+        );
+        let project_identity = "sha256:project";
+        let source_authority_digest = "sha256:source";
+        let compiler_version = "0.5.1-test";
+        let payload = OvenProjectInspectionAuthorityPayload {
+            schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
+            project_identity: project_identity.to_string(),
+            source_authority_digest: source_authority_digest.to_string(),
+            compiler_version: compiler_version.to_string(),
+            registry_lock_digest: digest_bytes(b"registry lock"),
+            registry_source_dependencies: Vec::new(),
+            dev_registry_source_dependencies: Vec::new(),
+            test_dependency_envelope: None,
+            constituents: Vec::new(),
+            registry_sources: Vec::new(),
+        };
+        let encoded_payload = serde_json::to_vec(&payload)?;
+        let publish = |domain: &str| {
+            store.publish(&OvenArtifactPublishRequest {
+                receipt: receipt.clone(),
+                domain: domain.to_string(),
+                kind: OvenArtifactKind::ProjectInspectionAuthority,
+                payload: encoded_payload.clone(),
+                materialized_files: Vec::new(),
+            })
+        };
+        let requested = publish("requested-project-inspection-authority")?;
+        let substitute = publish("substitute-project-inspection-authority")?;
+        assert_ne!(requested.identity, substitute.identity);
+        let (requested_entry, requested_lease) = store.select(&requested.identity)?;
+        let (substitute_entry, substitute_lease) = store.select(&substitute.identity)?;
+        drop(requested_lease);
+        drop(substitute_lease);
+        fs::remove_dir_all(&requested_entry.path)?;
+        fs::rename(&substitute_entry.path, &requested_entry.path)?;
+
+        let result = load_project_inspection_authority(
+            &store,
+            &OvenProjectInspectionAuthorityRef {
+                identity: requested.identity,
+                receipt_identity: receipt.identity,
+                build_unit_identity: receipt.build_unit_identity,
+            },
+            project_identity,
+            source_authority_digest,
+            compiler_version,
+        );
+        assert!(matches!(
+            result,
+            Err(OvenRustcError::InvalidStoredPlan { identity, .. }) if identity == substitute.identity
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn loaded_project_inspection_authority_retains_and_revalidates_its_store_owner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let store_root = tempfile::tempdir()?;
+        let materialized = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let evidence = materialized.path().join("authority-evidence.txt");
+        fs::write(&evidence, b"authority evidence")?;
+        let store = OvenStore::new(
+            store_root.path(),
+            OvenStoreLimits::new(128 * 1024, 128 * 1024, 64 * 1024),
+        );
+        let project_identity = "sha256:project";
+        let source_authority_digest = "sha256:source";
+        let compiler_version = "0.5.1-test";
+        let payload = OvenProjectInspectionAuthorityPayload {
+            schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
+            project_identity: project_identity.to_string(),
+            source_authority_digest: source_authority_digest.to_string(),
+            compiler_version: compiler_version.to_string(),
+            registry_lock_digest: digest_bytes(b"registry lock"),
+            registry_source_dependencies: Vec::new(),
+            dev_registry_source_dependencies: Vec::new(),
+            test_dependency_envelope: None,
+            constituents: Vec::new(),
+            registry_sources: Vec::new(),
+        };
+        let authority = store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "retained-project-inspection-authority".to_string(),
+            kind: OvenArtifactKind::ProjectInspectionAuthority,
+            payload: serde_json::to_vec(&payload)?,
+            materialized_files: vec![OvenArtifactMaterializedFile {
+                source_path: evidence,
+                relative_path: "authority/evidence.txt".to_string(),
+            }],
+        })?;
+        let authority_ref = OvenProjectInspectionAuthorityRef {
+            identity: authority.identity.clone(),
+            receipt_identity: receipt.identity.clone(),
+            build_unit_identity: receipt.build_unit_identity.clone(),
+        };
+
+        let loaded = load_project_inspection_authority(
+            &store,
+            &authority_ref,
+            project_identity,
+            source_authority_digest,
+            compiler_version,
+        )?;
+        assert_eq!(loaded.identity(), authority.identity);
+        assert!(loaded.artifact_root().join("authority/evidence.txt").is_file());
+        assert!(store.inspect()?.active_lease_physical_bytes > 0);
+        drop(loaded);
+        assert_eq!(store.inspect()?.active_lease_physical_bytes, 0);
+
+        let (entry, lease) = store.select(&authority.identity)?;
+        drop(lease);
+        let stored_evidence = entry.materialized_root().join("authority/evidence.txt");
+        fs::remove_file(&stored_evidence)?;
+        fs::write(stored_evidence, b"authority evidencf")?;
+        let result = load_project_inspection_authority(
+            &store,
+            &authority_ref,
+            project_identity,
+            source_authority_digest,
+            compiler_version,
+        );
+        assert!(matches!(result, Err(OvenRustcError::Store(_))));
         Ok(())
     }
 

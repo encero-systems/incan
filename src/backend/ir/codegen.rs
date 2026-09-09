@@ -5680,6 +5680,7 @@ pub def forward(value: Thing) -> None:
                     definition_path: Some("demo::takes_ref".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("value".to_string()),
@@ -5822,6 +5823,7 @@ pub def retain(file: File) -> File:
                     definition_path: Some("demo::flock".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("fd".to_string()),
@@ -6019,6 +6021,7 @@ pub def build_pair() -> None:
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: vec![
                                     RustParam {
@@ -6212,6 +6215,7 @@ pub def clear() -> ClearColor:
                         methods: vec![RustMethodSig {
                             name: "srgb".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: vec![
                                     RustParam {
@@ -6308,6 +6312,7 @@ pub def retain(mut commands: List[Commands]) -> None:
                         methods: vec![RustMethodSig {
                             name: "spawn_empty".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: vec![RustParam {
                                     name: Some("self".to_string()),
@@ -7283,6 +7288,7 @@ pub def translate(time: f32, velocity: f32) -> f32:
                     definition_path: Some("demo::accept_f32".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("value".to_string()),
@@ -7493,6 +7499,7 @@ pub def forward(payload: Payload) -> int:
                             RustMethodSig {
                                 name: "new".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: Vec::new(),
                                     return_type: "demo::Builder".to_string(),
@@ -7503,6 +7510,7 @@ pub def forward(payload: Payload) -> int:
                             RustMethodSig {
                                 name: "json".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: vec![RustParam {
                                         name: Some("value".to_string()),
@@ -7675,6 +7683,7 @@ pub async def run(state: State, plan: Plan) -> None:
                     definition_path: Some("demo::consume".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![
                             RustParam {
@@ -7765,6 +7774,7 @@ pub async def register_csv() -> None:
                             RustMethodSig {
                                 name: "new".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: Vec::new(),
                                     return_type: "demo::SessionContext".to_string(),
@@ -7775,6 +7785,7 @@ pub async def register_csv() -> None:
                             RustMethodSig {
                                 name: "register_csv".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: vec![
                                         RustParam {
@@ -7825,6 +7836,7 @@ pub async def register_csv() -> None:
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: Vec::new(),
                                 return_type: "demo::CsvReadOptions".to_string(),
@@ -7847,6 +7859,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::make_context".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::SessionContext".to_string(),
@@ -7864,6 +7877,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::make_options".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::CsvReadOptions".to_string(),
@@ -8288,5 +8302,45 @@ def read() -> None:
             code.contains("for WrappedPort"),
             "expected checked composed-newtype bridge in generated module:\n{code}"
         );
+    }
+    /// Exercise real TOML receiver facts under the library test root's declared registry-source authority.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn toml_traversal_uses_extracted_receiver_contracts() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::toml_edit import Item
+
+def traverse(item: Item, keys: list[str]) -> Item:
+    mut current = item
+    for key in keys:
+        match current.get(key):
+            Some(child) => current = child
+            None => return Item.None
+    return current.clone()
+
+pub def observe(item: Item) -> Item:
+    return traverse(item, ["project", "count"])
+"#;
+        let tokens =
+            crate::frontend::lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex: {errors:?}")))?;
+        let ast = crate::frontend::parser::parse(&tokens)
+            .map_err(|errors| std::io::Error::other(format!("parse: {errors:?}")))?;
+        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        checker.set_rust_inspect_manifest_dir(manifest_dir);
+        checker
+            .check_program(&ast)
+            .map_err(|errors| std::io::Error::other(format!("check: {errors:?}")))?;
+        let ir = crate::backend::ir::AstLowering::new_with_type_info(checker.type_info().clone())
+            .lower_program(&ast)
+            .map_err(|error| std::io::Error::other(format!("lower: {error:?}")))?;
+        let generated = crate::backend::ir::IrEmitter::new(&ir.function_registry).emit_program(&ir)?;
+        assert!(
+            generated.contains("item: &Item"),
+            "contracts: {:?}\n{generated}",
+            checker.type_info().rust.receiver_contracts
+        );
+        assert!(!generated.contains("child.clone()"), "{generated}");
+        Ok(())
     }
 }

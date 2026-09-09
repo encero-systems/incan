@@ -276,16 +276,12 @@ impl OvenStoreExecutionPayload {
         verify_materialized_files(&self.admitted_entry_root, &manifest).map(|_| ())
     }
 
-    /// Verify the complete materialized file closure while retaining this payload's active lease.
+    /// Revalidate the admitted Store owner and its complete materialized file closure under the held lease.
     ///
-    /// Call before importing the source files. An already admitted destination can reuse its own leased content
-    /// without rereading the source closure. This verification does not populate physical-accounting caches.
+    /// Call before importing source files. This preserves the original selected coordinate and content identity in
+    /// addition to checking the physical closure, and does not populate physical-accounting caches.
     pub fn verify_materialized_files(&self) -> Result<(), OvenStoreError> {
-        let entry_root = self.artifact_root.parent().ok_or_else(|| OvenStoreError::Integrity {
-            identity: self.manifest.identity.clone(),
-            message: "selected artifact root has no containing store entry".to_string(),
-        })?;
-        verify_materialized_files(entry_root, &self.manifest).map(|_| ())
+        self.verify_admitted_payload()
     }
 
     /// Consume this selected payload while retaining the execution lease for the caller's complete use of it.

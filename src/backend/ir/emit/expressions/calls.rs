@@ -1447,8 +1447,13 @@ impl<'a> IrEmitter<'a> {
         Ok(result_validation.apply(emitted))
     }
 
-    /// Return whether a nested binary operand must be parenthesized to preserve Incan precedence.
+    /// Group binary operands to preserve precedence and disambiguate named constructors from Rust control-flow blocks.
     fn binop_operand_needs_parens(parent: &BinOp, operand: &TypedExpr, is_right: bool) -> bool {
+        if let IrExprKind::Struct { fields, .. } = &operand.kind
+            && fields.iter().all(|(name, _)| !name.is_empty())
+        {
+            return true;
+        }
         let IrExprKind::BinOp { op: child, .. } = &operand.kind else {
             return false;
         };
@@ -2025,6 +2030,52 @@ mod tests {
             render(tokens),
             "ifincan_stdlib::strings::str_eq(&value,&target){panic!(\"AssertionError:left==right\");}"
         );
+        Ok(())
+    }
+
+    /// Inline named constructors must parse as operands rather than as the assertion's failure block.
+    #[test]
+    fn emit_canonical_assert_model_constructor_comparison_parses() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let model_type = IrType::Struct("Pair".to_string());
+        let constructor = || {
+            TypedExpr::new(
+                IrExprKind::Struct {
+                    name: "Pair".to_string(),
+                    fields: vec![("x".to_string(), TypedExpr::new(IrExprKind::Int(1), IrType::Int))],
+                    fill_defaults: false,
+                },
+                model_type.clone(),
+            )
+        };
+
+        for helper in ["assert_eq", "assert_ne"] {
+            for (inline_left, inline_right) in [(false, true), (true, false), (true, true)] {
+                let left = if inline_left {
+                    constructor()
+                } else {
+                    local_arg("left", model_type.clone())
+                };
+                let right = if inline_right {
+                    constructor()
+                } else {
+                    local_arg("right", model_type.clone())
+                };
+                let tokens = emitter.emit_call_expr(
+                    &rust_call_target(helper),
+                    &[],
+                    &[pos_arg(left), pos_arg(right)],
+                    None,
+                    Some(&canonical_testing_path(helper)),
+                )?;
+                syn::parse2::<syn::Block>(quote! {{ #tokens }}).map_err(|error| {
+                    std::io::Error::other(format!(
+                        "{helper} with inline operands ({inline_left}, {inline_right}) must parse: {error}; {tokens}"
+                    ))
+                })?;
+            }
+        }
         Ok(())
     }
 

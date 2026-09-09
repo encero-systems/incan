@@ -65,7 +65,7 @@ pub enum TomlKind(str):
         return self.value()
 
 
-def _value_kind(value: &EditValue) -> TomlKind:
+def _value_kind(value: EditValue) -> TomlKind:
     """Classify a borrowed TOML value without copying its contents."""
     match value:
         EditValue.String(_) => return TomlKind.String
@@ -310,7 +310,7 @@ pub class TomlValue:
                 )
         return self._traverse(self._item, keys)
 
-    def _traverse(self, item: &SpannedItem, keys: list[str]) -> Result[Option[TomlValue], TomlError]:
+    def _traverse(self, item: SpannedItem, keys: list[str]) -> Result[Option[TomlValue], TomlError]:
         """Walk borrowed parser nodes and copy only the selected subtree into its public snapshot."""
         mut current = item
         mut selected_path = self._path
@@ -413,7 +413,7 @@ pub class TomlValue:
         return _located_error(kind, detail, Some(path), location)
 
 
-def _item_kind(item: &SpannedItem) -> TomlKind:
+def _item_kind(item: SpannedItem) -> TomlKind:
     """
     Classify the parsed Rust enum, combining authored and inline container representations.
 

@@ -21,6 +21,7 @@ mod error;
 mod extractor;
 mod generic_params;
 mod loader;
+mod receiver_contract;
 mod selection;
 #[cfg(test)]
 mod selection_test_support;

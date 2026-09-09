@@ -5983,6 +5983,44 @@ fn test_assert_surface_codegen() {
     assert_codegen_snapshot!("assert_surface", rust_code);
 }
 
+/// Checked inline model comparisons and their equivalent assertion forms must survive Rust parsing.
+#[test]
+fn model_constructor_comparison_assertion_forms_codegen() -> TestResult {
+    for assertion in [
+        "assert value == Pair(x=1)",
+        "assert Pair(x=1) == value",
+        "assert Pair(x=1) == Pair(x=1)",
+        "assert value != Pair(x=2)",
+        "assert Pair(x=2) != value",
+        "assert (value == Pair(x=1)) == (Pair(x=1) == value)",
+        "assert not (value != Pair(x=1))",
+        "assert_eq(value, Pair(x=1))",
+        "assert_eq(Pair(x=1), value)",
+        "assert_ne(value, Pair(x=2))",
+        "assert_ne(Pair(x=2), value)",
+        "assert_false(value != Pair(x=1))",
+        "assert value == expected",
+    ] {
+        let source = format!(
+            r#"from std.testing import assert_eq, assert_ne, assert_false
+
+@derive(Eq)
+model Pair:
+    x: int
+
+pub def main() -> None:
+    value = Pair(x=1)
+    expected = Pair(x=1)
+    {assertion}
+"#,
+        );
+        let rust = generate_rust(&source);
+        syn::parse_file(&rust)
+            .map_err(|error| std::io::Error::other(format!("{assertion} must emit a valid Rust program: {error}")))?;
+    }
+    Ok(())
+}
+
 // ============================================================================
 /// RFC 057: Targeted Rust lint suppression.
 // ============================================================================

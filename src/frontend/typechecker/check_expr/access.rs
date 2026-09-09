@@ -2176,6 +2176,7 @@ impl TypeChecker {
         receiver_display: &str,
     ) -> RustFunctionSig {
         RustFunctionSig {
+            receiver_contract: sig.receiver_contract,
             type_params: sig.type_params.clone(),
             params: sig
                 .params

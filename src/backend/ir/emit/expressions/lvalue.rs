@@ -114,7 +114,7 @@ impl<'a> IrEmitter<'a> {
     /// - Negative indices are translated into `len() - offset` (Python-style indexing).
     pub(in super::super) fn emit_assign_target(&self, target: &AssignTarget) -> Result<TokenStream, EmitError> {
         match target {
-            AssignTarget::Var(name) => {
+            AssignTarget::Var { name, .. } => {
                 let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }

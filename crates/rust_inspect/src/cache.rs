@@ -130,7 +130,7 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 39;
+const DISK_CACHE_FORMAT: u32 = 40;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
