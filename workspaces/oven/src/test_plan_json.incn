@@ -1,7 +1,7 @@
 """Wire-boundary assertions with synthetic comparison facts, never admitted native artifacts."""
 
 from std.json import JsonValue
-from std.testing import fail
+from std.testing import fail, fail_t
 from plan_json import decode_request, evaluate
 from plan import SelectionErrorKind, NativeCandidateEvidence
 
@@ -13,13 +13,14 @@ pub def test_selection_binding_and_rank() -> None:
         Err(error) => fail(error.message())
         Ok(request) =>
             assert request.context.features == ["feature"]
-            assert request.runtime.unknown_input_keys == []
+            # Empty-list comparison loses context in native emission: https://github.com/encero-systems/incan/issues/1476
+            assert len(request.runtime.unknown_input_keys) == 0
             assert request.providers[0].direct_link
             match request.candidates[0].evidence:
                 NativeCandidateEvidence.RuntimeProviderRecipe(_, providers) =>
                     assert providers[0].modules == ["prelude"]
                 NativeCandidateEvidence.ExactBuildUnit => fail("legacy decoder produced exact-unit evidence")
-            assert request.unsupported_intent == []
+            assert len(request.unsupported_intent) == 0
     response = evaluate(source)
     assert text(response, "status") == "selected"
     assert text(response, "request_id") == "request"
@@ -246,32 +247,33 @@ def wrap(owner: str, value: JsonValue) -> JsonValue:
         _ => return put(envelope(), "request", put(request(), owner, value))
 
 
-def put(mut value: JsonValue, key: str, item: JsonValue) -> JsonValue:
-    """Replace one fixture field and retain mutation failures as test failures."""
-    match value.set(key, item):
-        Err(error) => fail(error.message())
-        Ok(_) => return value
+def put(value: JsonValue, key: str, item: JsonValue) -> JsonValue:
+    """Return an updated copy, preserving the input fixture and reporting mutation failure."""
+    mut updated = value.clone()
+    match updated.set(key, item):
+        Err(error) => return fail_t[JsonValue](error.message())
+        Ok(_) => return updated
 
 
 def get(value: JsonValue, key: str) -> JsonValue:
     """Require an expected response field for an assertion."""
     match value.get(key):
         Some(item) => return item
-        None => fail(f"missing response field {key}")
+        None => return fail_t[JsonValue](f"missing response field {key}")
 
 
 def text(value: JsonValue, key: str) -> str:
     """Require an expected string response field without coercion."""
     match get(value, key).as_str():
         Some(item) => return item
-        None => fail(f"response field {key} is not text")
+        None => return fail_t[str](f"response field {key} is not text")
 
 
 def render(value: JsonValue) -> str:
     """Serialize fixture JSON, failing explicitly if the fixture itself is invalid."""
     match value.to_json():
         Ok(source) => return source
-        Err(error) => fail(error.message())
+        Err(error) => return fail_t[str](error.message())
 
 
 pub def test_version_two_exact_and_recipe_evidence() -> None:

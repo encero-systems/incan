@@ -1,7 +1,7 @@
 """Batch wire and selection contracts using synthetic facts, never authenticated native claims."""
 
 from std.json import JsonValue, parse
-from std.testing import fail
+from std.testing import fail, fail_t
 from plan_json import evaluate, decode_batch
 from source_unit import select_source_units
 
@@ -188,10 +188,12 @@ def run(value: JsonValue) -> JsonValue:
         Ok(source) => return evaluate(source)
 
 
-def put(mut value: JsonValue, key: str, item: JsonValue) -> JsonValue:
-    """Replace one fixture field using the existing JsonValue API."""
-    value.set(key, item)
-    return value
+def put(value: JsonValue, key: str, item: JsonValue) -> JsonValue:
+    """Return a changed copy without mutating the original fixture or ignoring an invalid object."""
+    mut updated = value.clone()
+    match updated.set(key, item):
+        Err(error) => return fail_t[JsonValue](error.message())
+        Ok(_) => return updated
 
 
 def get(value: JsonValue, key: str) -> JsonValue:
