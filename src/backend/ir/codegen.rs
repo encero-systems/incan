@@ -4583,7 +4583,6 @@ pub def add(a: int, b: int) -> int:
     #[test]
     fn emitted_compiler_support_tracks_actual_macro_sites_and_features() -> Result<(), Box<dyn std::error::Error>> {
         use crate::library_manifest::{NativeCompilerSupport, NativeCompilerSupportRequirement};
-        let mut generator = IrCodegen::new();
         for (source, needs_derive) in [
             ("pub def answer() -> int:\n  return 42\n", false),
             ("pub model Sample:\n  pub value: int\n", true),
@@ -4593,7 +4592,7 @@ pub def add(a: int, b: int) -> int:
         ] {
             let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
             let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
-            let (code, metadata) = generator.try_generate_with_metadata(&ast, &["support".to_string()])?;
+            let (code, metadata) = IrCodegen::new().try_generate_with_metadata(&ast, &["support".to_string()])?;
             assert!(code.contains("__incan_stdlib_version_check"), "{source}");
             assert_eq!(code.contains("incan_derive::"), needs_derive, "{source}");
             let mut expected = vec![NativeCompilerSupportRequirement {
