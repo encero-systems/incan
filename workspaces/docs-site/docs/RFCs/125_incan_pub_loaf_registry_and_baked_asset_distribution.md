@@ -1,4 +1,4 @@
-# RFC 124: `incan.pub` Loaf registry and baked asset distribution
+# RFC 125: `incan.pub` Loaf registry and baked asset distribution
 
 - **Status:** Draft
 - **Created:** 2026-09-09
@@ -13,6 +13,7 @@
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 123 (package executable representation)
+    - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
@@ -190,7 +191,7 @@ On publish the registry must: verify the caller is authorised for the scope; rej
 
 Oven must fetch over HTTPS with a certificate policy that behaves identically on every supported host, and should offer an explicit opt-in to the operating system's certificate store for environments that require it. Oven must verify every downloaded artifact's digest against the index or asset manifest before using it, must fail closed on mismatch, and must verify attestations according to the active trust policy. Oven must not execute any content of a downloaded artifact during resolution or fetching.
 
-The Loaf store is the only cache and the only offline source. An offline mode must satisfy resolution from the store and the lockfile alone and must fail fast on anything absent, as RFC 020 requires.
+The Loaf store is the only cache and the only offline source. An offline mode must satisfy resolution from the store and the lockfile alone and must fail fast on anything absent, as RFC 020 requires. Assets are addressed by the unit identity RFC 124 defines, and importing an asset must insert its units into the store through the same path a local bake uses, so a downloaded unit and a locally baked unit with equal identity are one entry. A unit RFC 124 marks machine-local must not be published as an asset.
 
 ### crates.io and other sources
 
@@ -219,6 +220,10 @@ Because every artifact and index file is immutable or event-derived, a mirror is
 ### Interaction with RFC 119
 
 The Rust facet is what makes Rust-only publication possible. Asset applicability reuses RFC 119's host and target domains and per-unit feature closures verbatim; this RFC introduces no new notion of a build unit. Cargo compatibility mode is orthogonal: a project in that mode is not Loaf-native and cannot publish here until it adopts `loaf.toml`.
+
+### Interaction with RFC 124
+
+RFC 124 is the normative source for unit identity and for the store's sharing and collection behaviour. This RFC depends on it: an asset's applicability rule is the unit identity rule stated at the granularity of a published bundle, and the store that receives imports is the store RFC 124 defines. Whether assets are offered per unit, per package bundle, or both is an open question shared between the two RFCs.
 
 ### Interaction with RFC 123
 
@@ -272,6 +277,7 @@ Non-normative. The registry client belongs in Oven's build-system ring rather th
 - How is a Rust-facet Loaf from `incan.pub` imported in Incan source? The dependency key selects the registry; whether `rust::` or `pub::` selects the surface needs a rule.
 - How are scopes claimed and verified: free claim on first publish, linked to a source-forge organisation, or both with different display?
 - What is the retention policy for assets whose toolchain is no longer supported, given that source Loaves are retained forever?
+- Should assets be offered per unit, per package bundle, or both? Per-unit assets maximise cross-project hits; bundles keep the asset manifest small. Shared with RFC 124.
 - Should running a published tool without a project (`oven run <scope>/<name>@<version>`) be defined here or in an RFC 118 amendment?
 - Which documentation asset format does the web surface render, and does RFC 082 define it?
 - When the CDN bandwidth cap is reached, should clients fall back to the origin or fail with a clear diagnostic?

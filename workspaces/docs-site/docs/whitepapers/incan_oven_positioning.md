@@ -144,7 +144,7 @@ This does not eliminate source distributions, local compilation, cross-compilati
 
 The trust decision belongs to the receiving project. A Loaf must bind to declared source and build inputs, carry verifiable publisher or rebuild evidence, and remain subject to the project's trust policy. If an artifact is withdrawn or found invalid, Oven must be able to explain which projects selected it and refuse, replace, or rebuild it according to policy. Prebuilt distribution removes surprise compilation; it cannot remove provenance or revocation responsibility.
 
-The registry side of this division of labour, with measured cold-build costs on two hosts, is argued in [Ship the loaf, not the recipe](incan_pub_ship_the_loaf.md); the contract is RFC 124.
+The registry side of this division of labour, with measured cold-build costs on two hosts, is argued in [Ship the loaf, not the recipe](incan_pub_ship_the_loaf.md); the contract is RFC 125.
 
 The cache-identity, lifecycle, and CI-safety principles explored in current work remain valuable. Under this direction, they become the substrate for managed build units and Loaves rather than a permanent way to manage Cargo target directories.
 
