@@ -4154,7 +4154,7 @@ pub(crate) fn oven_caller_owned_libraries(
             ProjectGenerator::rust_target_name(&artifact.manifest_name)
         ));
         if !output.is_file() {
-            // `rematerialize_caller_owned_libraries` follows immediately after native-plan selection and rebuilds
+            // Hosted provider selection follows native-plan selection and rebuilds
             // the receipt-authorized generated source with that exact cohort. Do not turn a missing convenience
             // output into a Cargo fallback or a false prerequisite for a source that is already materialized.
             continue;
@@ -5839,179 +5839,12 @@ impl AdmittedProviderSourceBatch<'_, '_, '_> {
     }
 }
 
-/// Re-materialize one public provider graph by following only digest-verified public edges.
-///
-/// Every nested output is retained as a verified direct-Rustc search path. Only the current graph root is exposed to
-/// its caller, which prevents an implementation dependency from becoming an accidental public package extern.
-#[allow(clippy::too_many_arguments)]
-fn rematerialize_caller_owned_provider_graph(
-    definitions: &mut CallerOwnedProviderSourceDefinitions<'_>,
-    provider_identity: &ProviderIdentity,
-    dependency_key: &str,
-    profile: &str,
-    artifacts: &OvenRustcArtifactManifest,
-    artifact_root: &Path,
-    artifact_plan: &OvenRustcArtifactPlan,
-    rustc: &Path,
-    consumer_output_root: &Path,
-    registry_authority: Option<&OvenRegistryLeafAuthority>,
-    extra_dependency_search_paths: &[PathBuf],
-    compiler_owned_roots: &[PathBuf],
-    selected_path_authority: Option<&OvenSelectedPathRustcAuthority>,
-    visiting: &mut BTreeSet<PathBuf>,
-    authority_context: &mut Option<&mut OvenProjectBakeAuthorityContext>,
-) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
-    let provider_plan = definitions.provider_plan;
-    let provider = provider_plan
-        .public_artifact(provider_identity)
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let canonical_root = provider.admitted_root.clone();
-    if !visiting.insert(canonical_root.clone()) {
-        return Err(CliError::failure(format!(
-            "Oven Alpha refuses a cyclic public provider graph while re-materializing pub::{} at {}",
-            dependency_key,
-            canonical_root.display()
-        )));
-    }
-    let result = (|| {
-        if let Some(dependency) = first_unselected_private_provider_edge(&provider.manifest, artifact_plan) {
-            return Err(CliError::failure(format!(
-                "Oven Alpha cannot re-materialize pub::{} because private provider edge `{}` is not a selected direct-Rustc foundation extern",
-                dependency_key, dependency.dependency_key
-            )));
-        }
-        let (provider, source_definition, artifact_digest) = definitions.read(provider_identity)?;
-        let artifact = &provider.artifact;
-        let manifest = provider.manifest.as_ref();
-
-        let mut nested_libraries = Vec::new();
-        let provider_plan = definitions.provider_plan;
-        for edge in provider_plan
-            .public_dependencies(provider_identity)
-            .map_err(|error| CliError::failure(error.to_string()))?
-        {
-            let mut materialized = rematerialize_caller_owned_provider_graph(
-                definitions,
-                &edge.target.identity,
-                &edge.descriptor.dependency_key,
-                profile,
-                artifacts,
-                artifact_root,
-                artifact_plan,
-                rustc,
-                consumer_output_root,
-                registry_authority,
-                extra_dependency_search_paths,
-                compiler_owned_roots,
-                selected_path_authority,
-                visiting,
-                authority_context,
-            )?;
-            nested_libraries.append(&mut materialized);
-        }
-        deduplicate_caller_owned_libraries_prefer_extern(&mut nested_libraries);
-
-        let receipt = caller_owned_library_receipt(artifact, profile, artifacts, authority_context.as_deref_mut())?;
-        let is_proc_macro = source_definition.crate_kind == NativeSourceCrateKind::ProcMacro;
-        let provider_dependencies = caller_owned_library_rust_dependencies(artifact)?;
-        let provider_dependencies =
-            caller_owned_library_dependencies_without_unused_incan_derive(artifact, provider_dependencies)?;
-        let provider_dependencies =
-            caller_owned_library_dependencies_without_public_provider_edges(provider_dependencies, manifest);
-        let provider_dependencies = caller_owned_library_dependencies_missing_from_selected_plan_with_owned_roots(
-            &provider_dependencies,
-            artifact_plan,
-            compiler_owned_roots,
-        );
-        let mut provider_rust_libraries = materialize_declared_rust_libraries_with_selected_path_authority(
-            &consumer_output_root
-                .join("oven")
-                .join("caller-owned-libraries")
-                .join(profile)
-                .join("provider-rust-dependencies"),
-            rustc,
-            &receipt.intent.target,
-            profile,
-            &provider_dependencies,
-            registry_authority,
-            selected_path_authority,
-        )
-        .map_err(oven_rustc_error)?;
-        nested_libraries.append(&mut provider_rust_libraries);
-        deduplicate_caller_owned_libraries_prefer_extern(&mut nested_libraries);
-
-        let crate_name = &source_definition.crate_name;
-        let output = consumer_output_root
-            .join("oven")
-            .join("caller-owned-libraries")
-            .join(profile)
-            .join(artifact_digest.trim_start_matches("sha256:"))
-            .join(if is_proc_macro {
-                format!("lib{crate_name}{}", std::env::consts::DLL_SUFFIX)
-            } else {
-                format!("lib{crate_name}.rlib")
-            });
-        let mut provider_plan = artifact_plan.clone();
-        attach_caller_owned_rustc_libraries(&mut provider_plan, &nested_libraries).map_err(oven_rustc_error)?;
-        if provider_dependencies
-            .iter()
-            .any(|dependency| matches!(dependency.source, DependencySource::Registry))
-        {
-            // The provider's own registry dependencies were each attached above as a direct `--extern`, but loading
-            // any one of them can require Rustc to locate its *own* further dependencies purely through
-            // `-L dependency=...` search -- including proc-macro/build-script outputs that never become a named
-            // registry leaf at all. `extra_dependency_search_paths` is this provider's own already-materialized
-            // closure (see `caller_owned_provider_registry_leaf_authority`), the same directories that made this
-            // provider's own standalone bake link successfully.
-            for directory in extra_dependency_search_paths {
-                if !provider_plan.dependency_search_paths.contains(directory) {
-                    provider_plan.dependency_search_paths.push(directory.clone());
-                }
-            }
-        }
-        let source = artifact.crate_root.join(&source_definition.entrypoint.path);
-        let bake_request = OvenTrustedDirectRustcTargetRequest {
-            receipt: &receipt,
-            artifacts,
-            artifact_root,
-            artifact_plan: Some(&provider_plan),
-            rustc,
-            source: &source,
-            output: &output,
-            crate_name,
-            edition: &source_definition.edition,
-            source_evidence_key: "generated-root",
-            features: &receipt.intent.features,
-            prefer_dynamic: false,
-        };
-        let bake = if is_proc_macro {
-            bake_trusted_direct_rustc_proc_macro(&bake_request)
-        } else {
-            bake_trusted_direct_rustc_library(&bake_request)
-        }
-        .map_err(oven_rustc_error)?;
-
-        for nested in &mut nested_libraries {
-            nested.expose_extern = false;
-        }
-        nested_libraries.push(OvenCallerOwnedRustcLibrary {
-            crate_name: dependency_key.to_string(),
-            output: bake.output,
-            digest: bake.output_digest,
-            expose_extern: true,
-        });
-        Ok(nested_libraries)
-    })();
-    visiting.remove(&canonical_root);
-    result
-}
-
 /// Registry-leaf authorities and dependency-search closure collected from every caller-owned path-dependency
 /// provider.
 ///
 /// A `pub::` provider consumed by path (for example a query-engine library) was compiled against its own sealed
-/// third-party registry closure. [`rematerialize_caller_owned_provider_graph`] re-materializes that provider's
-/// compiled libraries into the consumer's own direct-Rustc plan, but resolving the provider's *own* declared
+/// third-party registry closure. Hosted source selection materializes that provider's compiled libraries into the
+/// consumer's direct-Rustc plan, but resolving the provider's *own* declared
 /// registry dependencies (its `[rust-dependencies]`) needs the provider's own registry-leaf authority and full
 /// dependency search closure, not just the consumer's -- the consumer's own closure knows nothing about a package
 /// the provider alone depends on, directly or transitively. Each provider's authority is kept separate here rather
@@ -6029,7 +5862,7 @@ struct CallerOwnedProviderRegistryClosure {
 /// Collect the registry-leaf authorities and dependency search closure owned by every caller-owned path-dependency
 /// provider.
 ///
-/// Walks the exact same caller-owned provider graph [`rematerialize_caller_owned_provider_graph`] re-materializes.
+/// Walks the admitted caller-owned provider graph shared with hosted source selection.
 /// The collected authorities feed both the pre-bake conflict decision
 /// ([`caller_owned_provider_registry_conflict`]) for already packaged closures. Source-unit rematerialization uses
 /// the original admitted candidate and checked batch edges instead of this legacy lookup surface.
@@ -6066,8 +5899,8 @@ fn collect_caller_owned_provider_registry_leaf_authority(
 
 /// Recursive worker for [`collect_caller_owned_provider_registry_leaf_authority`].
 ///
-/// Follows the same public-package provider edges [`rematerialize_caller_owned_provider_graph`] follows, so both
-/// walks agree on which providers exist and which are another provider's own nested public-package dependency.
+/// Follows the same admitted public-package edges as hosted source selection, preserving each provider's nested
+/// public-package dependency associations.
 /// Fresh physical validation precedes child traversal and receipt selection, including packaged-provider paths that
 /// will not subsequently run source rematerialization.
 fn collect_caller_owned_provider_registry_leaf_authority_graph(
@@ -6180,109 +6013,6 @@ fn read_verified_caller_owned_provider_receipt(project_root: &Path, profile: &st
         .and_then(|bytes| serde_json::from_slice::<crate::oven::OvenReceipt>(&bytes).ok())?;
     receipt.verify_identity().ok()?;
     Some(receipt)
-}
-
-/// Rebuild selected caller-owned Rust libraries in the consumer's direct-Rustc cohort.
-#[allow(clippy::too_many_arguments)]
-fn rematerialize_caller_owned_libraries_with_authority_context(
-    provider_plan: &ProviderPlan,
-    profile: &str,
-    artifacts: &OvenRustcArtifactManifest,
-    artifact_root: &Path,
-    artifact_plan: &OvenRustcArtifactPlan,
-    rustc: &Path,
-    consumer_output_root: &Path,
-    registry_authority: Option<&OvenRegistryLeafAuthority>,
-    extra_dependency_search_paths: &[PathBuf],
-    mut authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
-) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
-    // Compiler-owned SDK-only projects, including the explicit core Engine publisher, need no hosted provider batch.
-    if !has_caller_owned_project_libraries(provider_plan) {
-        return Ok(Vec::new());
-    }
-    let mut libraries = Vec::new();
-    let mut visiting = BTreeSet::new();
-    let mut definitions = CallerOwnedProviderSourceDefinitions::new(provider_plan);
-    let compiler_owned_roots = compiler_owned_roots_with_provider_plan(artifact_plan, Some(provider_plan));
-    let selected_path_authority = (!compiler_owned_roots.is_empty())
-        .then(|| OvenSelectedPathRustcAuthority::new(&compiler_owned_roots, artifact_plan));
-    for provider in provider_plan.active_records().filter(|provider| {
-        matches!(
-            provider.authority,
-            crate::provider::NamespaceAuthority::ProjectDependency { .. }
-        )
-    }) {
-        let crate::provider::NamespaceAuthority::ProjectDependency { dependency_key } = &provider.authority else {
-            continue;
-        };
-        libraries.extend(rematerialize_caller_owned_provider_graph(
-            &mut definitions,
-            &provider.identity,
-            dependency_key,
-            profile,
-            artifacts,
-            artifact_root,
-            artifact_plan,
-            rustc,
-            consumer_output_root,
-            registry_authority,
-            extra_dependency_search_paths,
-            &compiler_owned_roots,
-            selected_path_authority.as_ref(),
-            &mut visiting,
-            &mut authority_context,
-        )?);
-    }
-    libraries.sort_by(|left, right| {
-        left.crate_name
-            .cmp(&right.crate_name)
-            .then_with(|| left.output.cmp(&right.output))
-            .then_with(|| left.expose_extern.cmp(&right.expose_extern))
-    });
-    libraries.dedup_by(|left, right| {
-        left.crate_name == right.crate_name && left.output == right.output && left.expose_extern == right.expose_extern
-    });
-    if libraries
-        .windows(2)
-        .any(|pair| pair[0].expose_extern && pair[1].expose_extern && pair[0].crate_name == pair[1].crate_name)
-    {
-        return Err(CliError::failure(
-            "Oven Alpha resolved duplicate re-materialized caller-owned Rust library crate names",
-        ));
-    }
-    Ok(libraries)
-}
-
-/// Rebuild selected caller-owned Rust libraries for ordinary consumers without an explicit-bake memo.
-///
-/// Unlike [`bake_oven_project`]/[`bake_oven_library`], this entry point does not (yet) collect each caller-owned
-/// provider's own registry-leaf authority and dependency search closure via
-/// [`collect_caller_owned_provider_registry_leaf_authority`] -- a caller-owned provider that declares registry
-/// dependencies of its own is not yet supported through this path. Ordinary providers without their own registry
-/// dependencies are unaffected.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn rematerialize_caller_owned_libraries(
-    provider_plan: &ProviderPlan,
-    profile: &str,
-    artifacts: &OvenRustcArtifactManifest,
-    artifact_root: &Path,
-    artifact_plan: &OvenRustcArtifactPlan,
-    rustc: &Path,
-    consumer_output_root: &Path,
-    registry_authority: Option<&OvenRegistryLeafAuthority>,
-) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
-    rematerialize_caller_owned_libraries_with_authority_context(
-        provider_plan,
-        profile,
-        artifacts,
-        artifact_root,
-        artifact_plan,
-        rustc,
-        consumer_output_root,
-        registry_authority,
-        &[],
-        None,
-    )
 }
 
 /// Replace package-library attachments while preserving independently materialized inline Rust dependencies.
@@ -18717,66 +18447,91 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
+    /// Checked capture retains authored Rust requests separately from named compiler support through admission.
     #[test]
-    fn caller_owned_provider_manifest_dependencies_are_explicit_direct_rustc_inputs()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn caller_owned_provider_requests_remain_explicit_beside_compiler_support() -> Result<(), Box<dyn std::error::Error>>
+    {
         let workspace = tempfile::tempdir()?;
-        let artifact_root = workspace.path().join("target/lib");
-        let toolchain_root = workspace.path().join("toolchain");
-        fs::create_dir_all(artifact_root.join("src"))?;
-        fs::create_dir_all(toolchain_root.join("incan_stdlib"))?;
-        fs::write(
-            artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nincan_stdlib = { path = \"../../toolchain/incan_stdlib\" }\nserde = { version = \"1.0\", features = [\"derive\"] }\nrust_shadow = { path = \"../../rust_shadow\" }\n",
+        let (artifact, manifest, _) =
+            provider_source_definition_fixture(&workspace.path().join("provider"), NativeSourceCrateKind::Rlib)?;
+        let authored = ProjectManifest::from_str(
+            r#"[project]
+name = "public-provider"
+version = "1.2.3"
+[rust-dependencies]
+serde = { version = "1.0", features = ["derive"], default-features = false }
+rust_shadow = { path = "never-opened-rust-shadow" }
+"#,
+            &workspace.path().join("loaf.toml"),
         )?;
-        fs::write(artifact_root.join("src/lib.rs"), "pub fn marker() {}\n")?;
-        let artifact = LibraryArtifactMetadata {
-            dependency_key: "provider".to_string(),
-            manifest_name: "provider".to_string(),
-            manifest_path: workspace.path().join("provider.incnlib"),
-            crate_root: artifact_root.clone(),
-            crate_lib_path: artifact_root.join("src/lib.rs"),
-            kind: LibraryArtifactKind::Materialized,
-        };
-
-        let dependencies = caller_owned_library_rust_dependencies(&artifact)?;
-        assert_eq!(dependencies.len(), 3);
-        assert!(dependencies.iter().any(|dependency| {
-            dependency.crate_name == "serde"
-                && dependency.version.as_deref() == Some("1.0")
-                && dependency.features == ["derive"]
-                && dependency.source == DependencySource::Registry
-        }));
-        assert!(dependencies.iter().any(|dependency| {
-            dependency.crate_name == "rust_shadow"
-                && matches!(
-                    &dependency.source,
-                    DependencySource::Path { path } if path == &artifact_root.join("../../rust_shadow")
-                )
-        }));
-
-        let plan = OvenRustcArtifactPlan {
-            dependency_search_paths: Vec::new(),
-            native_search_paths: Vec::new(),
-            externs: vec![(
-                "incan_stdlib".to_string(),
-                workspace.path().join("sealed/incan_stdlib.rlib"),
-            )],
-            compile_environment: BTreeMap::new(),
-            caller_owned_library_digests: BTreeMap::new(),
-        };
-        let remaining = caller_owned_library_dependencies_missing_from_selected_plan_with_owned_roots(
-            &dependencies,
-            &plan,
-            &[fs::canonicalize(&toolchain_root)?],
+        let dependencies = authored.rust_dependencies().values().cloned().collect::<Vec<_>>();
+        let captured = capture_provider_requests_fixture(&artifact, &manifest, &dependencies)?;
+        let expected = vec![
+            NativeSourceRequirement {
+                role: NativeRequirementRole::Normal,
+                alias: "rust_shadow".to_string(),
+                package: None,
+                version_requirement: None,
+                features: Vec::new(),
+                default_features: true,
+                optional: false,
+                source: NativeRequirementSource::UnboundPathRequest {
+                    request_key: "normal:rust_shadow".to_string(),
+                    reason: NativeUnboundPathReason::PortableSourceBindingUnavailable,
+                },
+            },
+            NativeSourceRequirement {
+                role: NativeRequirementRole::Normal,
+                alias: "serde".to_string(),
+                package: None,
+                version_requirement: Some("1.0".to_string()),
+                features: vec!["derive".to_string()],
+                default_features: false,
+                optional: false,
+                source: NativeRequirementSource::RegistryRequest,
+            },
+        ];
+        assert_eq!(captured.requirements, expected);
+        let poison = "not a Cargo manifest; checked requests are already captured";
+        fs::write(artifact.crate_root.join("Cargo.toml"), poison)?;
+        let plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::from_entries(HashMap::from([(
+                "provider_alias".to_string(),
+                load_provider_dependency_artifact("provider_alias", &artifact.crate_root),
+            )])),
+            None,
+            None,
+            None,
+            [],
+        )?;
+        let identity = &plan.active_records().next().ok_or("provider absent")?.identity;
+        let mut definitions = CallerOwnedProviderSourceDefinitions::new(&plan);
+        let (_, admitted, _) = definitions.read(identity)?;
+        assert_eq!(admitted.as_ref(), &captured);
+        let (receipt, owner) = provider_batch_store_fixture(&workspace.path().join("native"))?;
+        let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?;
+        let view = stored.native_input_view()?;
+        let candidates = [ProviderBatchCandidate::from_store(&view)?];
+        let batch = ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &candidates)?;
+        let request: serde_json::Value = serde_json::from_slice(&batch.request)?;
+        assert_eq!(batch.units.len(), 1);
+        assert_eq!(batch.units[0].definition.requirements, expected);
+        assert_eq!(
+            request["units"][0]["definition"]["requirements"],
+            serde_json::to_value(&expected)?
         );
-        assert_eq!(remaining.len(), 2);
-        assert!(remaining.iter().any(|dependency| dependency.crate_name == "serde"));
-        assert!(
-            remaining
-                .iter()
-                .any(|dependency| dependency.crate_name == "rust_shadow")
+        assert_eq!(batch.need_ids, [vec!["runtime:0:0".to_string()]]);
+        assert_eq!(batch.grants.len(), 1);
+        assert_eq!(batch.grants[0].artifact.crate_name, "incan_stdlib");
+        assert_eq!(
+            admitted.compiler_support,
+            Some(vec![NativeCompilerSupportRequirement {
+                support: NativeCompilerSupport::Stdlib,
+                features: Vec::new(),
+            }])
         );
+        assert!(!workspace.path().join("never-opened-rust-shadow").exists());
+        assert_eq!(fs::read_to_string(artifact.crate_root.join("Cargo.toml"))?, poison);
         Ok(())
     }
 
@@ -18992,42 +18747,161 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
+    /// A valid facade batch cannot hide its leaf's authored registry slots behind a selected runtime foundation.
     #[test]
-    fn public_provider_registry_closure_constrains_loaf_selection() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = tempfile::tempdir()?;
-        let artifact_root = workspace.path().join("target/lib");
-        fs::create_dir_all(artifact_root.join("src"))?;
-        fs::write(
-            artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"query_provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\ndatafusion = \"53\"\nsubstrait = \"0.58\"\n",
-        )?;
-        fs::write(artifact_root.join("src/lib.rs"), "pub fn query() {}\n")?;
-        let artifact = LibraryArtifactMetadata {
-            dependency_key: "query_provider".to_string(),
-            manifest_name: "query_provider".to_string(),
-            manifest_path: workspace.path().join("query_provider.incnlib"),
-            crate_root: artifact_root.clone(),
-            crate_lib_path: artifact_root.join("src/lib.rs"),
-            kind: LibraryArtifactKind::Materialized,
-        };
-        let manifest = LibraryManifest::new("query_provider", "0.1.0");
-        let mut dependencies = Vec::new();
-        let mut visiting = BTreeSet::new();
-
-        collect_caller_owned_project_rust_dependencies(&artifact, &manifest, &mut visiting, &mut dependencies)?;
-
-        assert_eq!(dependencies.len(), 2);
-        assert!(dependencies.iter().any(|dependency| {
-            dependency.crate_name == "datafusion"
-                && dependency.version.as_deref() == Some("53")
-                && dependency.source == DependencySource::Registry
-        }));
-        assert!(dependencies.iter().any(|dependency| {
-            dependency.crate_name == "substrait"
-                && dependency.version.as_deref() == Some("0.58")
-                && dependency.source == DependencySource::Registry
-        }));
+    fn public_provider_registry_requests_cannot_be_omitted_from_batch_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for registry_requests in [false, true] {
+            let workspace = tempfile::tempdir()?;
+            let (leaf, leaf_manifest, _) =
+                provider_source_definition_fixture(&workspace.path().join("leaf"), NativeSourceCrateKind::Rlib)?;
+            let dependencies = if registry_requests {
+                let authored = ProjectManifest::from_str(
+                    "[project]\nname = \"public-provider\"\nversion = \"1.2.3\"\n[rust-dependencies]\ndatafusion = \"53\"\nsubstrait = \"0.58\"\n",
+                    &workspace.path().join("loaf.toml"),
+                )?;
+                authored.rust_dependencies().values().cloned().collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            capture_provider_requests_fixture(&leaf, &leaf_manifest, &dependencies)?;
+            let (facade, mut manifest, _) =
+                provider_source_definition_fixture(&workspace.path().join("facade"), NativeSourceCrateKind::Rlib)?;
+            manifest
+                .contract_metadata
+                .provider
+                .provider_dependencies
+                .push(ProviderDependencyMetadata {
+                    kind: ProviderDependencyKind::PublicPackage,
+                    dependency_key: "query".to_string(),
+                    provider_name: leaf_manifest.name.clone(),
+                    provider_version: leaf_manifest.version.clone(),
+                    artifact_digest: digest_provider_artifact(&leaf.crate_root)?,
+                    relative_artifact_path: "../leaf".to_string(),
+                    requested_features: BTreeSet::new(),
+                    default_features: false,
+                    optional: false,
+                });
+            manifest.write_to_path(&facade.manifest_path)?;
+            capture_provider_requests_fixture(
+                &facade,
+                &manifest,
+                &[DependencySpec {
+                    crate_name: "query".to_string(),
+                    version: None,
+                    features: Vec::new(),
+                    default_features: false,
+                    source: DependencySource::Path {
+                        path: leaf.crate_root.clone(),
+                    },
+                    optional: false,
+                    package: Some(leaf_manifest.name),
+                }],
+            )?;
+            let plan = ProviderPlan::from_resolved_inputs(
+                LibraryManifestIndex::from_entries(HashMap::from([(
+                    "facade_alias".to_string(),
+                    load_provider_dependency_artifact("facade_alias", &facade.crate_root),
+                )])),
+                None,
+                None,
+                None,
+                [],
+            )?;
+            let (receipt, owner) = provider_batch_store_fixture(&workspace.path().join("native"))?;
+            let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?;
+            let view = stored.native_input_view()?;
+            let candidates = [ProviderBatchCandidate::from_store(&view)?];
+            let batch = ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &candidates)?;
+            assert_eq!(batch.units.len(), 2);
+            assert_eq!(batch.edges.len(), 1);
+            assert_eq!(batch.edges[0].unit, 1);
+            assert_eq!(batch.edges[0].target_unit, Some(0));
+            assert_eq!(batch.edges[0].descriptor_index, 0);
+            assert_eq!(batch.edges[0].descriptor.dependency_key, "query");
+            assert_eq!(batch.edges[0].target, &batch.units[0].provider.identity);
+            assert_eq!(batch.units[1].root_aliases, ["facade_alias"]);
+            assert!(batch.units[0].root_aliases.is_empty());
+            let request: serde_json::Value = serde_json::from_slice(&batch.request)?;
+            assert_eq!(
+                request["units"][0]["definition"]["requirements"],
+                serde_json::to_value(&batch.units[0].definition.requirements)?
+            );
+            // This response is complete for the positive control. The registry case changes only the leaf's
+            // captured requests; the same runtime grants and checked public edge cannot discharge those slots.
+            let mut response = provider_batch_one_unit_response(&batch)?;
+            response["units"]
+                .as_array_mut()
+                .ok_or("response units absent")?
+                .push(serde_json::json!({
+                    "unit_id": "unit:1", "owner_id": batch.units[1].provider.identity.stable_key(),
+                    "definition_id": "definition:1", "definition_digest": batch.units[1].definition_digest,
+                    "slots": [{"role": "normal", "alias": "query", "edge_id": "edge:0"}],
+                    "grant_ids": ["grant:1"]
+                }));
+            let admitted = batch.admit_response(&serde_json::to_vec(&response)?);
+            if registry_requests {
+                assert_eq!(batch.units[0].definition.requirements.len(), 2);
+                assert_eq!(
+                    batch.units[0]
+                        .definition
+                        .requirements
+                        .iter()
+                        .map(|requirement| (
+                            requirement.alias.as_str(),
+                            requirement.version_requirement.as_deref(),
+                            &requirement.source
+                        ))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        ("datafusion", Some("53"), &NativeRequirementSource::RegistryRequest),
+                        ("substrait", Some("0.58"), &NativeRequirementSource::RegistryRequest),
+                    ]
+                );
+                let Err(error) = admitted else {
+                    return Err("a selected foundation must not erase leaf registry obligations".into());
+                };
+                assert!(
+                    error.to_string().contains("does not match its original command tables"),
+                    "{error}"
+                );
+            } else {
+                assert!(batch.units[0].definition.requirements.is_empty());
+                let admitted = admitted?;
+                assert_eq!(admitted.unit_edges[0].len(), 0);
+                assert_eq!(admitted.unit_edges[1], [("query".to_string(), 0)]);
+            }
+        }
         Ok(())
+    }
+
+    /// Persist the real source-capture result from retained requests and source evidence for provider admission.
+    fn capture_provider_requests_fixture(
+        artifact: &LibraryArtifactMetadata,
+        manifest: &LibraryManifest,
+        normal: &[DependencySpec],
+    ) -> Result<NativeSourceUnitDefinition, Box<dyn std::error::Error>> {
+        let evidence = generated_source_evidence_for_inputs(
+            &BTreeMap::from([("generated-root".to_string(), artifact.crate_lib_path.clone())]),
+            &BTreeMap::from([("generated-source-tree".to_string(), artifact.crate_root.join("src"))]),
+        )?;
+        let definition = capture_native_source_definition(NativeSourceDefinitionInputs {
+            library_manifest: manifest,
+            artifact_root: &artifact.crate_root,
+            rust_edition: "2021",
+            normal,
+            dev: &[],
+            source_evidence: &evidence,
+            compiler_support: &[NativeCompilerSupportRequirement {
+                support: NativeCompilerSupport::Stdlib,
+                features: Vec::new(),
+            }],
+        })?;
+        fs::write(
+            artifact.crate_root.join(NATIVE_SOURCE_UNIT_PATH),
+            definition.to_json_bytes()?,
+        )?;
+        Ok(definition)
     }
 
     /// Publish one actual Store owner and frozen runtime receipt for host binding controls, without invoking rustc.
@@ -19701,7 +19575,7 @@ headers = ["interop/include/bridge.h"]
         Ok((artifact, manifest, definition))
     }
 
-    /// Exercise the real rematerialization entry with an invalid parent and an unreachable nested provider.
+    /// Exercise hosted batch preparation with an invalid parent and an unreachable nested provider.
     fn assert_provider_definition_refused_before_materialization(
         artifact: &LibraryArtifactMetadata,
         manifest: &LibraryManifest,
@@ -19738,23 +19612,6 @@ headers = ["interop/include/bridge.h"]
                 default_features: false,
                 optional: false,
             });
-        let artifacts = package_loaf_manifest(
-            crate::oven::OvenBuildIntent {
-                target: "aarch64-apple-darwin".to_string(),
-                toolchain: "source-definition-refusal-test".to_string(),
-                profile: "debug".to_string(),
-                features: Vec::new(),
-            },
-            "emitted_provider",
-            &digest_bytes(b"unused native payload"),
-        );
-        let plan = OvenRustcArtifactPlan {
-            dependency_search_paths: Vec::new(),
-            native_search_paths: Vec::new(),
-            externs: Vec::new(),
-            compile_environment: BTreeMap::new(),
-            caller_owned_library_digests: BTreeMap::new(),
-        };
         let index = LibraryManifestIndex::from_entries(HashMap::from([(
             artifact.dependency_key.clone(),
             LibraryManifestIndexEntry::Loaded {
@@ -19763,39 +19620,15 @@ headers = ["interop/include/bridge.h"]
             },
         )]));
         let provider_plan = ProviderPlan::from_resolved_inputs(index, None, None, None, [])?;
-        let identity = provider_plan
-            .active_records()
-            .next()
-            .ok_or("admitted root absent")?
-            .identity
-            .clone();
-        let mut definitions = CallerOwnedProviderSourceDefinitions::new(&provider_plan);
         // The checked child facts remain retained, but its native bytes are now unavailable. An invalid parent
         // definition must still refuse before any recursive materialization tries to consume this child.
         fs::rename(&child_root, child_owner.path().join("moved"))?;
         let before = digest_provider_artifact(&artifact.crate_root)?;
-        let mut visiting = BTreeSet::new();
-        let Err(error) = rematerialize_caller_owned_provider_graph(
-            &mut definitions,
-            &identity,
-            &artifact.dependency_key,
-            "debug",
-            &artifacts,
-            consumer.path(),
-            &plan,
-            &consumer.path().join("must-not-run-rustc"),
-            &output,
-            None,
-            &[],
-            &[],
-            None,
-            &mut visiting,
-            &mut None,
-        ) else {
-            return Err("invalid parent source evidence must refuse rematerialization".into());
+        let (receipt, _owner) = provider_batch_store_fixture(&consumer.path().join("native"))?;
+        let Err(error) = ProviderSourceBatch::new(&provider_plan, &receipt, &BTreeMap::new(), &[]) else {
+            return Err("invalid parent source evidence must refuse hosted batch preparation".into());
         };
         assert!(error.to_string().contains(expected), "{error}");
-        assert!(visiting.is_empty(), "refusal must release graph traversal state");
         assert_eq!(before, digest_provider_artifact(&artifact.crate_root)?);
         assert_eq!(
             fs::read_to_string(output.join("accepted-output"))?,
