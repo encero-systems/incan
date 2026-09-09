@@ -50,6 +50,27 @@ impl CompilerBinaryIdentity {
 pub(crate) enum EngineModuleContract {
     /// The reviewed selection and source-unit batch adapter using bounded native JSON file exchange.
     OvenSourceUnitBatchV1,
+    /// Explicit version 2 selection evidence and source-unit batch exchange, retaining the original version 1
+    /// protocols.
+    OvenSourceUnitBatchV2,
+}
+
+impl EngineModuleContract {
+    /// Bind an explicit publisher declaration to its descriptor version and exact supported protocols.
+    fn wire_contract(self) -> (u32, Vec<String>) {
+        let mut schemas: Vec<String> = EXCHANGE_SCHEMAS.into_iter().map(str::to_string).collect();
+        let version = match self {
+            Self::OvenSourceUnitBatchV1 => DESCRIPTOR_VERSION,
+            Self::OvenSourceUnitBatchV2 => {
+                schemas.extend([
+                    "incan.oven.selection/2".to_string(),
+                    "incan.oven.source-unit-batch/2".to_string(),
+                ]);
+                2
+            }
+        };
+        (version, schemas)
+    }
 }
 
 /// Explicit trusted bootstrap request; source paths and script names never infer a module role.
@@ -324,13 +345,14 @@ impl EngineDescriptor {
                 "Engine native output digest, length or executable mode differs from its completed owner",
             ));
         }
+        let (schema_version, schemas) = contract.wire_contract();
         let descriptor = Self {
-            schema_version: DESCRIPTOR_VERSION,
+            schema_version,
             artifact_kind: DESCRIPTOR_KIND.to_string(),
             contract,
             native_file_exchange_abi: 1,
-            request_schemas: EXCHANGE_SCHEMAS.into_iter().map(str::to_string).collect(),
-            response_schemas: EXCHANGE_SCHEMAS.into_iter().map(str::to_string).collect(),
+            request_schemas: schemas.clone(),
+            response_schemas: schemas,
             output: EngineOutputBinding {
                 identity: manifest.identity.clone(),
                 receipt: receipt.clone(),
@@ -366,7 +388,7 @@ impl EngineDescriptor {
         }
         let header: Header = serde_json::from_slice(bytes)
             .map_err(|error| CliError::failure(format!("invalid Engine descriptor header: {error}")))?;
-        if header.schema_version != DESCRIPTOR_VERSION || header.artifact_kind != DESCRIPTOR_KIND {
+        if ![DESCRIPTOR_VERSION, 2].contains(&header.schema_version) || header.artifact_kind != DESCRIPTOR_KIND {
             return Err(CliError::failure(
                 "unsupported Engine descriptor kind or schema version",
             ));
@@ -387,11 +409,12 @@ impl EngineDescriptor {
             .backend_receipt
             .verify_identity()
             .map_err(|error| CliError::failure(error.to_string()))?;
-        if self.schema_version != DESCRIPTOR_VERSION
+        let (version, schemas) = self.contract.wire_contract();
+        if self.schema_version != version
             || self.artifact_kind != DESCRIPTOR_KIND
             || self.native_file_exchange_abi != 1
-            || self.request_schemas != EXCHANGE_SCHEMAS
-            || self.response_schemas != EXCHANGE_SCHEMAS
+            || self.request_schemas != schemas
+            || self.response_schemas != schemas
             || self.output.native_relative_path != OVEN_PROJECT_OUTPUT_ARTIFACT_PATH
             || [
                 &self.output.identity,
@@ -569,6 +592,27 @@ impl<'a> AdmittedEngineArtifact<'a> {
         &self.native_output
     }
 
+    /// Recheck the exact sealed executable immediately before launch; a pruning lease does not prevent file mutation.
+    pub(crate) fn verify_native_for_execution(&self) -> CliResult<()> {
+        verify_native_executable_mode(&self.native_output)?;
+        let metadata = std::fs::symlink_metadata(&self.native_output)
+            .map_err(|error| CliError::failure(format!("cannot inspect Engine native output: {error}")))?;
+        if metadata.len() != self.descriptor.output.native_logical_bytes
+            || digest_file(&self.native_output).map_err(|error| CliError::failure(error.to_string()))?
+                != self.descriptor.output.native_digest
+        {
+            return Err(CliError::failure(
+                "Engine native output changed after borrowed admission",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Return the original sealed native digest for the kernel exchange report.
+    pub(crate) fn native_digest(&self) -> &str {
+        &self.descriptor.output.native_digest
+    }
+
     /// Return both original owner identities for reporting and a later governed handoff.
     #[must_use]
     pub(crate) fn owner_identities(&self) -> (&str, &str) {
@@ -589,7 +633,11 @@ mod tests {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
+    use super::super::EngineBootstrapPermit;
+    use super::super::engine_exchange::{ExchangeOutcome, ExchangePhase, exchange};
     use super::super::{
         OVEN_PROJECT_OUTPUT_ARTIFACT_PATH, OvenBakeProjectTarget, OvenProjectOutputPayload, OvenStoredProjectOutput,
     };
@@ -597,7 +645,7 @@ mod tests {
         AdmittedEngineArtifact, CompilerBinaryIdentity, CompilingBinary, DESCRIPTOR_LIMIT, EngineDescriptor,
         EngineModuleContract, EnginePublisher, EnginePublisherRequest,
     };
-    use crate::generated_source::digest_file;
+    use crate::generated_source::{digest_bytes, digest_file};
     use crate::oven::OvenReceipt;
     use crate::oven::store::{
         OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreExecutionPayload, OvenStoreLimits,
@@ -616,6 +664,15 @@ mod tests {
     impl Fixture {
         /// Use the existing completed-output fixture and real store publisher; the native file is test data only.
         fn new(label: &str, compiler_observed: bool) -> Result<Self, Box<dyn std::error::Error>> {
+            Self::with_native(label, compiler_observed, None)
+        }
+
+        /// Supply an explicit process-test script before ordinary output sealing; this is not Incan native proof.
+        fn with_native(
+            label: &str,
+            compiler_observed: bool,
+            native: Option<&[u8]>,
+        ) -> Result<Self, Box<dyn std::error::Error>> {
             let root = tempfile::tempdir()?;
             fs::create_dir(root.path().join("src"))?;
             fs::write(root.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
@@ -632,6 +689,15 @@ mod tests {
             }
             for file in &files {
                 if file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH {
+                    if let Some(bytes) = native {
+                        fs::write(&file.source_path, bytes)?;
+                        for record in &mut payload.files {
+                            if record.output_relative_path == file.output_relative_path {
+                                record.digest = digest_bytes(bytes);
+                                record.logical_bytes = bytes.len() as u64;
+                            }
+                        }
+                    }
                     fs::set_permissions(&file.source_path, fs::Permissions::from_mode(0o755))?;
                 }
             }
@@ -706,6 +772,435 @@ mod tests {
                 .ok_or("artifact root has no owning entry")?
                 .join(".active.lock"),
         )?)
+    }
+
+    /// Construct a permit only inside this trusted-parent fixture; production exchange has no issuing constructor.
+    fn exchange_permit<'a>(
+        fixture: &'a Fixture,
+        admitted: &AdmittedEngineArtifact<'_>,
+        request: &[u8],
+    ) -> Result<EngineBootstrapPermit<'a>, Box<dyn std::error::Error>> {
+        let (engine, output) = admitted.owner_identities();
+        Ok(EngineBootstrapPermit {
+            permit_id: "fixture-permit".into(),
+            invocation_id: "fixture-invocation".into(),
+            command_receipt: &fixture.receipt,
+            engine_identity: engine.into(),
+            output_identity: output.into(),
+            contract: admitted.descriptor().module_contract(),
+            host_target: admitted.descriptor().receipt().intent.target.clone(),
+            request_digest: digest_bytes(request),
+            scratch_parent: fixture.project_root.path().canonicalize()?,
+            deadline: Instant::now() + Duration::from_secs(5),
+            request_limit: 1024 * 1024,
+            response_limit: 1024 * 1024,
+            stdout_limit: 64 * 1024,
+            stderr_limit: 64 * 1024,
+        })
+    }
+
+    /// Preserve exact bytes and original store inventories while reporting a separate caller permit and invocation.
+    #[test]
+    fn engine_exchange_preserves_exact_response_and_original_owners() -> TestResult {
+        let fixture = Fixture::with_native(
+            "exchange_exact",
+            true,
+            Some(b"#!/bin/sh\n/bin/cat \"$1\" > \"$2\"\nprintf output\nprintf diagnostic >&2\n"),
+        )?;
+        let engine = fixture.publish_engine()?;
+        let output = fixture.output_owner()?;
+        let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+        let before_output = inventory(&output.artifact_root)?;
+        let before_engine = inventory(&engine.artifact_root)?;
+        let request = b"{\"value\": 42}\n";
+        let report = exchange(
+            &admitted,
+            exchange_permit(&fixture, &admitted, request)?,
+            request,
+            &AtomicBool::new(false),
+        );
+        assert_eq!(report.outcome, ExchangeOutcome::Completed, "{report:?}");
+        assert_eq!(report.response.as_deref(), Some(request.as_slice()));
+        assert_eq!(report.response_digest.as_deref(), Some(digest_bytes(request).as_str()));
+        assert_eq!(report.stdout.bytes, b"output");
+        assert_eq!(report.stderr.bytes, b"diagnostic");
+        assert_eq!(report.permit_id, "fixture-permit");
+        assert_eq!(report.invocation_id, "fixture-invocation");
+        assert_eq!(report.command_receipt_identity, fixture.receipt.identity);
+        assert_eq!(report.engine_identity, engine.manifest.identity);
+        assert_eq!(report.output_identity, output.manifest.identity);
+        assert!(
+            report
+                .phases
+                .iter()
+                .all(|phase| phase.outcome == Some(ExchangeOutcome::Completed))
+        );
+        assert_eq!(before_output, inventory(&output.artifact_root)?);
+        assert_eq!(before_engine, inventory(&engine.artifact_root)?);
+        assert!(!report.scratch_path.ok_or("missing scratch observation")?.exists());
+        Ok(())
+    }
+
+    /// Reject independent owner, request, budget, deadline and cancellation failures without file or process effects.
+    #[test]
+    fn engine_exchange_refuses_unmatched_or_interrupted_permits_before_effects() -> TestResult {
+        let fixture = Fixture::with_native("exchange_permit", true, Some(b"#!/bin/sh\nexit 0\n"))?;
+        let engine = fixture.publish_engine()?;
+        let output = fixture.output_owner()?;
+        let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+        let before = inventory(fixture.project_root.path())?;
+        for case in 0..9 {
+            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
+            let cancelled = AtomicBool::new(false);
+            let expected = match case {
+                0 => {
+                    permit.engine_identity = "different-engine".into();
+                    ExchangeOutcome::Refused
+                }
+                1 => {
+                    permit.output_identity = "different-output".into();
+                    ExchangeOutcome::Refused
+                }
+                2 => {
+                    permit.request_digest = digest_bytes(b"changed");
+                    ExchangeOutcome::Refused
+                }
+                3 => {
+                    permit.stdout_limit = 0;
+                    ExchangeOutcome::Refused
+                }
+                4 => {
+                    permit.response_limit = 1024 * 1024 + 1;
+                    ExchangeOutcome::Refused
+                }
+                5 => {
+                    permit.deadline = Instant::now();
+                    ExchangeOutcome::TimedOut
+                }
+                6 => {
+                    cancelled.store(true, Ordering::Release);
+                    ExchangeOutcome::Cancelled
+                }
+                7 => {
+                    permit.host_target = "unrelated-host-target".into();
+                    ExchangeOutcome::Refused
+                }
+                _ => {
+                    permit.contract = EngineModuleContract::OvenSourceUnitBatchV2;
+                    ExchangeOutcome::Refused
+                }
+            };
+            let report = exchange(&admitted, permit, b"{}", &cancelled);
+            assert_eq!(report.outcome, expected, "case {case}: {report:?}");
+            assert!(report.child_id.is_none());
+            assert!(report.scratch_path.is_none());
+            assert_eq!(report.phases.len(), 1);
+            assert_eq!(report.phases[0].phase, ExchangePhase::Admission);
+        }
+        assert_eq!(before, inventory(fixture.project_root.path())?);
+        Ok(())
+    }
+
+    /// A lease prevents pruning but does not authorize executing bytes changed after initial admission.
+    #[test]
+    fn engine_exchange_rechecks_sealed_native_bytes_before_spawn() -> TestResult {
+        let fixture = Fixture::with_native("exchange_tamper", true, Some(b"#!/bin/sh\nexit 0\n"))?;
+        let engine = fixture.publish_engine()?;
+        let output = fixture.output_owner()?;
+        let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+        fs::set_permissions(admitted.native_output(), fs::Permissions::from_mode(0o755))?;
+        fs::write(admitted.native_output(), b"#!/bin/sh\nexit 7\n")?;
+        let report = exchange(
+            &admitted,
+            exchange_permit(&fixture, &admitted, b"{}")?,
+            b"{}",
+            &AtomicBool::new(false),
+        );
+        assert_eq!(report.outcome, ExchangeOutcome::Failed);
+        assert!(
+            report
+                .detail
+                .as_deref()
+                .is_some_and(|message| message.contains("changed after borrowed admission"))
+        );
+        assert!(report.child_id.is_none());
+        assert!(!report.scratch_path.ok_or("missing scratch observation")?.exists());
+        Ok(())
+    }
+
+    /// Missing, oversized, indirect, invalid-text and failed-child responses cannot become accepted exchange bytes.
+    #[test]
+    fn engine_exchange_rejects_invalid_response_and_child_failures() -> TestResult {
+        let cases: [(&str, &[u8]); 7] = [
+            ("missing", b"#!/bin/sh\nexit 0\n"),
+            ("exit", b"#!/bin/sh\nprintf refused >&2\nexit 7\n"),
+            ("utf8", b"#!/bin/sh\nprintf '\\377' > \"$2\"\n"),
+            ("symlink", b"#!/bin/sh\n/bin/ln -s /dev/null \"$2\"\n"),
+            ("hardlink", b"#!/bin/sh\n/bin/ln \"$1\" \"$2\"\n"),
+            ("size", b"#!/bin/sh\nprintf 12345 > \"$2\"\n"),
+            ("request", b"#!/bin/sh\nprintf changed > \"$1\"\nprintf ok > \"$2\"\n"),
+        ];
+        for (label, script) in cases {
+            let fixture = Fixture::with_native(label, true, Some(script))?;
+            let engine = fixture.publish_engine()?;
+            let output = fixture.output_owner()?;
+            let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
+            permit.response_limit = 4;
+            let report = exchange(&admitted, permit, b"{}", &AtomicBool::new(false));
+            assert_eq!(report.outcome, ExchangeOutcome::Failed, "{label}: {report:?}");
+            let detail = report.detail.as_deref().ok_or("missing failure reason")?;
+            let expected = match label {
+                "missing" => detail.contains("No such file"),
+                "exit" => {
+                    detail.contains("Engine child exited")
+                        && report.child_status.is_some_and(|status| status.code() == Some(7))
+                }
+                "utf8" => detail.contains("utf-8"),
+                "symlink" => detail.contains("indirect") || detail.contains("Too many levels"),
+                "hardlink" => detail.contains("bounded private regular file"),
+                "size" => detail.contains("byte limit") || detail.contains("bounded private regular file"),
+                "request" => detail.contains("changed the original request file"),
+                _ => false,
+            };
+            assert!(expected, "{label}: unexpected failure {report:?}");
+            assert!(report.response.is_none());
+            assert!(report.response_digest.is_none());
+            assert!(
+                report
+                    .phases
+                    .iter()
+                    .any(|phase| phase.phase == ExchangePhase::ProcessCleanup
+                        && phase.outcome == Some(ExchangeOutcome::Completed))
+            );
+            assert!(!report.scratch_path.ok_or("missing scratch observation")?.exists());
+            assert!(!crate::oven::process::process_is_running(
+                report.child_id.ok_or("missing child ID")?
+            )?);
+        }
+        Ok(())
+    }
+
+    /// Failed launch and incomplete file cleanup retain distinct phase failures without accepting response bytes.
+    #[test]
+    fn engine_exchange_reports_spawn_and_scope_cleanup_failures() -> TestResult {
+        for (label, script) in [
+            ("spawn", b"#!/missing-engine-test-interpreter\n".as_slice()),
+            (
+                "cleanup",
+                b"#!/bin/sh\nprintf extra > extra\nprintf 42 > \"$2\"\n".as_slice(),
+            ),
+        ] {
+            let fixture = Fixture::with_native(label, true, Some(script))?;
+            let engine = fixture.publish_engine()?;
+            let output = fixture.output_owner()?;
+            let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+            let report = exchange(
+                &admitted,
+                exchange_permit(&fixture, &admitted, b"{}")?,
+                b"{}",
+                &AtomicBool::new(false),
+            );
+            assert_eq!(report.outcome, ExchangeOutcome::Failed, "{report:?}");
+            assert!(report.response.is_none());
+            let scope = report.scratch_path.as_ref().ok_or("missing scope observation")?;
+            if label == "spawn" {
+                assert!(report.child_id.is_none());
+                assert!(
+                    report
+                        .phases
+                        .iter()
+                        .any(|phase| phase.phase == ExchangePhase::Spawn
+                            && phase.outcome == Some(ExchangeOutcome::Failed))
+                );
+                assert!(
+                    !report
+                        .phases
+                        .iter()
+                        .any(|phase| phase.phase == ExchangePhase::ProcessCleanup)
+                );
+                assert!(!scope.exists());
+            } else {
+                assert!(report.child_id.is_some());
+                assert!(
+                    report
+                        .phases
+                        .iter()
+                        .any(|phase| phase.phase == ExchangePhase::ResponseRead
+                            && phase.outcome == Some(ExchangeOutcome::Completed))
+                );
+                assert!(
+                    report
+                        .phases
+                        .iter()
+                        .any(|phase| phase.phase == ExchangePhase::FileCleanup
+                            && phase.outcome == Some(ExchangeOutcome::Failed))
+                );
+                assert_eq!(fs::read(scope.join("extra"))?, b"extra");
+                assert!(!scope.join("request.json").exists());
+                assert!(!scope.join("response.json").exists());
+            }
+        }
+        Ok(())
+    }
+
+    /// Overflow retains a bounded diagnostic prefix and still cleans up a blocked writer.
+    #[test]
+    fn engine_exchange_bounds_each_diagnostic_stream() -> TestResult {
+        for (label, script) in [
+            ("stdout", b"#!/bin/sh\nwhile :; do printf 0123456789; done\n".as_slice()),
+            (
+                "stderr",
+                b"#!/bin/sh\nwhile :; do printf 0123456789 >&2; done\n".as_slice(),
+            ),
+        ] {
+            let fixture = Fixture::with_native(label, true, Some(script))?;
+            let engine = fixture.publish_engine()?;
+            let output = fixture.output_owner()?;
+            let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
+            permit.stdout_limit = 64;
+            permit.stderr_limit = 64;
+            let report = exchange(&admitted, permit, b"{}", &AtomicBool::new(false));
+            assert_eq!(report.outcome, ExchangeOutcome::Failed, "{report:?}");
+            let capture = if label == "stdout" {
+                &report.stdout
+            } else {
+                &report.stderr
+            };
+            assert!(capture.exceeded);
+            assert_eq!(capture.bytes.len(), 64);
+            assert!(report.response.is_none());
+            assert!(!crate::oven::process::process_is_running(
+                report.child_id.ok_or("missing child ID")?
+            )?);
+        }
+        Ok(())
+    }
+
+    /// Both timeout and caller cancellation kill normal descendants and remain distinct from completed exchange.
+    #[test]
+    fn engine_exchange_cancels_and_times_out_process_groups() -> TestResult {
+        for cancel in [false, true] {
+            let fixture = Fixture::with_native(
+                "interrupt",
+                true,
+                Some(b"#!/bin/sh\n/bin/sleep 30 &\nprintf '%s' \"$!\"\nprintf ready > \"$2\"\nwait\n"),
+            )?;
+            let engine = fixture.publish_engine()?;
+            let output = fixture.output_owner()?;
+            let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
+            permit.deadline = Instant::now() + Duration::from_secs(if cancel { 5 } else { 1 });
+            let cancelled = AtomicBool::new(false);
+            let scratch_parent = permit.scratch_parent.clone();
+            let report = std::thread::scope(|scope| {
+                if cancel {
+                    let cancelled = &cancelled;
+                    scope.spawn(move || {
+                        // The fixture cancels after actual child work, rather than racing process startup with a sleep.
+                        let until = Instant::now() + Duration::from_secs(4);
+                        while Instant::now() < until {
+                            if fs::read_dir(&scratch_parent).is_ok_and(|entries| {
+                                entries.flatten().any(|entry| {
+                                    entry.file_name().to_string_lossy().starts_with("engine-")
+                                        && entry.path().join("response.json").exists()
+                                })
+                            }) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        cancelled.store(true, Ordering::Release);
+                    });
+                }
+                exchange(&admitted, permit, b"{}", &cancelled)
+            });
+            assert_eq!(
+                report.outcome,
+                if cancel {
+                    ExchangeOutcome::Cancelled
+                } else {
+                    ExchangeOutcome::TimedOut
+                },
+                "{report:?}"
+            );
+            assert!(report.response.is_none());
+            let descendant: u32 = std::str::from_utf8(&report.stdout.bytes)?.parse()?;
+            assert!(!crate::oven::process::process_is_running(descendant)?);
+            assert!(!crate::oven::process::process_is_running(
+                report.child_id.ok_or("missing child ID")?
+            )?);
+            assert!(!report.scratch_path.ok_or("missing scratch observation")?.exists());
+        }
+        Ok(())
+    }
+
+    /// A successful parent cannot leave its normal group descendants running or holding diagnostic pipes open.
+    #[test]
+    fn engine_exchange_cleans_descendants_after_successful_child_exit() -> TestResult {
+        let fixture = Fixture::with_native(
+            "descendant",
+            true,
+            Some(b"#!/bin/sh\n/bin/sleep 30 &\nprintf '%s' \"$!\"\nprintf 42 > \"$2\"\nexit 0\n"),
+        )?;
+        let engine = fixture.publish_engine()?;
+        let output = fixture.output_owner()?;
+        let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
+        let report = exchange(
+            &admitted,
+            exchange_permit(&fixture, &admitted, b"{}")?,
+            b"{}",
+            &AtomicBool::new(false),
+        );
+        assert_eq!(report.outcome, ExchangeOutcome::Completed, "{report:?}");
+        assert_eq!(report.response.as_deref(), Some(b"42".as_slice()));
+        let descendant: u32 = std::str::from_utf8(&report.stdout.bytes)?.parse()?;
+        assert!(!crate::oven::process::process_is_running(descendant)?);
+        Ok(())
+    }
+
+    /// Explicit V2 declaration preserves V1 bytes and rejects a crossed role/version instead of relabeling it.
+    #[test]
+    fn engine_exchange_role_versions_preserve_original_descriptor_evidence() -> TestResult {
+        let fixture = Fixture::new("role", true)?;
+        let engine = fixture.publish_engine()?;
+        let original = engine.payload.clone();
+        let first = EngineDescriptor::from_json(&original)?;
+        assert_eq!(first.schema_version, 1);
+        let second = EngineDescriptor::from_output(
+            EngineModuleContract::OvenSourceUnitBatchV2,
+            &fixture.completed.manifest,
+            &fixture.completed.payload,
+            &fixture.receipt,
+        )?;
+        assert_eq!(second.schema_version, 2);
+        assert_eq!(second.output, first.output);
+        assert!(second.request_schemas.contains(&"incan.oven.selection/2".to_string()));
+        assert_eq!(EngineDescriptor::from_json(&serde_json::to_vec(&second)?)?, second);
+        let mut crossed = first;
+        crossed.contract = EngineModuleContract::OvenSourceUnitBatchV2;
+        assert!(EngineDescriptor::from_json(&serde_json::to_vec(&crossed)?).is_err());
+        assert_eq!(original, engine.payload);
+        let second_fixture = Fixture::new("role_v2", true)?;
+        let mut second_publisher = EnginePublisher {
+            request: EnginePublisherRequest::new(EngineModuleContract::OvenSourceUnitBatchV2, "src/main.incn")?,
+            compiler: None,
+            published: Vec::new(),
+        };
+        second_publisher.publish_if_requested(
+            &second_fixture.store,
+            &second_fixture.receipt,
+            &second_fixture.completed,
+        )?;
+        let second_owner = second_publisher.published.pop().ok_or("missing V2 owner")?;
+        let second_output = second_fixture.output_owner()?;
+        let admitted = AdmittedEngineArtifact::borrow(&second_owner, &second_output)?;
+        assert_eq!(
+            admitted.descriptor().module_contract(),
+            EngineModuleContract::OvenSourceUnitBatchV2
+        );
+        Ok(())
     }
 
     /// Verify descriptor admission preserves native inventory and holds both original store leases.
@@ -794,7 +1289,7 @@ mod tests {
         let descriptor = EngineDescriptor::from_json(&owner.payload)?;
         assert_eq!(serde_json::to_vec(&descriptor)?, owner.payload);
         // Invalid typed body deliberately accompanies a future header: version refusal must win.
-        let future = br#"{"schema_version":2,"artifact_kind":"incan.oven.engine","output":false}"#;
+        let future = br#"{"schema_version":3,"artifact_kind":"incan.oven.engine","output":false}"#;
         let Err(error) = EngineDescriptor::from_json(future) else {
             return Err("future Engine schema accepted".into());
         };

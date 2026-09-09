@@ -4,6 +4,7 @@
 //! resolution, project generation, and receipt-bound direct-`rustc` Oven execution.
 
 pub(crate) mod engine;
+pub(crate) mod engine_exchange;
 mod library_publication;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -14,6 +15,32 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// One-use permission issued by the trusted command boundary for one Engine exchange.
+///
+/// These private fields are deliberately not deserializable. The exchange module has no issuer or permit construction
+/// path; Rust child-module privacy does not prevent one from being added. A receipt proves provenance only.
+/// Pending #991: ordinary command issuance and module installation remain unwired.
+#[allow(
+    dead_code,
+    reason = "Pending #991: the trusted command permit issuer is not connected"
+)]
+pub(crate) struct EngineBootstrapPermit<'a> {
+    permit_id: String,
+    invocation_id: String,
+    command_receipt: &'a crate::oven::OvenReceipt,
+    engine_identity: String,
+    output_identity: String,
+    contract: engine::EngineModuleContract,
+    host_target: String,
+    request_digest: String,
+    scratch_parent: PathBuf,
+    deadline: Instant,
+    request_limit: usize,
+    response_limit: usize,
+    stdout_limit: usize,
+    stderr_limit: usize,
+}
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;

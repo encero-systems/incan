@@ -23,7 +23,7 @@ pub(crate) mod interop;
 pub mod loaf;
 pub mod native_contract;
 pub mod native_test;
-mod process;
+pub(crate) mod process;
 pub mod progress;
 pub mod rustc;
 pub mod store;
