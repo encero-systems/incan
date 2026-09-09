@@ -13,6 +13,6 @@ Language server over the driver.
 
 `compiler`
 
-Links `incan_driver`, never `incan`. Owns the tokio and tower-lsp dependencies with a narrowed tokio feature set.
+Links `incan_driver`, never `incan-cli`. Owns the tokio and tower-lsp dependencies with a narrowed tokio feature set.
 
 This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.

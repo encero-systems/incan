@@ -1,8 +1,8 @@
-# `oven`
+# `oven-cli`
 
 Ring: **toolchain**
 
-The `oven` command surface from RFC 118.
+The `oven` binary: the command surface from RFC 118.
 
 ## Moves here from
 

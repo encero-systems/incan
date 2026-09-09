@@ -6,9 +6,9 @@ Thin binaries and distribution. May depend on every ring. Nothing depends on it.
 
 | Directory | Purpose |
 | --- | --- |
-| `incan/` | The `incan` command: clap surface, terminal rendering, exit codes. |
+| `incan-cli/` | The `incan` command: clap surface, terminal rendering, exit codes. |
 | `incan-lsp/` | Language server over the driver. |
-| `oven/` | The `oven` command surface from RFC 118. |
+| `oven-cli/` | The `oven` command surface from RFC 118. |
 | `release/` | Archive packaging, release manifest, support workspace, install scripts. |
 | `ide/` | Editor integrations. |
 

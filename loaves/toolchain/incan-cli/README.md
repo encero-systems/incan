@@ -1,8 +1,8 @@
-# `incan`
+# `incan-cli`
 
 Ring: **toolchain**
 
-The `incan` command: clap surface, terminal rendering, exit codes.
+The `incan` binary: clap surface, terminal rendering, exit codes.
 
 ## Moves here from
 

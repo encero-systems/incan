@@ -13,7 +13,7 @@ incan/
     compiler/    incan_frontend · incan_ir · incan_emit · incan_format · incan_provider · incan_inspect · incan_driver
     oven/        oven_model · oven_store · oven_rustc · oven_registry · oven_interop · oven_cargo_compat
     stdlib/      core · interop · system · codecs · compression · data · async · observability · web · testing · derive
-    toolchain/   incan · incan-lsp · oven · release · ide
+    toolchain/   incan-cli · incan-lsp · oven-cli · release · ide
     third_party/ vendored patches, expected to empty
   examples/
   workspaces/    benchmarks · docs-site   (ide and release move under loaves/toolchain)
@@ -30,7 +30,7 @@ Each ring has its own version line. Cross-ring edges are semver requirements, ne
 - `incan_<thing>` for kernel and compiler crates.
 - `oven_<thing>` for the build system.
 - `incan_std_<component>` for stdlib runtime crates, matching the `stdlib-<component>` ids in `sdk-components.toml`.
-- Binaries keep their product names: `incan`, `incan-lsp`, `oven`.
+- Binaries keep their product names: `incan`, `incan-lsp`, `oven`. Their directories say what they are: `incan-cli`, `incan-lsp`, `oven-cli`.
 - `incan_core` becomes `incan_lang`, so that `core` means the mandatory stdlib component and nothing else.
 
 ## Why these cuts
@@ -42,7 +42,7 @@ Measured on 0.6.0-dev.4 (see the dependency audit): the root crate is 380k lines
 | `frontend` ↔ `library_manifest` | 106 / 51 | provider *contract* crate the frontend imports; loaders stay in `incan_provider` |
 | `backend`, `oven`, `lsp` → `cli` | 9 / 3 / 6 | `cli/commands/common.rs` session and discovery move to `incan_driver` and `incan_provider` |
 | `backend` → `oven` | 33 | `backend/project/` is Oven code; it moves to `oven_rustc` and `oven_cargo_compat` |
-| `cli/commands/build.rs` | 20.8k lines | the driver, not a command; `toolchain/incan` keeps the clap surface only |
+| `cli/commands/build.rs` | 20.8k lines | the driver, not a command; `toolchain/incan-cli` keeps the clap surface only |
 
 ## Rust beside Incan
 
