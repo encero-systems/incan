@@ -890,7 +890,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
     for source in &authority.payload.registry_sources {
         let (root, catalog) = match source.owner {
             OvenProjectInspectionSourceOwner::Authority => {
-                (authority.artifact_root.as_path(), std::slice::from_ref(&source.package))
+                (authority.artifact_root(), std::slice::from_ref(&source.package))
             }
             OvenProjectInspectionSourceOwner::Constituent { index } => {
                 let owner = owners.get(index).ok_or_else(|| {
@@ -920,7 +920,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
     let registry_lock_source = if sources.is_empty() {
         None
     } else {
-        let path = authority.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
+        let path = authority.artifact_root().join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             CliError::failure(format!(
                 "project inspection authority lacks its sealed Cargo.lock at {}: {error}",
@@ -942,7 +942,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
         .generated_out_dirs
         .iter()
         .map(|dir| crate::rust_inspect::SealedGeneratedOutDir {
-            out_dir: authority.artifact_root.join(&dir.relative_root),
+            out_dir: authority.artifact_root().join(&dir.relative_root),
             version: dir.version.clone(),
         })
         .collect::<Vec<_>>();
@@ -1036,7 +1036,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
 
     /// Bind generated test receipts to the exact project authority selected once for this command.
     pub(crate) fn authority_identity(&self) -> &str {
-        &self.authority.identity
+        self.authority.identity()
     }
 
     /// Project the one complete exact authority for one generated test batch.
