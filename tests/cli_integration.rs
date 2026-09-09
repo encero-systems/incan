@@ -6994,6 +6994,24 @@ def test_smoke() -> None:
     Ok(())
 }
 
+/// Infer owned strings from later list members through a real build and runtime loop.
+#[test]
+fn nested_empty_first_list_runs_without_a_caller_annotation_issue1471() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "nested_empty_first_list", "")?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        include_str!("fixtures/nested_list_loop_1471.incn"),
+    )?;
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare nested empty-first list fixture");
+    let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
+    assert_success(&build, "build inferred nested string lists");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run nested-list count and content assertions");
+    Ok(())
+}
+
 #[test]
 fn build_assert_string_inequality_in_list_loop_issue739() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
