@@ -284,6 +284,7 @@ impl TypeChecker {
         let resolved_path = self.resolved_source_module_path(path);
         let target_identity = resolved_path.as_deref().and_then(SymbolTable::module_path_identity);
         let canonical_path = resolved_path.unwrap_or(normalized_path);
+        self.cache_stdlib_module_import_semantics(path);
         self.define_import_symbol(name, canonical_path, false, target_identity, span);
     }
 
@@ -406,6 +407,9 @@ impl TypeChecker {
             if self.materialize_bootstrap_source_dependency_import(module, item, span) {
                 continue;
             }
+            if self.materialize_stdlib_submodule_import(module, item, span) {
+                continue;
+            }
             if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
                 continue;
             }
@@ -511,6 +515,19 @@ impl TypeChecker {
             )),
             ProviderModuleResolution::Active(_) | ProviderModuleResolution::Unknown => None,
         }
+    }
+
+    /// Retain a module import's hidden type and trait facts for its qualified signatures and derives.
+    ///
+    /// Checked providers keep authority over their own metadata. Only the existing inventoryless or source-bootstrap
+    /// adapters may seed source stub facts; this does not import those declarations into the consumer's namespace.
+    fn cache_stdlib_module_import_semantics(&mut self, module: &ImportPath) {
+        let provider_owned = matches!(
+            self.provider_plan.resolve_module(&module.segments),
+            ProviderModuleResolution::Active(provider) if provider.manifest.is_some()
+        );
+        let context = FromImportContext::new(module, self.is_known_stdlib_module(&module.segments), provider_owned);
+        self.cache_stdlib_stub_semantics(&context);
     }
 
     /// Cache all known top-level types and traits for a stub-backed stdlib module without making them source-visible.
@@ -1011,9 +1028,6 @@ impl TypeChecker {
             }
             return true;
         }
-        if self.materialize_stdlib_submodule_import(context.module, item, span) {
-            return true;
-        }
         if self.materialize_sdk_provider_import(context, item, testing_semantics, span) {
             return true;
         }
@@ -1074,9 +1088,13 @@ impl TypeChecker {
         true
     }
 
-    /// Materialize `from std.namespace import submodule` as a module binding when the submodule is registered.
+    /// Bind a registered submodule imported from `std` or `std.namespace`, retaining its hidden signature facts.
     fn materialize_stdlib_submodule_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
-        if module.segments.len() != 2 {
+        if module.parent_levels != 0
+            || module.is_absolute
+            || module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
+            || !(1..=2).contains(&module.segments.len())
+        {
             return false;
         }
         let mut submodule_path = module.segments.clone();
@@ -1097,11 +1115,16 @@ impl TypeChecker {
         if !is_known_submodule {
             return false;
         }
+        if let Some(error) = self.sdk_provider_module_error(&submodule_path, span) {
+            self.errors.push(error);
+            return true;
+        }
 
         let local_name = Self::import_item_local_name(item);
         self.validate_root_namespace(&local_name, span);
         let path = canonicalize_source_module_segments(&submodule_path);
         let target_identity = SymbolTable::module_path_identity(&path);
+        self.cache_stdlib_module_import_semantics(&ImportPath::simple(submodule_path));
         self.define_import_symbol(local_name, path, false, target_identity, span);
         true
     }
