@@ -1,6 +1,6 @@
 # Workspace layout skeleton
 
-This branch carries a **skeleton only**: directories and READMEs describing a proposed layout, next to the existing `src/` and `crates/`. No manifests, no code, nothing Cargo or `incan` will read. It exists to look at the shape and argue with the cuts.
+This branch carries a **skeleton only**: directories and READMEs describing a proposed layout, next to the existing `src/` and `crates/`, which it would replace. No manifests, no code, nothing Cargo or `incan` will read. It exists to look at the shape and argue with the cuts.
 
 ## Rings
 
@@ -8,13 +8,20 @@ Five directories. Dependencies point inward only: `toolchain → compiler → ke
 
 ```text
 incan/
-  kernel/      incan_lang · incan_syntax · incan_semantics · incan_vocab · incan_codegraph
-  compiler/    incan_frontend · incan_ir · incan_emit · incan_format · incan_provider · incan_inspect · incan_driver
-  oven/        oven_model · oven_store · oven_rustc · oven_registry · oven_interop · oven_cargo_compat
-  stdlib/      core · interop · system · codecs · compression · data · async · observability · web · testing · derive
-  toolchain/   incan · incan-lsp · oven · release · ide
-  third_party/ vendored patches, expected to empty
+  loaves/
+    kernel/      incan_lang · incan_syntax · incan_semantics · incan_vocab · incan_codegraph
+    compiler/    incan_frontend · incan_ir · incan_emit · incan_format · incan_provider · incan_inspect · incan_driver
+    oven/        oven_model · oven_store · oven_rustc · oven_registry · oven_interop · oven_cargo_compat
+    stdlib/      core · interop · system · codecs · compression · data · async · observability · web · testing · derive
+    toolchain/   incan · incan-lsp · oven · release · ide
+    third_party/ vendored patches, expected to empty
+  examples/
+  workspaces/    benchmarks · docs-site   (ide and release move under loaves/toolchain)
+  scripts/
+  assets/
 ```
+
+`loaves/` is the one container the way `crates/` is today. Rings live inside it so the repository root stays stable when a ring is added, split, or retired, and so the root reads as a project, not as a dependency graph.
 
 Each ring has its own version line. Cross-ring edges are semver requirements, never equalities. The user-facing `Incan 0.6` is a toolchain manifest pinning one version of every ring.
 
