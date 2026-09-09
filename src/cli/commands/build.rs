@@ -9765,6 +9765,12 @@ fn library_publication_receipts(project_root: &Path) -> CliResult<Vec<PathBuf>> 
     ])
 }
 
+#[cfg(test)]
+std::thread_local! {
+    // Observe the real library producer boundary without replacing its implementation or changing process state.
+    static LIBRARY_SEMANTIC_PROJECTION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Validate a library project and generate its Rust project without running Cargo.
 ///
 /// Normal consumers include their already selected interop execution receipt in the runtime identity. Explicit Oven
@@ -9839,16 +9845,22 @@ fn prepare_library_project(
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
-    let (semantic, provider_semantic_identities) = semantic_lock_state_with_provider_identities(
-        &project_root,
-        manifest.interop_c(),
-        compilation_session.sdk_inventory.as_deref(),
-        compilation_session.sdk_components.as_ref(),
-        Some(&package_feature_plan),
-        &provider_plan,
-        &semantic_sdk_paths,
-    )
-    .map_err(CliError::failure)?;
+    // Artifact-only children publish checked source without consuming a canonical lock or native identity.
+    // Retain the original inputs, but evaluate this projection only in the mutually exclusive consumers below.
+    let semantic_projection = || {
+        #[cfg(test)]
+        LIBRARY_SEMANTIC_PROJECTION_CALLS.with(|calls| calls.set(calls.get() + 1));
+        semantic_lock_state_with_provider_identities(
+            &project_root,
+            manifest.interop_c(),
+            compilation_session.sdk_inventory.as_deref(),
+            compilation_session.sdk_components.as_ref(),
+            Some(&package_feature_plan),
+            &provider_plan,
+            &semantic_sdk_paths,
+        )
+        .map_err(CliError::failure)
+    };
     let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
@@ -9924,6 +9936,7 @@ fn prepare_library_project(
         ));
     }
     if !normal_oven && !artifact_only {
+        let (semantic, _) = semantic_projection()?;
         let lock_resolution = resolve_lock_context(LockResolutionRequest {
             project_root: &project_root,
             entry_file: Some(&lib_entry),
@@ -9943,10 +9956,11 @@ fn prepare_library_project(
     // lock collection would request this still-unpublished artifact recursively. The command owning the full project
     // remains responsible for canonical lock observation and publication, including SDK publisher invocations.
     record_timing(&mut timings_ms, "library_observe_lock_facts", lock_start);
-    // Only normal Oven preparation reuses the earlier projection. Other library paths may replace requirements
-    // through canonical lock resolution above and do not construct native build inputs here.
+    // Normal Oven preparation computes this map once. Other library paths may replace requirements through
+    // canonical lock resolution above and do not construct native build inputs here.
     let mut oven_build_inputs = normal_oven
         .then(|| {
+            let (_, provider_semantic_identities) = semantic_projection()?;
             oven_build_unit_inputs_with_provider_identities(
                 &provider_plan,
                 &project_requirements,
@@ -19707,6 +19721,94 @@ impl ChildId {
             "doubled",
             "resolving the manifest's identity must reach the declaration it names"
         );
+        Ok(())
+    }
+
+    /// Publish checked plain and local-facade source without evaluating the unused native semantic projection.
+    #[test]
+    fn artifact_only_library_publication_does_not_request_native_semantic_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_none() {
+            let output = Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "cli::commands::build::tests::artifact_only_library_publication_does_not_request_native_semantic_inputs",
+                    "--nocapture",
+                ])
+                .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
+                .output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{stdout}\n{stderr}");
+            assert!(
+                stdout.contains("1 passed"),
+                "isolated publisher control did not execute: {stdout}"
+            );
+            return Ok(());
+        }
+
+        for (name, facade) in [("plain_source", false), ("local_facade", true)] {
+            let temporary = tempfile::tempdir()?;
+            let root = temporary.path();
+            fs::create_dir(root.join("src"))?;
+            fs::write(
+                root.join("loaf.toml"),
+                format!("[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n"),
+            )?;
+            let body = "pub def answer() -> int:\n    return 42\n";
+            fs::write(
+                root.join("src/lib.incn"),
+                if facade { "pub from api import answer\n" } else { body },
+            )?;
+            if facade {
+                fs::write(root.join("src/api.incn"), body)?;
+            }
+            let entrypoint = root.join("src/lib.incn");
+            LIBRARY_SEMANTIC_PROJECTION_CALLS.with(|calls| calls.set(0));
+            let mut prepared = prepare_library_project(
+                Some(entrypoint.to_str().ok_or("fixture path is not UTF-8")?),
+                None,
+                &FeatureSelection::default(),
+                None,
+                Vec::new(),
+                false,
+                false,
+                None,
+                false,
+                false,
+                OvenProjectPlanMode::ConsumeOnly,
+                None,
+                &BackendSelectionOptions::default(),
+            )?;
+            write_library_manifest_artifacts(&mut prepared)?;
+            LIBRARY_SEMANTIC_PROJECTION_CALLS.with(|calls| assert_eq!(calls.get(), 0));
+            assert!(prepared.oven.is_none());
+            assert!(
+                !root.join("oven.lock").exists(),
+                "child publication must leave canonical lock ownership to its parent"
+            );
+            let manifest = LibraryManifest::read_from_path(&prepared.manifest_path)?;
+            let published_identity = manifest
+                .contract_metadata
+                .identity_graph
+                .function_identities_for_public_name("answer")
+                .into_iter()
+                .flatten()
+                .next()
+                .ok_or("checked publisher omitted the public answer identity")?;
+            let executable =
+                crate::library_manifest::published_layout::executable_surface_path(&prepared.manifest_path, &manifest)
+                    .ok_or("checked publisher omitted the executable surface")?;
+            let bytes = fs::read(executable)?;
+            let surface = incan_semantics_core::executable_representation::SurfaceReader::open(&bytes)?;
+            assert!(surface.covers(&published_identity));
+            let definition = NativeSourceUnitDefinition::read_optional(&prepared.out_dir)?
+                .ok_or("publisher omitted the physical source definition")?;
+            definition.validate_against_manifest(&manifest)?;
+            definition.validate_sources(&prepared.out_dir)?;
+            let emitted = fs::read_to_string(prepared.generator.crate_root_path())?;
+            assert!(emitted.contains("incan_stdlib::__incan_stdlib_version_check!"));
+        }
         Ok(())
     }
 
