@@ -100,7 +100,7 @@ Unit-seconds is the sum of the durations cargo attributes to each compilation un
 
 **Consumer hardware pays most.** Wall time grew 2.7 times between the two hosts; unit-seconds grew 3.8 times. The extra growth is contention. Cargo runs one `rustc` per logical core by default, each DataFusion crate wants over a gigabyte while it compiles, and a 16 GB machine has nowhere to put twelve of them. The cost of source-only distribution lands hardest on exactly the machines that can least absorb it, and CI runners are small machines.
 
-**The trade is favourable.** The compiled closure of the DataFusion probe compresses to 172 to 195 MB, roughly five to six times the 35 MB of source. A CDN serves that in seconds on an ordinary connection, in exchange for seven minutes of a saturated machine and 1.6 GB of scratch space, on every machine that ever wants this dependency at this toolchain and target.
+**The trade is favourable.** The compiled closure of the DataFusion probe compresses to 172 to 195 MB with gzip, the figure in the tables, and to about 120 MB with zstd at a high level, roughly three to six times the 35 MB of source. Two thirds of the compressed bytes are compiler metadata rather than machine code, which compresses only 3.5 times against 8 times for the object files; that ratio is a property of the compiler, not of the registry. A CDN serves that in seconds on an ordinary connection, in exchange for seven minutes of a saturated machine and 1.6 GB of scratch space, on every machine that ever wants this dependency at this toolchain and target.
 
 **Repetition is the multiplier.** None of the numbers above is paid once. They are paid per checkout, per clean CI run, per container layer, per developer on the team, and per toolchain bump.
 
