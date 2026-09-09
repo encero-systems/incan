@@ -56,6 +56,48 @@ Only the stdlib has both languages. Each component directory holds `src/*.incn` 
 4. Move directories into rings; give each ring a version.
 5. Rename `incan_core` to `incan_lang`.
 
+## Where the root crate goes
+
+Nothing remains under `src/`, `crates/`, or `tests/`. The root `incan` crate ceases to exist; `compiler/incan_driver` is its closest successor.
+
+| In `src/` today | Goes to |
+| --- | --- |
+| `frontend/` | `compiler/incan_frontend` |
+| `backend/ir/lower/`, IR type modules, `numeric_adapters.rs` | `compiler/incan_ir` |
+| `backend/ir/emit/`, `conversions.rs`, `codegen.rs`, `backend/replacement/` | `compiler/incan_emit` |
+| `backend/project/` | `oven/oven_rustc` (plan, generator) and `oven/oven_cargo_compat` (cargo_toml, runner) |
+| `format/` | `compiler/incan_format` |
+| `provider/`, `library_manifest/`, `compiled_sdk.rs`, `semantics_registry.rs` | `compiler/incan_provider` |
+| `rust_inspect/` | `compiler/incan_inspect` |
+| `cli/commands/build.rs` logic, `cli/commands/common.rs` session and discovery, `generated_cache.rs`, `replacement_compatibility*`, `compiler_stack.rs` | `compiler/incan_driver` |
+| `cli/` command surface, `main.rs` | `toolchain/incan-cli` |
+| `cli/commands/{oven,lock,tools}.rs` | `toolchain/oven-cli` |
+| `lsp/`, `bin/lsp.rs` | `toolchain/incan-lsp` |
+| `bin/generate_*` | `toolchain/release` (inventory generators) and `toolchain/ide` (grammar keywords) |
+| `manifest.rs`, `workspace.rs`, `lockfile.rs`, `dependency_resolver.rs`, `project_lifecycle/`, `toolchain_layout.rs` | `oven/oven_model` |
+| `oven/` store and loaf modules, `oven.rs` | `oven/oven_store` |
+| `oven/rustc.rs` | `oven/oven_rustc` |
+| `oven/legacy_cargo.rs` | `oven/oven_cargo_compat` |
+| `oven_interop.rs`, `oven/interop.rs` | `oven/oven_interop` |
+| `version.rs` | `kernel/incan_lang`; the toolchain manifest overrides it per bundle |
+| `numeric.rs` (a re-export) | deleted; callers import `incan_lang` |
+| `lib.rs`, `README.md` | deleted; replaced by ring READMEs |
+
+| In `tests/` today | Goes to |
+| --- | --- |
+| codegen snapshots, lowering, ownership, construction diagnostics | `compiler/incan_emit/tests` |
+| parity corpus, replacement, generated-Rust artifact and audit tests, protected bindings | `compiler/incan_driver/tests` |
+| CLI integration, layering guardrails, example capability coverage | `toolchain/incan-cli/tests` |
+| Oven PR regressions, generated cache integration | `oven/oven_rustc/tests` |
+| property tests | split by subject: formatting to `incan_format`, conversions to `incan_emit` |
+| `fixtures/` | beside the tests that use them |
+
+`cargo test` at the root then runs the workspace rather than one crate; `make test` should call it that way.
+
+## Timing
+
+Decided 2026-09-09: do this rewrite once `0.6.0-dev.4` has landed, as its own slice, following the migration order above.
+
 ## Decide first
 
 - Does `oven_registry` fetch crates itself, or borrow a Cargo binary? This is the largest new dependency in the programme and it shapes the Windows slice later.
