@@ -380,8 +380,8 @@ use crate::oven::rustc::{
     validate_project_inspection_authority_payload, validate_selected_sealed_registry_leaf,
 };
 use crate::oven::store::{
-    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError,
-    OvenStoreLease, PublishedOvenStore,
+    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLease,
+    PublishedOvenStore,
 };
 use crate::oven::{
     OvenGeneratedProjectRequest, OvenGeneratedProjectSourceEvidence, digest_bytes, digest_dependency_specs,
