@@ -7,6 +7,7 @@ These call the real Incan projection. No fixture authenticates files, executes r
 from std.json import JsonValue
 from std.testing import fail, fail_t
 from native_compilation import evaluate
+from plan_json import evaluate as evaluate_plan_json
 
 
 pub def test_native_compilation_literal_vector_and_cold_index() -> None:
@@ -21,6 +22,23 @@ pub def test_native_compilation_literal_vector_and_cold_index() -> None:
     assert text(ready, "candidate_index") == text(cold, "candidate_index")
     assert text(ready, "compilation_key") == "sha256:88e343b3540b313583f19e0f7a3c5f1b2522ff71ae436896edbc54a0e4f54cb2"
     assert text(ready, "candidate_index") == "sha256:6b21f1e817d6c4143025e34ff83efd4f4e48d25c827b31a7ecea2558602f1d81"
+
+
+pub def test_native_compilation_dispatch_matches_direct_document_policy() -> None:
+    """The shared Engine dispatcher routes only the exact schema without changing cold or observed outcomes."""
+    cold = fixture()
+    assert evaluate_plan_json(render(cold.clone())).equals(run(cold))
+    ready = observed(fixture(), [])
+    assert evaluate_plan_json(render(ready.clone())).equals(run(ready))
+
+    unknown = put(fixture(), "schema", JsonValue.string("incan.oven.native-compilation/3"))
+    response = evaluate_plan_json(render(unknown))
+    assert text(response, "schema") == "incan.oven.selection/1"
+    assert text(response, "status") == "refused"
+    assert text(get(response, "error"), "kind") == "invalid_input"
+    assert get(get(response, "error"), "fields").equals(texts(["schema"]))
+    for name in ["binding", "candidate_index", "index_material", "compilation_key", "key_material", "placement"]:
+        assert not response.contains_key(name)
 
 
 pub def test_native_compilation_version_and_physical_rebinding_keep_key() -> None:

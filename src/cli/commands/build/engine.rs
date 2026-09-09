@@ -55,6 +55,8 @@ pub(crate) enum EngineModuleContract {
     OvenSourceUnitBatchV2,
     /// Explicit compiler support requests and original runtime grants in source-unit batch version 3.
     OvenSourceUnitBatchV3,
+    /// Source-unit batch version 3 plus the checked native-compilation policy projection.
+    OvenNativeCompilationV4,
 }
 
 impl EngineModuleContract {
@@ -63,13 +65,18 @@ impl EngineModuleContract {
         let mut schemas: Vec<String> = EXCHANGE_SCHEMAS.into_iter().map(str::to_string).collect();
         let version = match self {
             Self::OvenSourceUnitBatchV1 => DESCRIPTOR_VERSION,
-            Self::OvenSourceUnitBatchV2 | Self::OvenSourceUnitBatchV3 => {
+            Self::OvenSourceUnitBatchV2 | Self::OvenSourceUnitBatchV3 | Self::OvenNativeCompilationV4 => {
                 schemas.extend([
                     "incan.oven.selection/2".to_string(),
                     "incan.oven.source-unit-batch/2".to_string(),
                 ]);
-                if self == Self::OvenSourceUnitBatchV3 {
+                if matches!(self, Self::OvenSourceUnitBatchV3 | Self::OvenNativeCompilationV4) {
                     schemas.push("incan.oven.source-unit-batch/3".to_string());
+                }
+                if self == Self::OvenNativeCompilationV4 {
+                    schemas.push("incan.oven.native-compilation/2".to_string());
+                    4
+                } else if self == Self::OvenSourceUnitBatchV3 {
                     3
                 } else {
                     2
@@ -409,7 +416,7 @@ impl EngineDescriptor {
         }
         let header: Header = serde_json::from_slice(bytes)
             .map_err(|error| CliError::failure(format!("invalid Engine descriptor header: {error}")))?;
-        if ![DESCRIPTOR_VERSION, 2, 3].contains(&header.schema_version) || header.artifact_kind != DESCRIPTOR_KIND {
+        if ![DESCRIPTOR_VERSION, 2, 3, 4].contains(&header.schema_version) || header.artifact_kind != DESCRIPTOR_KIND {
             return Err(CliError::failure(
                 "unsupported Engine descriptor kind or schema version",
             ));
@@ -470,6 +477,13 @@ impl EngineDescriptor {
     #[allow(dead_code, reason = "Pending #991: reporting accessor has no ordinary caller")]
     pub(crate) fn native_file_exchange_abi(&self) -> u32 {
         self.native_file_exchange_abi
+    }
+
+    /// Return whether this exact published module contract declares the requested wire schema.
+    #[must_use]
+    pub(crate) fn supports_request_schema(&self, schema: &str) -> bool {
+        self.request_schemas.iter().any(|declared| declared == schema)
+            && self.response_schemas.iter().any(|declared| declared == schema)
     }
 
     /// Return the original authored-source authority, separate from the compiler executable observation.
@@ -686,7 +700,7 @@ impl CoreEngineInstallation {
         }
         let value: Self = serde_json::from_slice(bytes)
             .map_err(|error| CliError::failure(format!("invalid installed Engine index: {error}")))?;
-        if value.contract != EngineModuleContract::OvenSourceUnitBatchV3
+        if value.contract != EngineModuleContract::OvenNativeCompilationV4
             || [
                 &value.installing_compiler.digest,
                 &value.engine_identity,
@@ -850,7 +864,7 @@ pub(crate) fn install_core_engine(toolchain_root: &Path) -> CliResult<()> {
     let project = root.join(CORE_ENGINE_SOURCE);
     let mut engines = publish_engine_project(
         &project,
-        EnginePublisherRequest::new(EngineModuleContract::OvenSourceUnitBatchV3, CORE_ENGINE_ENTRYPOINT)?,
+        EnginePublisherRequest::new(EngineModuleContract::OvenNativeCompilationV4, CORE_ENGINE_ENTRYPOINT)?,
     )?
     .into_iter()
     .filter(|owner| owner.manifest.intent.profile == "release")
@@ -925,7 +939,7 @@ fn install_core_engine_owners(
 ) -> CliResult<()> {
     use std::io::Write;
     let admitted = AdmittedEngineArtifact::borrow(&engine_owner, &output_owner)?;
-    if admitted.descriptor().module_contract() != EngineModuleContract::OvenSourceUnitBatchV3 {
+    if admitted.descriptor().module_contract() != EngineModuleContract::OvenNativeCompilationV4 {
         return Err(CliError::failure(
             "core Engine installation requires an explicitly published batch version 3 role",
         ));
@@ -936,7 +950,7 @@ fn install_core_engine_owners(
     let installation = CoreEngineInstallation {
         schema_version: 1,
         installing_compiler: installing_compiler.clone(),
-        contract: EngineModuleContract::OvenSourceUnitBatchV3,
+        contract: EngineModuleContract::OvenNativeCompilationV4,
         engine_identity: engine_owner.manifest.identity.clone(),
         output_identity: output_owner.manifest.identity.clone(),
         source_authority_digest: admitted.descriptor.source_authority_digest().to_string(),
@@ -1043,6 +1057,7 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
     type FileInventory = BTreeMap<PathBuf, (Vec<u8>, u32)>;
+    const BATCH_REQUEST: &[u8] = br#"{"schema":"incan.oven.source-unit-batch/3"}"#;
 
     struct Fixture {
         project_root: tempfile::TempDir,
@@ -1122,10 +1137,10 @@ mod tests {
         })
     }
 
-    /// Publish a version 3 descriptor through the same completion adapter used by the explicit installer.
+    /// Publish the current core descriptor through the same completion adapter used by the explicit installer.
     fn publish_core_fixture(fixture: &Fixture) -> Result<OvenStoreExecutionPayload, Box<dyn std::error::Error>> {
         let mut publisher = EnginePublisher {
-            request: EnginePublisherRequest::new(EngineModuleContract::OvenSourceUnitBatchV3, "src/main.incn")?,
+            request: EnginePublisherRequest::new(EngineModuleContract::OvenNativeCompilationV4, "src/main.incn")?,
             compiler: None,
             published: Vec::new(),
         };
@@ -1349,26 +1364,27 @@ mod tests {
             authority.issue(&admitted, &fixture.receipt, input, &scope, target, deadline, &cancelled)
         };
         let target = fixture.receipt.intent.target.as_str();
-        let permit = issue(&authority, target, b"{}", Instant::now() + Duration::from_secs(30))?;
+        let request = br#"{"schema":"incan.oven.source-unit-batch/3"}"#;
+        let permit = issue(&authority, target, request, Instant::now() + Duration::from_secs(30))?;
         assert_eq!(permit.command_receipt.identity, fixture.receipt.identity);
         assert_eq!(permit.engine_identity, engine_owner.manifest.identity);
-        assert_eq!(permit.request_digest, digest_bytes(b"{}"));
+        assert_eq!(permit.request_digest, digest_bytes(request));
         assert_eq!(permit.request_limit, 1024 * 1024);
         let denied = EngineCommandAuthority {
             operation: EngineKernelOperation::SelectProviderSources,
             ceiling: EngineKernelCeiling::Denied,
         };
-        assert!(issue(&denied, target, b"{}", Instant::now() + Duration::from_secs(30)).is_err());
+        assert!(issue(&denied, target, request, Instant::now() + Duration::from_secs(30)).is_err());
         let unrelated = EngineCommandAuthority {
             operation: EngineKernelOperation::PublishModule,
             ceiling: EngineKernelCeiling::BoundedCoreSelection,
         };
-        assert!(issue(&unrelated, target, b"{}", Instant::now() + Duration::from_secs(30)).is_err());
+        assert!(issue(&unrelated, target, request, Instant::now() + Duration::from_secs(30)).is_err());
         assert!(
             issue(
                 &authority,
                 "wrong-host",
-                b"{}",
+                request,
                 Instant::now() + Duration::from_secs(30)
             )
             .is_err()
@@ -1382,9 +1398,9 @@ mod tests {
             )
             .is_err()
         );
-        assert!(issue(&authority, target, b"{}", Instant::now()).is_err());
+        assert!(issue(&authority, target, request, Instant::now()).is_err());
         cancelled.store(true, Ordering::Release);
-        assert!(issue(&authority, target, b"{}", Instant::now() + Duration::from_secs(30)).is_err());
+        assert!(issue(&authority, target, request, Instant::now() + Duration::from_secs(30)).is_err());
         Ok(())
     }
 
@@ -1416,13 +1432,13 @@ mod tests {
             let permit = authority.issue(
                 admitted,
                 &fixture.receipt,
-                b"{}",
+                BATCH_REQUEST,
                 &scope,
                 &fixture.receipt.intent.target,
                 Instant::now() + Duration::from_secs(30),
                 &cancelled,
             )?;
-            let report = exchange(admitted, permit, b"{}", &cancelled);
+            let report = exchange(admitted, permit, BATCH_REQUEST, &cancelled);
             assert_eq!(report.outcome, ExchangeOutcome::Completed);
             assert_eq!(
                 report.response.as_deref(),
@@ -1441,6 +1457,8 @@ mod tests {
         assert_eq!(value["kind"], "incan.oven.engine-exchange-observation");
         assert_eq!(value["schema_version"], 1);
         assert_eq!(value["outcome"], "completed");
+        assert_eq!(value["operation"], "core-selection");
+        assert_eq!(value["request_schema"], "incan.oven.source-unit-batch/3");
         assert_eq!(
             value["response_digest"],
             digest_bytes(br#"{"schema":"fixture","ok":true}"#)
@@ -1530,6 +1548,8 @@ mod tests {
             engine_identity: engine.into(),
             output_identity: output.into(),
             contract: admitted.descriptor().module_contract(),
+            operation: EngineKernelOperation::SelectProviderSources,
+            request_schema: "incan.oven.source-unit-batch/3".into(),
             host_target: admitted.descriptor().receipt().intent.target.clone(),
             request_digest: digest_bytes(request),
             scratch_parent: fixture.project_root.path().canonicalize()?,
@@ -1549,12 +1569,12 @@ mod tests {
             true,
             Some(b"#!/bin/sh\n/bin/cat \"$1\" > \"$2\"\nprintf output\nprintf diagnostic >&2\n"),
         )?;
-        let engine = fixture.publish_engine()?;
+        let engine = publish_core_fixture(&fixture)?;
         let output = fixture.output_owner()?;
         let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
         let before_output = inventory(&output.artifact_root)?;
         let before_engine = inventory(&engine.artifact_root)?;
-        let request = b"{\"value\": 42}\n";
+        let request = br#"{"schema":"incan.oven.source-unit-batch/3","value":42}"#;
         let report = exchange(
             &admitted,
             exchange_permit(&fixture, &admitted, request)?,
@@ -1587,12 +1607,12 @@ mod tests {
     #[test]
     fn engine_exchange_refuses_unmatched_or_interrupted_permits_before_effects() -> TestResult {
         let fixture = Fixture::with_native("exchange_permit", true, Some(b"#!/bin/sh\nexit 0\n"))?;
-        let engine = fixture.publish_engine()?;
+        let engine = publish_core_fixture(&fixture)?;
         let output = fixture.output_owner()?;
         let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
         let before = inventory(fixture.project_root.path())?;
-        for case in 0..9 {
-            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
+        for case in 0..11 {
+            let mut permit = exchange_permit(&fixture, &admitted, BATCH_REQUEST)?;
             let cancelled = AtomicBool::new(false);
             let expected = match case {
                 0 => {
@@ -1627,12 +1647,20 @@ mod tests {
                     permit.host_target = "unrelated-host-target".into();
                     ExchangeOutcome::Refused
                 }
-                _ => {
+                8 => {
                     permit.contract = EngineModuleContract::OvenSourceUnitBatchV2;
                     ExchangeOutcome::Refused
                 }
+                9 => {
+                    permit.operation = EngineKernelOperation::ProjectNativeCompilation;
+                    ExchangeOutcome::Refused
+                }
+                _ => {
+                    permit.request_schema = "incan.oven.native-compilation/2".into();
+                    ExchangeOutcome::Refused
+                }
             };
-            let report = exchange(&admitted, permit, b"{}", &cancelled);
+            let report = exchange(&admitted, permit, BATCH_REQUEST, &cancelled);
             assert_eq!(report.outcome, expected, "case {case}: {report:?}");
             assert!(report.child_id.is_none());
             assert!(report.scratch_path.is_none());
@@ -1647,15 +1675,15 @@ mod tests {
     #[test]
     fn engine_exchange_rechecks_sealed_native_bytes_before_spawn() -> TestResult {
         let fixture = Fixture::with_native("exchange_tamper", true, Some(b"#!/bin/sh\nexit 0\n"))?;
-        let engine = fixture.publish_engine()?;
+        let engine = publish_core_fixture(&fixture)?;
         let output = fixture.output_owner()?;
         let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
         fs::set_permissions(admitted.native_output(), fs::Permissions::from_mode(0o755))?;
         fs::write(admitted.native_output(), b"#!/bin/sh\nexit 7\n")?;
         let report = exchange(
             &admitted,
-            exchange_permit(&fixture, &admitted, b"{}")?,
-            b"{}",
+            exchange_permit(&fixture, &admitted, BATCH_REQUEST)?,
+            BATCH_REQUEST,
             &AtomicBool::new(false),
         );
         assert_eq!(report.outcome, ExchangeOutcome::Failed);
@@ -1684,12 +1712,14 @@ mod tests {
         ];
         for (label, script) in cases {
             let fixture = Fixture::with_native(label, true, Some(script))?;
-            let engine = fixture.publish_engine()?;
+            let engine = publish_core_fixture(&fixture)?;
             let output = fixture.output_owner()?;
             let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
-            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
-            permit.response_limit = 4;
-            let report = exchange(&admitted, permit, b"{}", &AtomicBool::new(false));
+            let mut permit = exchange_permit(&fixture, &admitted, BATCH_REQUEST)?;
+            if label == "size" {
+                permit.response_limit = 4;
+            }
+            let report = exchange(&admitted, permit, BATCH_REQUEST, &AtomicBool::new(false));
             assert_eq!(report.outcome, ExchangeOutcome::Failed, "{label}: {report:?}");
             let detail = report.detail.as_deref().ok_or("missing failure reason")?;
             let expected = match label {
@@ -1700,7 +1730,7 @@ mod tests {
                 }
                 "utf8" => detail.contains("utf-8"),
                 "symlink" => detail.contains("indirect") || detail.contains("Too many levels"),
-                "hardlink" => detail.contains("bounded private regular file"),
+                "hardlink" => detail.contains("indirect") || detail.contains("bounded private regular file"),
                 "size" => detail.contains("byte limit") || detail.contains("bounded private regular file"),
                 "request" => detail.contains("changed the original request file"),
                 _ => false,
@@ -1734,13 +1764,13 @@ mod tests {
             ),
         ] {
             let fixture = Fixture::with_native(label, true, Some(script))?;
-            let engine = fixture.publish_engine()?;
+            let engine = publish_core_fixture(&fixture)?;
             let output = fixture.output_owner()?;
             let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
             let report = exchange(
                 &admitted,
-                exchange_permit(&fixture, &admitted, b"{}")?,
-                b"{}",
+                exchange_permit(&fixture, &admitted, BATCH_REQUEST)?,
+                BATCH_REQUEST,
                 &AtomicBool::new(false),
             );
             assert_eq!(report.outcome, ExchangeOutcome::Failed, "{report:?}");
@@ -1797,13 +1827,13 @@ mod tests {
             ),
         ] {
             let fixture = Fixture::with_native(label, true, Some(script))?;
-            let engine = fixture.publish_engine()?;
+            let engine = publish_core_fixture(&fixture)?;
             let output = fixture.output_owner()?;
             let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
-            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
+            let mut permit = exchange_permit(&fixture, &admitted, BATCH_REQUEST)?;
             permit.stdout_limit = 64;
             permit.stderr_limit = 64;
-            let report = exchange(&admitted, permit, b"{}", &AtomicBool::new(false));
+            let report = exchange(&admitted, permit, BATCH_REQUEST, &AtomicBool::new(false));
             assert_eq!(report.outcome, ExchangeOutcome::Failed, "{report:?}");
             let capture = if label == "stdout" {
                 &report.stdout
@@ -1829,10 +1859,10 @@ mod tests {
                 true,
                 Some(b"#!/bin/sh\n/bin/sleep 30 &\nprintf '%s' \"$!\"\nprintf ready > \"$2\"\nwait\n"),
             )?;
-            let engine = fixture.publish_engine()?;
+            let engine = publish_core_fixture(&fixture)?;
             let output = fixture.output_owner()?;
             let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
-            let mut permit = exchange_permit(&fixture, &admitted, b"{}")?;
+            let mut permit = exchange_permit(&fixture, &admitted, BATCH_REQUEST)?;
             permit.deadline = Instant::now() + Duration::from_secs(if cancel { 5 } else { 1 });
             let cancelled = AtomicBool::new(false);
             let scratch_parent = permit.scratch_parent.clone();
@@ -1856,7 +1886,7 @@ mod tests {
                         cancelled.store(true, Ordering::Release);
                     });
                 }
-                exchange(&admitted, permit, b"{}", &cancelled)
+                exchange(&admitted, permit, BATCH_REQUEST, &cancelled)
             });
             assert_eq!(
                 report.outcome,
@@ -1886,13 +1916,13 @@ mod tests {
             true,
             Some(b"#!/bin/sh\n/bin/sleep 30 &\nprintf '%s' \"$!\"\nprintf 42 > \"$2\"\nexit 0\n"),
         )?;
-        let engine = fixture.publish_engine()?;
+        let engine = publish_core_fixture(&fixture)?;
         let output = fixture.output_owner()?;
         let admitted = AdmittedEngineArtifact::borrow(&engine, &output)?;
         let report = exchange(
             &admitted,
-            exchange_permit(&fixture, &admitted, b"{}")?,
-            b"{}",
+            exchange_permit(&fixture, &admitted, BATCH_REQUEST)?,
+            BATCH_REQUEST,
             &AtomicBool::new(false),
         );
         assert_eq!(report.outcome, ExchangeOutcome::Completed, "{report:?}");
@@ -1902,7 +1932,7 @@ mod tests {
         Ok(())
     }
 
-    /// Explicit V2/V3 declarations preserve prior descriptor bytes and reject role/version relabeling.
+    /// Explicit V2/V3/V4 declarations preserve prior descriptor bytes and reject role/version relabeling.
     #[test]
     fn engine_exchange_role_versions_preserve_original_descriptor_evidence() -> TestResult {
         let fixture = Fixture::new("role", true)?;
@@ -1966,8 +1996,38 @@ mod tests {
                 .request_schemas
                 .contains(&"incan.oven.source-unit-batch/3".to_string())
         );
+        let mut fourth_publisher = EnginePublisher {
+            request: EnginePublisherRequest::new(EngineModuleContract::OvenNativeCompilationV4, "src/main.incn")?,
+            compiler: None,
+            published: Vec::new(),
+        };
+        fourth_publisher.publish_if_requested(
+            &second_fixture.store,
+            &second_fixture.receipt,
+            &second_fixture.completed,
+        )?;
+        let fourth_owner = fourth_publisher.published.pop().ok_or("missing V4 owner")?;
+        let fourth = AdmittedEngineArtifact::borrow(&fourth_owner, &second_output)?;
+        assert_eq!(fourth.descriptor().schema_version, 4);
+        assert_eq!(
+            fourth.descriptor().module_contract(),
+            EngineModuleContract::OvenNativeCompilationV4
+        );
+        assert!(
+            fourth
+                .descriptor()
+                .supports_request_schema("incan.oven.source-unit-batch/3")
+        );
+        assert!(
+            fourth
+                .descriptor()
+                .supports_request_schema("incan.oven.native-compilation/2")
+        );
         let mut retagged = EngineDescriptor::from_json(&second_bytes)?;
         retagged.contract = EngineModuleContract::OvenSourceUnitBatchV3;
+        assert!(EngineDescriptor::from_json(&serde_json::to_vec(&retagged)?).is_err());
+        let mut retagged = EngineDescriptor::from_json(&third_owner.payload)?;
+        retagged.contract = EngineModuleContract::OvenNativeCompilationV4;
         assert!(EngineDescriptor::from_json(&serde_json::to_vec(&retagged)?).is_err());
         assert_eq!(original, engine.payload);
         assert_eq!(second_bytes, second_owner.payload);
@@ -1987,7 +2047,10 @@ mod tests {
             admitted.owner_identities(),
             (engine.manifest.identity.as_str(), output.manifest.identity.as_str())
         );
-        assert_eq!(admitted.native_output(), fixture.completed.native_output);
+        assert_eq!(
+            admitted.native_output(),
+            fs::canonicalize(&fixture.completed.native_output)?
+        );
         assert_eq!(admitted.descriptor().receipt(), &fixture.receipt);
         assert_eq!(
             admitted.descriptor().output.source_authority_digest,
@@ -2060,7 +2123,7 @@ mod tests {
         let descriptor = EngineDescriptor::from_json(&owner.payload)?;
         assert_eq!(serde_json::to_vec(&descriptor)?, owner.payload);
         // Invalid typed body deliberately accompanies a future header: version refusal must win.
-        let future = br#"{"schema_version":4,"artifact_kind":"incan.oven.engine","output":false}"#;
+        let future = br#"{"schema_version":5,"artifact_kind":"incan.oven.engine","output":false}"#;
         let Err(error) = EngineDescriptor::from_json(future) else {
             return Err("future Engine schema accepted".into());
         };

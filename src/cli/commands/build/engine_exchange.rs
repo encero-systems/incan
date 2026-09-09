@@ -90,6 +90,8 @@ pub(crate) struct EngineExchangeReport {
     pub(crate) compiler_binary_digest: String,
     pub(crate) native_digest: String,
     pub(crate) contract: EngineModuleContract,
+    pub(crate) operation: String,
+    pub(crate) request_schema: String,
     pub(crate) native_file_exchange_abi: u32,
     pub(crate) host_target: String,
     pub(crate) request_limit: usize,
@@ -161,6 +163,8 @@ pub(crate) fn exchange(
         compiler_binary_digest: admitted.descriptor().compiler_binary_identity().digest().to_string(),
         native_digest: admitted.native_digest().to_string(),
         contract: admitted.descriptor().module_contract(),
+        operation: permit.operation.invocation_name().to_string(),
+        request_schema: permit.request_schema.clone(),
         native_file_exchange_abi: admitted.descriptor().native_file_exchange_abi(),
         host_target: permit.host_target.clone(),
         request_limit: permit.request_limit,
@@ -239,12 +243,20 @@ fn admit(
 ) -> Result<(), Failure> {
     check_interrupt(permit, cancelled)?;
     permit.command_receipt.verify_identity().map_err(Failure::io)?;
+    let request_document = serde_json::from_slice::<serde_json::Value>(request).map_err(Failure::io)?;
+    let request_schema = request_document
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Failure::refuse("Engine request has no exact schema"))?;
     let (engine, output) = admitted.owner_identities();
     if permit.permit_id.trim().is_empty()
         || permit.invocation_id.trim().is_empty()
         || permit.engine_identity != engine
         || permit.output_identity != output
         || permit.contract != admitted.descriptor().module_contract()
+        || permit.request_schema != permit.operation.request_schema()
+        || request_schema != permit.request_schema
+        || !admitted.descriptor().supports_request_schema(request_schema)
         || permit.host_target != admitted.descriptor().receipt().intent.target
         || admitted.descriptor().native_file_exchange_abi() != 1
         || [

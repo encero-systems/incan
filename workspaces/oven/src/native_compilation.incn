@@ -30,10 +30,14 @@ pub def evaluate(source: str) -> JsonValue:
     """Decode one bounded Engine request; neither a lookup index nor a key grants execution."""
     match parse(source):
         Err(_) => return refused([])
-        Ok(document) =>
-            match project(document):
-                Err(error) => return refused(error.fields)
-                Ok(response) => return response
+        Ok(document) => return evaluate_document(document)
+
+
+pub def evaluate_document(document: JsonValue) -> JsonValue:
+    """Evaluate an already decoded Engine request without reopening the wire representation."""
+    match project(document):
+        Err(error) => return refused(error.fields)
+        Ok(response) => return response
 
 
 pub def project(document: JsonValue) -> Result[JsonValue, CompilationError]:

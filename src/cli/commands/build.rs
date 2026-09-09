@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EngineKernelOperation {
     SelectProviderSources,
+    ProjectNativeCompilation,
     #[allow(
         dead_code,
         reason = "This unsupported kernel operation is retained for explicit policy denial controls"
@@ -33,6 +34,25 @@ enum EngineKernelCeiling {
     #[allow(dead_code, reason = "The denied ceiling is exercised by command policy controls")]
     Denied,
     BoundedCoreSelection,
+    BoundedNativeCompilation,
+}
+
+impl EngineKernelOperation {
+    fn request_schema(self) -> &'static str {
+        match self {
+            Self::SelectProviderSources => "incan.oven.source-unit-batch/3",
+            Self::ProjectNativeCompilation => "incan.oven.native-compilation/2",
+            Self::PublishModule => "",
+        }
+    }
+
+    fn invocation_name(self) -> &'static str {
+        match self {
+            Self::SelectProviderSources => "core-selection",
+            Self::ProjectNativeCompilation => "native-compilation",
+            Self::PublishModule => "publish-module",
+        }
+    }
 }
 
 /// Explicit host policy for the one supported kernel exchange, not an RFC104 source-operation decision.
@@ -45,6 +65,25 @@ struct EngineCommandAuthority {
 }
 
 impl EngineCommandAuthority {
+    fn require_operation(&self) -> CliResult<()> {
+        let allowed = matches!(
+            (self.operation, self.ceiling),
+            (
+                EngineKernelOperation::SelectProviderSources,
+                EngineKernelCeiling::BoundedCoreSelection
+            ) | (
+                EngineKernelOperation::ProjectNativeCompilation,
+                EngineKernelCeiling::BoundedNativeCompilation
+            )
+        );
+        if !allowed {
+            return Err(CliError::failure(
+                "kernel capability denied: operation is outside the command ceiling",
+            ));
+        }
+        Ok(())
+    }
+
     /// Refuse unsupported requests before installed-file access, request-file creation or process supervision.
     fn require_core_selection(&self) -> CliResult<()> {
         if self.operation != EngineKernelOperation::SelectProviderSources {
@@ -57,7 +96,7 @@ impl EngineCommandAuthority {
                 "kernel capability denied: core selection is outside the command ceiling",
             ));
         }
-        Ok(())
+        self.require_operation()
     }
 
     /// Issue a one-use permit only after explicit policy, original module admission and exact invocation checks.
@@ -74,14 +113,25 @@ impl EngineCommandAuthority {
     ) -> CliResult<EngineBootstrapPermit<'a>> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static INVOCATIONS: AtomicU64 = AtomicU64::new(0);
-        self.require_core_selection()?;
+        self.require_operation()?;
         receipt
             .verify_identity()
             .map_err(|error| CliError::failure(error.to_string()))?;
         if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
             return Err(CliError::failure("core selection invocation is cancelled or expired"));
         }
-        if admitted.descriptor().module_contract() != engine::EngineModuleContract::OvenSourceUnitBatchV3
+        let request_schema = serde_json::from_slice::<serde_json::Value>(request)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("schema")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| CliError::failure("kernel invocation requires an exact request schema"))?;
+        if request_schema != self.operation.request_schema()
+            || admitted.descriptor().module_contract() != engine::EngineModuleContract::OvenNativeCompilationV4
+            || !admitted.descriptor().supports_request_schema(&request_schema)
             || admitted.descriptor().native_file_exchange_abi() != 1
             || admitted.descriptor().receipt().intent.target != host_target
             || request.is_empty()
@@ -101,7 +151,11 @@ impl EngineCommandAuthority {
         let sequence = INVOCATIONS
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
             .map_err(|_| CliError::failure("kernel invocation sequence exhausted"))?;
-        let invocation_id = format!("incan.kernel.core-selection/1:{}:{sequence}", std::process::id());
+        let invocation_id = format!(
+            "incan.kernel.{}/1:{}:{sequence}",
+            self.operation.invocation_name(),
+            std::process::id()
+        );
         let (engine_identity, output_identity) = admitted.owner_identities();
         Ok(EngineBootstrapPermit {
             permit_id: format!("{invocation_id}:permit"),
@@ -109,7 +163,9 @@ impl EngineCommandAuthority {
             command_receipt: receipt,
             engine_identity: engine_identity.to_string(),
             output_identity: output_identity.to_string(),
-            contract: engine::EngineModuleContract::OvenSourceUnitBatchV3,
+            contract: engine::EngineModuleContract::OvenNativeCompilationV4,
+            operation: self.operation,
+            request_schema,
             host_target: host_target.to_string(),
             request_digest: digest_bytes(request),
             scratch_parent,
@@ -219,6 +275,7 @@ fn persist_engine_exchange_observation(
         "engine_identity": report.engine_identity, "output_identity": report.output_identity,
         "source_identity": report.source_identity, "compiler_binary_digest": report.compiler_binary_digest,
         "native_digest": report.native_digest, "contract": report.contract,
+        "operation": report.operation, "request_schema": report.request_schema,
         "native_file_exchange_abi": report.native_file_exchange_abi, "host_target": report.host_target,
         "limits": {"request": report.request_limit, "response": report.response_limit,
             "stdout": report.stdout_limit, "stderr": report.stderr_limit},
@@ -277,6 +334,8 @@ pub(crate) struct EngineBootstrapPermit<'a> {
     engine_identity: String,
     output_identity: String,
     contract: engine::EngineModuleContract,
+    operation: EngineKernelOperation,
+    request_schema: String,
     host_target: String,
     request_digest: String,
     scratch_parent: PathBuf,
@@ -5192,7 +5251,9 @@ impl<'plan, 'native> ProviderSourceBatch<'plan, 'native> {
         CliResult<AdmittedProviderSourceBatch<'_, 'plan, 'native>>,
     )> {
         if permit.command_receipt.identity != self.receipt.identity
-            || permit.contract != engine::EngineModuleContract::OvenSourceUnitBatchV3
+            || permit.contract != engine::EngineModuleContract::OvenNativeCompilationV4
+            || permit.operation != EngineKernelOperation::SelectProviderSources
+            || permit.request_schema != "incan.oven.source-unit-batch/3"
         {
             return Err(CliError::failure(
                 "provider batch permit belongs to a different command or protocol",

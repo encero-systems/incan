@@ -1,6 +1,7 @@
 """Decode the versioned native-selection wire contract and call the pure typed selector."""
 
 from std.json import JsonValue, parse
+from native_compilation import evaluate_document
 from plan import (
     RuntimeCompatibility,
     NativeContext,
@@ -41,6 +42,7 @@ const SCHEMA: str = "incan.oven.selection/1"
 const SCHEMA_V2: str = "incan.oven.selection/2"
 const BATCH_SCHEMA_V2: str = "incan.oven.source-unit-batch/2"
 const BATCH_SCHEMA_V3: str = "incan.oven.source-unit-batch/3"
+const NATIVE_COMPILATION_SCHEMA: str = "incan.oven.native-compilation/2"
 
 
 pub def evaluate(source: str) -> JsonValue:
@@ -60,6 +62,8 @@ pub def evaluate(source: str) -> JsonValue:
             if let Some(schema_name) = schema.as_str():
                 if schema_name == BATCH_SCHEMA or schema_name == BATCH_SCHEMA_V2 or schema_name == BATCH_SCHEMA_V3:
                     return evaluate_batch(document)
+                if schema_name == NATIVE_COMPILATION_SCHEMA:
+                    return evaluate_document(document)
                 if schema_name == SCHEMA_V2:
                     response_schema = SCHEMA_V2
     match decode_request(source):
