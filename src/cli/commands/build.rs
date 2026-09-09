@@ -101,6 +101,7 @@ use crate::library_manifest::{
 };
 use crate::lockfile::{
     CargoFeatureSelection, IncanLock, LOCK_FILENAME, provider_semantic_identities, semantic_lock_state,
+    semantic_lock_state_with_provider_identities,
 };
 use crate::manifest::{DependencySource, DependencySpec, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
 use crate::oven::interop::{
@@ -3782,7 +3783,23 @@ pub(crate) fn oven_build_unit_inputs(
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
 ) -> CliResult<BTreeMap<String, String>> {
-    let provider_records = oven_native_provider_records(provider_plan, &semantic_sdk_path_dependencies(requirements))?;
+    let semantic_identities =
+        provider_semantic_identities(provider_plan, &semantic_sdk_path_dependencies(requirements))
+            .map_err(CliError::failure)?;
+    oven_build_unit_inputs_with_provider_identities(provider_plan, requirements, resolved, &semantic_identities)
+}
+
+/// Encode native inputs with the identity map already produced for this checked provider plan and SDK requirements.
+///
+/// The library caller retains that map from semantic lock construction. Runtime and authored dependency inputs keep
+/// their existing producers and encoding; no stored receipt or native authority is inferred from this projection.
+fn oven_build_unit_inputs_with_provider_identities(
+    provider_plan: &ProviderPlan,
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    semantic_identities: &BTreeMap<String, String>,
+) -> CliResult<BTreeMap<String, String>> {
+    let provider_records = oven_native_provider_records_with_identities(provider_plan, semantic_identities)?;
     let mut dependencies = resolved.dependencies.clone();
     dependencies.extend(resolved.dev_dependencies.clone());
     let dependency_digest =
@@ -3850,6 +3867,17 @@ pub(crate) fn oven_native_provider_records(
 ) -> CliResult<Vec<String>> {
     let semantic_identities =
         provider_semantic_identities(provider_plan, sdk_path_dependencies).map_err(CliError::failure)?;
+    oven_native_provider_records_with_identities(provider_plan, &semantic_identities)
+}
+
+/// Encode SDK capabilities from this plan's original checked semantic projection.
+///
+/// Lookups retain full physical identity keys even when equivalent providers share a semantic identity. Callers with a
+/// retained producer map avoid another traversal; the convenience API still computes the map for callers without one.
+fn oven_native_provider_records_with_identities(
+    provider_plan: &ProviderPlan,
+    semantic_identities: &BTreeMap<String, String>,
+) -> CliResult<Vec<String>> {
     let direct_sdk_link_roots = provider_plan
         .sdk_link_roots()
         .into_iter()
@@ -9811,7 +9839,7 @@ fn prepare_library_project(
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
-    let semantic = semantic_lock_state(
+    let (semantic, provider_semantic_identities) = semantic_lock_state_with_provider_identities(
         &project_root,
         manifest.interop_c(),
         compilation_session.sdk_inventory.as_deref(),
@@ -9915,8 +9943,17 @@ fn prepare_library_project(
     // lock collection would request this still-unpublished artifact recursively. The command owning the full project
     // remains responsible for canonical lock observation and publication, including SDK publisher invocations.
     record_timing(&mut timings_ms, "library_observe_lock_facts", lock_start);
+    // Only normal Oven preparation reuses the earlier projection. Other library paths may replace requirements
+    // through canonical lock resolution above and do not construct native build inputs here.
     let mut oven_build_inputs = normal_oven
-        .then(|| oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved))
+        .then(|| {
+            oven_build_unit_inputs_with_provider_identities(
+                &provider_plan,
+                &project_requirements,
+                &resolved,
+                &provider_semantic_identities,
+            )
+        })
         .transpose()?;
     let oven_rustc = normal_oven
         .then(resolve_active_rustc)
@@ -17054,6 +17091,102 @@ headers = ["interop/include/bridge.h"]
         assert!(preserve_source_dependency_public_items(false, 1));
         assert!(preserve_source_dependency_public_items(true, 0));
         assert!(!preserve_source_dependency_public_items(false, 0));
+    }
+
+    /// Supply checked source-only SDK metadata for encoding tests, without claiming compiled native inputs.
+    fn native_provider_record_fixture() -> Result<ProviderPlan, Box<dyn std::error::Error>> {
+        use crate::provider::{
+            ImplementationFacet, NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord,
+        };
+
+        let mut records = Vec::new();
+        for (module, digit) in [("used", 'a'), ("unused", 'b')] {
+            let name = format!("fixture_{module}");
+            let features = BTreeSet::from(["feature-a".to_string()]);
+            let mut manifest = LibraryManifest::new(&name, "0.1.0");
+            manifest.contract_metadata.provider.active_features = features.clone();
+            records.push(ProviderRecord {
+                identity: ProviderIdentity {
+                    name,
+                    version: "0.1.0".to_string(),
+                    digest: format!("sha256:{}", digit.to_string().repeat(64)),
+                    feature_projection: features,
+                },
+                provenance: ProviderProvenance::Sdk {
+                    sdk_identity: "fixture@0.1.0".to_string(),
+                    component_id: module.to_string(),
+                    inventory_path: None,
+                },
+                authority: NamespaceAuthority::SdkReserved,
+                namespace_claims: BTreeSet::from([vec!["std".to_string(), module.to_string()]]),
+                available: true,
+                enabled: true,
+                manifest: Some(Arc::new(manifest)),
+                artifact: None,
+                implementation_facets: vec![ImplementationFacet {
+                    id: format!("{module}-facet"),
+                    required_modules: BTreeSet::from([vec![module.to_string()]]),
+                    required_features: BTreeSet::new(),
+                    backend_requirements: Vec::new(),
+                }],
+            });
+        }
+        Ok(ProviderPlan::new(
+            LibraryManifestIndex::default(),
+            records,
+            [vec!["std".to_string(), "used".to_string()]],
+        )?)
+    }
+
+    /// Reusing the checked map preserves native record bytes and does not activate an unused SDK provider.
+    #[test]
+    fn native_provider_records_preserve_selected_bytes_and_omit_unused_sdk() -> Result<(), Box<dyn std::error::Error>> {
+        let plan = native_provider_record_fixture()?;
+        let identities = provider_semantic_identities(&plan, &[])?;
+        assert_eq!(identities.len(), 2, "the unused provider remains a checked identity");
+        let records = oven_native_provider_records_with_identities(&plan, &identities)?;
+        assert_eq!(records, oven_native_provider_records(&plan, &[])?);
+        assert_eq!(
+            records,
+            [format!(
+                "fixture_used@0.1.0#sha256:{}[feature-a]|std.used|used-facet|link",
+                "a".repeat(64)
+            )]
+        );
+        Ok(())
+    }
+
+    /// A same-named provider at another version, digest or feature projection cannot replace the original map key.
+    #[test]
+    fn native_provider_records_refuse_inexact_retained_keys() -> Result<(), Box<dyn std::error::Error>> {
+        let plan = native_provider_record_fixture()?;
+        let identities = provider_semantic_identities(&plan, &[])?;
+        let provider = plan
+            .active_sdk_provider_for_module(&["std".to_string(), "used".to_string()])
+            .ok_or("missing used SDK fixture")?;
+        let original = provider.identity.stable_key();
+        for dimension in ["version", "digest", "features"] {
+            let mut other = provider.identity.clone();
+            match dimension {
+                "version" => other.version = "0.2.0".to_string(),
+                "digest" => other.digest = format!("sha256:{}", "c".repeat(64)),
+                _ => {
+                    other.feature_projection.insert("feature-b".to_string());
+                }
+            }
+            let mut mismatched = identities.clone();
+            let semantic = mismatched.remove(&original).ok_or("missing original identity")?;
+            mismatched.insert(other.stable_key(), semantic);
+            let error = oven_native_provider_records_with_identities(&plan, &mismatched)
+                .err()
+                .ok_or("inexact provider identity unexpectedly encoded")?;
+            assert!(error.to_string().contains(&original), "{dimension}: {error}");
+        }
+        let error = oven_native_provider_records_with_identities(&plan, &BTreeMap::new())
+            .err()
+            .ok_or("missing selected identities unexpectedly encoded")?;
+        assert!(error.to_string().contains(&original));
+        Ok(())
     }
 
     #[test]

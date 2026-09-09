@@ -256,6 +256,32 @@ pub fn semantic_lock_state(
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<SemanticLockState, String> {
+    semantic_lock_state_with_provider_identities(
+        project_root,
+        interop,
+        sdk_inventory,
+        sdk_components,
+        package_features,
+        provider_plan,
+        sdk_path_dependencies,
+    )
+    .map(|(semantic, _)| semantic)
+}
+
+/// Retain the exact provider identity projection used to construct this semantic lock state.
+///
+/// Native receipt construction for the same checked provider plan and SDK requirements can reuse this map without
+/// repeating semantic source traversal. These identities do not replace physical provider admission or grant native
+/// inputs.
+pub(crate) fn semantic_lock_state_with_provider_identities(
+    project_root: &Path,
+    interop: Option<&InteropCSection>,
+    sdk_inventory: Option<&SdkInventory>,
+    sdk_components: Option<&ResolvedSdkComponents>,
+    package_features: Option<&PackageFeaturePlan>,
+    provider_plan: &ProviderPlan,
+    sdk_path_dependencies: &[DependencySpec],
+) -> Result<(SemanticLockState, BTreeMap<String, String>), String> {
     let interop = locked_interop_targets_from_section(project_root, interop)?;
     let oven = (!interop.is_empty()).then_some(LockedOvenState { interop });
     let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
@@ -345,14 +371,17 @@ pub fn semantic_lock_state(
                 .collect(),
         })
         .collect();
-    Ok(SemanticLockState {
-        sdk,
-        packages,
-        feature_edges,
-        providers,
-        oven,
-        workspace_members: Vec::new(),
-    })
+    Ok((
+        SemanticLockState {
+            sdk,
+            packages,
+            feature_edges,
+            providers,
+            oven,
+            workspace_members: Vec::new(),
+        },
+        provider_identity_map,
+    ))
 }
 
 /// Return each checked provider's path-independent semantic identity keyed by its byte-exact catalog identity.
@@ -1888,6 +1917,79 @@ mod tests {
             &second_specs,
         );
         assert_ne!(second_fingerprint, changed_fingerprint);
+        Ok(())
+    }
+
+    /// Retaining the producer's identity map leaves the public semantic lock projection unchanged.
+    #[test]
+    fn semantic_lock_projection_retains_original_provider_identities() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let fixture = production_toolchain_semantic_fixture(root.path())?;
+        let ordinary = semantic_lock_state(
+            root.path(),
+            None,
+            Some(&fixture.inventory),
+            Some(&fixture.components),
+            None,
+            &fixture.provider_plan,
+            &fixture.specs,
+        )?;
+        let (retained, identities) = semantic_lock_state_with_provider_identities(
+            root.path(),
+            None,
+            Some(&fixture.inventory),
+            Some(&fixture.components),
+            None,
+            &fixture.provider_plan,
+            &fixture.specs,
+        )?;
+        assert_eq!(retained, ordinary);
+        assert_eq!(
+            identities,
+            provider_semantic_identities(&fixture.provider_plan, &fixture.specs)?
+        );
+        assert_eq!(identities.len(), 1, "the physical provider mapping must not disappear");
+        let provider = fixture
+            .provider_plan
+            .records()
+            .next()
+            .ok_or("missing provider fixture")?;
+        let identity = identities
+            .get(&provider.identity.stable_key())
+            .ok_or("missing retained identity")?;
+        assert_eq!(
+            retained.providers.first().ok_or("missing locked provider")?.identity,
+            *identity
+        );
+
+        let inconsistent = semantic_lock_state_with_provider_identities(
+            root.path(),
+            None,
+            Some(&fixture.inventory),
+            None,
+            None,
+            &fixture.provider_plan,
+            &fixture.specs,
+        );
+        assert_eq!(
+            inconsistent.err().ok_or("inconsistent SDK state accepted")?,
+            "SDK inventory and resolved component state must be recorded together"
+        );
+        Ok(())
+    }
+
+    /// An absent SDK stays explicitly absent through both lock projection APIs.
+    #[test]
+    fn semantic_lock_projection_preserves_absent_sdk() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let plan = ProviderPlan::default();
+        let ordinary = semantic_lock_state(root.path(), None, None, None, None, &plan, &[])?;
+        let (retained, identities) =
+            semantic_lock_state_with_provider_identities(root.path(), None, None, None, None, &plan, &[])?;
+        assert_eq!(retained, ordinary);
+        assert!(retained.sdk.is_none());
+        assert!(retained.providers.is_empty());
+        assert!(identities.is_empty());
         Ok(())
     }
 
