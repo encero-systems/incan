@@ -72,6 +72,70 @@ enum OvenNativeInputOwner<'owner> {
     ToolchainLoaf(&'owner super::loaf::OvenMaterializedLoafCandidate<'owner>),
 }
 
+/// Existing stored direct-plan carrier, retaining its original execution owner and one decoded native projection.
+///
+/// Selection keeps the historical inexpensive materialization path. A batch borrows this carrier only after its
+/// existing full owner validation, then enumerates and attaches members without another payload decode or full scan.
+pub(crate) struct OvenStoredDirectRustcExecutionPlan {
+    owner: OvenStoreExecutionPayload,
+    artifacts: OvenRustcArtifactManifest,
+    artifact_plan: OvenRustcArtifactPlan,
+}
+
+impl OvenStoredDirectRustcExecutionPlan {
+    /// Retain an already selected payload and decode its direct plan once, preserving ordinary selection semantics.
+    pub(crate) fn from_execution_payload(owner: OvenStoreExecutionPayload) -> Result<Self, OvenRustcError> {
+        if owner.manifest.kind != OvenArtifactKind::DirectRustcPlan {
+            return Err(OvenRustcError::InvalidInput {
+                field: "stored direct plan",
+                message: "requires an original selected direct-plan payload".to_string(),
+            });
+        }
+        let artifacts: OvenRustcArtifactManifest =
+            serde_json::from_slice(&owner.payload).map_err(|error| OvenRustcError::InvalidInput {
+                field: "stored direct plan payload",
+                message: error.to_string(),
+            })?;
+        let artifact_plan = artifacts.materialize_trusted_store(&owner.artifact_root, &owner.manifest.intent)?;
+        Ok(Self {
+            owner,
+            artifacts,
+            artifact_plan,
+        })
+    }
+
+    /// Return the original immutable Store entry identity.
+    pub(crate) fn identity(&self) -> &str {
+        &self.owner.manifest.identity
+    }
+
+    /// Borrow the sole decoded manifest while its original owner remains retained.
+    pub(crate) fn artifacts(&self) -> &OvenRustcArtifactManifest {
+        &self.artifacts
+    }
+
+    /// Borrow the original materialized root; this is not a caller-supplied authority path.
+    pub(crate) fn artifact_root(&self) -> &Path {
+        &self.owner.artifact_root
+    }
+
+    /// Borrow the existing inexpensive materialized plan used by ordinary stored-plan consumers.
+    pub(crate) fn artifact_plan(&self) -> &OvenRustcArtifactPlan {
+        &self.artifact_plan
+    }
+
+    /// Validate the original owner once for a batch and borrow its retained decode and native projection.
+    pub(crate) fn native_input_view(&self) -> Result<OvenNativeInputView<'_>, OvenRustcError> {
+        self.owner.verify_admitted_payload()?;
+        Ok(OvenNativeInputView {
+            owner: OvenNativeInputOwner::Store(&self.owner),
+            artifacts: Cow::Borrowed(&self.artifacts),
+            artifact_root: self.owner.artifact_root.clone(),
+            plan: Cow::Borrowed(&self.artifact_plan),
+        })
+    }
+}
+
 /// A command-owned physical view of one admitted foundation, borrowing its actual execution owner.
 ///
 /// Store construction validates the original record/files once; Loaf construction borrows an already materialized
@@ -164,6 +228,16 @@ impl<'owner> OvenNativeInputView<'owner> {
             } => build_unit_identity,
             OvenNativeInputOrigin::ToolchainLoaf { member, .. } => &member.build_unit_identity,
         }
+    }
+
+    /// Borrow the already admitted original catalog for command-table enumeration without another decode or scan.
+    pub(crate) fn artifacts(&self) -> &OvenRustcArtifactManifest {
+        &self.artifacts
+    }
+
+    /// Borrow the admitted physical root only for the existing direct-rustc output containment boundary.
+    pub(crate) fn artifact_root(&self) -> &Path {
+        &self.artifact_root
     }
 
     /// Return the original target, toolchain, profile and features as facts, without filtering candidates.
@@ -299,6 +373,7 @@ impl<'owner> OvenNativeInputView<'owner> {
 }
 
 /// One original manifest member; only its borrowed foundation view can construct this physical handle.
+#[derive(Clone)]
 pub(crate) struct OvenNativeInputCandidate<'view> {
     view: &'view OvenNativeInputView<'view>,
     artifact: &'view OvenRustcArtifactExtern,
@@ -3736,6 +3811,28 @@ impl OvenRustcArtifactManifest {
         })
     }
 
+    /// Borrow named members of an original declared role without granting physical execution authority.
+    ///
+    /// The existing projection validates the declaration once. Returned records still require an original leased
+    /// owner and physical attachment before execution; absent roles cannot use legacy broad projection.
+    pub(crate) fn named_artifacts_for_source_role(
+        &self,
+        source_role: &str,
+    ) -> Result<Vec<&OvenRustcArtifactExtern>, OvenRustcError> {
+        if !self.entrypoint_externs.contains_key(source_role) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "native input source role",
+                message: format!("`{source_role}` is not an original declared role of this foundation"),
+            });
+        }
+        let projected = self.for_source_evidence(source_role)?;
+        Ok(self
+            .externs
+            .iter()
+            .filter(|artifact| projected.externs.contains(artifact))
+            .collect())
+    }
+
     /// Select the exact direct root externs authorized for one receipt source target.
     ///
     /// The unselected extern artifacts remain declared supporting inputs so strict search-directory completeness and
@@ -4278,6 +4375,7 @@ pub(crate) fn bake_stored_direct_rustc_test_with_libraries(
         &request.crate_name,
         &request.edition,
         &request.source_evidence_key,
+        &request.source_evidence_key,
         true,
         OvenDirectRustcOutputKind::Binary,
         true,
@@ -4319,6 +4417,7 @@ pub(crate) fn bake_stored_direct_rustc_run_with_libraries(
         &request.crate_name,
         &request.edition,
         &request.source_evidence_key,
+        &request.source_evidence_key,
         false,
         OvenDirectRustcOutputKind::Binary,
         true,
@@ -4356,6 +4455,7 @@ pub(crate) fn bake_stored_direct_rustc_library_with_libraries(
         &request.output,
         &request.crate_name,
         &request.edition,
+        &request.source_evidence_key,
         &request.source_evidence_key,
         false,
         OvenDirectRustcOutputKind::Library,
@@ -5024,6 +5124,7 @@ pub fn bake_direct_rustc_test(request: &OvenDirectRustcTestRequest) -> Result<Ov
         &request.crate_name,
         &request.edition,
         &request.source_evidence_key,
+        &request.source_evidence_key,
         true,
         OvenDirectRustcOutputKind::Binary,
         false,
@@ -5047,6 +5148,7 @@ pub(crate) fn bake_trusted_direct_rustc_test(
         request.crate_name,
         request.edition,
         request.source_evidence_key,
+        request.source_evidence_key,
         true,
         OvenDirectRustcOutputKind::Binary,
         true,
@@ -5064,6 +5166,17 @@ pub(crate) fn bake_trusted_direct_rustc_test(
 pub(crate) fn bake_trusted_direct_rustc_library(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    bake_trusted_direct_rustc_library_with_artifact_role(request, request.source_evidence_key)
+}
+
+/// Compile a library using an original declared native role while preserving its receipt source key.
+///
+/// The caller retains the admitted manifest, physical plan and leases. This argument selects their existing role;
+/// it neither aliases physical bindings nor adds source authority to the receipt.
+pub(crate) fn bake_trusted_direct_rustc_library_with_artifact_role(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    artifact_role: &str,
+) -> Result<OvenDirectRustcBake, OvenRustcError> {
     bake_direct_rustc(
         request.receipt,
         request.artifacts,
@@ -5074,6 +5187,7 @@ pub(crate) fn bake_trusted_direct_rustc_library(
         request.crate_name,
         request.edition,
         request.source_evidence_key,
+        artifact_role,
         false,
         OvenDirectRustcOutputKind::Library,
         true,
@@ -5100,6 +5214,7 @@ pub(crate) fn bake_trusted_direct_rustc_dylib(
         request.crate_name,
         request.edition,
         request.source_evidence_key,
+        request.source_evidence_key,
         false,
         OvenDirectRustcOutputKind::Dylib,
         true,
@@ -5116,6 +5231,17 @@ pub(crate) fn bake_trusted_direct_rustc_dylib(
 pub(crate) fn bake_trusted_direct_rustc_proc_macro(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    bake_trusted_direct_rustc_proc_macro_with_artifact_role(request, request.source_evidence_key)
+}
+
+/// Compile a procedural macro using its original declared native role and unchanged source receipt.
+///
+/// The caller retains the admitted manifest, physical plan and leases. This argument selects their existing role;
+/// it neither aliases physical bindings nor adds source authority to the receipt.
+pub(crate) fn bake_trusted_direct_rustc_proc_macro_with_artifact_role(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    artifact_role: &str,
+) -> Result<OvenDirectRustcBake, OvenRustcError> {
     bake_direct_rustc(
         request.receipt,
         request.artifacts,
@@ -5126,6 +5252,7 @@ pub(crate) fn bake_trusted_direct_rustc_proc_macro(
         request.crate_name,
         request.edition,
         request.source_evidence_key,
+        artifact_role,
         false,
         OvenDirectRustcOutputKind::ProcMacro,
         true,
@@ -5149,6 +5276,7 @@ pub(crate) fn bake_trusted_direct_rustc_run(
         request.crate_name,
         request.edition,
         request.source_evidence_key,
+        request.source_evidence_key,
         false,
         OvenDirectRustcOutputKind::Binary,
         true,
@@ -5169,6 +5297,7 @@ pub fn bake_direct_rustc_run(request: &OvenDirectRustcRunRequest) -> Result<Oven
         &request.output,
         &request.crate_name,
         &request.edition,
+        &request.source_evidence_key,
         &request.source_evidence_key,
         false,
         OvenDirectRustcOutputKind::Binary,
@@ -5265,7 +5394,10 @@ pub(crate) fn direct_rustc_source_extern_names(
         .collect())
 }
 
-/// Compile one receipt-bound generated Rust source with either the libtest or binary direct-rustc mode.
+/// Compile one receipt-bound source using its distinct, original native artifact role.
+///
+/// The receipt key verifies source bytes; the artifact role selects existing native inputs. Ordinary callers retain
+/// the same key for both. Provider callers keep their original physical role without modifying either receipt.
 #[allow(clippy::too_many_arguments)]
 fn bake_direct_rustc(
     receipt: &OvenReceipt,
@@ -5277,6 +5409,7 @@ fn bake_direct_rustc(
     crate_name: &str,
     edition: &str,
     source_evidence_key: &str,
+    artifact_role: &str,
     test_harness: bool,
     output_kind: OvenDirectRustcOutputKind,
     trusted_store: bool,
@@ -5315,7 +5448,7 @@ fn bake_direct_rustc(
             actual: source_digest,
         });
     }
-    let selected_artifacts = artifacts.for_source_evidence(source_evidence_key)?;
+    let selected_artifacts = artifacts.for_source_evidence(artifact_role)?;
     let parent = output.parent().ok_or_else(|| OvenRustcError::InvalidInput {
         field: "output",
         message: "must have a parent directory".to_string(),

@@ -53,6 +53,8 @@ pub(crate) enum EngineModuleContract {
     /// Explicit version 2 selection evidence and source-unit batch exchange, retaining the original version 1
     /// protocols.
     OvenSourceUnitBatchV2,
+    /// Explicit compiler support requests and original runtime grants in source-unit batch version 3.
+    OvenSourceUnitBatchV3,
 }
 
 impl EngineModuleContract {
@@ -61,12 +63,17 @@ impl EngineModuleContract {
         let mut schemas: Vec<String> = EXCHANGE_SCHEMAS.into_iter().map(str::to_string).collect();
         let version = match self {
             Self::OvenSourceUnitBatchV1 => DESCRIPTOR_VERSION,
-            Self::OvenSourceUnitBatchV2 => {
+            Self::OvenSourceUnitBatchV2 | Self::OvenSourceUnitBatchV3 => {
                 schemas.extend([
                     "incan.oven.selection/2".to_string(),
                     "incan.oven.source-unit-batch/2".to_string(),
                 ]);
-                2
+                if self == Self::OvenSourceUnitBatchV3 {
+                    schemas.push("incan.oven.source-unit-batch/3".to_string());
+                    3
+                } else {
+                    2
+                }
             }
         };
         (version, schemas)
@@ -388,7 +395,7 @@ impl EngineDescriptor {
         }
         let header: Header = serde_json::from_slice(bytes)
             .map_err(|error| CliError::failure(format!("invalid Engine descriptor header: {error}")))?;
-        if ![DESCRIPTOR_VERSION, 2].contains(&header.schema_version) || header.artifact_kind != DESCRIPTOR_KIND {
+        if ![DESCRIPTOR_VERSION, 2, 3].contains(&header.schema_version) || header.artifact_kind != DESCRIPTOR_KIND {
             return Err(CliError::failure(
                 "unsupported Engine descriptor kind or schema version",
             ));
@@ -1160,7 +1167,7 @@ mod tests {
         Ok(())
     }
 
-    /// Explicit V2 declaration preserves V1 bytes and rejects a crossed role/version instead of relabeling it.
+    /// Explicit V2/V3 declarations preserve prior descriptor bytes and reject role/version relabeling.
     #[test]
     fn engine_exchange_role_versions_preserve_original_descriptor_evidence() -> TestResult {
         let fixture = Fixture::new("role", true)?;
@@ -1194,12 +1201,41 @@ mod tests {
             &second_fixture.completed,
         )?;
         let second_owner = second_publisher.published.pop().ok_or("missing V2 owner")?;
+        let second_bytes = second_owner.payload.clone();
         let second_output = second_fixture.output_owner()?;
         let admitted = AdmittedEngineArtifact::borrow(&second_owner, &second_output)?;
         assert_eq!(
             admitted.descriptor().module_contract(),
             EngineModuleContract::OvenSourceUnitBatchV2
         );
+        let mut third_publisher = EnginePublisher {
+            request: EnginePublisherRequest::new(EngineModuleContract::OvenSourceUnitBatchV3, "src/main.incn")?,
+            compiler: None,
+            published: Vec::new(),
+        };
+        third_publisher.publish_if_requested(
+            &second_fixture.store,
+            &second_fixture.receipt,
+            &second_fixture.completed,
+        )?;
+        let third_owner = third_publisher.published.pop().ok_or("missing V3 owner")?;
+        let third = AdmittedEngineArtifact::borrow(&third_owner, &second_output)?;
+        assert_eq!(third.descriptor().schema_version, 3);
+        assert_eq!(
+            third.descriptor().module_contract(),
+            EngineModuleContract::OvenSourceUnitBatchV3
+        );
+        assert!(
+            third
+                .descriptor()
+                .request_schemas
+                .contains(&"incan.oven.source-unit-batch/3".to_string())
+        );
+        let mut retagged = EngineDescriptor::from_json(&second_bytes)?;
+        retagged.contract = EngineModuleContract::OvenSourceUnitBatchV3;
+        assert!(EngineDescriptor::from_json(&serde_json::to_vec(&retagged)?).is_err());
+        assert_eq!(original, engine.payload);
+        assert_eq!(second_bytes, second_owner.payload);
         Ok(())
     }
 
@@ -1289,7 +1325,7 @@ mod tests {
         let descriptor = EngineDescriptor::from_json(&owner.payload)?;
         assert_eq!(serde_json::to_vec(&descriptor)?, owner.payload);
         // Invalid typed body deliberately accompanies a future header: version refusal must win.
-        let future = br#"{"schema_version":3,"artifact_kind":"incan.oven.engine","output":false}"#;
+        let future = br#"{"schema_version":4,"artifact_kind":"incan.oven.engine","output":false}"#;
         let Err(error) = EngineDescriptor::from_json(future) else {
             return Err("future Engine schema accepted".into());
         };

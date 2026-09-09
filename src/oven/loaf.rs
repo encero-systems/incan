@@ -731,7 +731,7 @@ struct CompatibleLoaf {
 
 impl OvenLoafCompatibility {
     /// Derive the explicit, portable compatibility envelope from one verified generated-project receipt.
-    fn from_receipt(receipt: &OvenReceipt) -> Result<Self, OvenLoafError> {
+    pub(crate) fn from_receipt(receipt: &OvenReceipt) -> Result<Self, OvenLoafError> {
         let mut runtime_inputs = receipt.sources.build_unit_inputs.clone();
         let provider_records = runtime_inputs.remove("providers").unwrap_or_default();
         let _ = runtime_inputs.remove("rust-dependencies");

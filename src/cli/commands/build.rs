@@ -129,9 +129,9 @@ use crate::oven::rustc::{
     OvenProjectInspectionTestDependencyEnvelope, OvenProjectInspectionTestDependencyRoot, OvenRegistryLeafAuthority,
     OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError, OvenRustcRegistryLeaf,
     OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedPathRustcAuthority,
-    OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot, attach_caller_owned_rustc_libraries,
-    bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run,
-    clear_inherited_cargo_environment, load_project_inspection_authority,
+    OvenStoredDirectRustcExecutionPlan, OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro,
+    bake_trusted_direct_rustc_run, clear_inherited_cargo_environment, load_project_inspection_authority,
     materialize_declared_rust_libraries_with_selected_path_authority, project_inspection_constituent_matches_receipt,
     resolve_active_rustc, rustc_host_target, rustc_identity, select_direct_rustc_plan_for_execution,
     trusted_artifact_plan_for_source_evidence, validate_project_extension_payload_against_base,
@@ -799,7 +799,7 @@ impl OvenDirectRustcPlanSelection {
     /// Return the receipt-bound identity included in a normal-command build report.
     fn report_identity(&self) -> String {
         match self {
-            Self::Stored(selected) => selected.identity.clone(),
+            Self::Stored(selected) => selected.identity().to_string(),
             Self::ToolchainLoaf(native) => {
                 format!("loaf:{}", native.loaf_build_unit_identity)
             }
@@ -819,7 +819,7 @@ impl OvenDirectRustcPlanSelection {
         match self {
             Self::Stored(selected) => vec![OvenPackagedLibraryLoafEntry {
                 receipt: receipt.clone(),
-                identity: selected.identity.clone(),
+                identity: selected.identity().to_string(),
                 kind: OvenArtifactKind::DirectRustcPlan,
                 base_loaf_identity: None,
             }],
@@ -841,7 +841,7 @@ impl OvenDirectRustcPlanSelection {
     /// caller dependency.
     pub(crate) fn artifact_plan(&self) -> &OvenRustcArtifactPlan {
         match self {
-            Self::Stored(selected) => &selected.artifact_plan,
+            Self::Stored(selected) => selected.artifact_plan(),
             Self::ToolchainLoaf(native) => &native.artifact_plan,
             Self::ProjectExtension(extension) => &extension.artifact_plan,
             Self::PackagedProvider(packages) => packages.artifact_plan(),
@@ -867,7 +867,7 @@ impl OvenDirectRustcPlanSelection {
     /// Return the complete execution manifest retained by this selected closure.
     pub(crate) fn artifacts(&self) -> &OvenRustcArtifactManifest {
         match self {
-            Self::Stored(selected) => &selected.artifacts,
+            Self::Stored(selected) => selected.artifacts(),
             Self::ToolchainLoaf(native) => &native.artifacts,
             Self::ProjectExtension(extension) => &extension.artifacts,
             Self::PackagedProvider(packages) => packages.artifacts(),
@@ -880,7 +880,7 @@ impl OvenDirectRustcPlanSelection {
     /// from both leased roots.  The output itself remains caller-owned and must be outside either root.
     pub(crate) fn output_guard_root(&self) -> &Path {
         match self {
-            Self::Stored(selected) => &selected.artifact_root,
+            Self::Stored(selected) => selected.artifact_root(),
             Self::ToolchainLoaf(native) => &native.artifact_root,
             Self::ProjectExtension(extension) => &extension.extension.artifact_root,
             Self::PackagedProvider(packages) => packages.output_guard_root(),
@@ -905,7 +905,7 @@ impl OvenDirectRustcPlanSelection {
     /// Return the one root that contains every vocabulary auxiliary closure, when it is not split across fragments.
     pub(crate) fn vocab_artifact_root(&self) -> Option<&Path> {
         match self {
-            Self::Stored(selected) => Some(&selected.artifact_root),
+            Self::Stored(selected) => Some(selected.artifact_root()),
             Self::ToolchainLoaf(native) => Some(&native.artifact_root),
             Self::ProjectExtension(extension) => extension.vocab_artifact_root.as_deref(),
             Self::PackagedProvider(packages) => packages.vocab_artifact_root(),
@@ -916,25 +916,13 @@ impl OvenDirectRustcPlanSelection {
     pub(crate) fn registry_leaf_authority(&self) -> Option<OvenRegistryLeafAuthority> {
         match self {
             Self::Stored(selected) => selected
-                .artifacts
-                .registry_leaf_authority(&selected.artifact_root, &selected.artifact_plan),
+                .artifacts()
+                .registry_leaf_authority(selected.artifact_root(), selected.artifact_plan()),
             Self::ToolchainLoaf(native) => Some(native.registry_leaf_authority()),
             Self::ProjectExtension(extension) => extension.registry_leaf_authority.clone(),
             Self::PackagedProvider(packages) => packages.registry_leaf_authority(),
         }
     }
-}
-
-/// Receipt-validated stored direct-Rustc inputs held under a caller-owned lease.
-///
-/// The lease stays alive while a caller-owned package is re-materialized, so policy pruning cannot remove the
-/// selected cohort between that compilation and the consuming normal Oven bake.
-pub(crate) struct OvenStoredDirectRustcExecutionPlan {
-    pub identity: String,
-    pub artifacts: OvenRustcArtifactManifest,
-    pub artifact_root: PathBuf,
-    pub artifact_plan: OvenRustcArtifactPlan,
-    _lease: OvenStoreLease,
 }
 
 /// Receipt-bound store entry that contributes only project-specific files to one exact compiler Loaf.
@@ -1047,7 +1035,7 @@ impl OvenPackagedProviderExecutionPlan {
                 plan,
                 packages.fragments.iter().map(|fragment| {
                     (
-                        fragment.plan.artifact_root.as_path(),
+                        fragment.plan.artifact_root(),
                         fragment.dependency_search_paths.as_slice(),
                     )
                 }),
@@ -1174,31 +1162,17 @@ pub(crate) fn select_receipt_direct_rustc_execution_plan(
     let Some(selected) = select_direct_rustc_plan_for_execution(store, receipt).map_err(oven_rustc_error)? else {
         return Ok(None);
     };
-    let (stored_manifest, artifact_root, payload, lease) = selected.into_parts();
-    let plan_identity = &stored_manifest.identity;
-    if stored_manifest.kind != OvenArtifactKind::DirectRustcPlan
-        || stored_manifest.build_unit_identity != receipt.build_unit_identity
-        || stored_manifest.intent != receipt.intent
+    if selected.manifest.kind != OvenArtifactKind::DirectRustcPlan
+        || selected.manifest.build_unit_identity != receipt.build_unit_identity
+        || selected.manifest.intent != receipt.intent
     {
         return Err(CliError::failure(
-            "selected Oven store entry is not the receipt-bound direct-Rustc plan".to_string(),
+            "selected Oven store entry is not the receipt-bound direct-Rustc plan",
         ));
     }
-    let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
-        CliError::failure(format!(
-            "selected Oven direct-Rustc plan has an invalid payload: {error}"
-        ))
-    })?;
-    let artifact_plan = artifacts
-        .materialize_trusted_store(&artifact_root, &receipt.intent)
-        .map_err(oven_rustc_error)?;
-    Ok(Some(OvenStoredDirectRustcExecutionPlan {
-        identity: plan_identity.clone(),
-        artifacts,
-        artifact_root,
-        artifact_plan,
-        _lease: lease,
-    }))
+    OvenStoredDirectRustcExecutionPlan::from_execution_payload(selected)
+        .map(Some)
+        .map_err(oven_rustc_error)
 }
 
 /// Select one exact direct-plan entry transported by a public package.
@@ -1231,23 +1205,9 @@ fn select_packaged_direct_rustc_execution_plan(
     let Some(selected) = selected.pop() else {
         return Ok(None);
     };
-    let (manifest, artifact_root, payload, lease) = selected.into_parts();
-    let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
-        CliError::failure(format!(
-            "selected Oven direct-plan Loaf `{}` has an invalid payload: {error}",
-            manifest.identity
-        ))
-    })?;
-    let artifact_plan = artifacts
-        .materialize_trusted_store(&artifact_root, &receipt.intent)
-        .map_err(oven_rustc_error)?;
-    Ok(Some(OvenStoredDirectRustcExecutionPlan {
-        identity: manifest.identity,
-        artifacts,
-        artifact_root,
-        artifact_plan,
-        _lease: lease,
-    }))
+    OvenStoredDirectRustcExecutionPlan::from_execution_payload(selected)
+        .map(Some)
+        .map_err(oven_rustc_error)
 }
 
 /// Select one receipt-bound project extension and reconstitute its exact base-plus-extension execution set.
@@ -1432,27 +1392,9 @@ pub(crate) fn project_test_dependency_plan_from_constituent(
         ));
     }
     match selected.manifest.kind {
-        OvenArtifactKind::DirectRustcPlan => {
-            let (manifest, artifact_root, payload, lease) = selected.into_parts();
-            let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
-                CliError::failure(format!(
-                    "project inspection test dependency constituent `{}` has an invalid direct-plan payload: {error}",
-                    manifest.identity
-                ))
-            })?;
-            let artifact_plan = artifacts
-                .materialize_trusted_store(&artifact_root, &receipt.intent)
-                .map_err(oven_rustc_error)?;
-            Ok(OvenDirectRustcPlanSelection::Stored(Box::new(
-                OvenStoredDirectRustcExecutionPlan {
-                    identity: manifest.identity,
-                    artifacts,
-                    artifact_root,
-                    artifact_plan,
-                    _lease: lease,
-                },
-            )))
-        }
+        OvenArtifactKind::DirectRustcPlan => OvenStoredDirectRustcExecutionPlan::from_execution_payload(selected)
+            .map(|plan| OvenDirectRustcPlanSelection::Stored(Box::new(plan)))
+            .map_err(oven_rustc_error),
         OvenArtifactKind::ProjectPayload => {
             let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&selected.payload).map_err(|error| {
                 CliError::failure(format!(
@@ -1842,19 +1784,19 @@ fn compose_direct_packaged_provider_plan(
     }
     let manifest_inputs = selected
         .iter()
-        .map(|(dependency_key, _, plan)| (dependency_key.as_str(), &plan.artifacts))
+        .map(|(dependency_key, _, plan)| (dependency_key.as_str(), plan.artifacts()))
         .collect::<Vec<_>>();
     let artifacts = merge_packaged_provider_artifact_manifests(&manifest_inputs, expected_intent)?;
     let mut owned_paths = BTreeSet::new();
     let mut fragments = Vec::new();
     for (dependency_key, entry, plan) in selected {
-        if plan.artifacts.intent != *expected_intent {
+        if plan.artifacts().intent != *expected_intent {
             return Err(CliError::failure(format!(
                 "Oven Alpha cannot compose pub::{dependency_key}: its sealed direct-plan intent differs from this consumer; rebake it for the selected target, toolchain, profile, and feature set"
             )));
         }
         let mut supporting_artifacts = plan
-            .artifacts
+            .artifacts()
             .composition_artifacts()
             .map_err(oven_rustc_error)?
             .into_iter()
@@ -1867,7 +1809,7 @@ fn compose_direct_packaged_provider_plan(
                 .any(|artifact| Path::new(&artifact.relative_path).starts_with(Path::new(search_path)))
         };
         let mut dependency_search_paths = plan
-            .artifacts
+            .artifacts()
             .dependency_search_paths
             .iter()
             .filter(|path| retains_artifact_below(path))
@@ -1876,7 +1818,7 @@ fn compose_direct_packaged_provider_plan(
         dependency_search_paths.sort();
         dependency_search_paths.dedup();
         let mut native_search_paths = plan
-            .artifacts
+            .artifacts()
             .native_search_paths
             .iter()
             .filter(|path| retains_artifact_below(path))
@@ -1887,7 +1829,7 @@ fn compose_direct_packaged_provider_plan(
         fragments.push(OvenPackagedDirectProviderFragment {
             dependency_key,
             receipt: entry.receipt,
-            identity: plan.identity.clone(),
+            identity: plan.identity().to_string(),
             plan,
             dependency_search_paths,
             native_search_paths,
@@ -1896,7 +1838,7 @@ fn compose_direct_packaged_provider_plan(
     }
     let output_guard_root = fragments
         .first()
-        .map(|fragment| fragment.plan.artifact_root.clone())
+        .map(|fragment| fragment.plan.artifact_root().to_path_buf())
         .ok_or_else(|| CliError::failure("package Loaf composition lost its provider artifact root"))?;
     let mut composed = OvenDirectPackagedProviderExecutionPlan {
         fragments,
@@ -1917,7 +1859,7 @@ fn compose_direct_packaged_provider_plan(
         .iter()
         .filter(|fragment| !fragment.supporting_artifacts.is_empty())
         .map(|fragment| OvenTrustedRustcArtifactRoot {
-            artifact_root: &fragment.plan.artifact_root,
+            artifact_root: fragment.plan.artifact_root(),
             dependency_search_paths: &fragment.dependency_search_paths,
             native_search_paths: &fragment.native_search_paths,
             supporting_artifacts: &fragment.supporting_artifacts,
@@ -1946,7 +1888,10 @@ fn compose_direct_packaged_provider_plan(
     let mut artifact_roots = BTreeMap::new();
     for fragment in &composed.fragments {
         for artifact in &fragment.supporting_artifacts {
-            artifact_roots.insert(artifact.relative_path.as_str(), fragment.plan.artifact_root.clone());
+            artifact_roots.insert(
+                artifact.relative_path.as_str(),
+                fragment.plan.artifact_root().to_path_buf(),
+            );
         }
     }
     let registry_leaf_entries = composed
@@ -1977,7 +1922,7 @@ fn compose_direct_packaged_provider_plan(
         composed.vocab_artifact_root = composed
             .fragments
             .first()
-            .map(|fragment| fragment.plan.artifact_root.clone());
+            .map(|fragment| fragment.plan.artifact_root().to_path_buf());
     } else if let Some(fragment) = composed.fragments.iter().find(|fragment| {
         let paths = fragment
             .supporting_artifacts
@@ -1986,7 +1931,7 @@ fn compose_direct_packaged_provider_plan(
             .collect::<BTreeSet<_>>();
         vocab_paths.iter().all(|path| paths.contains(path))
     }) {
-        composed.vocab_artifact_root = Some(fragment.plan.artifact_root.clone());
+        composed.vocab_artifact_root = Some(fragment.plan.artifact_root().to_path_buf());
     } else {
         return Err(CliError::failure(
             "Oven Alpha package Loaf composition split one compiler-owned vocabulary closure across self-contained provider Loafs",
@@ -4739,6 +4684,897 @@ impl<'plan> CallerOwnedProviderSourceDefinitions<'plan> {
     }
 }
 
+/// Original provider source and root grants retained by one command, in dependency-before-consumer order.
+struct ProviderBatchUnit<'plan> {
+    provider: &'plan PublicProviderArtifact,
+    definition: Arc<NativeSourceUnitDefinition>,
+    definition_digest: String,
+    root_aliases: Vec<String>,
+}
+
+/// One original descriptor association; indexes address this command's table and confer no semantic identity.
+struct ProviderBatchEdge<'plan> {
+    unit: usize,
+    descriptor_index: usize,
+    descriptor: &'plan ProviderDependencyMetadata,
+    target: &'plan ProviderIdentity,
+    target_unit: Option<usize>,
+    native_alias: Option<&'plan str>,
+}
+
+/// Intact original candidate owners, retaining metadata-only Loafs until Incan selects one.
+enum ProviderBatchNativeOwner<'native> {
+    Store(&'native crate::oven::rustc::OvenNativeInputView<'native>),
+    Loaf(crate::oven::loaf::OvenNativeLoafCandidate<'native>),
+}
+
+/// Facts offered from one original supplier; an optional recipe must belong to that exact Store receipt.
+struct ProviderBatchCandidate<'native> {
+    owner: ProviderBatchNativeOwner<'native>,
+    source_role: &'native str,
+    receipt: Option<&'native crate::oven::OvenReceipt>,
+}
+
+impl ProviderBatchCandidate<'_> {
+    /// Borrow the original catalog without materializing an unselected Loaf or interpreting compatibility.
+    fn artifacts(&self) -> &OvenRustcArtifactManifest {
+        match &self.owner {
+            ProviderBatchNativeOwner::Store(view) => view.artifacts(),
+            ProviderBatchNativeOwner::Loaf(candidate) => &candidate.metadata().plan,
+        }
+    }
+
+    /// Return actual supplier coordinates, preserving the distinct Store and committed Loaf provenance.
+    fn coordinates(&self) -> (&str, &str, &str) {
+        match &self.owner {
+            ProviderBatchNativeOwner::Store(view) => (view.identity(), view.identity(), view.build_unit_identity()),
+            ProviderBatchNativeOwner::Loaf(candidate) => (
+                &candidate.member().loaf_identity,
+                &candidate.member().plan_identity,
+                &candidate.member().build_unit_identity,
+            ),
+        }
+    }
+
+    /// Project actual evidence only; the Incan selector owns equality, coverage and ranking.
+    fn evidence(&self) -> CliResult<(serde_json::Value, Option<crate::oven::loaf::OvenLoafCompatibility>)> {
+        match &self.owner {
+            ProviderBatchNativeOwner::Store(view) => {
+                let Some(receipt) = self.receipt else {
+                    return Ok((serde_json::json!({"kind": "exact_build_unit"}), None));
+                };
+                receipt
+                    .verify_identity()
+                    .map_err(|error| CliError::failure(error.to_string()))?;
+                if view.receipt_identity() != Some(receipt.identity.as_str())
+                    || view.build_unit_identity() != receipt.build_unit_identity
+                    || view.intent() != &receipt.intent
+                {
+                    return Err(CliError::failure(
+                        "provider batch recipe does not belong to its original Store owner",
+                    ));
+                }
+                let compatibility = crate::oven::loaf::OvenLoafCompatibility::from_receipt(receipt)
+                    .map_err(|error| CliError::failure(error.to_string()))?;
+                Ok((provider_batch_recipe_json(&compatibility)?, Some(compatibility)))
+            }
+            ProviderBatchNativeOwner::Loaf(candidate) => {
+                if self.receipt.is_some() {
+                    return Err(CliError::failure("a bare Loaf has no original Store receipt witness"));
+                }
+                let compatibility = &candidate.metadata().compatibility;
+                Ok((provider_batch_recipe_json(compatibility)?, Some(compatibility.clone())))
+            }
+        }
+    }
+}
+
+/// Original named member plus its need coordinate. JSON never supplies a replacement path, role or owner.
+struct ProviderBatchGrant<'native> {
+    candidate: usize,
+    unit: usize,
+    need_id: String,
+    alias: String,
+    artifact: &'native crate::oven::rustc::OvenRustcArtifactExtern,
+}
+
+/// Command-local source/edge/member table, borrowed through Engine exchange and subsequent native consumption.
+struct ProviderSourceBatch<'plan, 'native> {
+    receipt: &'native crate::oven::OvenReceipt,
+    units: Vec<ProviderBatchUnit<'plan>>,
+    edges: Vec<ProviderBatchEdge<'plan>>,
+    candidates: &'native [ProviderBatchCandidate<'native>],
+    grants: Vec<ProviderBatchGrant<'native>>,
+    need_ids: Vec<Vec<String>>,
+    request: Vec<u8>,
+}
+
+/// The child returns indexes into the retained table; it cannot construct native handles or root grants.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderBatchUnitResponse {
+    unit_id: String,
+    owner_id: String,
+    definition_id: String,
+    definition_digest: String,
+    slots: Vec<ProviderBatchSlotResponse>,
+    grant_ids: Vec<String>,
+}
+
+/// One selected original dependency slot; request semantics remain exclusively in the Incan adapter.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderBatchSlotResponse {
+    role: crate::library_manifest::NativeRequirementRole,
+    alias: String,
+    edge_id: String,
+}
+
+/// Bound table coordinates after complete response admission, before any native output is created.
+struct AdmittedProviderSourceBatch<'batch, 'plan, 'native> {
+    batch: &'batch ProviderSourceBatch<'plan, 'native>,
+    candidate: usize,
+    unit_grants: Vec<Vec<usize>>,
+    unit_edges: Vec<Vec<(String, usize)>>,
+}
+
+/// Encode one existing runtime compatibility projection without inventing unsupported input values.
+fn provider_batch_recipe_json(
+    compatibility: &crate::oven::loaf::OvenLoafCompatibility,
+) -> CliResult<serde_json::Value> {
+    let mut fields = serde_json::Map::new();
+    let names = [
+        ("compiler-version", "compiler_version"),
+        ("sdk-provider-codegen-revision", "sdk_provider_codegen_revision"),
+        ("runtime-lock", "runtime_lock_digest"),
+        ("runtime-source-incan-core", "core_source_digest"),
+        ("runtime-source-incan-derive", "derive_source_digest"),
+        ("runtime-source-incan-stdlib", "stdlib_source_digest"),
+    ];
+    for (input, wire) in names {
+        let value = compatibility
+            .runtime_inputs
+            .get(input)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| CliError::failure(format!("provider batch lacks original runtime input `{input}`")))?;
+        fields.insert(wire.to_string(), serde_json::json!(value));
+    }
+    fields.insert(
+        "unknown_input_keys".to_string(),
+        serde_json::json!(
+            compatibility
+                .runtime_inputs
+                .keys()
+                .filter(|key| !names.iter().any(|(input, _)| input == key))
+                .collect::<Vec<_>>()
+        ),
+    );
+    Ok(serde_json::json!({
+        "kind": "runtime_provider_recipe", "runtime": fields,
+        "providers": compatibility.providers.iter().map(provider_batch_capability_json).collect::<Vec<_>>()
+    }))
+}
+
+/// Translate the existing capability field names without applying provider selection policy.
+fn provider_batch_capability_json(capability: &crate::oven::loaf::OvenLoafProviderCapability) -> serde_json::Value {
+    serde_json::json!({"semantic_identity": capability.identity, "modules": capability.modules,
+        "facets": capability.facets, "direct_link": capability.direct_link})
+}
+
+/// Retain the existing checked public-edge walk once, moving source admission ahead of native effects.
+fn collect_provider_batch_unit<'plan>(
+    definitions: &mut CallerOwnedProviderSourceDefinitions<'plan>,
+    identity: &ProviderIdentity,
+    units: &mut Vec<ProviderBatchUnit<'plan>>,
+    edges: &mut Vec<ProviderBatchEdge<'plan>>,
+    visiting: &mut BTreeSet<ProviderIdentity>,
+) -> CliResult<usize> {
+    if let Some(index) = units.iter().position(|unit| &unit.provider.identity == identity) {
+        return Ok(index);
+    }
+    if !visiting.insert(identity.clone()) {
+        return Err(CliError::failure(
+            "provider batch encountered a cycle in the admitted provider graph",
+        ));
+    }
+    let (provider, definition, _) = definitions.read(identity)?;
+    let mut pending = Vec::new();
+    for edge in definitions
+        .provider_plan
+        .public_dependencies(identity)
+        .map_err(|error| CliError::failure(error.to_string()))?
+    {
+        let target_unit = collect_provider_batch_unit(definitions, &edge.target.identity, units, edges, visiting)?;
+        pending.push((
+            edge.descriptor_index,
+            edge.descriptor,
+            &edge.target.identity,
+            Some(target_unit),
+            None,
+        ));
+    }
+    for edge in definitions
+        .provider_plan
+        .private_sdk_dependencies(identity)
+        .map_err(|error| CliError::failure(error.to_string()))?
+    {
+        let target = edge.target.ok_or_else(|| {
+            CliError::failure(format!(
+                "provider batch has no admitted SDK target for {} descriptor {}",
+                identity.stable_key(),
+                edge.descriptor_index
+            ))
+        })?;
+        let native_alias = target
+            .artifact
+            .as_ref()
+            .ok_or_else(|| CliError::failure("admitted private SDK target has no original artifact coordinates"))?
+            .dependency_key
+            .as_str();
+        pending.push((
+            edge.descriptor_index,
+            edge.descriptor,
+            &target.identity,
+            None,
+            Some(native_alias),
+        ));
+    }
+    let unit = units.len();
+    let definition_digest = crate::oven::digest_bytes(
+        &definition
+            .to_json_bytes()
+            .map_err(|error| CliError::failure(error.to_string()))?,
+    );
+    units.push(ProviderBatchUnit {
+        provider,
+        definition,
+        definition_digest,
+        root_aliases: Vec::new(),
+    });
+    edges.extend(
+        pending
+            .into_iter()
+            .map(
+                |(descriptor_index, descriptor, target, target_unit, native_alias)| ProviderBatchEdge {
+                    unit,
+                    descriptor_index,
+                    descriptor,
+                    target,
+                    target_unit,
+                    native_alias,
+                },
+            ),
+    );
+    visiting.remove(identity);
+    Ok(unit)
+}
+
+/// Read the emitted alias from the original captured request joined to its exact private descriptor.
+fn provider_batch_sdk_alias<'a>(
+    definition: &'a NativeSourceUnitDefinition,
+    descriptor: &ProviderDependencyMetadata,
+) -> CliResult<&'a str> {
+    let mut matching = definition.requirements.iter().filter(|requirement| {
+        requirement.role == NativeRequirementRole::Normal && matches!(&requirement.source,
+            NativeRequirementSource::ProviderEdge { edge_kind, dependency_key }
+            if *edge_kind == ProviderDependencyKind::PrivateImplementation && dependency_key == &descriptor.dependency_key)
+    });
+    let requirement = matching
+        .next()
+        .ok_or_else(|| CliError::failure("private SDK edge lacks its captured emitted requirement"))?;
+    if matching.next().is_some() || ProjectGenerator::rust_target_name(&requirement.alias) != requirement.alias {
+        return Err(CliError::failure(
+            "private SDK edge does not have one valid emitted Rust alias",
+        ));
+    }
+    Ok(&requirement.alias)
+}
+
+impl<'plan, 'native> ProviderSourceBatch<'plan, 'native> {
+    /// Produce the complete batch from the current receipt, original semantic map, checked graph and native owners.
+    ///
+    /// A missing receipt field or SDK association refuses instead of substituting empty facts. Every intact candidate
+    /// remains visible; bare Loafs without a feature-input witness receive no runtime grant. The request serializes
+    /// canonical definition fields, whose digest is retained separately from the original artifact's physical identity.
+    fn new(
+        provider_plan: &'plan ProviderPlan,
+        receipt: &'native crate::oven::OvenReceipt,
+        semantic_identities: &BTreeMap<String, String>,
+        candidates: &'native [ProviderBatchCandidate<'native>],
+    ) -> CliResult<Self> {
+        receipt
+            .verify_identity()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let compatibility = crate::oven::loaf::OvenLoafCompatibility::from_receipt(receipt)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let current_recipe = provider_batch_recipe_json(&compatibility)?;
+        let features_input = receipt
+            .sources
+            .build_unit_inputs
+            .get("stdlib-features")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| CliError::failure("provider batch lacks its current runtime feature input"))?;
+        let mut units = Vec::new();
+        let mut edges = Vec::new();
+        let mut definitions = CallerOwnedProviderSourceDefinitions::new(provider_plan);
+        let mut visiting = BTreeSet::new();
+        for provider in provider_plan.active_records() {
+            if let crate::provider::NamespaceAuthority::ProjectDependency { dependency_key } = &provider.authority {
+                let index = collect_provider_batch_unit(
+                    &mut definitions,
+                    &provider.identity,
+                    &mut units,
+                    &mut edges,
+                    &mut visiting,
+                )?;
+                units[index].root_aliases.push(dependency_key.clone());
+            }
+        }
+        let mut native_json = Vec::new();
+        let mut native_recipes = Vec::new();
+        let mut candidate_members = Vec::new();
+        for (index, candidate) in candidates.iter().enumerate() {
+            candidate_members.push(
+                candidate
+                    .artifacts()
+                    .named_artifacts_for_source_role(candidate.source_role)
+                    .map_err(oven_rustc_error)?,
+            );
+            let (evidence, recipe) = candidate.evidence()?;
+            let (identity, plan, build_unit) = candidate.coordinates();
+            native_json.push(serde_json::json!({"candidate_id": format!("candidate:{index}"), "evidence_id": identity,
+                "plan_identity": plan, "build_unit_identity": build_unit, "context": candidate.artifacts().intent, "evidence": evidence}));
+            native_recipes.push(recipe);
+        }
+        let unit_json = units.iter().enumerate().map(|(index, unit)| serde_json::json!({
+            "unit_id": format!("unit:{index}"), "owner_id": unit.provider.identity.stable_key(), "identity": unit.provider.identity,
+            "definition_id": format!("definition:{index}"), "definition_digest": unit.definition_digest, "definition": unit.definition.as_ref()
+        })).collect::<Vec<_>>();
+        let edge_json = edges.iter().enumerate().map(|(index, edge)| serde_json::json!({
+            "edge_id": format!("edge:{index}"), "owner_id": units[edge.unit].provider.identity.stable_key(),
+            "owner": units[edge.unit].provider.identity, "descriptor_index": edge.descriptor_index, "kind": edge.descriptor.kind,
+            "dependency_key": edge.descriptor.dependency_key, "target_owner_id": edge.target.stable_key(), "target": edge.target,
+            "target_unit_id": edge.target_unit.map(|index| format!("unit:{index}")).unwrap_or_default(),
+            "requested_features": edge.descriptor.requested_features, "default_features": edge.descriptor.default_features,
+            "optional": edge.descriptor.optional
+        })).collect::<Vec<_>>();
+        let mut needs = Vec::new();
+        let mut runtime_needs = Vec::new();
+        let mut grants = Vec::new();
+        let mut grant_json = Vec::new();
+        let mut runtime_grant_json = Vec::new();
+        let mut need_ids = vec![Vec::new(); units.len()];
+        for (unit_index, unit) in units.iter().enumerate() {
+            for (support_index, support) in unit
+                .definition
+                .compiler_support
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+            {
+                let need_id = format!("runtime:{unit_index}:{support_index}");
+                need_ids[unit_index].push(need_id.clone());
+                runtime_needs.push(
+                    serde_json::json!({"need_id": need_id, "unit_id": format!("unit:{unit_index}"),
+                    "unit_owner_id": unit.provider.identity.stable_key(), "support_index": support_index,
+                    "features": support.features, "runtime_features_input": features_input}),
+                );
+                for (candidate_index, candidate) in candidates.iter().enumerate() {
+                    let exact = native_recipes[candidate_index].is_none();
+                    let witness = candidate
+                        .receipt
+                        .and_then(|receipt| receipt.sources.build_unit_inputs.get("stdlib-features"));
+                    if !exact && witness.is_none() {
+                        continue;
+                    }
+                    for artifact in &candidate_members[candidate_index] {
+                        let grant_id = format!("grant:{}", grants.len());
+                        grants.push(ProviderBatchGrant {
+                            candidate: candidate_index,
+                            unit: unit_index,
+                            need_id: need_id.clone(),
+                            alias: artifact.crate_name.clone(),
+                            artifact,
+                        });
+                        let (identity, plan, _) = candidate.coordinates();
+                        runtime_grant_json.push(serde_json::json!({"grant_id": grant_id, "candidate_id": format!("candidate:{candidate_index}"),
+                            "candidate_evidence_id": identity, "plan_identity": plan, "need_id": need_id,
+                            "unit_owner_id": unit.provider.identity.stable_key(), "extern_name": artifact.crate_name,
+                            "source_role": candidate.source_role, "artifact_digest": artifact.digest, "runtime_features_input": witness}));
+                    }
+                }
+            }
+            for (edge_index, edge) in edges
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| edge.unit == unit_index && edge.target_unit.is_none())
+            {
+                let semantic = semantic_identities.get(&edge.target.stable_key()).ok_or_else(|| {
+                    CliError::failure(format!(
+                        "provider batch lacks the original semantic identity for {}",
+                        edge.target.stable_key()
+                    ))
+                })?;
+                let capability = compatibility
+                    .providers
+                    .iter()
+                    .find(|capability| &capability.identity == semantic)
+                    .ok_or_else(|| {
+                        CliError::failure(
+                            "provider batch current receipt does not include its required private SDK target",
+                        )
+                    })?;
+                let alias = provider_batch_sdk_alias(&unit.definition, edge.descriptor)?;
+                let native_alias = edge
+                    .native_alias
+                    .ok_or_else(|| CliError::failure("private SDK edge has no supplying native alias"))?;
+                let need_id = format!("sdk:{edge_index}");
+                need_ids[unit_index].push(need_id.clone());
+                needs.push(serde_json::json!({"need_id": need_id, "unit_id": format!("unit:{unit_index}"),
+                    "owner_id": edge.target.stable_key(), "provider": edge.target, "capability": provider_batch_capability_json(capability),
+                    "role": "source", "extern_name": alias}));
+                for (candidate_index, candidate) in candidates.iter().enumerate() {
+                    let supplied = match &native_recipes[candidate_index] {
+                        Some(recipe) => recipe.providers.as_slice(),
+                        None => &[],
+                    };
+                    let Some(supplied) = supplied.iter().find(|candidate| &candidate.identity == semantic) else {
+                        continue;
+                    };
+                    for artifact in &candidate_members[candidate_index] {
+                        if artifact.crate_name != native_alias {
+                            continue;
+                        }
+                        let grant_id = format!("grant:{}", grants.len());
+                        grants.push(ProviderBatchGrant {
+                            candidate: candidate_index,
+                            unit: unit_index,
+                            need_id: need_id.clone(),
+                            alias: alias.to_string(),
+                            artifact,
+                        });
+                        let (identity, plan, _) = candidate.coordinates();
+                        grant_json.push(serde_json::json!({"grant_id": grant_id, "candidate_id": format!("candidate:{candidate_index}"),
+                            "candidate_evidence_id": identity, "plan_identity": plan, "need_id": need_id, "owner_id": edge.target.stable_key(),
+                            "provider": edge.target, "capability": provider_batch_capability_json(supplied), "role": "source", "extern_name": alias}));
+                    }
+                }
+            }
+        }
+        let request = serde_json::to_vec(&serde_json::json!({
+            "schema": "incan.oven.source-unit-batch/3", "purpose": "library", "units": unit_json, "edges": edge_json,
+            "needs": needs, "grants": grant_json, "runtime_needs": runtime_needs, "runtime_grants": runtime_grant_json,
+            "foundation": {"schema": "incan.oven.selection/2", "request": {
+                "request_id": receipt.identity, "evidence_id": receipt.identity, "build_unit_identity": receipt.build_unit_identity,
+                "context": receipt.intent, "runtime": current_recipe["runtime"], "providers": current_recipe["providers"],
+                "candidates": native_json, "unsupported_intent": []
+            }}
+        })).map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(Self {
+            receipt,
+            units,
+            edges,
+            candidates,
+            grants,
+            need_ids,
+            request,
+        })
+    }
+
+    /// Invoke the admitted original Engine with a separately issued permit, retaining exact report bytes on refusal.
+    fn exchange(
+        &self,
+        engine: &engine::AdmittedEngineArtifact<'_>,
+        permit: EngineBootstrapPermit<'_>,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> CliResult<(
+        engine_exchange::EngineExchangeReport,
+        CliResult<AdmittedProviderSourceBatch<'_, 'plan, 'native>>,
+    )> {
+        if permit.command_receipt.identity != self.receipt.identity
+            || permit.contract != engine::EngineModuleContract::OvenSourceUnitBatchV3
+        {
+            return Err(CliError::failure(
+                "provider batch permit belongs to a different command or protocol",
+            ));
+        }
+        let report = engine_exchange::exchange(engine, permit, &self.request, cancelled);
+        let selected = if report.outcome != engine_exchange::ExchangeOutcome::Completed {
+            Err(CliError::failure(format!(
+                "provider batch Engine exchange did not complete under its command authority: {:?}",
+                report.outcome
+            )))
+        } else {
+            report
+                .response
+                .as_deref()
+                .ok_or_else(|| CliError::failure("completed provider batch exchange has no response"))
+                .and_then(|response| self.admit_response(response))
+        };
+        Ok((report, selected))
+    }
+
+    /// Authenticate complete returned table coordinates before any source member attaches or any output is created.
+    fn admit_response(&self, response: &[u8]) -> CliResult<AdmittedProviderSourceBatch<'_, 'plan, 'native>> {
+        let invalid = || CliError::failure("provider batch response does not match its original command tables");
+        let document: serde_json::Value = serde_json::from_slice(response).map_err(|_| invalid())?;
+        let object = document.as_object().ok_or_else(invalid)?;
+        if object.get("schema").and_then(serde_json::Value::as_str) != Some("incan.oven.source-unit-batch/3")
+            || object.get("request_id").and_then(serde_json::Value::as_str) != Some(self.receipt.identity.as_str())
+            || object.get("request_evidence_id").and_then(serde_json::Value::as_str)
+                != Some(self.receipt.identity.as_str())
+        {
+            return Err(invalid());
+        }
+        if object.get("status").and_then(serde_json::Value::as_str) == Some("refused") {
+            return Err(CliError::failure(format!(
+                "Incan provider batch refused: {}",
+                document["error"]
+            )));
+        }
+        if object.len() != 6 || document["status"] != "selected" {
+            return Err(invalid());
+        }
+        let foundation = document["foundation"].as_object().ok_or_else(invalid)?;
+        let selected = foundation
+            .get("selection")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(invalid)?;
+        if foundation.len() != 5
+            || selected.len() != 7
+            || foundation.get("schema") != Some(&serde_json::json!("incan.oven.selection/2"))
+            || foundation.get("status") != Some(&serde_json::json!("selected"))
+        {
+            return Err(invalid());
+        }
+        for record in [foundation, selected] {
+            for key in ["request_id", "request_evidence_id"] {
+                if record.get(key).and_then(serde_json::Value::as_str) != Some(self.receipt.identity.as_str()) {
+                    return Err(invalid());
+                }
+            }
+        }
+        let candidate = provider_batch_index(selected.get("candidate_id"), "candidate:", self.candidates.len())?;
+        let (evidence, plan, build_unit) = self.candidates[candidate].coordinates();
+        for (key, expected) in [
+            ("candidate_evidence_id", evidence),
+            ("plan_identity", plan),
+            ("build_unit_identity", build_unit),
+        ] {
+            if selected.get(key).and_then(serde_json::Value::as_str) != Some(expected) {
+                return Err(invalid());
+            }
+        }
+        let rank = selected
+            .get("excess")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(invalid)?;
+        if rank.len() != 4
+            || ["providers", "modules", "facets", "direct_links"]
+                .into_iter()
+                .any(|key| rank.get(key).and_then(serde_json::Value::as_u64).is_none())
+        {
+            return Err(invalid());
+        }
+        let responses: Vec<ProviderBatchUnitResponse> =
+            serde_json::from_value(document["units"].clone()).map_err(|_| invalid())?;
+        if responses.len() != self.units.len() {
+            return Err(invalid());
+        }
+        let mut seen = BTreeSet::new();
+        let mut unit_grants = vec![Vec::new(); self.units.len()];
+        let mut unit_edges = vec![Vec::new(); self.units.len()];
+        for response in responses {
+            let index = provider_batch_index(Some(&serde_json::json!(response.unit_id)), "unit:", self.units.len())?;
+            let unit = &self.units[index];
+            if !seen.insert(index)
+                || response.owner_id != unit.provider.identity.stable_key()
+                || response.definition_id != format!("definition:{index}")
+                || response.definition_digest != unit.definition_digest
+            {
+                return Err(invalid());
+            }
+            if unit.definition.compiler_support.is_none() || self.need_ids[index].is_empty() {
+                return Err(invalid());
+            }
+            let mut needs = BTreeSet::new();
+            for id in response.grant_ids {
+                let grant_index = provider_batch_index(Some(&serde_json::json!(id)), "grant:", self.grants.len())?;
+                let grant = &self.grants[grant_index];
+                if grant.candidate != candidate || grant.unit != index || !needs.insert(grant.need_id.as_str()) {
+                    return Err(invalid());
+                }
+                unit_grants[index].push(grant_index);
+            }
+            if needs != self.need_ids[index].iter().map(String::as_str).collect() {
+                return Err(invalid());
+            }
+            let required = unit
+                .definition
+                .requirements
+                .iter()
+                .filter(|request| request.role == crate::library_manifest::NativeRequirementRole::Normal)
+                .map(|request| (request.role, request.alias.as_str()))
+                .collect::<BTreeSet<_>>();
+            let mut slots = BTreeSet::new();
+            for slot in response.slots {
+                if !slots.insert((slot.role, slot.alias.clone()))
+                    || !required.contains(&(slot.role, slot.alias.as_str()))
+                {
+                    return Err(invalid());
+                }
+                let edge_index =
+                    provider_batch_index(Some(&serde_json::json!(slot.edge_id)), "edge:", self.edges.len())?;
+                let edge = &self.edges[edge_index];
+                let request = unit
+                    .definition
+                    .requirements
+                    .iter()
+                    .find(|request| request.role == slot.role && request.alias == slot.alias)
+                    .ok_or_else(invalid)?;
+                let crate::library_manifest::NativeRequirementSource::ProviderEdge {
+                    edge_kind,
+                    dependency_key,
+                } = &request.source
+                else {
+                    return Err(invalid());
+                };
+                if edge.unit != index
+                    || edge_kind != &edge.descriptor.kind
+                    || dependency_key != &edge.descriptor.dependency_key
+                {
+                    return Err(invalid());
+                }
+                unit_edges[index].push((slot.alias, edge_index));
+            }
+            if slots.len() != required.len() {
+                return Err(invalid());
+            }
+        }
+        Ok(AdmittedProviderSourceBatch {
+            batch: self,
+            candidate,
+            unit_grants,
+            unit_edges,
+        })
+    }
+}
+
+/// Resolve only canonical host-issued table IDs; alternate numeric spellings and foreign indexes refuse.
+fn provider_batch_index(value: Option<&serde_json::Value>, prefix: &str, length: usize) -> CliResult<usize> {
+    let text = value
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| CliError::failure("provider batch ID is not text"))?;
+    let index = text
+        .strip_prefix(prefix)
+        .and_then(|index| index.parse::<usize>().ok())
+        .filter(|index| *index < length && text == format!("{prefix}{index}"))
+        .ok_or_else(|| CliError::failure("provider batch ID is outside its original table"))?;
+    Ok(index)
+}
+
+impl AdmittedProviderSourceBatch<'_, '_, '_> {
+    /// Attach every returned member under the original owner before invoking the caller's physical source work.
+    fn with_native_plans<T>(
+        &self,
+        consume: impl FnOnce(
+            &crate::oven::rustc::OvenNativeInputView<'_>,
+            &[crate::oven::rustc::OvenSelectedNativeSourcePlan<'_>],
+        ) -> CliResult<T>,
+    ) -> CliResult<T> {
+        let candidate = &self.batch.candidates[self.candidate];
+        match &candidate.owner {
+            ProviderBatchNativeOwner::Store(view) => self.with_view(view, consume),
+            ProviderBatchNativeOwner::Loaf(owner) => {
+                let materialized = owner
+                    .materialize()
+                    .map_err(|error| CliError::failure(error.to_string()))?;
+                let view = crate::oven::rustc::OvenNativeInputView::from_materialized_loaf(&materialized)
+                    .map_err(oven_rustc_error)?;
+                self.with_view(&view, consume)
+            }
+        }
+    }
+
+    /// Rebind retained metadata members to the selected original physical view, never by a child-supplied path.
+    fn with_view<T>(
+        &self,
+        view: &crate::oven::rustc::OvenNativeInputView<'_>,
+        consume: impl FnOnce(
+            &crate::oven::rustc::OvenNativeInputView<'_>,
+            &[crate::oven::rustc::OvenSelectedNativeSourcePlan<'_>],
+        ) -> CliResult<T>,
+    ) -> CliResult<T> {
+        let candidate = &self.batch.candidates[self.candidate];
+        let mut plans = Vec::new();
+        let original_members = view.named_candidates(candidate.source_role).map_err(oven_rustc_error)?;
+        for (index, grant_indexes) in self.unit_grants.iter().enumerate() {
+            verify_admitted_public_artifact(self.batch.units[index].provider)?;
+            let mut selected = Vec::new();
+            let mut named = BTreeMap::new();
+            for grant_index in grant_indexes {
+                let grant = &self.batch.grants[*grant_index];
+                let artifact = grant.artifact;
+                if let Some(existing) = named.insert(grant.alias.as_str(), artifact) {
+                    if existing != artifact {
+                        return Err(CliError::failure("selected grants disagree on one named native member"));
+                    }
+                    continue;
+                }
+                let original = original_members
+                    .iter()
+                    .find(|member| member.artifact() == artifact)
+                    .ok_or_else(|| CliError::failure("selected original native member changed before attachment"))?;
+                selected.push(
+                    original
+                        .clone()
+                        .with_alias(grant.alias.clone())
+                        .map_err(oven_rustc_error)?,
+                );
+            }
+            plans.push(
+                view.attach_for_source(candidate.source_role, &selected)
+                    .map_err(oven_rustc_error)?,
+            );
+        }
+        consume(view, &plans)
+    }
+}
+
+impl AdmittedProviderSourceBatch<'_, '_, '_> {
+    /// Follow only the returned dependency bindings for one unit, keeping unrelated roots out of its native key.
+    fn native_dependencies(
+        &self,
+        unit: usize,
+        outputs: &[Option<OvenCallerOwnedRustcLibrary>],
+    ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
+        let mut dependencies = Vec::new();
+        let mut pending = Vec::new();
+        for (alias, edge_index) in &self.unit_edges[unit] {
+            if let Some(target) = self.batch.edges[*edge_index].target_unit {
+                let mut library = outputs[target]
+                    .as_ref()
+                    .ok_or_else(|| {
+                        CliError::failure("selected provider output was not materialized in dependency order")
+                    })?
+                    .clone();
+                library.crate_name = alias.clone();
+                library.expose_extern = true;
+                dependencies.push(library);
+                pending.push(target);
+            }
+        }
+        let mut visited = BTreeSet::new();
+        while let Some(target) = pending.pop() {
+            if !visited.insert(target) {
+                continue;
+            }
+            let mut support = outputs[target]
+                .as_ref()
+                .ok_or_else(|| CliError::failure("selected transitive provider output is missing"))?
+                .clone();
+            support.expose_extern = false;
+            dependencies.push(support);
+            for (_, edge) in &self.unit_edges[target] {
+                if let Some(child) = self.batch.edges[*edge].target_unit {
+                    pending.push(child);
+                }
+            }
+        }
+        deduplicate_caller_owned_libraries_prefer_extern(&mut dependencies);
+        Ok(dependencies)
+    }
+
+    /// Materialize returned source bindings through the existing receipt-bound native publisher.
+    ///
+    /// The enclosing native command owns this work separately from its Engine exchange permit. Source metadata and
+    /// original foundation owners stay borrowed through all outputs. Only original consumer root aliases become
+    /// final externs; internal outputs remain search inputs. The installer must supply the admitted Engine and permit
+    /// before an ordinary caller can enter this route; absence is not permission to use the retired Cargo reader.
+    fn materialize(
+        &self,
+        rustc: &Path,
+        output_root: &Path,
+        mut authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+    ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
+        let candidate = &self.batch.candidates[self.candidate];
+        self.with_native_plans(|view, plans| {
+            let mut required = self
+                .batch
+                .units
+                .iter()
+                .map(|unit| !unit.root_aliases.is_empty())
+                .collect::<Vec<_>>();
+            // Follow returned edges from original roots. This is execution of selected IDs, not dependency discovery.
+            for index in (0..self.batch.units.len()).rev() {
+                if required[index] {
+                    for (_, edge_index) in &self.unit_edges[index] {
+                        if let Some(target) = self.batch.edges[*edge_index].target_unit {
+                            required[target] = true;
+                        }
+                    }
+                }
+            }
+            let mut outputs: Vec<Option<OvenCallerOwnedRustcLibrary>> = vec![None; self.batch.units.len()];
+            for (index, unit) in self.batch.units.iter().enumerate() {
+                if !required[index] {
+                    continue;
+                }
+                verify_admitted_public_artifact(unit.provider)?;
+                let receipt = caller_owned_library_receipt(
+                    &unit.provider.artifact,
+                    &view.intent().profile,
+                    view.artifacts(),
+                    authority_context.as_deref_mut(),
+                )?;
+                let mut native = plans[index].artifact_plan().clone();
+                let dependencies = self.native_dependencies(index, &outputs)?;
+                attach_caller_owned_rustc_libraries(&mut native, &dependencies).map_err(oven_rustc_error)?;
+                let definition = &unit.definition;
+                let macro_output = definition.crate_kind == NativeSourceCrateKind::ProcMacro;
+                let output = output_root
+                    .join("oven/caller-owned-libraries")
+                    .join(&view.intent().profile)
+                    .join(unit.provider.identity.digest.trim_start_matches("sha256:"))
+                    .join(if macro_output {
+                        format!("lib{}{}", definition.crate_name, std::env::consts::DLL_SUFFIX)
+                    } else {
+                        format!("lib{}.rlib", definition.crate_name)
+                    });
+                let source = unit.provider.artifact.crate_root.join(&definition.entrypoint.path);
+                let request = OvenTrustedDirectRustcTargetRequest {
+                    receipt: &receipt,
+                    artifacts: view.artifacts(),
+                    artifact_root: view.artifact_root(),
+                    artifact_plan: Some(&native),
+                    rustc,
+                    source: &source,
+                    output: &output,
+                    crate_name: &definition.crate_name,
+                    edition: &definition.edition,
+                    source_evidence_key: "generated-root",
+                    features: &receipt.intent.features,
+                    prefer_dynamic: false,
+                };
+                let result = if macro_output {
+                    crate::oven::rustc::bake_trusted_direct_rustc_proc_macro_with_artifact_role(
+                        &request,
+                        candidate.source_role,
+                    )
+                } else {
+                    crate::oven::rustc::bake_trusted_direct_rustc_library_with_artifact_role(
+                        &request,
+                        candidate.source_role,
+                    )
+                }
+                .map_err(oven_rustc_error)?;
+                outputs[index] = Some(OvenCallerOwnedRustcLibrary {
+                    crate_name: definition.crate_name.clone(),
+                    output: result.output,
+                    digest: result.output_digest,
+                    expose_extern: false,
+                });
+            }
+            let mut result = Vec::new();
+            for (unit, output) in self.batch.units.iter().zip(outputs) {
+                let Some(output) = output else {
+                    continue;
+                };
+                for alias in &unit.root_aliases {
+                    let mut root = output.clone();
+                    root.crate_name = alias.clone();
+                    root.expose_extern = true;
+                    result.push(root);
+                }
+                result.push(output);
+            }
+            deduplicate_caller_owned_libraries_prefer_extern(&mut result);
+            Ok(result)
+        })
+    }
+}
+
 /// Re-materialize one public provider graph by following only digest-verified public edges.
 ///
 /// Every nested output is retained as a verified direct-Rustc search path. Only the current graph root is exposed to
@@ -7190,13 +8026,13 @@ fn publish_project_inspection_authority(
         test_dependency_constituent_index,
     ) = match selection {
         OvenDirectRustcPlanSelection::Stored(selected) => {
-            if selected.artifacts.intent != receipt.intent {
+            if selected.artifacts().intent != receipt.intent {
                 return Err(CliError::failure(
                     "project inspection authority selected a stored direct plan with a different build intent",
                 ));
             }
             let sources = selected
-                .artifacts
+                .artifacts()
                 .registry_sources
                 .iter()
                 .cloned()
@@ -7207,13 +8043,13 @@ fn publish_project_inspection_authority(
                 .collect::<Vec<_>>();
             (
                 vec![OvenProjectInspectionConstituent::Stored {
-                    identity: selected.identity.clone(),
+                    identity: selected.identity().to_string(),
                     artifact_kind: OvenArtifactKind::DirectRustcPlan,
                     receipt: receipt.clone(),
                     base_loaf_identity: None,
                 }],
                 sources,
-                selected.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH),
+                selected.artifact_root().join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH),
                 None,
                 None,
                 Some(0),
@@ -13810,8 +14646,8 @@ fn bake_oven_project_targets_with_engine(
                             // the generated Rust.
                             let constituent = match &selected_profile.plan_selection {
                                 OvenDirectRustcPlanSelection::Stored(plan) => Some((
-                                    plan.identity.clone(),
-                                    plan.artifacts.clone(),
+                                    plan.identity().to_string(),
+                                    plan.artifacts().clone(),
                                     OvenArtifactKind::DirectRustcPlan,
                                     None,
                                 )),
@@ -17950,6 +18786,498 @@ headers = ["interop/include/bridge.h"]
                 && dependency.version.as_deref() == Some("0.58")
                 && dependency.source == DependencySource::Registry
         }));
+        Ok(())
+    }
+
+    /// Publish one actual Store owner and frozen runtime receipt for host binding controls, without invoking rustc.
+    fn provider_batch_store_fixture(
+        root: &Path,
+    ) -> Result<(crate::oven::OvenReceipt, crate::oven::store::OvenStoreExecutionPayload), Box<dyn std::error::Error>>
+    {
+        provider_batch_store_fixture_with_role(root, "generated-root")
+    }
+
+    /// Publish a native role independently of the unchanged source receipt key.
+    fn provider_batch_store_fixture_with_role(
+        root: &Path,
+        role: &str,
+    ) -> Result<(crate::oven::OvenReceipt, crate::oven::store::OvenStoreExecutionPayload), Box<dyn std::error::Error>>
+    {
+        fs::create_dir_all(root)?;
+        fs::write(root.join("source.rs"), "fn main() {}\n")?;
+        fs::write(root.join("runtime.rlib"), b"original runtime bytes")?;
+        let mut request = OvenGeneratedProjectRequest::new(
+            root,
+            root.file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("fixture label missing")?,
+            "1.0.0",
+            "aarch64-apple-darwin",
+            "batch rustc",
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", root.join("source.rs"));
+        for (name, value) in [
+            ("compiler-version", "batch compiler".to_string()),
+            ("sdk-provider-codegen-revision", "7".to_string()),
+            ("runtime-lock", digest_bytes(b"original runtime lock")),
+            ("runtime-source-incan-core", digest_bytes(b"original core source")),
+            ("runtime-source-incan-derive", digest_bytes(b"original derive source")),
+            ("runtime-source-incan-stdlib", digest_bytes(b"original stdlib source")),
+            ("provider-plan", digest_bytes(b"")),
+            ("stdlib-features", digest_bytes(b"")),
+            ("rust-dependencies", digest_bytes(b"")),
+        ] {
+            request = request.with_build_unit_input(name, value);
+        }
+        let receipt = receipt_generated_project(&request)?;
+        let artifact = OvenRustcArtifactExtern {
+            crate_name: "incan_stdlib".to_string(),
+            relative_path: "deps/libincan_stdlib.rlib".to_string(),
+            digest: digest_bytes(b"original runtime bytes"),
+        };
+        let manifest = OvenRustcArtifactManifest {
+            schema_version: crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: receipt.intent.clone(),
+            dependency_search_paths: vec!["deps".to_string()],
+            native_search_paths: Vec::new(),
+            externs: vec![artifact],
+            entrypoint_externs: BTreeMap::from([(role.to_string(), vec!["incan_stdlib".to_string()])]),
+            registry_leaves: Vec::new(),
+            registry_sources: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: Vec::new(),
+        };
+        let store = OvenStore::new(
+            root.join("store"),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let published = store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "provider-batch".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&manifest)?,
+            materialized_files: vec![crate::oven::store::OvenArtifactMaterializedFile {
+                source_path: root.join("runtime.rlib"),
+                relative_path: "deps/libincan_stdlib.rlib".to_string(),
+            }],
+        })?;
+        let owner = store
+            .select_payloads_for_execution(&[published.identity])?
+            .pop()
+            .ok_or("native owner absent")?;
+        Ok((receipt, owner))
+    }
+
+    /// Literal one-unit response exercises the host's admission contract without emulating the Incan algorithm.
+    fn provider_batch_one_unit_response(
+        batch: &ProviderSourceBatch<'_, '_>,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let candidate = batch.candidates.first().ok_or("candidate absent")?;
+        let unit = batch.units.first().ok_or("unit absent")?;
+        let (evidence, plan, build_unit) = candidate.coordinates();
+        Ok(serde_json::json!({
+            "schema": "incan.oven.source-unit-batch/3", "request_id": batch.receipt.identity,
+            "request_evidence_id": batch.receipt.identity, "status": "selected",
+            "foundation": {"schema": "incan.oven.selection/2", "request_id": batch.receipt.identity,
+                "request_evidence_id": batch.receipt.identity, "status": "selected", "selection": {
+                    "request_id": batch.receipt.identity, "request_evidence_id": batch.receipt.identity,
+                    "candidate_id": "candidate:0", "candidate_evidence_id": evidence, "plan_identity": plan, "build_unit_identity": build_unit,
+                    "excess": {"providers": 0, "modules": 0, "facets": 0, "direct_links": 0}
+                }},
+            "units": [{"unit_id": "unit:0", "owner_id": unit.provider.identity.stable_key(), "definition_id": "definition:0",
+                "definition_digest": unit.definition_digest, "slots": [], "grant_ids": ["grant:0"]}]
+        }))
+    }
+
+    /// Actual publisher/member handles survive the roundtrip; altered bytes and complete-response substitutions refuse.
+    #[test]
+    fn provider_batch_original_store_roundtrip_refuses_changed_members_and_ids()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (artifact, _, _) =
+            provider_source_definition_fixture(&root.path().join("provider"), NativeSourceCrateKind::Rlib)?;
+        let entry = load_provider_dependency_artifact("stock", &artifact.crate_root);
+        let plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::from_entries(HashMap::from([("stock".to_string(), entry)])),
+            None,
+            None,
+            None,
+            [],
+        )?;
+        let (receipt, owner) = provider_batch_store_fixture(&root.path().join("native"))?;
+        let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?;
+        let view = stored.native_input_view()?;
+        let candidates = [ProviderBatchCandidate {
+            owner: ProviderBatchNativeOwner::Store(&view),
+            source_role: "generated-root",
+            receipt: None,
+        }];
+        let batch = ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &candidates)?;
+        let request: serde_json::Value = serde_json::from_slice(&batch.request)?;
+        assert_eq!(
+            request["foundation"]["request"]["candidates"][0]["evidence"],
+            serde_json::json!({"kind": "exact_build_unit"})
+        );
+        assert_eq!(request["runtime_needs"][0]["support_index"], 0);
+        assert_eq!(
+            request["runtime_grants"][0]["runtime_features_input"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            request["runtime_grants"][0]["artifact_digest"],
+            digest_bytes(b"original runtime bytes")
+        );
+        assert_eq!(batch.units[0].root_aliases, ["stock"]);
+        let response = provider_batch_one_unit_response(&batch)?;
+        let admitted = batch.admit_response(&serde_json::to_vec(&response)?)?;
+        admitted.with_native_plans(|_, plans| {
+            assert_eq!(plans.len(), 1);
+            assert_eq!(
+                plans[0].artifact_plan().externs,
+                [(
+                    "incan_stdlib".to_string(),
+                    stored.artifact_root().join("deps/libincan_stdlib.rlib")
+                )]
+            );
+            Ok(())
+        })?;
+        for (pointer, replacement) in [
+            ("/request_evidence_id", serde_json::json!("different command")),
+            (
+                "/foundation/selection/candidate_evidence_id",
+                serde_json::json!("different owner"),
+            ),
+            (
+                "/units/0/definition_digest",
+                serde_json::json!(digest_bytes(b"different definition")),
+            ),
+            ("/units/0/grant_ids", serde_json::json!(["grant:00"])),
+            ("/units/0/grant_ids", serde_json::json!(["grant:0", "grant:0"])),
+            ("/units/0/grant_ids", serde_json::json!([])),
+            ("/units", serde_json::json!([])),
+        ] {
+            let mut changed = response.clone();
+            *changed.pointer_mut(pointer).ok_or("response pointer missing")? = replacement;
+            assert!(
+                batch.admit_response(&serde_json::to_vec(&changed)?).is_err(),
+                "{pointer}"
+            );
+        }
+        let mut called = false;
+        let corrupted_member = stored.artifact_root().join("deps/libincan_stdlib.rlib");
+        let original_permissions = fs::metadata(&corrupted_member)?.permissions();
+        #[cfg(unix)]
+        fs::set_permissions(
+            &corrupted_member,
+            fs::Permissions::from_mode(original_permissions.mode() | 0o200),
+        )?;
+        #[cfg(not(unix))]
+        {
+            let mut writable = original_permissions.clone();
+            writable.set_readonly(false);
+            fs::set_permissions(&corrupted_member, writable)?;
+        }
+        let mutation = fs::write(&corrupted_member, b"replaced runtime bytes");
+        fs::set_permissions(&corrupted_member, original_permissions)?;
+        mutation?;
+        assert!(
+            admitted
+                .with_native_plans(|_, _| {
+                    called = true;
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert!(!called, "changed member must refuse before the native consumer runs");
+        assert!(!root.path().join("provider/oven").exists());
+        Ok(())
+    }
+
+    /// Only the supplying Store's full verified receipt provides recipe facts; role and receipt substitution refuse.
+    #[test]
+    fn provider_batch_recipe_requires_original_receipt_and_declared_source_role()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (artifact, _, _) =
+            provider_source_definition_fixture(&root.path().join("provider"), NativeSourceCrateKind::Rlib)?;
+        let entry = load_provider_dependency_artifact("stock", &artifact.crate_root);
+        let plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::from_entries(HashMap::from([("stock".to_string(), entry)])),
+            None,
+            None,
+            None,
+            [],
+        )?;
+        let (receipt, owner) = provider_batch_store_fixture(&root.path().join("native"))?;
+        let (foreign, _) = provider_batch_store_fixture(&root.path().join("foreign"))?;
+        let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?;
+        let view = stored.native_input_view()?;
+        let candidates = [ProviderBatchCandidate {
+            owner: ProviderBatchNativeOwner::Store(&view),
+            source_role: "generated-root",
+            receipt: Some(&receipt),
+        }];
+        let batch = ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &candidates)?;
+        let request: serde_json::Value = serde_json::from_slice(&batch.request)?;
+        assert_eq!(
+            request["foundation"]["request"]["candidates"][0]["evidence"]["kind"],
+            "runtime_provider_recipe"
+        );
+        assert_eq!(
+            request["runtime_grants"][0]["runtime_features_input"],
+            receipt.sources.build_unit_inputs["stdlib-features"]
+        );
+        for candidate in [
+            ProviderBatchCandidate {
+                owner: ProviderBatchNativeOwner::Store(&view),
+                source_role: "undeclared-role",
+                receipt: Some(&receipt),
+            },
+            ProviderBatchCandidate {
+                owner: ProviderBatchNativeOwner::Store(&view),
+                source_role: "generated-root",
+                receipt: Some(&foreign),
+            },
+        ] {
+            assert!(ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &[candidate]).is_err());
+        }
+        Ok(())
+    }
+
+    /// An admitted provider role stays distinct from the receipt's generated-root source key.
+    #[test]
+    fn provider_batch_preserves_original_native_role_and_source_receipt() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (artifact, _, _) =
+            provider_source_definition_fixture(&root.path().join("provider"), NativeSourceCrateKind::Rlib)?;
+        let plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::from_entries(HashMap::from([(
+                "stock".to_string(),
+                load_provider_dependency_artifact("stock", &artifact.crate_root),
+            )])),
+            None,
+            None,
+            None,
+            [],
+        )?;
+        let (receipt, owner) =
+            provider_batch_store_fixture_with_role(&root.path().join("native"), "provider-compilation")?;
+        let receipt_bytes = serde_json::to_vec(&receipt)?;
+        let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?;
+        let manifest_bytes = serde_json::to_vec(stored.artifacts())?;
+        let view = stored.native_input_view()?;
+        let candidates = [ProviderBatchCandidate {
+            owner: ProviderBatchNativeOwner::Store(&view),
+            source_role: "provider-compilation",
+            receipt: None,
+        }];
+        let batch = ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &candidates)?;
+        let request: serde_json::Value = serde_json::from_slice(&batch.request)?;
+        assert_eq!(request["runtime_grants"][0]["source_role"], "provider-compilation");
+        let response = provider_batch_one_unit_response(&batch)?;
+        let admitted = batch.admit_response(&serde_json::to_vec(&response)?)?;
+        admitted.with_native_plans(|_, plans| {
+            assert_eq!(plans[0].artifact_plan().externs[0].0, "incan_stdlib");
+            Ok(())
+        })?;
+        assert!(receipt.sources.supplemental_digests.contains_key("generated-root"));
+        assert!(
+            !receipt
+                .sources
+                .supplemental_digests
+                .contains_key("provider-compilation")
+        );
+        assert_eq!(serde_json::to_vec(&receipt)?, receipt_bytes);
+        assert_eq!(serde_json::to_vec(stored.artifacts())?, manifest_bytes);
+        assert!(view.named_candidates("generated-root").is_err());
+        Ok(())
+    }
+
+    /// A previously materialized unrelated root does not enter another root's actual native inputs or reuse key.
+    #[test]
+    fn provider_batch_unrelated_root_output_changes_do_not_invalidate_native_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (first, _, _) =
+            provider_source_definition_fixture(&root.path().join("first"), NativeSourceCrateKind::Rlib)?;
+        let (second, _, mut definition) =
+            provider_source_definition_fixture(&root.path().join("second"), NativeSourceCrateKind::Rlib)?;
+        definition.crate_name = "second_native".to_string();
+        fs::write(
+            second.crate_root.join(NATIVE_SOURCE_UNIT_PATH),
+            definition.to_json_bytes()?,
+        )?;
+        let plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::from_entries(HashMap::from([
+                (
+                    "first".to_string(),
+                    load_provider_dependency_artifact("first", &first.crate_root),
+                ),
+                (
+                    "second".to_string(),
+                    load_provider_dependency_artifact("second", &second.crate_root),
+                ),
+            ])),
+            None,
+            None,
+            None,
+            [],
+        )?;
+        let (receipt, owner) = provider_batch_store_fixture(&root.path().join("native"))?;
+        let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?;
+        let view = stored.native_input_view()?;
+        let candidates = [ProviderBatchCandidate {
+            owner: ProviderBatchNativeOwner::Store(&view),
+            source_role: "generated-root",
+            receipt: None,
+        }];
+        let batch = ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &candidates)?;
+        assert_eq!(batch.units.len(), 2);
+        assert!(batch.edges.is_empty());
+        // These original empty edge tables are the physical projection under test, not a simulated Incan selection.
+        let selected = AdmittedProviderSourceBatch {
+            batch: &batch,
+            candidate: 0,
+            unit_grants: vec![Vec::new(); 2],
+            unit_edges: vec![Vec::new(); 2],
+        };
+        let first_index = batch
+            .units
+            .iter()
+            .position(|unit| unit.root_aliases == ["first"])
+            .ok_or("first root absent")?;
+        let second_index = batch
+            .units
+            .iter()
+            .position(|unit| unit.root_aliases == ["second"])
+            .ok_or("second root absent")?;
+        let mut outputs = vec![None; 2];
+        let first_output = root.path().join("unrelated/libfirst.rlib");
+        outputs[first_index] = Some(OvenCallerOwnedRustcLibrary {
+            crate_name: "first_native".to_string(),
+            output: first_output.clone(),
+            digest: digest_bytes(b"first output"),
+            expose_extern: false,
+        });
+        let mut before = stored.artifact_plan().clone();
+        attach_caller_owned_rustc_libraries(&mut before, &selected.native_dependencies(second_index, &outputs)?)?;
+        outputs[first_index] = Some(OvenCallerOwnedRustcLibrary {
+            crate_name: "first_native".to_string(),
+            output: first_output,
+            digest: digest_bytes(b"changed unrelated output"),
+            expose_extern: false,
+        });
+        let mut after = stored.artifact_plan().clone();
+        attach_caller_owned_rustc_libraries(&mut after, &selected.native_dependencies(second_index, &outputs)?)?;
+        assert_eq!(before, after);
+        assert!(before.caller_owned_library_digests.is_empty());
+        assert!(
+            !root.path().join("unrelated").exists(),
+            "unrelated bytes must never be inspected or attached"
+        );
+        Ok(())
+    }
+
+    /// The actual source capture binds an SDK request alias to its original private descriptor, independently of
+    /// package name.
+    #[test]
+    fn provider_batch_sdk_alias_comes_from_captured_request_and_original_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (artifact, mut manifest, definition) =
+            provider_source_definition_fixture(&root.path().join("provider"), NativeSourceCrateKind::Rlib)?;
+        let sdk_root = root.path().join("sdk");
+        fs::create_dir(&sdk_root)?;
+        let target = LibraryArtifactMetadata::from_crate_root("incan_stdlib_json", "json_package", &sdk_root);
+        let descriptor = ProviderDependencyMetadata {
+            kind: ProviderDependencyKind::PrivateImplementation,
+            dependency_key: target.dependency_key.clone(),
+            provider_name: target.manifest_name.clone(),
+            provider_version: "1.0.0".to_string(),
+            artifact_digest: digest_provider_artifact(&sdk_root)?,
+            relative_artifact_path: "../../sdk".to_string(),
+            requested_features: BTreeSet::new(),
+            default_features: false,
+            optional: false,
+        };
+        // Use the same original metadata projection used by ProjectGenerator::set_provider_plan.
+        let dependency = target.to_dependency_spec();
+        let relative = relative_provider_artifact_path(&artifact.crate_root, &sdk_root)?;
+        manifest.contract_metadata.provider.provider_dependencies = vec![ProviderDependencyMetadata {
+            relative_artifact_path: relative,
+            ..descriptor
+        }];
+        let descriptor = &manifest.contract_metadata.provider.provider_dependencies[0];
+        let mut captured = definition;
+        captured.requirements.push(NativeSourceRequirement {
+            role: NativeRequirementRole::Normal,
+            alias: dependency.crate_name.clone(),
+            package: dependency.package.clone(),
+            version_requirement: dependency.version.clone(),
+            features: dependency.features.clone(),
+            default_features: dependency.default_features,
+            optional: dependency.optional,
+            source: native_source_requirement_origin(
+                &dependency,
+                NativeRequirementRole::Normal,
+                &manifest,
+                &artifact.crate_root,
+            )?,
+        });
+        assert_eq!(provider_batch_sdk_alias(&captured, descriptor)?, "incan_stdlib_json");
+        assert_ne!(provider_batch_sdk_alias(&captured, descriptor)?, "json_package");
+        assert_eq!(provider_batch_sdk_alias(&captured, descriptor)?, target.dependency_key);
+        let mut wrong = descriptor.clone();
+        wrong.dependency_key = "json".to_string();
+        assert!(provider_batch_sdk_alias(&captured, &wrong).is_err());
+        captured.requirements.clear();
+        assert!(provider_batch_sdk_alias(&captured, descriptor).is_err());
+        Ok(())
+    }
+
+    /// The existing admitted diamond keeps its shared leaf, all original descriptor indexes, and consumer root grants.
+    #[test]
+    fn provider_batch_retains_checked_diamond_postorder_and_root_aliases() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let plan = provider_source_definition_diamond(&root.path().join("providers"))?;
+        let (receipt, owner) = provider_batch_store_fixture(&root.path().join("native"))?;
+        let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(owner)?;
+        let view = stored.native_input_view()?;
+        let candidates = [ProviderBatchCandidate {
+            owner: ProviderBatchNativeOwner::Store(&view),
+            source_role: "generated-root",
+            receipt: None,
+        }];
+        let batch = ProviderSourceBatch::new(&plan, &receipt, &BTreeMap::new(), &candidates)?;
+        assert_eq!(batch.units.len(), 4);
+        assert_eq!(batch.edges.len(), 4);
+        assert_eq!(
+            batch.units.last().ok_or("root absent")?.root_aliases,
+            ["consumer_alias"]
+        );
+        assert!(batch.units[..3].iter().all(|unit| unit.root_aliases.is_empty()));
+        let shared = batch
+            .edges
+            .iter()
+            .filter(|edge| edge.target_unit == Some(0))
+            .collect::<Vec<_>>();
+        assert_eq!(shared.len(), 2);
+        assert!(std::ptr::eq(shared[0].target, shared[1].target));
+        for edge in &batch.edges {
+            assert!(edge.target_unit.is_some_and(|index| index < edge.unit));
+            assert!(std::ptr::eq(
+                edge.descriptor,
+                &batch.units[edge.unit]
+                    .provider
+                    .manifest
+                    .contract_metadata
+                    .provider
+                    .provider_dependencies[edge.descriptor_index]
+            ));
+        }
         Ok(())
     }
 
