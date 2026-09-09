@@ -597,9 +597,10 @@ fn rust_source_dependencies_require_complete_original_slot_bindings() -> TestRes
 /// Unknown producer contracts and malformed source catalogs cannot masquerade as existing selected source evidence.
 #[test]
 fn rust_source_contract_versions_and_file_evidence_refuse() -> TestResult {
+    let features = BTreeSet::new();
     let files = BTreeMap::from([("src/lib.rs".to_string(), digest('1'))]);
     let mut input = RustSemanticInputs {
-        activation: activation(&BTreeSet::new(), false),
+        activation: activation(&features, false),
         contract: "native-receipt",
         contract_version: 1,
         package: "package",
@@ -611,7 +612,7 @@ fn rust_source_contract_versions_and_file_evidence_refuse() -> TestResult {
         source: RustSemanticSource::Path,
         files: &files,
         configuration: &BTreeMap::new(),
-        features: &BTreeSet::new(),
+        features: &features,
         default_features: false,
         dependencies: &[],
         selections: &[],
