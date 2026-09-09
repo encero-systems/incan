@@ -1,9 +1,10 @@
 # RFC 034: `incan.pub` — The Incan Package Registry
 
-- **Status:** Draft
+- **Status:** Superseded
+- **Superseded by:** RFC 124
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 027 (incan-vocab), RFC 031 (library system phase 1), RFC 117 (`loaf.toml` and Oven's language-neutral project model), RFC 118 (Incan and Oven command-line surfaces)
+- **Related:** RFC 124 (`incan.pub` Loaf registry and baked asset distribution; supersedes this RFC), RFC 027 (incan-vocab), RFC 031 (library system phase 1), RFC 117 (`loaf.toml` and Oven's language-neutral project model), RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** [#168](https://github.com/encero-systems/incan/issues/168)
 - **RFC PR:** —
 - **Written against:** ~~v0.2~~ v0.5
