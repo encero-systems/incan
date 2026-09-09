@@ -4587,6 +4587,57 @@ fn is_selected_compiler_runtime_path_dependency(
             .is_some_and(|path| owned_roots.iter().any(|root| path.starts_with(root)))
 }
 
+/// Validate the emitted source definition required to re-materialize an already admitted provider.
+///
+/// This reads only the selected artifact's named sidecar and source inputs. Its requests do not select dependencies;
+/// the existing provider graph, receipt and native plan retain that responsibility. Legacy native payload consumers
+/// do not need this definition unless they re-materialize generated source.
+fn read_provider_native_source_definition(
+    artifact: &LibraryArtifactMetadata,
+    manifest: &LibraryManifest,
+) -> CliResult<NativeSourceUnitDefinition> {
+    let refuse = |reason: &str| {
+        CliError::failure(format!(
+            "Oven Alpha refuses source re-materialization of pub::{} at {}: {reason}",
+            artifact.dependency_key,
+            artifact.crate_root.display()
+        ))
+    };
+    if artifact.kind != LibraryArtifactKind::Materialized {
+        return Err(refuse("a materialized provider artifact is required"));
+    }
+    if artifact.manifest_name != manifest.name {
+        return Err(refuse("artifact name differs from the checked manifest"));
+    }
+    let definition = NativeSourceUnitDefinition::read_optional(&artifact.crate_root)
+        .map_err(|error| refuse(&error.to_string()))?
+        .ok_or_else(|| refuse("missing native/source-unit.json; no emitted source definition is available"))?;
+    definition
+        .validate_against_manifest(manifest)
+        .map_err(|error| refuse(&error.to_string()))?;
+    if ProjectGenerator::rust_target_name(&definition.crate_name) != definition.crate_name {
+        return Err(refuse("emitted crate name is not a Rust target identifier"));
+    }
+    let entrypoint_metadata = fs::symlink_metadata(&artifact.crate_lib_path)
+        .map_err(|error| refuse(&format!("cannot inspect indexed source entrypoint: {error}")))?;
+    if !entrypoint_metadata.is_file() || entrypoint_metadata.file_type().is_symlink() {
+        return Err(refuse("indexed source entrypoint must be a regular non-symlink file"));
+    }
+    let indexed_entrypoint = fs::canonicalize(&artifact.crate_lib_path)
+        .map_err(|error| refuse(&format!("cannot bind indexed source entrypoint: {error}")))?;
+    let defined_entrypoint = fs::canonicalize(artifact.crate_root.join(&definition.entrypoint.path))
+        .map_err(|error| refuse(&format!("cannot bind defined source entrypoint: {error}")))?;
+    if indexed_entrypoint != defined_entrypoint {
+        return Err(refuse(
+            "indexed source entrypoint differs from the emitted source definition",
+        ));
+    }
+    definition
+        .validate_sources(&artifact.crate_root)
+        .map_err(|error| refuse(&error.to_string()))?;
+    Ok(definition)
+}
+
 /// Re-materialize one public provider graph by following only digest-verified public edges.
 ///
 /// Every nested output is retained as a verified direct-Rustc search path. Only the current graph root is exposed to
@@ -4629,6 +4680,7 @@ fn rematerialize_caller_owned_provider_graph(
                 artifact.dependency_key, dependency.dependency_key
             )));
         }
+        let source_definition = read_provider_native_source_definition(artifact, manifest)?;
 
         let mut nested_libraries = Vec::new();
         for dependency in manifest
@@ -4660,8 +4712,7 @@ fn rematerialize_caller_owned_provider_graph(
         deduplicate_caller_owned_libraries_prefer_extern(&mut nested_libraries);
 
         let receipt = caller_owned_library_receipt(artifact, profile, artifacts, authority_context.as_deref_mut())?;
-        let edition = caller_owned_library_edition(artifact)?;
-        let is_proc_macro = caller_owned_library_is_proc_macro(artifact)?;
+        let is_proc_macro = source_definition.crate_kind == NativeSourceCrateKind::ProcMacro;
         let provider_dependencies = caller_owned_library_rust_dependencies(artifact)?;
         let provider_dependencies =
             caller_owned_library_dependencies_without_unused_incan_derive(artifact, provider_dependencies)?;
@@ -4689,7 +4740,7 @@ fn rematerialize_caller_owned_provider_graph(
         nested_libraries.append(&mut provider_rust_libraries);
         deduplicate_caller_owned_libraries_prefer_extern(&mut nested_libraries);
 
-        let crate_name = ProjectGenerator::rust_target_name(&artifact.manifest_name);
+        let crate_name = &source_definition.crate_name;
         let artifact_digest = digest_provider_artifact(&artifact.crate_root).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot fingerprint generated provider artifact for pub::{} at {}: {error}",
@@ -4725,16 +4776,17 @@ fn rematerialize_caller_owned_provider_graph(
                 }
             }
         }
+        let source = artifact.crate_root.join(&source_definition.entrypoint.path);
         let bake_request = OvenTrustedDirectRustcTargetRequest {
             receipt: &receipt,
             artifacts,
             artifact_root,
             artifact_plan: Some(&provider_plan),
             rustc,
-            source: &artifact.crate_lib_path,
+            source: &source,
             output: &output,
-            crate_name: &crate_name,
-            edition: &edition,
+            crate_name,
+            edition: &source_definition.edition,
             source_evidence_key: "generated-root",
             features: &receipt.intent.features,
             prefer_dynamic: false,
@@ -17658,27 +17710,269 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
-    #[test]
-    fn caller_owned_provider_proc_macro_is_classified_from_its_checked_manifest()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = tempfile::tempdir()?;
-        let artifact_root = workspace.path().join("target/lib");
-        fs::create_dir_all(artifact_root.join("src"))?;
-        fs::write(
-            artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"provider_macros\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\nproc-macro = true\n",
-        )?;
-        fs::write(artifact_root.join("src/lib.rs"), "pub fn marker() {}\n")?;
-        let artifact = LibraryArtifactMetadata {
-            dependency_key: "provider_macros".to_string(),
-            manifest_name: "provider_macros".to_string(),
-            manifest_path: workspace.path().join("provider_macros.incnlib"),
-            crate_root: artifact_root.clone(),
-            crate_lib_path: artifact_root.join("src/lib.rs"),
-            kind: LibraryArtifactKind::Materialized,
+    /// Publish a real physical definition whose emitted target name differs from both public name and import alias.
+    fn provider_source_definition_fixture(
+        root: &Path,
+        kind: NativeSourceCrateKind,
+    ) -> Result<(LibraryArtifactMetadata, LibraryManifest, NativeSourceUnitDefinition), Box<dyn std::error::Error>>
+    {
+        fs::create_dir_all(root.join("src"))?;
+        let source = match kind {
+            NativeSourceCrateKind::Rlib => "pub fn marker() -> u32 { 7 }\n",
+            NativeSourceCrateKind::ProcMacro => {
+                "extern crate proc_macro;\n#[proc_macro]\npub fn marker(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }\n"
+            }
         };
+        fs::write(root.join("src/lib.rs"), source)?;
+        let mut manifest = LibraryManifest::new("public-provider", "1.2.3");
+        let authored_source_digest = digest_bytes(b"checked provider source");
+        manifest.contract_metadata.provider.semantic_source_digest = Some(authored_source_digest.clone());
+        let definition = NativeSourceUnitDefinition {
+            schema_version: NATIVE_SOURCE_UNIT_SCHEMA_VERSION,
+            package: NativeSourcePackage {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+            },
+            crate_name: "emitted_provider".to_string(),
+            crate_kind: kind,
+            edition: "2021".to_string(),
+            authored_source_digest,
+            entrypoint: NativeSourceInput {
+                path: "src/lib.rs".to_string(),
+                digest: crate::generated_source::digest_file(&root.join("src/lib.rs"))?,
+            },
+            source_tree: NativeSourceInput {
+                path: "src".to_string(),
+                digest: crate::generated_source::digest_tree(&root.join("src"))?,
+            },
+            requirements: Vec::new(),
+        };
+        let artifact = LibraryArtifactMetadata::from_crate_root("renamed", &manifest.name, root);
+        manifest.write_to_path(&artifact.manifest_path)?;
+        fs::create_dir(root.join("native"))?;
+        fs::write(root.join(NATIVE_SOURCE_UNIT_PATH), definition.to_json_bytes()?)?;
+        Ok((artifact, manifest, definition))
+    }
 
-        assert!(caller_owned_library_is_proc_macro(&artifact)?);
+    /// Exercise the real rematerialization entry with an invalid parent and an unreachable nested provider.
+    fn assert_provider_definition_refused_before_materialization(
+        artifact: &LibraryArtifactMetadata,
+        manifest: &LibraryManifest,
+        expected: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let consumer = tempfile::tempdir()?;
+        let output = consumer.path().join("output");
+        fs::create_dir(&output)?;
+        fs::write(output.join("accepted-output"), "preserve caller output")?;
+        let mut manifest = manifest.clone();
+        manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PublicPackage,
+                dependency_key: "unreachable".to_string(),
+                provider_name: "unreachable".to_string(),
+                provider_version: "1.0.0".to_string(),
+                artifact_digest: digest_bytes(b"unreachable provider"),
+                relative_artifact_path: "missing-child".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            });
+        let artifacts = package_loaf_manifest(
+            crate::oven::OvenBuildIntent {
+                target: "aarch64-apple-darwin".to_string(),
+                toolchain: "source-definition-refusal-test".to_string(),
+                profile: "debug".to_string(),
+                features: Vec::new(),
+            },
+            "emitted_provider",
+            &digest_bytes(b"unused native payload"),
+        );
+        let plan = OvenRustcArtifactPlan {
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            caller_owned_library_digests: BTreeMap::new(),
+        };
+        let before = digest_provider_artifact(&artifact.crate_root)?;
+        let mut visiting = BTreeSet::new();
+        let Err(error) = rematerialize_caller_owned_provider_graph(
+            artifact,
+            &manifest,
+            "debug",
+            &artifacts,
+            consumer.path(),
+            &plan,
+            &consumer.path().join("must-not-run-rustc"),
+            &output,
+            None,
+            &[],
+            &[],
+            None,
+            &mut visiting,
+            &mut None,
+        ) else {
+            return Err("invalid parent source evidence must refuse rematerialization".into());
+        };
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(visiting.is_empty(), "refusal must release graph traversal state");
+        assert_eq!(before, digest_provider_artifact(&artifact.crate_root)?);
+        assert_eq!(
+            fs::read_to_string(output.join("accepted-output"))?,
+            "preserve caller output"
+        );
+        assert_eq!(
+            fs::read_dir(&output)?.count(),
+            1,
+            "no child materialization may publish output"
+        );
+        assert!(!artifact.crate_root.join("missing-child").exists());
+        Ok(())
+    }
+
+    /// Ordinary and procedural macro source consumers retain producer properties without reading a Cargo manifest.
+    #[test]
+    fn caller_owned_provider_source_definition_retains_native_properties() -> Result<(), Box<dyn std::error::Error>> {
+        for kind in [NativeSourceCrateKind::Rlib, NativeSourceCrateKind::ProcMacro] {
+            let workspace = tempfile::tempdir()?;
+            let (artifact, manifest, definition) = provider_source_definition_fixture(workspace.path(), kind)?;
+            let poison = "not a Cargo manifest; must not be read as native authority";
+            fs::write(artifact.crate_root.join("Cargo.toml"), poison)?;
+            assert_eq!(
+                read_provider_native_source_definition(&artifact, &manifest)?,
+                definition
+            );
+            assert_eq!(definition.crate_kind, kind);
+            assert_eq!(definition.crate_name, "emitted_provider");
+            assert_eq!(definition.edition, "2021");
+            assert_ne!(
+                definition.crate_name,
+                ProjectGenerator::rust_target_name(&manifest.name)
+            );
+            assert_ne!(definition.crate_name, artifact.dependency_key);
+            assert_eq!(fs::read_to_string(artifact.crate_root.join("Cargo.toml"))?, poison);
+
+            let relocated = tempfile::tempdir()?;
+            let (relocated_artifact, relocated_manifest, _) =
+                provider_source_definition_fixture(relocated.path(), kind)?;
+            fs::write(
+                relocated.path().join(NATIVE_SOURCE_UNIT_PATH),
+                definition.to_json_bytes()?,
+            )?;
+            assert_eq!(
+                read_provider_native_source_definition(&relocated_artifact, &relocated_manifest)?,
+                definition
+            );
+        }
+        Ok(())
+    }
+
+    /// Missing and malformed definitions are distinct refusals before any child-provider lookup or native work.
+    #[test]
+    fn caller_owned_provider_source_definition_refuses_unavailable_sidecar_before_children()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (payload, expected) in [
+            (None, "missing native/source-unit.json"),
+            (Some("{"), "invalid native source-unit JSON"),
+            (
+                Some(r#"{"schema_version":999}"#),
+                "unsupported native source-unit schema 999",
+            ),
+        ] {
+            let workspace = tempfile::tempdir()?;
+            let (artifact, manifest, _) =
+                provider_source_definition_fixture(workspace.path(), NativeSourceCrateKind::Rlib)?;
+            let sidecar = artifact.crate_root.join(NATIVE_SOURCE_UNIT_PATH);
+            if let Some(payload) = payload {
+                fs::write(sidecar, payload)?;
+            } else {
+                fs::remove_file(sidecar)?;
+            }
+            assert_provider_definition_refused_before_materialization(&artifact, &manifest, expected)?;
+        }
+        Ok(())
+    }
+
+    /// Definition identity, generated bytes and indexed entrypoint must agree before a nested consumer can run.
+    #[test]
+    fn caller_owned_provider_source_definition_refuses_mismatched_bindings() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let (artifact, manifest, definition) =
+            provider_source_definition_fixture(workspace.path(), NativeSourceCrateKind::Rlib)?;
+        let mut changed = manifest.clone();
+        changed.version = "2.0.0".to_string();
+        assert_provider_definition_refused_before_materialization(
+            &artifact,
+            &changed,
+            "differs from the checked manifest",
+        )?;
+        changed = manifest.clone();
+        changed.contract_metadata.provider.semantic_source_digest = Some(digest_bytes(b"different authored source"));
+        assert_provider_definition_refused_before_materialization(
+            &artifact,
+            &changed,
+            "differs from the checked manifest",
+        )?;
+
+        let mut other_artifact = artifact.clone();
+        other_artifact.manifest_name = "other-provider".to_string();
+        assert_provider_definition_refused_before_materialization(&other_artifact, &manifest, "artifact name differs")?;
+        other_artifact = artifact.clone();
+        other_artifact.kind = LibraryArtifactKind::ParserSource;
+        assert_provider_definition_refused_before_materialization(
+            &other_artifact,
+            &manifest,
+            "materialized provider artifact is required",
+        )?;
+
+        let original_source = fs::read(&artifact.crate_lib_path)?;
+        other_artifact = artifact.clone();
+        other_artifact.crate_lib_path = workspace.path().join("same-bytes.rs");
+        fs::write(&other_artifact.crate_lib_path, &original_source)?;
+        assert_provider_definition_refused_before_materialization(
+            &other_artifact,
+            &manifest,
+            "indexed source entrypoint differs",
+        )?;
+        other_artifact.crate_lib_path = workspace.path().join("native");
+        assert_provider_definition_refused_before_materialization(
+            &other_artifact,
+            &manifest,
+            "indexed source entrypoint must be a regular non-symlink file",
+        )?;
+        #[cfg(unix)]
+        {
+            let alias_root = tempfile::tempdir()?;
+            other_artifact.crate_lib_path = alias_root.path().join("aliased-source.rs");
+            std::os::unix::fs::symlink(&artifact.crate_lib_path, &other_artifact.crate_lib_path)?;
+            assert_provider_definition_refused_before_materialization(
+                &other_artifact,
+                &manifest,
+                "indexed source entrypoint must be a regular non-symlink file",
+            )?;
+        }
+        fs::write(&artifact.crate_lib_path, "pub fn changed() {}\n")?;
+        assert_provider_definition_refused_before_materialization(
+            &artifact,
+            &manifest,
+            "generated source bytes differ",
+        )?;
+        fs::write(&artifact.crate_lib_path, original_source)?;
+
+        let mut invalid_name = definition;
+        invalid_name.crate_name = "../../escaped-output".to_string();
+        fs::write(
+            artifact.crate_root.join(NATIVE_SOURCE_UNIT_PATH),
+            invalid_name.to_json_bytes()?,
+        )?;
+        assert_provider_definition_refused_before_materialization(
+            &artifact,
+            &manifest,
+            "not a Rust target identifier",
+        )?;
         Ok(())
     }
 
