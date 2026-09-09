@@ -7028,6 +7028,109 @@ def main() -> None:
     Ok(())
 }
 
+/// Inline and bound model comparisons agree without moving operands or evaluating their fields twice.
+#[test]
+fn model_constructor_comparison_runs_equivalent_assertions() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::create_dir_all(tmp.path().join("src"))?;
+    fs::write(
+        tmp.path().join("loaf.toml"),
+        "[project]\nname = \"model_constructor_comparison\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        r#"from std.testing import assert_eq, assert_ne, assert_false
+
+@derive(Eq)
+model Pair:
+    x: str
+
+def observed(tag: str) -> str:
+    println(tag)
+    return "same"
+
+def failure_message() -> str:
+    println("unexpected failure message")
+    return "model comparison failed"
+
+pub def main() -> None:
+    value = Pair(x="same")
+    expected = Pair(x="same")
+    assert value == Pair(x="same")
+    assert Pair(x="same") == value
+    assert Pair(x="same") == Pair(x="same")
+    assert value != Pair(x="different")
+    assert Pair(x="different") != value
+    assert (value == Pair(x="same")) == (Pair(x="same") == value)
+    assert not (value != Pair(x="same"))
+    assert_eq(value, Pair(x="same"))
+    assert_eq(Pair(x="same"), value)
+    assert_ne(value, Pair(x="different"))
+    assert_ne(Pair(x="different"), value)
+    assert_false(value != Pair(x="same"))
+    assert value == expected
+    assert value == Pair(x="same"), failure_message()
+    assert Pair(x=observed("left")) == Pair(x=observed("right"))
+    println(value.x)
+    println(expected.x)
+    println("ok")
+"#,
+    )?;
+
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare inline model comparison fixture");
+    let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
+    assert_success(&build, "build inline model comparison assertions");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run inline model comparison assertions");
+    assert_eq!(String::from_utf8(run.stdout)?, "left\nright\nsame\nsame\nok\n");
+    Ok(())
+}
+
+/// Unequal inline models still fail at runtime and evaluate the failure message exactly once.
+#[test]
+fn model_constructor_comparison_preserves_assertion_failure() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::create_dir_all(tmp.path().join("src"))?;
+    fs::write(
+        tmp.path().join("loaf.toml"),
+        "[project]\nname = \"model_constructor_comparison_failure\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        r#"@derive(Eq)
+model Pair:
+    x: str
+
+def observed(tag: str) -> str:
+    println(tag)
+    return tag
+
+def failure_message() -> str:
+    println("failure message")
+    return "model comparison failed"
+
+pub def main() -> None:
+    assert Pair(x=observed("left")) == Pair(x=observed("right")), failure_message()
+    println("unreachable")
+"#,
+    )?;
+
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare failing inline model comparison fixture");
+    let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
+    assert_success(&build, "build failing inline model comparison assertion");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_failure(&run, "unequal inline models must fail their assertion");
+    assert_eq!(String::from_utf8(run.stdout)?, "left\nright\nfailure message\n");
+    let stderr = String::from_utf8(run.stderr)?;
+    assert!(
+        stderr.contains("AssertionError: model comparison failed; left != right"),
+        "the normal assertion failure must survive native execution: {stderr}"
+    );
+    Ok(())
+}
+
 #[test]
 fn build_union_widening_converts_generated_wrappers_issue741() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
