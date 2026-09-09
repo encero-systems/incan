@@ -117,7 +117,8 @@ use crate::oven::{
 };
 use crate::oven_interop::locked_oven_interop_targets;
 use crate::provider::{
-    FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderPlan, SDK_PROVIDER_BUILD_ENV,
+    FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderIdentity, ProviderPlan, PublicProviderArtifact,
+    SDK_PROVIDER_BUILD_ENV,
 };
 use crate::version::INCAN_VERSION;
 
@@ -3995,60 +3996,6 @@ fn deduplicate_caller_owned_libraries_prefer_extern(libraries: &mut Vec<OvenCall
     libraries.dedup_by(|left, right| left.crate_name == right.crate_name && left.output == right.output);
 }
 
-/// Load one public provider edge from the parent artifact's checked, relocation-safe projection.
-///
-/// The parent manifest supplies both the exact artifact-tree digest and the expected provider identity. Resolving the
-/// relative path therefore does not restore normal dependency discovery: a child is admissible only when all three
-/// values agree, and the normal artifact loader confirms its generated source and Cargo projection are complete.
-fn load_receipted_public_provider_dependency(
-    parent: &LibraryArtifactMetadata,
-    dependency: &ProviderDependencyMetadata,
-) -> CliResult<(LibraryManifest, LibraryArtifactMetadata)> {
-    let candidate = parent.crate_root.join(&dependency.relative_artifact_path);
-    let actual_digest = digest_provider_artifact(&candidate).map_err(|error| {
-        CliError::failure(format!(
-            "Oven Alpha cannot re-materialize pub::{} because provider edge `{}` has an invalid artifact at {}: {error}",
-            parent.dependency_key,
-            dependency.dependency_key,
-            candidate.display()
-        ))
-    })?;
-    if actual_digest != dependency.artifact_digest {
-        return Err(CliError::failure(format!(
-            "Oven Alpha refuses provider edge `{}` below pub::{}: artifact digest {actual_digest} does not match its checked manifest identity {}",
-            dependency.dependency_key, parent.dependency_key, dependency.artifact_digest
-        )));
-    }
-    let entry = load_provider_dependency_artifact(&dependency.dependency_key, &candidate);
-    let (manifest, metadata) = match entry {
-        LibraryManifestIndexEntry::Loaded { manifest, metadata } => (*manifest, metadata),
-        LibraryManifestIndexEntry::Failed(failure) => {
-            return Err(CliError::failure(format!(
-                "Oven Alpha cannot re-materialize provider edge `{}` below pub::{}: {failure}",
-                dependency.dependency_key, parent.dependency_key
-            )));
-        }
-    };
-    if manifest.name != dependency.provider_name || manifest.version != dependency.provider_version {
-        return Err(CliError::failure(format!(
-            "Oven Alpha refuses provider edge `{}` below pub::{}: checked identity {}@{} differs from discovered {}@{}",
-            dependency.dependency_key,
-            parent.dependency_key,
-            dependency.provider_name,
-            dependency.provider_version,
-            manifest.name,
-            manifest.version
-        )));
-    }
-    if metadata.kind != LibraryArtifactKind::Materialized {
-        return Err(CliError::failure(format!(
-            "Oven Alpha cannot re-materialize provider edge `{}` below pub::{} from parser-only metadata",
-            dependency.dependency_key, parent.dependency_key
-        )));
-    }
-    Ok((manifest, metadata))
-}
-
 /// Read and verify the producer receipt that authorizes one caller-owned generated library source.
 fn caller_owned_library_receipt(
     artifact: &LibraryArtifactMetadata,
@@ -4638,14 +4585,105 @@ fn read_provider_native_source_definition(
     Ok(definition)
 }
 
+/// Verify one admitted artifact's current physical location and bytes before consuming native authority.
+///
+/// Registry receipt selection and source rematerialization are distinct physical consumers. Each must verify its
+/// borrowed graph facts before use; neither may infer fresh admission from a neighboring receipt or a memo hit.
+/// The returned digest also supplies rematerialization's existing output coordinate.
+fn verify_admitted_public_artifact(provider: &PublicProviderArtifact) -> CliResult<String> {
+    let artifact = &provider.artifact;
+    let identity = &provider.identity;
+    let current_root = fs::canonicalize(&artifact.crate_root)
+        .map_err(|error| CliError::failure(format!("cannot verify admitted provider root: {error}")))?;
+    if current_root != provider.admitted_root {
+        return Err(CliError::failure(format!(
+            "Oven Alpha refuses native provider consumption of {}: physical location changed after admission",
+            identity.stable_key()
+        )));
+    }
+    let artifact_digest = digest_provider_artifact(&artifact.crate_root).map_err(|error| {
+        CliError::failure(format!(
+            "Oven Alpha cannot fingerprint generated provider artifact for {} at {}: {error}",
+            identity.stable_key(),
+            artifact.crate_root.display()
+        ))
+    })?;
+    if artifact_digest != identity.digest {
+        return Err(CliError::failure(format!(
+            "Oven Alpha refuses native provider consumption of {}: artifact digest {artifact_digest} differs from admitted identity",
+            identity.stable_key()
+        )));
+    }
+    Ok(artifact_digest)
+}
+
+/// Source definitions validated during one native rematerialization invocation against its borrowed provider plan.
+///
+/// Every lookup still checks current physical artifact bytes against the admitted identity. The memo avoids only
+/// repeated definition/source validation for the same identity and established root; it does not freeze disk paths
+/// or cache native outputs, receipts or selected dependencies.
+struct CallerOwnedProviderSourceDefinitions<'plan> {
+    provider_plan: &'plan ProviderPlan,
+    definitions: BTreeMap<(ProviderIdentity, PathBuf), Arc<NativeSourceUnitDefinition>>,
+    #[cfg(test)]
+    source_validations: usize,
+    #[cfg(test)]
+    artifact_verifications: usize,
+}
+
+impl<'plan> CallerOwnedProviderSourceDefinitions<'plan> {
+    /// Start a memo whose lifetime cannot exceed the existing admitted plan or this native invocation.
+    fn new(provider_plan: &'plan ProviderPlan) -> Self {
+        Self {
+            provider_plan,
+            definitions: BTreeMap::new(),
+            #[cfg(test)]
+            source_validations: 0,
+            #[cfg(test)]
+            artifact_verifications: 0,
+        }
+    }
+
+    /// Retain the existing artifact-integrity hash before a definition hit, then reuse it for the output coordinate.
+    fn read(
+        &mut self,
+        identity: &ProviderIdentity,
+    ) -> CliResult<(&'plan PublicProviderArtifact, Arc<NativeSourceUnitDefinition>, String)> {
+        let provider = self
+            .provider_plan
+            .public_artifact(identity)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let artifact = &provider.artifact;
+        NativeSourceUnitDefinition::path_in(&artifact.crate_root)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        #[cfg(test)]
+        {
+            self.artifact_verifications += 1;
+        }
+        let artifact_digest = verify_admitted_public_artifact(provider)?;
+        let key = (identity.clone(), provider.admitted_root.clone());
+        if let Some(definition) = self.definitions.get(&key) {
+            return Ok((provider, Arc::clone(definition), artifact_digest));
+        }
+        let definition = Arc::new(read_provider_native_source_definition(artifact, &provider.manifest)?);
+        #[cfg(test)]
+        {
+            self.source_validations += 1;
+        }
+        self.definitions.insert(key, Arc::clone(&definition));
+        Ok((provider, definition, artifact_digest))
+    }
+}
+
 /// Re-materialize one public provider graph by following only digest-verified public edges.
 ///
 /// Every nested output is retained as a verified direct-Rustc search path. Only the current graph root is exposed to
 /// its caller, which prevents an implementation dependency from becoming an accidental public package extern.
 #[allow(clippy::too_many_arguments)]
 fn rematerialize_caller_owned_provider_graph(
-    artifact: &LibraryArtifactMetadata,
-    manifest: &LibraryManifest,
+    definitions: &mut CallerOwnedProviderSourceDefinitions<'_>,
+    provider_identity: &ProviderIdentity,
+    dependency_key: &str,
     profile: &str,
     artifacts: &OvenRustcArtifactManifest,
     artifact_root: &Path,
@@ -4659,41 +4697,39 @@ fn rematerialize_caller_owned_provider_graph(
     visiting: &mut BTreeSet<PathBuf>,
     authority_context: &mut Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
-    let canonical_root = fs::canonicalize(&artifact.crate_root).map_err(|error| {
-        CliError::failure(format!(
-            "Oven Alpha cannot canonicalize generated artifact root for pub::{} at {}: {error}",
-            artifact.dependency_key,
-            artifact.crate_root.display()
-        ))
-    })?;
+    let provider_plan = definitions.provider_plan;
+    let provider = provider_plan
+        .public_artifact(provider_identity)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let canonical_root = provider.admitted_root.clone();
     if !visiting.insert(canonical_root.clone()) {
         return Err(CliError::failure(format!(
             "Oven Alpha refuses a cyclic public provider graph while re-materializing pub::{} at {}",
-            artifact.dependency_key,
+            dependency_key,
             canonical_root.display()
         )));
     }
     let result = (|| {
-        if let Some(dependency) = first_unselected_private_provider_edge(manifest, artifact_plan) {
+        if let Some(dependency) = first_unselected_private_provider_edge(&provider.manifest, artifact_plan) {
             return Err(CliError::failure(format!(
                 "Oven Alpha cannot re-materialize pub::{} because private provider edge `{}` is not a selected direct-Rustc foundation extern",
-                artifact.dependency_key, dependency.dependency_key
+                dependency_key, dependency.dependency_key
             )));
         }
-        let source_definition = read_provider_native_source_definition(artifact, manifest)?;
+        let (provider, source_definition, artifact_digest) = definitions.read(provider_identity)?;
+        let artifact = &provider.artifact;
+        let manifest = provider.manifest.as_ref();
 
         let mut nested_libraries = Vec::new();
-        for dependency in manifest
-            .contract_metadata
-            .provider
-            .provider_dependencies
-            .iter()
-            .filter(|dependency| dependency.kind == ProviderDependencyKind::PublicPackage)
+        let provider_plan = definitions.provider_plan;
+        for edge in provider_plan
+            .public_dependencies(provider_identity)
+            .map_err(|error| CliError::failure(error.to_string()))?
         {
-            let (nested_manifest, nested_artifact) = load_receipted_public_provider_dependency(artifact, dependency)?;
             let mut materialized = rematerialize_caller_owned_provider_graph(
-                &nested_artifact,
-                &nested_manifest,
+                definitions,
+                &edge.target.identity,
+                &edge.descriptor.dependency_key,
                 profile,
                 artifacts,
                 artifact_root,
@@ -4741,13 +4777,6 @@ fn rematerialize_caller_owned_provider_graph(
         deduplicate_caller_owned_libraries_prefer_extern(&mut nested_libraries);
 
         let crate_name = &source_definition.crate_name;
-        let artifact_digest = digest_provider_artifact(&artifact.crate_root).map_err(|error| {
-            CliError::failure(format!(
-                "Oven Alpha cannot fingerprint generated provider artifact for pub::{} at {}: {error}",
-                artifact.dependency_key,
-                artifact.crate_root.display()
-            ))
-        })?;
         let output = consumer_output_root
             .join("oven")
             .join("caller-owned-libraries")
@@ -4802,7 +4831,7 @@ fn rematerialize_caller_owned_provider_graph(
             nested.expose_extern = false;
         }
         nested_libraries.push(OvenCallerOwnedRustcLibrary {
-            crate_name: artifact.dependency_key.clone(),
+            crate_name: dependency_key.to_string(),
             output: bake.output,
             digest: bake.output_digest,
             expose_extern: true,
@@ -4869,22 +4898,14 @@ fn collect_caller_owned_provider_registry_leaf_authority(
             crate::provider::NamespaceAuthority::ProjectDependency { .. }
         )
     }) {
-        let artifact = provider.artifact.as_ref().ok_or_else(|| {
-            CliError::failure(format!(
-                "Oven Alpha cannot resolve pub::{} because its generated library artifact is unavailable",
-                provider.identity.name
-            ))
-        })?;
-        let manifest = provider.manifest.as_ref().ok_or_else(|| {
-            CliError::failure(format!(
-                "Oven Alpha cannot resolve pub::{} because its checked provider manifest is unavailable",
-                artifact.dependency_key
-            ))
-        })?;
+        let crate::provider::NamespaceAuthority::ProjectDependency { dependency_key } = &provider.authority else {
+            continue;
+        };
         collect_caller_owned_provider_registry_leaf_authority_graph(
             store,
-            artifact,
-            manifest,
+            provider_plan,
+            &provider.identity,
+            dependency_key,
             profile,
             &mut closure,
             &mut visiting,
@@ -4899,41 +4920,40 @@ fn collect_caller_owned_provider_registry_leaf_authority(
 ///
 /// Follows the same public-package provider edges [`rematerialize_caller_owned_provider_graph`] follows, so both
 /// walks agree on which providers exist and which are another provider's own nested public-package dependency.
+/// Fresh physical validation precedes child traversal and receipt selection, including packaged-provider paths that
+/// will not subsequently run source rematerialization.
 fn collect_caller_owned_provider_registry_leaf_authority_graph(
     store: &OvenStore,
-    artifact: &LibraryArtifactMetadata,
-    manifest: &LibraryManifest,
+    provider_plan: &ProviderPlan,
+    identity: &ProviderIdentity,
+    dependency_key: &str,
     profile: &str,
     closure: &mut CallerOwnedProviderRegistryClosure,
     visiting: &mut BTreeSet<PathBuf>,
 ) -> CliResult<()> {
-    let canonical_root = fs::canonicalize(&artifact.crate_root).map_err(|error| {
-        CliError::failure(format!(
-            "Oven Alpha cannot canonicalize generated artifact root for pub::{} at {}: {error}",
-            artifact.dependency_key,
-            artifact.crate_root.display()
-        ))
-    })?;
+    let provider = provider_plan
+        .public_artifact(identity)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let artifact = &provider.artifact;
+    let canonical_root = provider.admitted_root.clone();
     if !visiting.insert(canonical_root.clone()) {
         return Err(CliError::failure(format!(
             "Oven Alpha refuses a cyclic public provider graph while resolving pub::{} at {}",
-            artifact.dependency_key,
+            dependency_key,
             canonical_root.display()
         )));
     }
     let result = (|| {
-        for dependency in manifest
-            .contract_metadata
-            .provider
-            .provider_dependencies
-            .iter()
-            .filter(|dependency| dependency.kind == ProviderDependencyKind::PublicPackage)
+        verify_admitted_public_artifact(provider)?;
+        for edge in provider_plan
+            .public_dependencies(identity)
+            .map_err(|error| CliError::failure(error.to_string()))?
         {
-            let (nested_manifest, nested_artifact) = load_receipted_public_provider_dependency(artifact, dependency)?;
             collect_caller_owned_provider_registry_leaf_authority_graph(
                 store,
-                &nested_artifact,
-                &nested_manifest,
+                provider_plan,
+                &edge.target.identity,
+                &edge.descriptor.dependency_key,
                 profile,
                 closure,
                 visiting,
@@ -5030,6 +5050,7 @@ fn rematerialize_caller_owned_libraries_with_authority_context(
 ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
     let mut libraries = Vec::new();
     let mut visiting = BTreeSet::new();
+    let mut definitions = CallerOwnedProviderSourceDefinitions::new(provider_plan);
     let compiler_owned_roots = compiler_owned_roots_with_provider_plan(artifact_plan, Some(provider_plan));
     let selected_path_authority = (!compiler_owned_roots.is_empty())
         .then(|| OvenSelectedPathRustcAuthority::new(&compiler_owned_roots, artifact_plan));
@@ -5039,27 +5060,13 @@ fn rematerialize_caller_owned_libraries_with_authority_context(
             crate::provider::NamespaceAuthority::ProjectDependency { .. }
         )
     }) {
-        let artifact = provider.artifact.as_ref().ok_or_else(|| {
-            CliError::failure(format!(
-                "Oven Alpha cannot re-materialize pub::{} because its generated library artifact is unavailable",
-                provider.identity.name
-            ))
-        })?;
-        if artifact.kind != LibraryArtifactKind::Materialized {
-            return Err(CliError::failure(format!(
-                "Oven Alpha cannot re-materialize pub::{} from source-only metadata; run `incan build --lib` for that dependency first",
-                artifact.dependency_key
-            )));
-        }
-        let manifest = provider.manifest.as_ref().ok_or_else(|| {
-            CliError::failure(format!(
-                "Oven Alpha cannot re-materialize pub::{} because its checked provider manifest is unavailable",
-                artifact.dependency_key
-            ))
-        })?;
+        let crate::provider::NamespaceAuthority::ProjectDependency { dependency_key } = &provider.authority else {
+            continue;
+        };
         libraries.extend(rematerialize_caller_owned_provider_graph(
-            artifact,
-            manifest,
+            &mut definitions,
+            &provider.identity,
+            dependency_key,
             profile,
             artifacts,
             artifact_root,
@@ -17764,6 +17771,17 @@ headers = ["interop/include/bridge.h"]
         let output = consumer.path().join("output");
         fs::create_dir(&output)?;
         fs::write(output.join("accepted-output"), "preserve caller output")?;
+        let child_owner = tempfile::Builder::new()
+            .prefix("admitted-child-")
+            .tempdir_in(artifact.crate_root.parent().ok_or("provider root has no parent")?)?;
+        let child_root = child_owner.path().join("published");
+        let (child_artifact, child_manifest, _) =
+            provider_source_definition_fixture(&child_root, NativeSourceCrateKind::ProcMacro)?;
+        let child_directory = child_owner
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("child directory is not UTF-8")?;
         let mut manifest = manifest.clone();
         manifest
             .contract_metadata
@@ -17772,10 +17790,10 @@ headers = ["interop/include/bridge.h"]
             .push(ProviderDependencyMetadata {
                 kind: ProviderDependencyKind::PublicPackage,
                 dependency_key: "unreachable".to_string(),
-                provider_name: "unreachable".to_string(),
-                provider_version: "1.0.0".to_string(),
-                artifact_digest: digest_bytes(b"unreachable provider"),
-                relative_artifact_path: "missing-child".to_string(),
+                provider_name: child_manifest.name,
+                provider_version: child_manifest.version,
+                artifact_digest: digest_provider_artifact(&child_artifact.crate_root)?,
+                relative_artifact_path: format!("../{child_directory}/published"),
                 requested_features: BTreeSet::new(),
                 default_features: false,
                 optional: false,
@@ -17797,11 +17815,30 @@ headers = ["interop/include/bridge.h"]
             compile_environment: BTreeMap::new(),
             caller_owned_library_digests: BTreeMap::new(),
         };
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            artifact.dependency_key.clone(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: artifact.clone(),
+            },
+        )]));
+        let provider_plan = ProviderPlan::from_resolved_inputs(index, None, None, None, [])?;
+        let identity = provider_plan
+            .active_records()
+            .next()
+            .ok_or("admitted root absent")?
+            .identity
+            .clone();
+        let mut definitions = CallerOwnedProviderSourceDefinitions::new(&provider_plan);
+        // The checked child facts remain retained, but its native bytes are now unavailable. An invalid parent
+        // definition must still refuse before any recursive materialization tries to consume this child.
+        fs::rename(&child_root, child_owner.path().join("moved"))?;
         let before = digest_provider_artifact(&artifact.crate_root)?;
         let mut visiting = BTreeSet::new();
         let Err(error) = rematerialize_caller_owned_provider_graph(
-            artifact,
-            &manifest,
+            &mut definitions,
+            &identity,
+            &artifact.dependency_key,
             "debug",
             &artifacts,
             consumer.path(),
@@ -17829,7 +17866,7 @@ headers = ["interop/include/bridge.h"]
             1,
             "no child materialization may publish output"
         );
-        assert!(!artifact.crate_root.join("missing-child").exists());
+        assert!(!child_root.exists());
         Ok(())
     }
 
@@ -17867,6 +17904,160 @@ headers = ["interop/include/bridge.h"]
                 definition
             );
         }
+        Ok(())
+    }
+
+    /// Build a physical source-definition diamond and admit every edge through the normal provider loader.
+    fn provider_source_definition_diamond(root: &Path) -> Result<ProviderPlan, Box<dyn std::error::Error>> {
+        let (leaf, leaf_manifest, _) =
+            provider_source_definition_fixture(&root.join("leaf"), NativeSourceCrateKind::Rlib)?;
+        let edge = |alias: &str, child: &LibraryArtifactMetadata, manifest: &LibraryManifest, relative: &str| {
+            Ok::<_, Box<dyn std::error::Error>>(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PublicPackage,
+                dependency_key: alias.to_string(),
+                provider_name: manifest.name.clone(),
+                provider_version: manifest.version.clone(),
+                artifact_digest: digest_provider_artifact(&child.crate_root)?,
+                relative_artifact_path: relative.to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            })
+        };
+        let mut root_edges = Vec::new();
+        for (name, alias) in [("left", "stock"), ("right", "inventory")] {
+            let (artifact, mut manifest, _) =
+                provider_source_definition_fixture(&root.join(name), NativeSourceCrateKind::Rlib)?;
+            manifest.contract_metadata.provider.provider_dependencies.push(edge(
+                alias,
+                &leaf,
+                &leaf_manifest,
+                "../leaf",
+            )?);
+            manifest.write_to_path(&artifact.manifest_path)?;
+            root_edges.push(edge(name, &artifact, &manifest, &format!("../{name}"))?);
+        }
+        let (artifact, mut manifest, _) =
+            provider_source_definition_fixture(&root.join("root"), NativeSourceCrateKind::Rlib)?;
+        manifest.contract_metadata.provider.provider_dependencies = root_edges;
+        manifest.write_to_path(&artifact.manifest_path)?;
+        let entry = load_provider_dependency_artifact("consumer_alias", &artifact.crate_root);
+        let index = LibraryManifestIndex::from_entries(HashMap::from([("consumer_alias".to_string(), entry)]));
+        Ok(ProviderPlan::from_resolved_inputs(index, None, None, None, [])?)
+    }
+
+    /// A shared leaf validates once per invocation, while every cache hit still requires admitted physical bytes.
+    #[test]
+    fn caller_owned_provider_definition_memo_reuses_diamond_and_refuses_changed_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let plan = provider_source_definition_diamond(workspace.path())?;
+        let root = plan.active_records().next().ok_or("admitted root missing")?;
+        let mut definitions = CallerOwnedProviderSourceDefinitions::new(&plan);
+        let mut pending = vec![root.identity.clone()];
+        let mut visits = 0;
+        let mut leaf_definitions = Vec::new();
+        let mut leaf_identity = None;
+        while let Some(identity) = pending.pop() {
+            let (provider, definition, digest) = definitions.read(&identity)?;
+            visits += 1;
+            assert_eq!(digest, identity.digest);
+            let edges = plan.public_dependencies(&identity)?;
+            if edges.is_empty() {
+                leaf_identity = Some(identity);
+                leaf_definitions.push(definition);
+                assert_eq!(provider.admitted_root, fs::canonicalize(workspace.path().join("leaf"))?);
+            } else {
+                pending.extend(edges.into_iter().map(|edge| edge.target.identity.clone()));
+            }
+        }
+        assert_eq!(visits, 5);
+        assert_eq!(definitions.source_validations, 4);
+        assert_eq!(definitions.artifact_verifications, 5);
+        assert_eq!(leaf_definitions.len(), 2);
+        assert!(Arc::ptr_eq(&leaf_definitions[0], &leaf_definitions[1]));
+        let leaf_identity = leaf_identity.ok_or("diamond leaf absent")?;
+        let leaf = plan.public_artifact(&leaf_identity)?;
+        for path in [
+            leaf.artifact.crate_lib_path.clone(),
+            leaf.artifact.crate_root.join(NATIVE_SOURCE_UNIT_PATH),
+            leaf.artifact.manifest_path.clone(),
+        ] {
+            let original = fs::read(&path)?;
+            let mut changed = original.clone();
+            changed.extend_from_slice(b"\n");
+            fs::write(&path, changed)?;
+            let Err(error) = definitions.read(&leaf_identity) else {
+                return Err("changed source or metadata bytes must refuse before a definition cache hit".into());
+            };
+            assert!(error.to_string().contains("differs from admitted identity"), "{error}");
+            assert_eq!(definitions.source_validations, 4);
+            fs::write(&path, original)?;
+            let (_, reused, _) = definitions.read(&leaf_identity)?;
+            assert!(Arc::ptr_eq(&reused, &leaf_definitions[0]));
+        }
+        let mut next_invocation = CallerOwnedProviderSourceDefinitions::new(&plan);
+        let (_, fresh, _) = next_invocation.read(&leaf_identity)?;
+        assert_eq!(next_invocation.source_validations, 1);
+        assert_eq!(definitions.artifact_verifications, 11);
+        assert_eq!(next_invocation.artifact_verifications, 1);
+        assert!(!Arc::ptr_eq(&fresh, &leaf_definitions[0]));
+        assert!(!workspace.path().join("oven").exists());
+        Ok(())
+    }
+
+    /// Registry traversal verifies mutable provider bytes before inspecting any provider receipt or selected plan.
+    #[test]
+    fn caller_owned_provider_registry_collection_refuses_post_admission_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let plan = provider_source_definition_diamond(workspace.path())?;
+        let store = OvenStore::new(
+            workspace.path().join("oven-store"),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let closure = collect_caller_owned_provider_registry_leaf_authority(&store, &plan, "release")?;
+        assert!(closure.provider_authorities.is_empty());
+        assert!(closure.dependency_search_paths.is_empty());
+        let leaf = workspace.path().join("leaf");
+        let source = leaf.join("src/lib.rs");
+        let original = fs::read(&source)?;
+        let mut changed = original.clone();
+        changed.extend_from_slice(b"\n");
+        fs::write(&source, changed)?;
+        let Err(error) = collect_caller_owned_provider_registry_leaf_authority(&store, &plan, "release") else {
+            return Err("changed child bytes must refuse in the registry consumer itself".into());
+        };
+        assert!(error.to_string().contains("differs from admitted identity"), "{error}");
+        fs::write(&source, original)?;
+
+        let moved = workspace.path().join("moved-leaf");
+        fs::rename(&leaf, &moved)?;
+        let Err(error) = collect_caller_owned_provider_registry_leaf_authority(&store, &plan, "release") else {
+            return Err("missing admitted child location must refuse before receipt selection".into());
+        };
+        assert!(
+            error.to_string().contains("cannot verify admitted provider root"),
+            "{error}"
+        );
+        #[cfg(unix)]
+        {
+            // Equal bytes at a new location must not authorize a rebinding of the retained physical root.
+            std::os::unix::fs::symlink(&moved, &leaf)?;
+            let Err(error) = collect_caller_owned_provider_registry_leaf_authority(&store, &plan, "release") else {
+                return Err("rebound admitted child location must refuse before receipt selection".into());
+            };
+            assert!(
+                error.to_string().contains("physical location changed after admission"),
+                "{error}"
+            );
+            fs::remove_file(&leaf)?;
+        }
+        fs::rename(&moved, &leaf)?;
+        let restored = collect_caller_owned_provider_registry_leaf_authority(&store, &plan, "release")?;
+        assert!(restored.provider_authorities.is_empty());
+        assert!(restored.dependency_search_paths.is_empty());
+        assert!(!workspace.path().join("oven-store").exists());
         Ok(())
     }
 
@@ -17922,11 +18113,10 @@ headers = ["interop/include/bridge.h"]
         assert_provider_definition_refused_before_materialization(&other_artifact, &manifest, "artifact name differs")?;
         other_artifact = artifact.clone();
         other_artifact.kind = LibraryArtifactKind::ParserSource;
-        assert_provider_definition_refused_before_materialization(
-            &other_artifact,
-            &manifest,
-            "materialized provider artifact is required",
-        )?;
+        let Err(error) = read_provider_native_source_definition(&other_artifact, &manifest) else {
+            return Err("parser-only metadata must not authorize source materialization".into());
+        };
+        assert!(error.to_string().contains("materialized provider artifact is required"));
 
         let original_source = fs::read(&artifact.crate_lib_path)?;
         other_artifact = artifact.clone();
