@@ -3,6 +3,7 @@
 //! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
 //! resolution, project generation, and receipt-bound direct-`rustc` Oven execution.
 
+pub(crate) mod engine;
 mod library_publication;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -614,6 +615,9 @@ struct OvenProjectOutputPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lock_dependencies_fingerprint: Option<String>,
     compiler_version: String,
+    /// Actual compiling Incan executable, recorded only by an explicit Engine publisher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compiler_binary_identity: Option<engine::CompilerBinaryIdentity>,
     entrypoint_relative_path: String,
     build_unit_identity: String,
     receipt_identity: String,
@@ -703,11 +707,13 @@ struct OvenProjectOutputBakeRequest<'a> {
     required_project_loafs: Vec<OvenPackagedLibraryLoafEntry>,
     package_loaf_store_relative_path: Option<String>,
     backend_receipt: BackendExecutionReceipt,
+    compiler_binary_identity: Option<engine::CompilerBinaryIdentity>,
     build_report: Option<OvenProjectOutputReportSnapshot>,
 }
 
 /// A selected completed project output with the store lease held for its use.
 struct OvenStoredProjectOutput {
+    manifest: crate::oven::store::OvenArtifactManifest,
     identity: String,
     profile: String,
     intent: crate::oven::OvenBuildIntent,
@@ -734,6 +740,7 @@ struct PendingOvenProjectOutput {
     required_project_loafs: Vec<OvenPackagedLibraryLoafEntry>,
     package_loaf_store_relative_path: Option<String>,
     backend_receipt: BackendExecutionReceipt,
+    compiler_binary_identity: Option<engine::CompilerBinaryIdentity>,
     build_report: Option<OvenProjectOutputReportSnapshot>,
 }
 
@@ -7580,12 +7587,11 @@ fn publish_project_output_loaf(
 }
 
 /// Validate one already leased project-output payload without rehashing its immutable artifact bytes.
-fn stored_project_output_from_parts(
-    manifest: crate::oven::store::OvenArtifactManifest,
-    artifact_root: PathBuf,
-    payload: OvenProjectOutputPayload,
-    lease: OvenStoreLease,
-) -> CliResult<OvenStoredProjectOutput> {
+fn validated_project_output_native_path(
+    manifest: &crate::oven::store::OvenArtifactManifest,
+    artifact_root: &Path,
+    payload: &OvenProjectOutputPayload,
+) -> CliResult<PathBuf> {
     if manifest.kind != OvenArtifactKind::ProjectOutput
         || payload.schema_version != OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
         || payload.compiler_version != INCAN_VERSION
@@ -7667,12 +7673,22 @@ fn stored_project_output_from_parts(
             native_output.display()
         )));
     }
-    let profile = manifest.intent.profile.clone();
-    let intent = manifest.intent.clone();
+    Ok(native_output)
+}
+
+/// Retain the original manifest and lease after validating a completed output's recorded authority.
+fn stored_project_output_from_parts(
+    manifest: crate::oven::store::OvenArtifactManifest,
+    artifact_root: PathBuf,
+    payload: OvenProjectOutputPayload,
+    lease: OvenStoreLease,
+) -> CliResult<OvenStoredProjectOutput> {
+    let native_output = validated_project_output_native_path(&manifest, &artifact_root, &payload)?;
     Ok(OvenStoredProjectOutput {
-        identity: manifest.identity,
-        profile,
-        intent,
+        identity: manifest.identity.clone(),
+        profile: manifest.intent.profile.clone(),
+        intent: manifest.intent.clone(),
+        manifest,
         payload,
         artifact_root,
         native_output,
@@ -7783,6 +7799,7 @@ fn project_output_payload_for_bake(request: OvenProjectOutputBakeRequest<'_>) ->
         source_authority_digest: request.source_authority_digest.to_string(),
         lock_dependencies_fingerprint: request.lock_dependencies_fingerprint,
         compiler_version: INCAN_VERSION.to_string(),
+        compiler_binary_identity: request.compiler_binary_identity,
         entrypoint_relative_path,
         build_unit_identity: request.receipt.build_unit_identity.clone(),
         receipt_identity: request.receipt.identity.clone(),
@@ -12420,6 +12437,7 @@ fn try_reuse_baked_project(
     store: &OvenStore,
     package_features: &FeatureSelection,
     authority_context: &mut OvenProjectBakeAuthorityContext,
+    engine_publisher: Option<&mut engine::EnginePublisher>,
 ) -> CliResult<Option<OvenProjectBakeReport>> {
     // A completed project-output payload is selected only for the default command projection. Feature-qualified project
     // outputs remain explicit bake results until their selection facts are part of the public normal command payload,
@@ -12606,6 +12624,11 @@ fn try_reuse_baked_project(
         for (project_target, output, _, _) in &selected_outputs {
             if *project_target == OvenBakeProjectTarget::Executable {
                 materialize_project_output(project_root, output)?;
+            }
+        }
+        if let Some(publisher) = engine_publisher {
+            for (_, output, _, receipt) in &selected_outputs {
+                publisher.publish_if_requested(store, receipt, output)?;
             }
         }
         Ok(Some(report))
@@ -13588,11 +13611,23 @@ pub(crate) fn bake_oven_project_targets(
     project: &Path,
     package_features: &FeatureSelection,
 ) -> CliResult<OvenProjectBakeReport> {
+    bake_oven_project_targets_with_engine(project, package_features, None)
+}
+
+/// Add descriptor publication only for a trusted, explicit Engine bootstrap request.
+fn bake_oven_project_targets_with_engine(
+    project: &Path,
+    package_features: &FeatureSelection,
+    mut engine_publisher: Option<&mut engine::EnginePublisher>,
+) -> CliResult<OvenProjectBakeReport> {
     let project = project
         .to_str()
         .ok_or_else(|| CliError::failure(format!("Oven project path is not valid UTF-8: {}", project.display())))?;
     let project_root = resolve_library_project_root(Some(project))?;
     let targets = discover_oven_bake_project_targets(&project_root)?;
+    if let Some(publisher) = engine_publisher.as_ref() {
+        publisher.validate_targets(&project_root, &targets)?;
+    }
     let dependency_surface_entrypoint = oven_bake_dependency_surface_entrypoint(&targets)
         .ok_or_else(|| CliError::failure("explicit Oven project bake discovered no dependency-surface entrypoint"))?
         .to_path_buf();
@@ -13605,9 +13640,13 @@ pub(crate) fn bake_oven_project_targets(
             &store,
             package_features,
             &mut authority_context,
+            engine_publisher.as_deref_mut(),
         )?
     {
         return Ok(reused);
+    }
+    if let Some(publisher) = engine_publisher.as_deref_mut() {
+        publisher.begin_fresh_compilation()?;
     }
     let mut source_authority_digest = None;
     let mut published_project_lock = None;
@@ -13830,6 +13869,7 @@ pub(crate) fn bake_oven_project_targets(
                             required_project_loafs,
                             package_loaf_store_relative_path: Some(package_loaf_store_relative_path.clone()),
                             backend_receipt: backend_receipt.clone(),
+                            compiler_binary_identity: None,
                             build_report: None,
                         });
                     }
@@ -13912,6 +13952,9 @@ pub(crate) fn bake_oven_project_targets(
                             required_project_loafs: Vec::new(),
                             package_loaf_store_relative_path: None,
                             backend_receipt,
+                            compiler_binary_identity: engine_publisher.as_ref().and_then(|publisher| {
+                                publisher.compiler_identity_for(&project_root, &prepared.entrypoint)
+                            }),
                             build_report: Some(build_report),
                         });
                         let target_identity =
@@ -13961,6 +14004,9 @@ pub(crate) fn bake_oven_project_targets(
             library_inspection_constituent.as_ref(),
         )?;
         let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(&project_root)?;
+        if let Some(publisher) = engine_publisher.as_ref() {
+            publisher.verify_compiling_binary()?;
+        }
         let mut published_outputs = Vec::with_capacity(pending_outputs.len());
         for pending in pending_outputs {
             let files = pending.files;
@@ -13978,9 +14024,14 @@ pub(crate) fn bake_oven_project_targets(
                 required_project_loafs: pending.required_project_loafs,
                 package_loaf_store_relative_path: pending.package_loaf_store_relative_path,
                 backend_receipt: pending.backend_receipt,
+                compiler_binary_identity: pending.compiler_binary_identity,
                 build_report: pending.build_report,
             })?;
-            published_outputs.push(publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?);
+            let output = publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?;
+            if let Some(publisher) = engine_publisher.as_deref_mut() {
+                publisher.publish_if_requested(&store, &pending.receipt, &output)?;
+            }
+            published_outputs.push(output);
         }
         // Keep every sibling output and the authority leased through completion. A tight policy must fail this bake
         // rather than prune an earlier target/profile and then report a partial project as successfully prepared.
@@ -15623,7 +15674,8 @@ headers = ["interop/include/bridge.h"]
         Ok(())
     }
 
-    fn fixture_project_output_publication(
+    /// Construct a receipt-bound completed-output fixture shared with Engine artifact-admission controls.
+    pub(super) fn fixture_project_output_publication(
         project_root: &Path,
         profile: &str,
         label: &str,
@@ -15720,6 +15772,7 @@ headers = ["interop/include/bridge.h"]
             required_project_loafs: Vec::new(),
             package_loaf_store_relative_path: None,
             backend_receipt,
+            compiler_binary_identity: None,
             build_report: None,
         })?;
         Ok((receipt, payload, files))
@@ -16336,6 +16389,7 @@ headers = ["interop/include/bridge.h"]
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_version: INCAN_VERSION.to_string(),
+            compiler_binary_identity: None,
             entrypoint_relative_path: "src/main.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),
             receipt_identity: receipt.identity.clone(),
@@ -16406,6 +16460,7 @@ headers = ["interop/include/bridge.h"]
             required_project_loafs: Vec::new(),
             package_loaf_store_relative_path: None,
             backend_receipt: payload.backend_receipt.clone(),
+            compiler_binary_identity: None,
             build_report: None,
         });
         let Err(inconsistent) = inconsistent else {
@@ -16649,6 +16704,7 @@ headers = ["interop/include/bridge.h"]
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_version: INCAN_VERSION.to_string(),
+            compiler_binary_identity: None,
             entrypoint_relative_path: "src/lib.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),
             receipt_identity: receipt.identity.clone(),
@@ -16945,6 +17001,7 @@ headers = ["interop/include/bridge.h"]
                 &consumer_store,
                 &FeatureSelection::default(),
                 &mut authority_context,
+                None,
             )?
             .is_none(),
             "a package Loaf alone cannot skip producing this project's completed outputs"
@@ -20263,6 +20320,7 @@ pub model Nested:
                 &store,
                 &FeatureSelection::default(),
                 &mut context,
+                None,
             )?
             .is_none()
         );
@@ -20286,6 +20344,7 @@ pub model Nested:
                 &store,
                 &FeatureSelection::default(),
                 &mut context,
+                None,
             )?
             .is_none()
         );
