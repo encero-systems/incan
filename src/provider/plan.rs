@@ -311,6 +311,8 @@ struct ResolvedPublicDependency {
 
 /// Borrowed request and selected target of one already admitted public edge.
 pub(crate) struct PublicProviderDependency<'a> {
+    /// Position in the original checked manifest, including preceding private descriptors.
+    pub descriptor_index: usize,
     /// Original checked request, retaining alias, kind, version and every feature/request dimension.
     pub descriptor: &'a ProviderDependencyMetadata,
     /// Selected artifact, including its actual active feature projection and established physical root.
@@ -469,7 +471,11 @@ impl ProviderPlan {
                 {
                     return Err(invalid());
                 }
-                Ok(PublicProviderDependency { descriptor, target })
+                Ok(PublicProviderDependency {
+                    descriptor_index: edge.descriptor_index,
+                    descriptor,
+                    target,
+                })
             })
             .collect()
     }
@@ -1997,6 +2003,10 @@ mod tests {
         let root = plan.public_import_artifact("entry")?;
         let parents = plan.public_dependencies(&root.identity)?;
         assert_eq!(
+            parents.iter().map(|edge| edge.descriptor_index).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
             parents
                 .iter()
                 .map(|edge| edge.descriptor.dependency_key.as_str())
@@ -2011,6 +2021,8 @@ mod tests {
             "the preceding private SDK descriptor must not become public"
         );
         assert_eq!(left_children[0].descriptor, &left_edge);
+        assert_eq!(left_children[0].descriptor_index, 1);
+        assert_eq!(right_children[0].descriptor_index, 0);
         assert!(left_children[0].target.identity.feature_projection.is_empty());
         assert!(std::ptr::eq(left_children[0].target, right_children[0].target));
         let leaf_identity = left_children[0].target.identity.clone();
@@ -2020,6 +2032,10 @@ mod tests {
         assert!(!live.exists());
         assert_eq!(plan.public_artifact_route("entry", &leaf_identity)?, expected_route);
         assert_eq!(plan.public_dependencies(&root.identity)?.len(), 2);
+        assert_eq!(
+            plan.public_dependencies(&parents[0].target.identity)?[0].descriptor_index,
+            1
+        );
         assert!(plan.public_dependencies(&leaf_identity)?.is_empty());
         assert_eq!(plan.public_artifact(&leaf_identity)?.identity, leaf_identity);
         assert_eq!(plan.sdk_dependency_rebindings().len(), 0);
