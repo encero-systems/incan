@@ -25,6 +25,11 @@ const LOAF_MANIFEST_FILE: &str = "loaf.json";
 const PAYLOAD_FILE: &str = "payload";
 const MATERIALIZED_DIRECTORY: &str = "artifacts";
 const ACCESS_FILE: &str = "last-used";
+/// Optional original publisher receipt; legacy entries remain immutable without this witness.
+const NATIVE_RECEIPT_FILE: &str = "native-receipt.json";
+const NATIVE_RECEIPT_SCHEMA_VERSION: u32 = 1;
+const MAX_NATIVE_RECEIPT_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Sidecar cache for one immutable entry's recursively measured physical allocation.
 ///
 /// Entries under [`ENTRIES_DIRECTORY`] never change after publication, so a physical-byte measurement taken once
@@ -44,6 +49,21 @@ const LEGACY_CARGO_STAGING_DIRECTORY: &str = "legacy-cargo-staging";
 const LEGACY_CARGO_PUBLISHER_LOCK_FILE: &str = ".publisher.lock";
 const LEGACY_CARGO_STAGING_PREFIX: &str = ".legacy-cargo-";
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Versioned preimage of the receipt identity already authenticated by a native entry header.
+/// The writer borrows its validated request; admission retains the decoded receipt under the selected lease.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeReceiptWitness<T = OvenReceipt> {
+    schema_version: u32,
+    receipt: T,
+}
+
+/// Original decoded recipe and exact metadata bytes retained by one admitted execution owner.
+struct AdmittedNativeReceipt {
+    receipt: OvenReceipt,
+    bytes_digest: String,
+}
 
 /// Policy enforced before an Oven artifact becomes visible in the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,10 +229,16 @@ pub struct OvenStoreExecutionPayload {
     admitted_entry_root: PathBuf,
     /// Original content identity; public record mutation cannot retarget the held lease.
     admitted_identity: String,
+    original_native_receipt: Option<AdmittedNativeReceipt>,
     _lease: OvenStoreLease,
 }
 
 impl OvenStoreExecutionPayload {
+    /// Borrow the original publisher recipe; a legacy hash-only entry does not acquire new receipt facts.
+    pub(crate) fn original_native_receipt(&self) -> Option<&OvenReceipt> {
+        self.original_native_receipt.as_ref().map(|witness| &witness.receipt)
+    }
+
     /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
     ///
     /// A lease protects the selected entry from store pruning; it does not authenticate mutable public fields. This
@@ -235,6 +261,19 @@ impl OvenStoreExecutionPayload {
             return Err(OvenStoreError::Integrity {
                 identity: self.admitted_identity.clone(),
                 message: "execution payload bytes disagree with the original admitted descriptor".to_string(),
+            });
+        }
+        let witness_bytes = read_native_receipt_bytes(&self.admitted_entry_root, &manifest)?;
+        let current_digest = witness_bytes.as_deref().map(digest_bytes);
+        if current_digest.as_deref()
+            != self
+                .original_native_receipt
+                .as_ref()
+                .map(|witness| witness.bytes_digest.as_str())
+        {
+            return Err(OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "original native receipt witness changed after admission".to_string(),
             });
         }
         verify_materialized_files(&self.admitted_entry_root, &manifest).map(|_| ())
@@ -409,6 +448,7 @@ struct PreparedOvenArtifactPublication<'a> {
     manifest: OvenArtifactManifest,
     materialized_files: Vec<ValidatedMaterializedFile>,
     logical_bytes: u64,
+    native_receipt_bytes: Option<Vec<u8>>,
 }
 
 /// Fully written but not-yet-visible member of one related Oven publication batch.
@@ -517,7 +557,8 @@ impl OvenStore {
             return Ok(existing);
         }
 
-        let estimated_physical = conservative_physical_reservation(&manifest)?;
+        let native_receipt_bytes = encode_native_receipt(request)?;
+        let estimated_physical = conservative_physical_reservation(&manifest, native_receipt_bytes.as_deref())?;
         if estimated_physical > self.limits.max_domain_physical_bytes {
             return Err(OvenStoreError::CapacityBlocked {
                 domain,
@@ -539,6 +580,7 @@ impl OvenStore {
             &staging,
             &manifest,
             &request.payload,
+            native_receipt_bytes.as_deref(),
             &materialized_files,
             &mut shared_materialized_files,
         );
@@ -603,6 +645,7 @@ impl OvenStore {
             }
             let existing = verify_entry_manifest(&path)?;
             if reusable_manifest_equivalent(&existing, candidate) {
+                admit_native_receipt(&path, &existing)?;
                 return Ok(Some((existing, path)));
             }
         }
@@ -712,6 +755,7 @@ impl OvenStore {
                 manifest,
                 materialized_files,
                 logical_bytes,
+                native_receipt_bytes: encode_native_receipt(request)?,
             });
         }
         self.ensure_layout()?;
@@ -757,10 +801,12 @@ impl OvenStore {
             estimated_physical =
                 estimated_physical.saturating_add(conservative_physical_reservation_with_shared_materialized_files(
                     &publication.manifest,
+                    publication.native_receipt_bytes.as_deref(),
                     &mut reserved_materialized_files,
                 )?);
             let domain_reservation = conservative_physical_reservation_with_shared_materialized_files(
                 &publication.manifest,
+                publication.native_receipt_bytes.as_deref(),
                 reserved_by_domain
                     .entry(publication.manifest.domain.clone())
                     .or_default(),
@@ -794,6 +840,7 @@ impl OvenStore {
                 &staging,
                 &publication.manifest,
                 &publication.request.payload,
+                publication.native_receipt_bytes.as_deref(),
                 &publication.materialized_files,
                 &mut shared_materialized_files,
             ) {
@@ -960,6 +1007,7 @@ impl OvenStore {
         self.reclaim_stale_staging()?;
         let path = self.entry_root(identity);
         let manifest = verify_entry_manifest(&path)?;
+        admit_native_receipt(&path, &manifest)?;
         let payload_path = path.join(PAYLOAD_FILE);
         let payload = fs::read(&payload_path).map_err(|source| OvenStoreError::Io {
             path: payload_path,
@@ -1056,10 +1104,12 @@ impl OvenStore {
                 path: lease_path,
                 source,
             })?;
+            let original_native_receipt = admit_native_receipt(&path, &manifest)?;
             touch_entry(&path)?;
             selected.push(OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
                 admitted_identity: manifest.identity.clone(),
+                original_native_receipt,
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -1822,11 +1872,13 @@ where
             path: lease_path,
             source,
         })?;
+        let original_native_receipt = admit_native_receipt(&path, &manifest)?;
         selected.push((
             path.clone(),
             OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
                 admitted_identity: manifest.identity.clone(),
+                original_native_receipt,
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -1975,8 +2027,15 @@ fn normalized_domain(domain: &str) -> Result<String, OvenStoreError> {
 }
 
 /// Reserve enough physical capacity for one staged manifest, payload, materialized closure, and advisory files.
-fn conservative_physical_reservation(manifest: &OvenArtifactManifest) -> Result<u64, OvenStoreError> {
-    conservative_physical_reservation_with_shared_materialized_files(manifest, &mut BTreeSet::new())
+fn conservative_physical_reservation(
+    manifest: &OvenArtifactManifest,
+    native_receipt_bytes: Option<&[u8]>,
+) -> Result<u64, OvenStoreError> {
+    conservative_physical_reservation_with_shared_materialized_files(
+        manifest,
+        native_receipt_bytes,
+        &mut BTreeSet::new(),
+    )
 }
 
 /// Reserve a staged entry while counting one digest-matched immutable materialization only once in a publication
@@ -1984,6 +2043,7 @@ fn conservative_physical_reservation(manifest: &OvenArtifactManifest) -> Result<
 /// writer creates beneath its single managed store root.
 fn conservative_physical_reservation_with_shared_materialized_files(
     manifest: &OvenArtifactManifest,
+    native_receipt_bytes: Option<&[u8]>,
     shared_materialized_files: &mut BTreeSet<(String, bool)>,
 ) -> Result<u64, OvenStoreError> {
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| OvenStoreError::Manifest {
@@ -1994,6 +2054,11 @@ fn conservative_physical_reservation_with_shared_materialized_files(
         field: "manifest",
         message: "serialized manifest length does not fit the supported accounting range".to_string(),
     })?;
+    let receipt_bytes =
+        u64::try_from(native_receipt_bytes.map_or(0, <[u8]>::len)).map_err(|_| OvenStoreError::InvalidInput {
+            field: "native receipt",
+            message: "serialized receipt length does not fit the supported accounting range".to_string(),
+        })?;
     let materialized_reservation = manifest.materialized_files.iter().fold(0_u64, |total, file| {
         let key = (file.digest.clone(), file.executable);
         if shared_materialized_files.insert(key) {
@@ -2005,6 +2070,7 @@ fn conservative_physical_reservation_with_shared_materialized_files(
     Ok(round_physical(manifest.payload.logical_bytes)
         .saturating_add(materialized_reservation)
         .saturating_add(round_physical(manifest_bytes))
+        .saturating_add(round_physical(receipt_bytes))
         .saturating_add(round_physical(20)))
 }
 
@@ -2024,6 +2090,7 @@ fn write_staged_entry(
     root: &Path,
     manifest: &OvenArtifactManifest,
     payload: &[u8],
+    native_receipt_bytes: Option<&[u8]>,
     materialized_files: &[ValidatedMaterializedFile],
     shared_materialized_files: &mut BTreeMap<(String, bool), PathBuf>,
 ) -> Result<(), OvenStoreError> {
@@ -2085,6 +2152,9 @@ fn write_staged_entry(
         }
     }
     sync_directory_tree(&materialized_root)?;
+    if let Some(bytes) = native_receipt_bytes {
+        write_synced_file(&root.join(NATIVE_RECEIPT_FILE), bytes, false)?;
+    }
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| OvenStoreError::Manifest {
         path: root.join(manifest_file_name(manifest.kind)),
         message: error.to_string(),
@@ -2159,6 +2229,7 @@ fn is_private_publisher_materialized_source(root: &Path, source: &Path) -> Resul
 /// Verify one published immutable entry and calculate both its logical and physical accounting.
 fn verify_entry(root: &Path) -> Result<OvenStoreEntry, OvenStoreError> {
     let manifest = verify_entry_manifest(root)?;
+    admit_native_receipt(root, &manifest)?;
     let payload_path = root.join(PAYLOAD_FILE);
     let payload = fs::read(&payload_path).map_err(|source| OvenStoreError::Io {
         path: payload_path.clone(),
@@ -2199,6 +2270,108 @@ fn verify_entry(root: &Path) -> Result<OvenStoreEntry, OvenStoreError> {
         manifest,
         path: root.to_path_buf(),
     })
+}
+
+/// Encode a newly published native entry's original receipt after `artifact_manifest` validates it.
+/// Borrowing the request avoids copying or rehashing its recipe; this metadata does not change the entry identity.
+fn encode_native_receipt(request: &OvenArtifactPublishRequest) -> Result<Option<Vec<u8>>, OvenStoreError> {
+    if request.kind != OvenArtifactKind::DirectRustcPlan {
+        return Ok(None);
+    }
+    let bytes = serde_json::to_vec(&NativeReceiptWitness {
+        schema_version: NATIVE_RECEIPT_SCHEMA_VERSION,
+        receipt: &request.receipt,
+    })
+    .map_err(|error| OvenStoreError::InvalidInput {
+        field: "native receipt",
+        message: error.to_string(),
+    })?;
+    if u64::try_from(bytes.len())
+        .ok()
+        .is_none_or(|length| length > MAX_NATIVE_RECEIPT_BYTES)
+    {
+        return Err(OvenStoreError::InvalidInput {
+            field: "native receipt",
+            message: "original native receipt exceeds the 16 MiB metadata bound".to_string(),
+        });
+    }
+    Ok(Some(bytes))
+}
+
+/// Read bounded regular metadata only at its original entry coordinate; absence is legacy evidence, not an empty
+/// recipe.
+fn read_native_receipt_bytes(root: &Path, manifest: &OvenArtifactManifest) -> Result<Option<Vec<u8>>, OvenStoreError> {
+    let path = root.join(NATIVE_RECEIPT_FILE);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(OvenStoreError::Io { path, source }),
+    };
+    if manifest.kind != OvenArtifactKind::DirectRustcPlan
+        || !metadata.file_type().is_file()
+        || metadata.len() > MAX_NATIVE_RECEIPT_BYTES
+    {
+        return Err(OvenStoreError::Integrity {
+            identity: manifest.identity.clone(),
+            message: "native receipt must be bounded regular metadata on a DirectRustcPlan entry".to_string(),
+        });
+    }
+    let file = File::open(&path).map_err(|source| OvenStoreError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    let mut bytes = Vec::new();
+    file.take(MAX_NATIVE_RECEIPT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|source| OvenStoreError::Io { path, source })?;
+    if u64::try_from(bytes.len())
+        .ok()
+        .is_none_or(|length| length > MAX_NATIVE_RECEIPT_BYTES)
+    {
+        return Err(OvenStoreError::Integrity {
+            identity: manifest.identity.clone(),
+            message: "original native receipt exceeds the 16 MiB metadata bound".to_string(),
+        });
+    }
+    Ok(Some(bytes))
+}
+
+/// Admit the publisher's complete receipt against the existing header, decoding selected metadata once.
+fn admit_native_receipt(
+    root: &Path,
+    manifest: &OvenArtifactManifest,
+) -> Result<Option<AdmittedNativeReceipt>, OvenStoreError> {
+    let Some(bytes) = read_native_receipt_bytes(root, manifest)? else {
+        return Ok(None);
+    };
+    let invalid = |message: String| OvenStoreError::Integrity {
+        identity: manifest.identity.clone(),
+        message,
+    };
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
+    if value.get("schema_version").and_then(serde_json::Value::as_u64) != Some(u64::from(NATIVE_RECEIPT_SCHEMA_VERSION))
+    {
+        return Err(invalid(
+            "unsupported original native receipt witness schema".to_string(),
+        ));
+    }
+    let witness: NativeReceiptWitness = serde_json::from_value(value).map_err(|error| invalid(error.to_string()))?;
+    witness
+        .receipt
+        .verify_identity()
+        .map_err(|error| invalid(error.to_string()))?;
+    if witness.receipt.identity != manifest.receipt_identity
+        || witness.receipt.build_unit_identity != manifest.build_unit_identity
+        || witness.receipt.intent != manifest.intent
+    {
+        return Err(invalid(
+            "original native receipt witness disagrees with entry receipt, build unit, or intent".to_string(),
+        ));
+    }
+    Ok(Some(AdmittedNativeReceipt {
+        receipt: witness.receipt,
+        bytes_digest: digest_bytes(&bytes),
+    }))
 }
 
 /// Verify immutable manifest structure and identity without traversing the materialized compiler closure.
@@ -3213,6 +3386,287 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+
+    /// Generic equivalent-unit reuse preserves the first publisher's complete source receipt.
+    #[test]
+    fn native_receipt_witness_survives_source_changed_equivalent_publication() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "recipe", b"same native bytes")?;
+        original.kind = OvenArtifactKind::DirectRustcPlan;
+        let published = store.publish(&original)?;
+        let original_bytes = fs::read(store.entry_root(&published.identity).join(super::NATIVE_RECEIPT_FILE))?;
+        fs::write(
+            project.path().join("fixture.rs"),
+            "pub fn fixture() { let changed = 42; }\n",
+        )?;
+        let mut current = request(project.path(), "recipe", b"same native bytes")?;
+        current.kind = OvenArtifactKind::DirectRustcPlan;
+        assert_ne!(original.receipt.identity, current.receipt.identity);
+        assert_eq!(
+            original.receipt.build_unit_identity,
+            current.receipt.build_unit_identity
+        );
+        let reused = store.publish(&current)?;
+        assert_eq!(reused, published);
+        assert_eq!(fs::read_dir(root.path().join(super::ENTRIES_DIRECTORY))?.count(), 1);
+        let selected = store.select_payloads_matching_for_execution(|header| {
+            header.build_unit_identity == current.receipt.build_unit_identity
+        })?;
+        let owner = selected.first().ok_or("original native owner missing")?;
+        assert_eq!(owner.original_native_receipt(), Some(&original.receipt));
+        assert_ne!(owner.original_native_receipt(), Some(&current.receipt));
+        owner.verify_admitted_payload()?;
+        assert_eq!(
+            fs::read(store.entry_root(&reused.identity).join(super::NATIVE_RECEIPT_FILE))?,
+            original_bytes
+        );
+        Ok(())
+    }
+
+    /// Same-ID and equivalent publications cannot retrofit a recipe into a legacy immutable entry.
+    #[test]
+    fn native_receipt_witness_absence_stays_absent_on_legacy_deduplication() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "legacy", b"same native bytes")?;
+        original.kind = OvenArtifactKind::DirectRustcPlan;
+        let published = store.publish(&original)?;
+        let entry = store.entry_root(&published.identity);
+        fs::remove_file(entry.join(super::NATIVE_RECEIPT_FILE))?;
+        let immutable = || -> Result<PublishedInventory, Box<dyn std::error::Error>> {
+            let mut inventory = published_inventory(&entry)?;
+            inventory.remove(Path::new(super::ACCESS_FILE));
+            inventory.remove(Path::new(super::PHYSICAL_BYTES_CACHE_FILE));
+            inventory.remove(Path::new(super::UNIQUE_FILE_RECORDS_CACHE_FILE));
+            Ok(inventory)
+        };
+        let before = immutable()?;
+        assert_eq!(store.publish(&original)?, published);
+        assert_eq!(store.publish_batch(&[original.clone()])?, vec![published.clone()]);
+        fs::write(
+            project.path().join("fixture.rs"),
+            "pub fn fixture() { let changed = 42; }\n",
+        )?;
+        let mut current = request(project.path(), "legacy", b"same native bytes")?;
+        current.kind = OvenArtifactKind::DirectRustcPlan;
+        assert_ne!(original.receipt.identity, current.receipt.identity);
+        assert_eq!(
+            original.receipt.build_unit_identity,
+            current.receipt.build_unit_identity
+        );
+        assert_eq!(store.publish(&current)?, published);
+        let selected = store.select_payloads_for_execution(&[published.identity])?;
+        assert!(
+            selected
+                .first()
+                .ok_or("legacy owner missing")?
+                .original_native_receipt()
+                .is_none()
+        );
+        assert_eq!(immutable()?, before);
+        assert!(!entry.join(super::NATIVE_RECEIPT_FILE).exists());
+        Ok(())
+    }
+
+    /// A valid receipt from another source invocation, or malformed metadata, cannot replace the header's preimage.
+    #[test]
+    fn native_receipt_witness_rejects_contradiction_and_future_schema() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "recipe", b"native")?;
+        original.kind = OvenArtifactKind::DirectRustcPlan;
+        let published = store.publish(&original)?;
+        let path = store.entry_root(&published.identity).join(super::NATIVE_RECEIPT_FILE);
+        let original_bytes = fs::read(&path)?;
+        store.select_payloads_for_execution(&[published.identity.clone()])?;
+        fs::write(
+            project.path().join("fixture.rs"),
+            "pub fn fixture() { let changed = 42; }\n",
+        )?;
+        let foreign = request(project.path(), "recipe", b"native")?.receipt;
+        foreign.verify_identity()?;
+        assert_eq!(foreign.build_unit_identity, original.receipt.build_unit_identity);
+        let contradictory = serde_json::to_vec(&super::NativeReceiptWitness {
+            schema_version: 1,
+            receipt: foreign,
+        })?;
+        replace_native_witness_fixture(&path, &contradictory)?;
+        let error = store
+            .select_payloads_for_execution(&[published.identity.clone()])
+            .err()
+            .ok_or("contradictory witness accepted")?;
+        assert!(error.to_string().contains("disagrees with entry receipt"), "{error}");
+        assert!(
+            store.publish(&original).is_err(),
+            "dedup must validate an existing contradictory witness"
+        );
+        replace_native_witness_fixture(&path, br#"{"schema_version":2,"receipt":"not a version-1 receipt"}"#)?;
+        let error = store
+            .select_payloads_for_execution(&[published.identity.clone()])
+            .err()
+            .ok_or("future schema accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported original native receipt witness schema"),
+            "{error}"
+        );
+        let mut invalid = serde_json::to_value(&original.receipt)?;
+        invalid["identity"] = serde_json::json!("sha256:invalid");
+        replace_native_witness_fixture(
+            &path,
+            &serde_json::to_vec(&serde_json::json!({"schema_version":1,"receipt":invalid}))?,
+        )?;
+        assert!(
+            store
+                .select_payloads_for_execution(&[published.identity.clone()])
+                .is_err()
+        );
+        replace_native_witness_fixture(&path, &original_bytes)?;
+        store.select_payloads_for_execution(&[published.identity])?;
+        Ok(())
+    }
+
+    /// The retained lease protects reachability while subsequent admission still detects removed or changed metadata.
+    #[test]
+    fn native_receipt_witness_revalidates_original_bytes_under_lease() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "recipe", b"native")?;
+        original.kind = OvenArtifactKind::DirectRustcPlan;
+        let published = store.publish(&original)?;
+        let selected = store.select_payloads_for_execution(&[published.identity.clone()])?;
+        let owner = selected.first().ok_or("native owner missing")?;
+        owner.verify_admitted_payload()?;
+        let path = store.entry_root(&published.identity).join(super::NATIVE_RECEIPT_FILE);
+        let original_bytes = fs::read(&path)?;
+        let mut changed = original_bytes.clone();
+        changed.push(b' ');
+        replace_native_witness_fixture(&path, &changed)?;
+        assert!(
+            owner.verify_admitted_payload().is_err(),
+            "even equivalent metadata must retain its admitted bytes"
+        );
+        replace_native_witness_fixture(&path, &original_bytes)?;
+        owner.verify_admitted_payload()?;
+        fs::remove_file(&path)?;
+        assert!(
+            owner.verify_admitted_payload().is_err(),
+            "witness removal must not downgrade an admitted owner"
+        );
+        fs::write(&path, &original_bytes)?;
+        owner.verify_admitted_payload()?;
+        Ok(())
+    }
+
+    /// Batch publication retains each actual recipe and reserves its metadata without changing logical payload
+    /// accounting.
+    #[test]
+    fn native_receipt_witness_batch_publication_accounts_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut first = request(project.path(), "recipe", b"native one")?;
+        first.kind = OvenArtifactKind::DirectRustcPlan;
+        let mut second = first.clone();
+        second.payload = b"native two".to_vec();
+        let manifests = store.publish_batch(&[first.clone(), second])?;
+        assert_eq!(manifests.len(), 2);
+        for manifest in manifests {
+            let entry = store.entry_root(&manifest.identity);
+            let bytes = fs::read(entry.join(super::NATIVE_RECEIPT_FILE))?;
+            assert!(!bytes.is_empty());
+            assert!(
+                super::conservative_physical_reservation(&manifest, Some(&bytes))?
+                    > super::conservative_physical_reservation(&manifest, None)?
+            );
+            let measured = super::verify_entry(&entry)?;
+            assert_eq!(measured.logical_bytes, manifest.payload.logical_bytes);
+            assert!(
+                measured.physical_bytes
+                    >= super::physical_file_bytes(&fs::metadata(entry.join(super::NATIVE_RECEIPT_FILE))?)
+            );
+            let selected = store.select_payloads_for_execution(&[manifest.identity])?;
+            assert_eq!(
+                selected.first().ok_or("batch owner missing")?.original_native_receipt(),
+                Some(&first.receipt)
+            );
+        }
+        Ok(())
+    }
+
+    /// A sparse oversized receipt refuses before allocation, even if its first bytes form valid JSON.
+    #[test]
+    fn native_receipt_witness_rejects_oversized_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "recipe", b"native")?;
+        original.kind = OvenArtifactKind::DirectRustcPlan;
+        let published = store.publish(&original)?;
+        let path = store.entry_root(&published.identity).join(super::NATIVE_RECEIPT_FILE);
+        OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .set_len(super::MAX_NATIVE_RECEIPT_BYTES + 1)?;
+        let error = store
+            .select_payloads_for_execution(&[published.identity])
+            .err()
+            .ok_or("oversized witness accepted")?;
+        assert!(error.to_string().contains("bounded regular metadata"), "{error}");
+        Ok(())
+    }
+
+    /// A link to matching receipt bytes does not confer authority on a different physical owner.
+    #[cfg(unix)]
+    #[test]
+    fn native_receipt_witness_rejects_symlink_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "recipe", b"native")?;
+        original.kind = OvenArtifactKind::DirectRustcPlan;
+        let published = store.publish(&original)?;
+        let path = store.entry_root(&published.identity).join(super::NATIVE_RECEIPT_FILE);
+        let foreign = project.path().join("receipt.json");
+        fs::rename(&path, &foreign)?;
+        std::os::unix::fs::symlink(foreign, path)?;
+        assert!(store.select_payloads_for_execution(&[published.identity]).is_err());
+        Ok(())
+    }
+
+    /// Corrupt only this temporary fixture's metadata, restoring its permissions before admission.
+    fn replace_native_witness_fixture(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let original = fs::metadata(path)?.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(original.mode() | 0o200))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut writable = original.clone();
+            writable.set_readonly(false);
+            fs::set_permissions(path, writable)?;
+        }
+        let result = fs::write(path, bytes);
+        fs::set_permissions(path, original)?;
+        result?;
+        Ok(())
+    }
 
     /// Relative directory entries and exact file bytes in a published store.
     type PublishedInventory = BTreeMap<PathBuf, Option<Vec<u8>>>;

@@ -152,3 +152,5 @@ The private tests exercise the real descriptor/Store installer, original-owner r
 explicit issuer denials, exact bounded process observations, the empty-provider command path, and target filtering.
 Their executable fixtures are process-test data, not native Incan proof. This increment has only source/static checks;
 compilation, real core publication and the plain-provider/facade native acceptance remain pending. #991 stays open.
+
+New native Store publications retain the publisher's full receipt as bounded, versioned metadata. Ordinary provider selection borrows that original recipe under the selected owner lease, including when the current source receipt differs but the reusable build unit matches. Legacy entries without the metadata keep their original bytes and native admission; the provider recipe path reports the missing witness instead of substituting the current receipt. This source connection has focused controls but has not yet been compiled or executed.

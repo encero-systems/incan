@@ -220,6 +220,19 @@ impl<'owner> OvenNativeInputView<'owner> {
         }
     }
 
+    /// Require the selected Store's original full publisher recipe; an exact key cannot supply missing SDK recipe
+    /// facts.
+    pub(crate) fn original_native_receipt(&self) -> Result<&OvenReceipt, OvenRustcError> {
+        let receipt = match &self.owner {
+            OvenNativeInputOwner::Store(owner) => owner.original_native_receipt(),
+            OvenNativeInputOwner::ToolchainLoaf(_) => None,
+        };
+        receipt.ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "native input receipt witness",
+            message: "selected native owner has no original full publisher receipt witness".to_string(),
+        })
+    }
+
     /// Return the original reusable build-unit identity without recomputing compatibility.
     pub(crate) fn build_unit_identity(&self) -> &str {
         match self.origin() {

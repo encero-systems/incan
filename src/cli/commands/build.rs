@@ -153,18 +153,7 @@ fn materialize_provider_sources_with_installed_engine(
         ));
     };
     let view = stored.native_input_view().map_err(oven_rustc_error)?;
-    // The publisher's provider-specific role wins only when explicitly declared in the original manifest. Legacy
-    // plans keep their original generated-root role; a missing role is rejected by the batch's normal admission.
-    let source_role = if view.artifacts().entrypoint_externs.contains_key("provider-compilation") {
-        "provider-compilation"
-    } else {
-        "generated-root"
-    };
-    let candidates = [ProviderBatchCandidate {
-        owner: ProviderBatchNativeOwner::Store(&view),
-        source_role,
-        receipt: (view.receipt_identity() == Some(receipt.identity.as_str())).then_some(receipt),
-    }];
+    let candidates = [ProviderBatchCandidate::from_store(&view)?];
     let installed = engine::InstalledCoreEngine::load_current()?;
     let host_target = rustc_host_target(rustc).map_err(oven_rustc_error)?;
     let batch = ProviderSourceBatch::new(provider_plan, receipt, semantic_identities, &candidates)?;
@@ -4973,7 +4962,24 @@ struct ProviderBatchCandidate<'native> {
     receipt: Option<&'native crate::oven::OvenReceipt>,
 }
 
-impl ProviderBatchCandidate<'_> {
+impl<'native> ProviderBatchCandidate<'native> {
+    /// Retain the ordinary command's original Store recipe and declared provider role without substituting current
+    /// source facts.
+    fn from_store(view: &'native crate::oven::rustc::OvenNativeInputView<'native>) -> CliResult<Self> {
+        // Legacy native manifests retain their original generated-root role. The batch still rejects a missing role;
+        // only a publisher-declared provider-compilation role changes the physical projection.
+        let source_role = if view.artifacts().entrypoint_externs.contains_key("provider-compilation") {
+            "provider-compilation"
+        } else {
+            "generated-root"
+        };
+        Ok(Self {
+            owner: ProviderBatchNativeOwner::Store(view),
+            source_role,
+            receipt: Some(view.original_native_receipt().map_err(oven_rustc_error)?),
+        })
+    }
+
     /// Borrow the original catalog without materializing an unselected Loaf or interpreting compatibility.
     fn artifacts(&self) -> &OvenRustcArtifactManifest {
         match &self.owner {
@@ -19254,6 +19260,111 @@ headers = ["interop/include/bridge.h"]
         );
         assert!(!called, "changed member must refuse before the native consumer runs");
         assert!(!root.path().join("provider/oven").exists());
+        Ok(())
+    }
+
+    /// The ordinary candidate producer retains its original recipe when current source changes without changing the
+    /// native unit.
+    #[test]
+    fn provider_batch_warm_store_reuse_keeps_original_recipe() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (artifact, _, _) =
+            provider_source_definition_fixture(&root.path().join("provider"), NativeSourceCrateKind::Rlib)?;
+        let entry = load_provider_dependency_artifact("stock", &artifact.crate_root);
+        let plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::from_entries(HashMap::from([("stock".to_string(), entry)])),
+            None,
+            None,
+            None,
+            [],
+        )?;
+        let native = root.path().join("native");
+        let (original, owner) = provider_batch_store_fixture_with_role(&native, "provider-compilation")?;
+        let original_identity = owner.manifest.identity.clone();
+        fs::write(native.join("source.rs"), "fn main() { let changed = 42; }\n")?;
+        let mut current_request = OvenGeneratedProjectRequest::new(
+            &native,
+            &original.project.name,
+            &original.project.version,
+            &original.intent.target,
+            &original.intent.toolchain,
+            &original.intent.profile,
+            original.intent.features.clone(),
+        )
+        .with_generated_source("generated-root", native.join("source.rs"));
+        for (key, value) in &original.sources.build_unit_inputs {
+            current_request = current_request.with_build_unit_input(key, value);
+        }
+        let current = receipt_generated_project(&current_request)?;
+        assert_ne!(current.identity, original.identity);
+        assert_eq!(current.build_unit_identity, original.build_unit_identity);
+        let store = OvenStore::new(
+            native.join("store"),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let reused = store.publish(&OvenArtifactPublishRequest {
+            receipt: current.clone(),
+            domain: owner.manifest.domain.clone(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: owner.payload.clone(),
+            materialized_files: vec![crate::oven::store::OvenArtifactMaterializedFile {
+                source_path: native.join("runtime.rlib"),
+                relative_path: "deps/libincan_stdlib.rlib".to_string(),
+            }],
+        })?;
+        assert_eq!(reused.identity, original_identity);
+        drop(owner);
+        let selected = crate::oven::rustc::select_direct_rustc_plan_for_execution(&store, &current)?;
+        let stored =
+            OvenStoredDirectRustcExecutionPlan::from_execution_payload(selected.ok_or("warm native plan absent")?)?;
+        let view = stored.native_input_view()?;
+        let candidates = [ProviderBatchCandidate::from_store(&view)?];
+        assert_eq!(candidates[0].receipt, Some(&original));
+        assert_eq!(candidates[0].source_role, "provider-compilation");
+        let batch = ProviderSourceBatch::new(&plan, &current, &BTreeMap::new(), &candidates)?;
+        let request: serde_json::Value = serde_json::from_slice(&batch.request)?;
+        assert_eq!(
+            request["foundation"]["request"]["candidates"][0]["evidence"]["kind"],
+            "runtime_provider_recipe"
+        );
+        assert_eq!(
+            request["runtime_grants"][0]["runtime_features_input"],
+            original.sources.build_unit_inputs["stdlib-features"]
+        );
+        Ok(())
+    }
+
+    /// Legacy native admission remains usable, but the ordinary recipe producer refuses missing original facts before
+    /// Engine loading.
+    #[test]
+    fn provider_batch_ordinary_store_candidate_refuses_missing_original_witness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let native = root.path().join("native");
+        let (receipt, owner) = provider_batch_store_fixture(&native)?;
+        let entry = owner
+            .artifact_root
+            .parent()
+            .ok_or("native entry root absent")?
+            .to_path_buf();
+        fs::remove_file(entry.join("native-receipt.json"))?;
+        drop(owner);
+        let store = OvenStore::new(
+            native.join("store"),
+            crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let stored = OvenStoredDirectRustcExecutionPlan::from_execution_payload(
+            crate::oven::rustc::select_direct_rustc_plan_for_execution(&store, &receipt)?
+                .ok_or("legacy native plan absent")?,
+        )?;
+        let view = stored.native_input_view()?;
+        let error = ProviderBatchCandidate::from_store(&view)
+            .err()
+            .ok_or("missing witness accepted")?;
+        assert!(
+            error.to_string().contains("no original full publisher receipt witness"),
+            "{error}"
+        );
         Ok(())
     }
 
