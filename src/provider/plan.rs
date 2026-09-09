@@ -170,6 +170,14 @@ pub enum ProviderPlanError {
         /// Missing admission or retained association detail.
         message: String,
     },
+    /// An SDK-parent query lacks its exact admitted record or encounters an inconsistent retained descriptor row.
+    #[error("cannot query admitted SDK provider `{identity}`: {message}")]
+    SdkArtifactQuery {
+        /// Complete selected parent identity, including its feature projection.
+        identity: String,
+        /// Missing or contradictory original association evidence.
+        message: String,
+    },
     /// Two records share one immutable provider key.
     #[error("duplicate provider identity `{identity}`")]
     DuplicateIdentity {
@@ -336,6 +344,21 @@ pub(crate) struct PrivateSdkDependency<'a> {
     pub target: Option<&'a ProviderRecord>,
 }
 
+/// One original SDK-parent descriptor associated with its exact admitted SDK record.
+#[derive(Debug, Clone)]
+struct ResolvedSdkProviderDependency {
+    descriptor_index: usize,
+    target_key: String,
+}
+
+/// Borrowed original SDK-parent request and its selected source owner; this is not a native or namespace grant.
+#[allow(dead_code, reason = "Pending #1037: SDK semantic projection caller")]
+pub(crate) struct SdkProviderDependency<'a> {
+    pub descriptor_index: usize,
+    pub descriptor: &'a ProviderDependencyMetadata,
+    pub target: &'a ProviderRecord,
+}
+
 /// Products retained from the single compiled-provider graph traversal.
 #[derive(Default)]
 struct ResolvedArtifactGraph {
@@ -345,6 +368,7 @@ struct ResolvedArtifactGraph {
     /// Public dependency edges retained by artifact admission, keyed by the containing artifact root.
     public_dependencies: BTreeMap<PathBuf, Vec<ResolvedPublicDependency>>,
     private_sdk_dependencies: BTreeMap<PathBuf, Vec<ResolvedPrivateSdkDependency>>,
+    sdk_dependencies: BTreeMap<String, Vec<ResolvedSdkProviderDependency>>,
     /// Root dependency grants indexed during admission, separate from nested edge aliases.
     public_imports: BTreeMap<String, String>,
 }
@@ -362,6 +386,7 @@ pub struct ProviderPlan {
     /// Public dependency edges retained by artifact admission, keyed by the containing artifact root.
     public_dependencies: BTreeMap<PathBuf, Vec<ResolvedPublicDependency>>,
     private_sdk_dependencies: BTreeMap<PathBuf, Vec<ResolvedPrivateSdkDependency>>,
+    sdk_dependencies: BTreeMap<String, Vec<ResolvedSdkProviderDependency>>,
     /// Exact ordinary import grants to selected root identities, retained without later path lookup.
     public_imports: BTreeMap<String, String>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
@@ -422,6 +447,7 @@ impl ProviderPlan {
             public_artifacts: artifact_graph.public_artifacts,
             public_dependencies: artifact_graph.public_dependencies,
             private_sdk_dependencies: artifact_graph.private_sdk_dependencies,
+            sdk_dependencies: artifact_graph.sdk_dependencies,
             public_imports: artifact_graph.public_imports,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         })
@@ -531,18 +557,7 @@ impl ProviderPlan {
                 let target = match &edge.target_key {
                     Some(key) => {
                         let target = self.records.get(key).ok_or_else(invalid)?;
-                        if !matches!(target.authority, NamespaceAuthority::SdkReserved)
-                            || key != &target.identity.stable_key()
-                            || descriptor.provider_name != target.identity.name
-                            || descriptor.provider_version != target.identity.version
-                            || descriptor.artifact_digest != target.identity.digest
-                            || descriptor.requested_features != target.identity.feature_projection
-                            || descriptor.default_features
-                            || descriptor.optional
-                            || !target.enabled
-                            || !target.available
-                            || target.artifact.is_none()
-                        {
+                        if key != &target.identity.stable_key() || !sdk_descriptor_matches(descriptor, target) {
                             return Err(invalid());
                         }
                         Some(target)
@@ -550,6 +565,67 @@ impl ProviderPlan {
                     None => None,
                 };
                 Ok(PrivateSdkDependency {
+                    descriptor_index: edge.descriptor_index,
+                    descriptor,
+                    target,
+                })
+            })
+            .collect()
+    }
+
+    /// Borrow descriptor associations captured from an original enabled, available SDK parent during plan admission.
+    ///
+    /// This exact-identity lookup does not reopen old artifact paths or activate a dependency. Private projections
+    /// remain exact; public requests retain their original flags and may name a subset of the selected features.
+    /// SDK-free, disabled, source-only or missing parents have no admitted row and refuse instead of returning an
+    /// invented empty closure. A checked materialized leaf has a real empty row.
+    #[allow(dead_code, reason = "Pending #1037: SDK semantic projection caller")]
+    pub(crate) fn sdk_dependencies(
+        &self,
+        identity: &ProviderIdentity,
+    ) -> Result<Vec<SdkProviderDependency<'_>>, ProviderPlanError> {
+        let key = identity.stable_key();
+        let invalid = || ProviderPlanError::SdkArtifactQuery {
+            identity: key.clone(),
+            message: "SDK parent or retained descriptor association lacks its exact admitted record".to_string(),
+        };
+        let parent = self
+            .records
+            .get(&key)
+            .filter(|parent| {
+                parent.identity == *identity
+                    && matches!(parent.authority, NamespaceAuthority::SdkReserved)
+                    && parent.enabled
+                    && parent.available
+                    && parent.artifact.is_some()
+            })
+            .ok_or_else(invalid)?;
+        let manifest = parent.manifest.as_ref().ok_or_else(invalid)?;
+        let edges = self.sdk_dependencies.get(&key).ok_or_else(invalid)?;
+        if edges.len() != manifest.contract_metadata.provider.provider_dependencies.len() {
+            return Err(invalid());
+        }
+        edges
+            .iter()
+            .enumerate()
+            .map(|(index, edge)| {
+                if edge.descriptor_index != index {
+                    return Err(invalid());
+                }
+                let descriptor = manifest
+                    .contract_metadata
+                    .provider
+                    .provider_dependencies
+                    .get(edge.descriptor_index)
+                    .ok_or_else(invalid)?;
+                let target = self
+                    .records
+                    .get(&edge.target_key)
+                    .filter(|target| {
+                        target.identity.stable_key() == edge.target_key && sdk_descriptor_matches(descriptor, target)
+                    })
+                    .ok_or_else(invalid)?;
+                Ok(SdkProviderDependency {
                     descriptor_index: edge.descriptor_index,
                     descriptor,
                     target,
@@ -946,6 +1022,7 @@ impl ProviderPlan {
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
             private_sdk_dependencies: BTreeMap::new(),
+            sdk_dependencies: BTreeMap::new(),
             public_imports: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
@@ -1016,6 +1093,7 @@ impl ProviderPlan {
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
             private_sdk_dependencies: BTreeMap::new(),
+            sdk_dependencies: BTreeMap::new(),
             public_imports: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
@@ -1217,7 +1295,7 @@ impl ProviderPlan {
     }
 }
 
-/// Admit public compiled artifacts and resolve historical private SDK edges through one graph traversal.
+/// Admit public artifacts, retain SDK-parent associations, and resolve historical private SDK edges in one graph pass.
 ///
 /// The checked `.incnlib` descriptor is authoritative for the frozen name, version, digest, and feature projection;
 /// the old physical cache root is deliberately not read because content-addressed provider generations may already
@@ -1232,6 +1310,7 @@ fn resolve_artifact_graph(
     let mut public_artifacts = BTreeMap::new();
     let mut public_dependencies = BTreeMap::new();
     let mut private_sdk_dependencies = BTreeMap::new();
+    let mut sdk_dependencies = BTreeMap::new();
     let mut public_imports = BTreeMap::new();
     let mut rebindings = Vec::new();
     let mut projected = BTreeMap::<PathBuf, LibraryArtifactMetadata>::new();
@@ -1240,12 +1319,59 @@ fn resolve_artifact_graph(
     for library in records
         .values()
         .filter(|record| record.enabled && record.available)
-        .filter(|record| matches!(record.authority, NamespaceAuthority::ProjectDependency { .. }))
+        .filter(|record| {
+            matches!(
+                record.authority,
+                NamespaceAuthority::ProjectDependency { .. } | NamespaceAuthority::SdkReserved
+            )
+        })
     {
         let (Some(manifest), Some(containing_artifact)) = (library.manifest.as_deref(), library.artifact.as_ref())
         else {
             continue;
         };
+        if matches!(library.authority, NamespaceAuthority::SdkReserved) {
+            let mut edges = Vec::with_capacity(manifest.contract_metadata.provider.provider_dependencies.len());
+            for (descriptor_index, descriptor) in manifest
+                .contract_metadata
+                .provider
+                .provider_dependencies
+                .iter()
+                .enumerate()
+            {
+                let candidates = sdk_records
+                    .iter()
+                    .copied()
+                    .filter(|record| record.identity.name == descriptor.provider_name)
+                    .collect::<Vec<_>>();
+                let mut exact = candidates
+                    .iter()
+                    .copied()
+                    .filter(|record| sdk_descriptor_matches(descriptor, record));
+                let Some(target) = exact.next() else {
+                    return Err(incompatible_compiled_sdk_dependency(
+                        &library.identity.name,
+                        containing_artifact,
+                        descriptor,
+                        &candidates,
+                    ));
+                };
+                if exact.next().is_some() {
+                    return Err(incompatible_compiled_sdk_dependency(
+                        &library.identity.name,
+                        containing_artifact,
+                        descriptor,
+                        &candidates,
+                    ));
+                }
+                edges.push(ResolvedSdkProviderDependency {
+                    descriptor_index,
+                    target_key: target.identity.stable_key(),
+                });
+            }
+            sdk_dependencies.insert(library.identity.stable_key(), edges);
+            continue;
+        }
         let admitted_root = normalize_artifact_root(&containing_artifact.crate_root);
         if let NamespaceAuthority::ProjectDependency { dependency_key } = &library.authority
             && public_imports
@@ -1308,8 +1434,33 @@ fn resolve_artifact_graph(
         public_artifacts,
         public_dependencies,
         private_sdk_dependencies,
+        sdk_dependencies,
         public_imports,
     })
+}
+
+/// Check a descriptor against its original SDK record without selecting source paths or changing its feature
+/// projection. Private descriptors freeze the full selected projection; public descriptors retain the authored
+/// requested subset.
+fn sdk_descriptor_matches(descriptor: &ProviderDependencyMetadata, target: &ProviderRecord) -> bool {
+    matches!(target.authority, NamespaceAuthority::SdkReserved)
+        && target.enabled
+        && target.available
+        && target.manifest.is_some()
+        && target.artifact.is_some()
+        && target.identity.name == descriptor.provider_name
+        && target.identity.version == descriptor.provider_version
+        && target.identity.digest == descriptor.artifact_digest
+        && match descriptor.kind {
+            ProviderDependencyKind::PrivateImplementation => {
+                !descriptor.default_features
+                    && !descriptor.optional
+                    && target.identity.feature_projection == descriptor.requested_features
+            }
+            ProviderDependencyKind::PublicPackage => descriptor
+                .requested_features
+                .is_subset(&target.identity.feature_projection),
+        }
 }
 
 /// Traverse one compiled provider graph and mark every ancestor that must point at a projected child artifact.
@@ -1371,16 +1522,9 @@ fn resolve_sdk_artifact_projection(
             let exact = candidates
                 .iter()
                 .copied()
-                .filter(|record| {
-                    record.identity.version == dependency.provider_version
-                        && record.identity.digest == dependency.artifact_digest
-                        && record.identity.feature_projection == dependency.requested_features
-                        && record.enabled
-                        && record.available
-                        && record.artifact.is_some()
-                })
+                .filter(|record| sdk_descriptor_matches(dependency, record))
                 .collect::<Vec<_>>();
-            if dependency.default_features || dependency.optional || exact.len() != 1 {
+            if exact.len() != 1 {
                 return Err(incompatible_compiled_sdk_dependency(
                     library_name,
                     artifact,
@@ -2674,6 +2818,319 @@ mod tests {
             [],
         );
         assert!(matches!(result, Err(ProviderPlanError::InventoryMismatch { .. })));
+        Ok(())
+    }
+
+    /// Supply materialized SDK records at the existing admission boundary with actual checked manifests and digests.
+    fn sdk_graph_record(
+        root: &Path,
+        name: &str,
+        features: BTreeSet<String>,
+        dependencies: Vec<ProviderDependencyMetadata>,
+    ) -> Result<ProviderRecord, Box<dyn std::error::Error>> {
+        let artifact = public_graph_artifact(root, name, dependencies)?;
+        let mut manifest = LibraryManifest::read_from_path(&artifact.manifest_path)?;
+        manifest.contract_metadata.provider.active_features = features.clone();
+        manifest.write_to_path(&artifact.manifest_path)?;
+        Ok(ProviderRecord {
+            identity: ProviderIdentity {
+                name: name.to_string(),
+                version: "1.0.0".to_string(),
+                digest: digest_provider_artifact(root)?,
+                feature_projection: features,
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "fixture@1.0.0".to_string(),
+                component_id: name.to_string(),
+                inventory_path: None,
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::new(),
+            enabled: true,
+            available: true,
+            manifest: Some(Arc::new(manifest)),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        })
+    }
+
+    /// Freeze an exact private descriptor; its historical path is deliberately not an SDK admission lookup.
+    fn sdk_graph_edge(alias: &str, target: &ProviderRecord) -> ProviderDependencyMetadata {
+        ProviderDependencyMetadata {
+            kind: ProviderDependencyKind::PrivateImplementation,
+            dependency_key: alias.to_string(),
+            provider_name: target.identity.name.clone(),
+            provider_version: target.identity.version.clone(),
+            artifact_digest: target.identity.digest.clone(),
+            requested_features: target.identity.feature_projection.clone(),
+            relative_artifact_path: format!("retired/{alias}"),
+            default_features: false,
+            optional: false,
+        }
+    }
+
+    /// SDK-parent chains retain descriptor positions and exact owners without becoming project artifacts or following
+    /// paths.
+    #[test]
+    fn sdk_parent_associations_preserve_chain_slots_and_relocation() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let live = root.path().join("live");
+        let leaf = sdk_graph_record(
+            &live.join("leaf"),
+            "sdk_leaf",
+            BTreeSet::from(["json".to_string(), "extra".to_string()]),
+            Vec::new(),
+        )?;
+        let middle = sdk_graph_record(
+            &live.join("middle"),
+            "sdk_middle",
+            BTreeSet::new(),
+            vec![sdk_graph_edge("leaf", &leaf)],
+        )?;
+        let mut public = sdk_graph_edge("public_leaf", &leaf);
+        public.kind = ProviderDependencyKind::PublicPackage;
+        public.requested_features = BTreeSet::from(["json".to_string()]);
+        public.default_features = true;
+        public.optional = true;
+        let parent = sdk_graph_record(
+            &live.join("parent"),
+            "sdk_parent",
+            BTreeSet::new(),
+            vec![
+                sdk_graph_edge("middle", &middle),
+                public,
+                sdk_graph_edge("second_middle", &middle),
+            ],
+        )?;
+        let parent_identity = parent.identity.clone();
+        let middle_identity = middle.identity.clone();
+        let leaf_identity = leaf.identity.clone();
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), vec![parent, middle, leaf], [])?;
+        assert_eq!(plan.public_artifacts().count(), 0);
+        assert!(plan.public_imports.is_empty());
+        assert!(plan.sdk_dependency_rebindings().is_empty());
+        assert!(plan.sdk_artifact_projections().is_empty());
+        let edges = plan.sdk_dependencies(&parent_identity)?;
+        assert_eq!(
+            edges.iter().map(|edge| edge.descriptor_index).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(edges[2].descriptor.dependency_key, "second_middle");
+        assert_eq!(edges[0].target.identity, middle_identity);
+        assert!(std::ptr::eq(edges[0].target, edges[2].target));
+        assert_eq!(
+            edges[1].descriptor.requested_features,
+            BTreeSet::from(["json".to_string()])
+        );
+        assert_eq!(
+            edges[1].target.identity.feature_projection,
+            BTreeSet::from(["extra".to_string(), "json".to_string()])
+        );
+        assert!(edges[1].descriptor.default_features && edges[1].descriptor.optional);
+        assert_eq!(
+            plan.sdk_dependencies(&middle_identity)?[0].target.identity,
+            leaf_identity
+        );
+        assert!(plan.sdk_dependencies(&leaf_identity)?.is_empty());
+        std::fs::rename(&live, root.path().join("moved"))?;
+        assert!(!live.exists());
+        let retained = plan.sdk_dependencies(&parent_identity)?;
+        assert!(std::ptr::eq(retained[0].target, edges[0].target));
+        assert_eq!(
+            plan.sdk_dependencies(&middle_identity)?[0].target.identity,
+            leaf_identity
+        );
+        Ok(())
+    }
+
+    /// Missing, disabled or contradictory child records cannot satisfy a frozen private SDK-parent request.
+    #[test]
+    fn sdk_parent_associations_refuse_inexact_or_unavailable_children() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let leaf = sdk_graph_record(
+            &root.path().join("leaf"),
+            "sdk_leaf",
+            BTreeSet::from(["json".to_string()]),
+            Vec::new(),
+        )?;
+        let parent = sdk_graph_record(
+            &root.path().join("parent"),
+            "sdk_parent",
+            BTreeSet::new(),
+            vec![sdk_graph_edge("leaf", &leaf)],
+        )?;
+        ProviderPlan::new(LibraryManifestIndex::default(), vec![parent.clone(), leaf.clone()], [])?;
+        assert!(matches!(
+            ProviderPlan::new(LibraryManifestIndex::default(), vec![parent.clone()], []),
+            Err(ProviderPlanError::IncompatibleCompiledSdkDependency { .. })
+        ));
+        for change in 0..8 {
+            let mut target = leaf.clone();
+            let mut declaring = parent.clone();
+            match change {
+                0 => target.identity.version = "2.0.0".to_string(),
+                1 => target.identity.digest = format!("sha256:{}", "f".repeat(64)),
+                2 => {
+                    target.identity.feature_projection.insert("extra".to_string());
+                }
+                3 => target.enabled = false,
+                4 => target.available = false,
+                5 => target.artifact = None,
+                6 | 7 => {
+                    let descriptor = Arc::make_mut(declaring.manifest.as_mut().ok_or("parent manifest missing")?)
+                        .contract_metadata
+                        .provider
+                        .provider_dependencies
+                        .first_mut()
+                        .ok_or("descriptor missing")?;
+                    descriptor.default_features = change == 6;
+                    descriptor.optional = change == 7;
+                }
+                _ => return Err("unexpected control".into()),
+            }
+            assert!(
+                matches!(
+                    ProviderPlan::new(LibraryManifestIndex::default(), vec![declaring, target], []),
+                    Err(ProviderPlanError::IncompatibleCompiledSdkDependency { .. })
+                ),
+                "control {change} accepted"
+            );
+        }
+        Ok(())
+    }
+
+    /// Public SDK requests preserve selected extra features but refuse unavailable requested features or ambiguous full
+    /// targets.
+    #[test]
+    fn sdk_parent_public_requests_preserve_feature_subsets_without_guessing() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let leaf = sdk_graph_record(
+            &root.path().join("leaf"),
+            "sdk_leaf",
+            BTreeSet::from(["json".to_string(), "extra".to_string()]),
+            Vec::new(),
+        )?;
+        let mut request = sdk_graph_edge("leaf", &leaf);
+        request.kind = ProviderDependencyKind::PublicPackage;
+        request.requested_features = BTreeSet::from(["json".to_string()]);
+        request.default_features = true;
+        request.optional = true;
+        let parent = sdk_graph_record(
+            &root.path().join("parent"),
+            "sdk_parent",
+            BTreeSet::new(),
+            vec![request],
+        )?;
+        let identity = parent.identity.clone();
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), vec![parent.clone(), leaf.clone()], [])?;
+        assert_eq!(plan.sdk_dependencies(&identity)?[0].target.identity, leaf.identity);
+        let mut missing = parent.clone();
+        Arc::make_mut(missing.manifest.as_mut().ok_or("parent manifest missing")?)
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .first_mut()
+            .ok_or("descriptor missing")?
+            .requested_features
+            .insert("missing".to_string());
+        assert!(matches!(
+            ProviderPlan::new(LibraryManifestIndex::default(), vec![missing, leaf.clone()], []),
+            Err(ProviderPlanError::IncompatibleCompiledSdkDependency { .. })
+        ));
+        // Two contradictory catalog records sharing the same bytes cannot be resolved by picking a feature superset.
+        let mut alternative = leaf.clone();
+        alternative.identity.feature_projection = BTreeSet::from(["json".to_string()]);
+        assert!(matches!(
+            ProviderPlan::new(LibraryManifestIndex::default(), vec![parent, leaf, alternative], []),
+            Err(ProviderPlanError::IncompatibleCompiledSdkDependency { .. })
+        ));
+        Ok(())
+    }
+
+    /// Retained rows require the full parent key, complete descriptor positions and unchanged selected child
+    /// identities.
+    #[test]
+    fn sdk_parent_associations_refuse_corrupted_retained_coordinates() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let leaf = sdk_graph_record(&root.path().join("leaf"), "sdk_leaf", BTreeSet::new(), Vec::new())?;
+        let parent = sdk_graph_record(
+            &root.path().join("parent"),
+            "sdk_parent",
+            BTreeSet::new(),
+            vec![sdk_graph_edge("leaf", &leaf)],
+        )?;
+        let identity = parent.identity.clone();
+        let key = identity.stable_key();
+        let target_key = leaf.identity.stable_key();
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), vec![parent, leaf], [])?;
+        let mut inexact = identity.clone();
+        inexact.feature_projection.insert("unselected".to_string());
+        assert!(plan.sdk_dependencies(&inexact).is_err());
+        for change in 0..5 {
+            let mut changed = plan.clone();
+            match change {
+                0 => {
+                    changed.sdk_dependencies.remove(&key);
+                }
+                1 => changed.sdk_dependencies.get_mut(&key).ok_or("row missing")?.clear(),
+                2 => {
+                    changed
+                        .sdk_dependencies
+                        .get_mut(&key)
+                        .and_then(|row| row.first_mut())
+                        .ok_or("edge missing")?
+                        .descriptor_index = usize::MAX
+                }
+                3 => {
+                    changed
+                        .sdk_dependencies
+                        .get_mut(&key)
+                        .and_then(|row| row.first_mut())
+                        .ok_or("edge missing")?
+                        .target_key = key.clone()
+                }
+                4 => {
+                    changed
+                        .records
+                        .get_mut(&target_key)
+                        .ok_or("target missing")?
+                        .identity
+                        .version = "2.0.0".to_string()
+                }
+                _ => return Err("unexpected control".into()),
+            }
+            assert!(
+                changed.sdk_dependencies(&identity).is_err(),
+                "corruption {change} accepted"
+            );
+        }
+        Ok(())
+    }
+
+    /// SDK-free and source-only catalogs do not manufacture an empty SDK source closure or change project-private
+    /// absence.
+    #[test]
+    fn sdk_parent_associations_preserve_absent_sdk_and_source_only_semantics() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let leaf = sdk_graph_record(&root.path().join("leaf"), "sdk_leaf", BTreeSet::new(), Vec::new())?;
+        let identity = leaf.identity.clone();
+        let empty = ProviderPlan::new(LibraryManifestIndex::default(), Vec::new(), [])?;
+        assert!(empty.sdk_dependencies(&identity).is_err());
+        let mut source_only = leaf;
+        source_only.artifact = None;
+        let source_only = ProviderPlan::new(LibraryManifestIndex::default(), vec![source_only], [])?;
+        assert!(source_only.sdk_dependencies(&identity).is_err());
+        let project = compiled_library_record(
+            &root.path().join("project"),
+            &format!("sha256:{}", "a".repeat(64)),
+            BTreeSet::new(),
+        );
+        let project_identity = project.identity.clone();
+        let project_only = ProviderPlan::new(LibraryManifestIndex::default(), vec![project], [])?;
+        let private = project_only.private_sdk_dependencies(&project_identity)?;
+        assert_eq!(private.len(), 1);
+        assert!(private[0].target.is_none());
+        assert!(project_only.sdk_dependencies(&project_identity).is_err());
         Ok(())
     }
 
