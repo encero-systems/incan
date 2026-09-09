@@ -15,7 +15,7 @@
     - RFC 123 (package executable representation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
 - **Issue:** —
-- **RFC PR:** —
+- **RFC PR:** [#1477](https://github.com/encero-systems/incan/pull/1477)
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —
 
@@ -26,8 +26,8 @@
 ## Core model
 
 1. **The Loaf is the package.** A published package is a project as RFC 117 defines it, identified by `loaf.toml`. The registry does not distinguish Incan-facet, Rust-facet, or mixed Loaves; RFC 119 defines what a Rust facet is, and this RFC only requires that whatever a Loaf declares is what gets published.
-2. **Two tiers, one identity chain.** A source Loaf is the publication of record. A baked asset is derived from exactly one source Loaf under one recorded toolchain, target, profile, and feature closure, and says so in its receipt. Nothing in the registry is authoritative unless it is reachable from a signed source Loaf.
-3. **Assets are offered, never substituted.** An asset is usable only when the consumer's plan facts equal the asset's receipt facts. A near match is a miss, and a miss means baking from source. Two compiled instances of one crate at the same version are not interchangeable, and the registry must never make Oven believe otherwise.
+2. **Two tiers, one identity chain.** A source Loaf is the publication of record. A baked asset is derived from exactly one source Loaf under one recorded toolchain, target, profile, and feature closure, and says so in its receipt. Nothing in the registry is authoritative unless it is reachable from a signed source Loaf or, for assets derived from an external source such as crates.io, from a signed external-source record that binds the registry, package, version, and upstream checksum the asset was built from.
+3. **Assets are offered, never substituted.** An asset is usable only when every unit it carries has exactly the RFC 124 unit identity the consumer's plan requires. Toolchain, target, profile, and features are how candidates are found; unit identity is how they are admitted. A near match is a miss, and a miss means baking from source. Two compiled instances of one crate at the same version are not interchangeable, and the registry must never make Oven believe otherwise.
 4. **Versions are immutable; state is events.** A `(name, version)` pair is published once and never overwritten. Yank, unyank, ownership, advisory, and supersession are signed registry events. The index and the web site are projections over the event stream and the immutable artifacts, never a database that can drift from them.
 5. **Names are scoped.** Community packages live under an owner scope. Unscoped names are reserved for the toolchain's own Loaves.
 6. **Resolution executes nothing.** Resolving, fetching, verifying, and staging never run package-provided code, as RFC 117 already requires. Build-time code runs only through an explicitly selected host provider under RFC 119.
@@ -142,7 +142,7 @@ Every source Loaf must be signed by its publisher. Signing uses keyless certific
 
 ### Baked assets
 
-A baked asset is a `*.loaf` produced by Oven from exactly one source Loaf. Its receipt must record the source Loaf digest, the toolchain identity, the target triple, the profile, the resolved feature closure of every unit, and the host and target domains. The asset's identity is the SHA-256 digest of the archive.
+A baked asset is a `*.loaf` produced by Oven from exactly one source publication: a signed source Loaf, or an external-source record for a crates.io crate. Its receipt must record the source digest, the toolchain identity, the target triple, the profile, the host and target domains, and for every unit it carries the RFC 124 unit identity and payload digest. Two digests name an asset and must not be conflated: the **archive digest** is the SHA-256 of the asset archive and is what the asset manifest, attestation, and transport verify; the **unit identities** inside it are what admission compares against a plan.
 
 Every asset must carry an attestation that binds the asset digest to the source Loaf digest and the toolchain identity, and names the builder. Builder kinds are:
 
@@ -152,7 +152,7 @@ Every asset must carry an attestation that binds the asset digest to the source 
 
 Consumers may apply different trust policy to each builder kind through RFC 117 registry configuration. The registry must publish which kind produced each asset and must not relabel one kind as another.
 
-An asset is **applicable** to a consumer plan only when the plan's toolchain identity, target triple, profile, and per-unit feature closure equal the asset's receipt facts. Oven must treat any inequality as inapplicable and bake from source. Oven must not select an asset by version alone.
+Toolchain identity, target triple, profile, and feature closure are **discovery facts**: the asset manifest is filtered by them to find candidates cheaply. An asset is **admitted** to a consumer plan only when, for every unit the plan would take from it, the asset's recorded RFC 124 unit identity equals the identity the plan computed, and the asset's attestation satisfies the project's trust policy for its builder kind. Discovery facts alone are never sufficient: two assets can share all of them and differ in dependency identities, provider outputs, or native inputs. Oven must treat any unit-identity inequality as inapplicable for that unit and bake it from source, and must never admit an asset by version alone. A unit RFC 124 marks machine-local must not be present in a published asset.
 
 ### Index
 
@@ -176,7 +176,7 @@ The resolver must filter candidates by the dependency's version requirement and 
 
 ### Registry events
 
-Every state change other than a first publish is a signed event: `yank`, `unyank`, `ownership`, `trusted-publisher`, `advisory`, and `supersede`. Events must be signed by an identity authorised for the scope at the time of the event, must be append-only, and must be publicly readable. The index, the asset manifests, and the web site must be derivable from the event log plus the immutable artifacts alone. This is the package-level substrate the RFC 079 artifact graph projects from.
+Every state change other than a first publish is a signed event: `asset`, `yank`, `unyank`, `ownership`, `trusted-publisher`, `advisory`, and `supersede`. Events must be signed by an identity authorised for the scope at the time of the event, must be append-only, and must be publicly readable. The index, the asset manifests, and the web site must be derivable from the event log plus the immutable artifacts alone. This is the package-level substrate the RFC 079 artifact graph projects from.
 
 ### Publishing protocol
 
@@ -187,6 +187,8 @@ Publishing must be possible through two authentication paths:
 
 On publish the registry must: verify the caller is authorised for the scope; reject an existing `(name, version)`; verify the declared digest against the uploaded archive; verify the signature and transparency-log inclusion; parse `loaf.toml` and reject a Loaf whose manifest does not describe the archive's contents; verify each uploaded asset's attestation binds it to the uploaded source digest; store the artifacts; append the index line and asset manifest; and emit a `publish` event. Publish must be atomic from the consumer's point of view: a version is either fully visible or absent.
 
+**Adding assets after publication.** Source publication is immutable, but the set of attested assets for a version grows: CI jobs for other targets finish later, and the registry bakery runs after the fact. The registry must accept an `asset` event for an existing `(name, version)` from an identity authorised for the scope or from the registry bakery, carrying the asset archive, its receipt, and an attestation bound to the version's source digest. The registry must verify that binding, must reject an asset whose source digest does not match the published version, and must project the new entry into the asset manifest atomically. Publishing an asset whose archive digest already exists is idempotent. Publishing an asset that claims a unit identity already present in the manifest with a different payload digest must be refused and recorded as a determinism conflict for that unit identity, so that consumers are never offered two payloads for one identity.
+
 ### Fetching and verification
 
 Oven must fetch over HTTPS with a certificate policy that behaves identically on every supported host, and should offer an explicit opt-in to the operating system's certificate store for environments that require it. Oven must verify every downloaded artifact's digest against the index or asset manifest before using it, must fail closed on mismatch, and must verify attestations according to the active trust policy. Oven must not execute any content of a downloaded artifact during resolution or fetching.
@@ -195,7 +197,7 @@ The Loaf store is the only cache and the only offline source. An offline mode mu
 
 ### crates.io and other sources
 
-`crate` dependencies resolve against the crates.io sparse index and download archives from crates.io through the same client, transport, verification, and store. Oven must parse a crate's manifest only as provider metadata under the constraints RFC 119 places on it. The registry must not mirror crates.io source. The registry may publish registry-built assets for crates.io crates at selected closures; such assets follow every rule above for registry-built assets, with the crate's crates.io checksum as the source digest.
+`crate` dependencies resolve against the crates.io sparse index and download archives from crates.io through the same client, transport, verification, and store. Oven must parse a crate's manifest only as provider metadata under the constraints RFC 119 places on it. The registry must not mirror crates.io source. The registry may publish registry-built assets for crates.io crates at selected closures. Such an asset does not descend from a publisher-signed source Loaf and must not be presented as if it did. Instead it descends from a signed **external-source record** that binds the upstream registry identity, package name, version, and the crates.io checksum of the archive the bakery consumed, together with the registry's builder attestation. External-source records and their assets must be indexed separately from scoped packages, at a path that names the upstream registry, and the consumer's selected source kind in `loaf.toml` remains authoritative: a `crate` dependency is always resolved against crates.io for its source of truth, and an `incan.pub` asset for it is only ever an admitted shortcut for units whose identities match.
 
 Registered compatible sources under RFC 117 configuration must implement this index and artifact protocol for `kind = "loaf"` or the crates.io sparse protocol for `kind = "crate"`.
 
@@ -223,7 +225,7 @@ The Rust facet is what makes Rust-only publication possible. Asset applicability
 
 ### Interaction with RFC 124
 
-RFC 124 is the normative source for unit identity and for the store's sharing and collection behaviour. This RFC depends on it: an asset's applicability rule is the unit identity rule stated at the granularity of a published bundle, and the store that receives imports is the store RFC 124 defines. Whether assets are offered per unit, per package bundle, or both is an open question shared between the two RFCs.
+RFC 124 is the normative source for unit identity, the separation of publication provenance from compilation identity, staged identity completion, and the store's sharing and collection behaviour. This RFC depends on it: asset admission is unit-identity equality, discovery facts only narrow the search, and the store that receives imports is the store RFC 124 defines. Whether assets are offered per unit, per package bundle, or both is an open question shared between the two RFCs.
 
 ### Interaction with RFC 123
 
