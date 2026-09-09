@@ -14,7 +14,7 @@ from std.testing import fail
 
 pub def test_normalized_regex_catalog_retains_inactive_declarations() -> None:
     """Read the exact normalized manifest as a format fixture, not as workbench selection evidence."""
-    match Path("tests/fixtures/rust-source/regex-1.12.3.toml").read_text():
+    match Path("tests/fixtures/rust-source/regex-1.12.3.toml").read_text("utf-8", "strict"):
         Err(error) => fail(error.message())
         Ok(source) =>
             match read_dependency_catalog(source, "fixture/regex/Cargo.toml"):
