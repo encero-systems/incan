@@ -1126,7 +1126,7 @@ fn export_loaf(
         serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| OvenLoafError::Preparation {
             message: format!("temporary Loaf payload is not a direct-rustc plan: {error}"),
         })?;
-    record_generated_root_externs(&mut plan);
+    record_generated_root_externs(&mut plan)?;
     promote_compiler_runtime_externs(&mut plan)?;
     plan.registry_leaves = registry_leaves.clone();
     let materialized_files = plan.materialized_artifacts(&artifact_root, &receipt.intent)?;
@@ -1369,7 +1369,14 @@ fn merge_loaf_inspection_sources(
 /// to the same immutable closure. Runtime roots are promoted into every declared entrypoint below, but the vocabulary
 /// helper roots must remain private to vocabulary extraction: passing their independently built `serde` closure to a
 /// generated library would make Rustc see two incompatible `serde` identities.
-fn record_generated_root_externs(plan: &mut OvenRustcArtifactManifest) {
+fn record_generated_root_externs(plan: &mut OvenRustcArtifactManifest) -> Result<(), OvenLoafError> {
+    if plan.schema_version == crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION
+        && !plan.entrypoint_dependency_search_paths.contains_key("generated-root")
+    {
+        let closure = plan.capture_source_search_closure(&plan.dependency_search_paths)?;
+        plan.entrypoint_dependency_search_paths
+            .insert("generated-root".to_string(), closure);
+    }
     plan.entrypoint_externs
         .entry("generated-root".to_string())
         .or_insert_with(|| {
@@ -1382,6 +1389,7 @@ fn record_generated_root_externs(plan: &mut OvenRustcArtifactManifest) {
             crate_names.dedup();
             crate_names
         });
+    Ok(())
 }
 
 /// Promote compiler runtime artifacts required by generated provider libraries to direct externs.
@@ -3574,6 +3582,7 @@ mod tests {
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: BTreeMap::new(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -4033,6 +4042,7 @@ mod tests {
             registry_leaves: Vec::new(),
             artifact_root: PathBuf::from("/sealed-loaf"),
             artifact_plan: OvenRustcArtifactPlan {
+                source_path_projection: None,
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
@@ -4130,6 +4140,7 @@ mod tests {
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: BTreeMap::new(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -4199,6 +4210,7 @@ mod tests {
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: BTreeMap::new(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -4536,7 +4548,7 @@ mod tests {
             },
         ];
 
-        super::record_generated_root_externs(&mut plan);
+        super::record_generated_root_externs(&mut plan)?;
 
         assert_eq!(
             plan.supporting_artifacts
@@ -4553,11 +4565,49 @@ mod tests {
     }
 
     #[test]
+    fn native_loaf_captures_search_paths_before_helper_promotion() -> Result<(), Box<dyn std::error::Error>> {
+        let receipt = runtime_receipt_for_plan()?;
+        let mut plan = empty_manifest(&receipt);
+        plan.dependency_search_paths = vec!["target/deps".to_string(), "host/deps".to_string()];
+        plan.externs.push(crate::oven::rustc::OvenRustcArtifactExtern {
+            crate_name: "runtime".to_string(),
+            relative_path: "target/deps/libruntime.rlib".to_string(),
+            digest: digest_bytes(b"runtime"),
+        });
+        plan.supporting_artifacts
+            .push(crate::oven::rustc::OvenRustcSupportingArtifact {
+                relative_path: "host/deps/libderive.dylib".to_string(),
+                digest: digest_bytes(b"macro metadata dependency"),
+            });
+        super::record_generated_root_externs(&mut plan)?;
+        let captured = plan.entrypoint_dependency_search_paths["generated-root"].clone();
+        assert_eq!(
+            captured.paths().map(String::as_str).collect::<Vec<_>>(),
+            vec!["target/deps", "host/deps"]
+        );
+        plan.dependency_search_paths.push("helper/deps".to_string());
+        plan.externs.push(crate::oven::rustc::OvenRustcArtifactExtern {
+            crate_name: "private_helper".to_string(),
+            relative_path: "helper/deps/libprivate_helper.rlib".to_string(),
+            digest: digest_bytes(b"unrelated helper"),
+        });
+        super::record_generated_root_externs(&mut plan)?;
+        assert_eq!(plan.entrypoint_dependency_search_paths["generated-root"], captured);
+        assert_eq!(plan.entrypoint_externs["generated-root"], vec!["runtime"]);
+        plan.validate_shape(&receipt.intent)?;
+        Ok(())
+    }
+
+    #[test]
     fn native_loaf_promotes_compiler_runtime_externs_for_compatible_callers() -> Result<(), Box<dyn std::error::Error>>
     {
         let receipt = runtime_receipt_for_plan()?;
         let mut plan = empty_manifest(&receipt);
         plan.entrypoint_externs.insert("generated-root".to_string(), Vec::new());
+        plan.entrypoint_dependency_search_paths.insert(
+            "generated-root".to_string(),
+            crate::oven::rustc::OvenRustcSourceSearchClosure::default(),
+        );
         plan.supporting_artifacts = vec![
             crate::oven::rustc::OvenRustcSupportingArtifact {
                 relative_path: "host/deps/libincan_derive-verified.dylib".to_string(),
@@ -4623,7 +4673,7 @@ mod tests {
             },
         ];
 
-        super::record_generated_root_externs(&mut plan);
+        super::record_generated_root_externs(&mut plan)?;
         super::promote_compiler_runtime_externs(&mut plan)?;
         plan.externs.extend([
             crate::oven::rustc::OvenRustcArtifactExtern {
@@ -4742,16 +4792,55 @@ mod tests {
         let loaf = tempfile::tempdir()?;
         let receipt = runtime_receipt_for_plan()?;
         let mut plan = empty_manifest(&receipt);
+        plan.dependency_search_paths = vec!["target/deps".to_string(), "host/deps".to_string()];
+        for (relative_path, bytes) in [
+            ("target/deps/libnormal.rlib", b"normal".as_slice()),
+            ("host/deps/libmacro.rlib", b"macro".as_slice()),
+        ] {
+            let file = loaf.path().join(relative_path);
+            fs::create_dir_all(file.parent().ok_or("normal artifact parent missing")?)?;
+            fs::write(file, bytes)?;
+            plan.supporting_artifacts
+                .push(crate::oven::rustc::OvenRustcSupportingArtifact {
+                    relative_path: relative_path.to_string(),
+                    digest: digest_bytes(bytes),
+                });
+        }
+        super::record_generated_root_externs(&mut plan)?;
+        let original_role = plan.entrypoint_dependency_search_paths["generated-root"].clone();
         super::copy_compiler_vocab_support_artifacts(
             &artifacts,
             &target_deps,
             &publisher.path().join("target"),
             &host_deps,
-            &loaf.path().join("deps"),
+            &loaf.path().join("compiler-support/deps"),
             &mut plan,
         )?;
 
-        assert!(!loaf.path().join("deps/libunrelated_cargo_residue.rlib").exists());
+        assert_eq!(plan.entrypoint_dependency_search_paths["generated-root"], original_role);
+        let materialized = plan.materialize(loaf.path(), &receipt.intent)?;
+        let selected =
+            crate::oven::rustc::trusted_artifact_plan_for_source_evidence(&materialized, &plan, "generated-root")?;
+        let physical_root = fs::canonicalize(loaf.path())?;
+        assert_eq!(
+            selected
+                .dependency_search_paths
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([physical_root.join("target/deps"), physical_root.join("host/deps")])
+        );
+        assert!(
+            !selected
+                .dependency_search_paths
+                .contains(&physical_root.join("compiler-support/deps"))
+        );
+        assert!(
+            !loaf
+                .path()
+                .join("compiler-support/deps/libunrelated_cargo_residue.rlib")
+                .exists()
+        );
         assert!(
             artifacts.iter().any(|artifact| artifact == &profile_copy_canonical),
             "the named publisher's reported profile-root rlib must enter the direct-rustc closure"
@@ -4863,6 +4952,7 @@ mod tests {
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),

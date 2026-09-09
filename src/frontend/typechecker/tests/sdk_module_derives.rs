@@ -1,5 +1,7 @@
 //! Checked SDK metadata retains explicit module derive membership and backend requirements.
 
+use incan_core::lang::traits::{self as builtin_traits, TraitId};
+
 use crate::backend::IrCodegen;
 use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, api_declaration_public_name,
@@ -13,18 +15,22 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 /// Publish a synthetic module with no source-stdlib fallback and a deliberately excluded derivable trait.
 fn provider_metadata() -> Result<CheckedApiMetadata, Box<dyn std::error::Error>> {
-    let source = r#"
+    let source = format!(
+        r#"
 const __derives__ = [Included]
 
-@rust.derive("Debug")
+@rust.derive("{debug}")
 pub trait Included:
     pass
 
-@rust.derive("Clone")
+@rust.derive("{clone}")
 pub trait Omitted:
     pass
-"#;
-    metadata_from_source(source, &["bundle_probe".into()])
+"#,
+        debug = builtin_traits::as_str(TraitId::Debug),
+        clone = builtin_traits::as_str(TraitId::Clone),
+    );
+    metadata_from_source(&source, &["bundle_probe".into()])
 }
 
 /// Collect the same checked module representation used by SDK publishers.
@@ -98,7 +104,7 @@ fn sdk_module_derives_imports_and_aliases_preserve_backend_requirements() -> Tes
             info.derivations
                 .trait_rust_derive_paths
                 .get("std.bundle_probe.Included"),
-            Some(&vec!["Debug".into()])
+            Some(&vec![builtin_traits::as_str(TraitId::Debug).into()])
         );
         let mut generator = IrCodegen::new();
         generator.set_prechecked_type_info(info.clone(), Default::default());
@@ -106,8 +112,9 @@ fn sdk_module_derives_imports_and_aliases_preserve_backend_requirements() -> Tes
             .try_generate(&ast)
             .map_err(|error| format!("codegen: {error:?}"))?;
         assert!(
-            rust.lines()
-                .any(|line| line.trim_start().starts_with("#[derive(") && line.contains("Debug")),
+            rust.lines().any(|line| {
+                line.trim_start().starts_with("#[derive(") && line.contains(builtin_traits::as_str(TraitId::Debug))
+            }),
             "{rust}"
         );
         assert!(rust.contains("Included for Record"), "{rust}");
@@ -189,7 +196,7 @@ fn sdk_module_derives_trait_alias_retains_target_macro() -> TestResult {
             .derivations
             .trait_rust_derive_paths
             .get("std.bundle_facade.Exported"),
-        Some(&vec!["Debug".into()])
+        Some(&vec![builtin_traits::as_str(TraitId::Debug).into()])
     );
     let mut generator = IrCodegen::new();
     generator.set_prechecked_type_info(checker.type_info().clone(), Default::default());
@@ -197,8 +204,9 @@ fn sdk_module_derives_trait_alias_retains_target_macro() -> TestResult {
         .try_generate(&ast)
         .map_err(|error| format!("codegen: {error:?}"))?;
     assert!(
-        rust.lines()
-            .any(|line| line.trim_start().starts_with("#[derive(") && line.contains("Debug")),
+        rust.lines().any(|line| {
+            line.trim_start().starts_with("#[derive(") && line.contains(builtin_traits::as_str(TraitId::Debug))
+        }),
         "{rust}"
     );
     Ok(())
