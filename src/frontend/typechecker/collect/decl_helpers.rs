@@ -201,7 +201,7 @@ fn method_info_from_decl(
                 tp.name.clone(),
                 tp.bounds
                     .iter()
-                    .map(|bound| checker.resolve_trait_bound_name(&bound.name, method.span))
+                    .map(|bound| checker.resolve_generic_bound_name(&bound.name, method.span))
                     .collect(),
             )
         })
@@ -216,7 +216,7 @@ fn method_info_from_decl(
                 tp.bounds
                     .iter()
                     .map(|bound| TypeBoundInfo {
-                        name: checker.resolve_trait_bound_name(&bound.name, method.span),
+                        name: checker.resolve_generic_bound_name(&bound.name, method.span),
                         source_name: checker.trait_bound_source_name(&bound.name),
                         type_args: bound
                             .type_args

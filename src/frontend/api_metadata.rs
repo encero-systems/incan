@@ -109,6 +109,9 @@ pub struct CheckedApiPackageIdentity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CheckedApiMetadata {
     pub schema_version: u32,
+    /// Exact module-owned RFC 024 derive membership; names resolve in this module's checked declarations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derivable_traits: Vec<String>,
     pub module_path: Vec<String>,
     pub declarations: Vec<ApiDeclaration>,
 }
@@ -785,6 +788,7 @@ pub fn collect_checked_api_metadata(
 
     CheckedApiMetadata {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        derivable_traits: TypeChecker::derivable_traits_from_program(program),
         module_path,
         declarations,
     }
@@ -807,6 +811,7 @@ pub fn collect_checked_api_alias_metadata(program: &Program, module_path: Vec<St
         .collect();
     CheckedApiMetadata {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        derivable_traits: TypeChecker::derivable_traits_from_program(program),
         module_path,
         declarations,
     }

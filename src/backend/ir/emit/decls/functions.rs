@@ -218,7 +218,12 @@ impl<'a> IrEmitter<'a> {
                 Self::rewrite_borrowed_param_types_in_expr(object, borrowed);
                 Self::rewrite_borrowed_param_types_in_expr(index, borrowed);
             }
-            AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
+            AssignTarget::Var { name, ty } => {
+                if let Some(borrowed_ty) = borrowed.get(name) {
+                    *ty = borrowed_ty.clone();
+                }
+            }
+            AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
         }
     }
 
@@ -1583,7 +1588,7 @@ impl<'a> IrEmitter<'a> {
         used_names: &mut HashSet<String>,
     ) {
         match target {
-            AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => {
+            AssignTarget::Var { name, .. } | AssignTarget::StaticBinding(name) => {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
             AssignTarget::Static { .. } => {}

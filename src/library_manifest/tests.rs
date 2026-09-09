@@ -361,6 +361,7 @@ fn manifest_with_api_declaration_issue883(declaration: ApiDeclaration) -> Librar
         package: None,
         modules: vec![CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: Vec::new(),
             module_path: vec!["private_api".to_string()],
             declarations: vec![declaration],
         }],
@@ -1108,6 +1109,7 @@ fn compiled_nested_module_aliases_and_reexports_preserve_identity() -> Result<()
     let mut modules = vec![
         CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: Vec::new(),
             module_path: vec!["helpers".to_string()],
             declarations: vec![ApiDeclaration::Function(ApiFunction {
                 name: "compute".to_string(),
@@ -1125,6 +1127,7 @@ fn compiled_nested_module_aliases_and_reexports_preserve_identity() -> Result<()
         },
         CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: Vec::new(),
             module_path: vec!["facade".to_string()],
             declarations: vec![
                 ApiDeclaration::Alias(ApiAlias {
@@ -1348,6 +1351,7 @@ fn package_identity_path_keeps_same_named_module_and_declaration_segments() -> R
         package: None,
         modules: vec![CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: Vec::new(),
             module_path: vec!["codec".to_string()],
             declarations: vec![ApiDeclaration::Function(ApiFunction {
                 name: "codec".to_string(),
@@ -1436,6 +1440,7 @@ fn package_root_nominal_reexport_requires_binding_and_exact_target_anchor() -> R
         modules: vec![
             CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["domain".to_string()],
                 declarations: vec![ApiDeclaration::Model(ApiModel {
                     name: "Record".to_string(),
@@ -1457,6 +1462,7 @@ fn package_root_nominal_reexport_requires_binding_and_exact_target_anchor() -> R
             },
             CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["lib".to_string()],
                 declarations: vec![ApiDeclaration::Alias(ApiAlias {
                     name: "PublicRecord".to_string(),
@@ -1558,6 +1564,7 @@ fn manifest_accepts_public_rusttype_identity_and_rejects_newtype_kind_disagreeme
         package: None,
         modules: vec![CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: Vec::new(),
             module_path: vec!["ffi".to_string()],
             declarations: vec![ApiDeclaration::Newtype(ApiNewtype {
                 name: "Handle".to_string(),
@@ -2171,6 +2178,7 @@ fn manifest_io_round_trip_preserves_rust_abi_metadata() -> Result<(), Box<dyn st
             definition_path: Some("mylib_runtime::parse".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Function(RustFunctionSig {
+                receiver_contract: None,
                 type_params: Vec::new(),
                 params: vec![RustParam {
                     name: Some("source".to_string()),
@@ -4153,6 +4161,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
     let mut modules = vec![
         CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: Vec::new(),
             module_path: vec!["provider".to_string()],
             declarations: vec![
                 ApiDeclaration::Function(ApiFunction {
@@ -4180,6 +4189,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
         },
         CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: Vec::new(),
             module_path: vec!["main".to_string()],
             declarations: vec![ApiDeclaration::Alias(ApiAlias {
                 name: "public_target".to_string(),
