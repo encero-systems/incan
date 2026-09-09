@@ -1,0 +1,357 @@
+"""
+Read constrained Rust dependency declarations from an explicitly supplied manifest snapshot.
+
+The caller retains the original source owner. This module does not admit that owner, choose a source/version,
+activate dependencies, discover a workspace or permit build-time effects. The result retains the full document
+for the later unit/configuration producer; a dependency catalog alone cannot produce semantic input evidence.
+"""
+
+from std import toml
+from std.toml import TomlValue, TomlKind
+from intake import IntakeError, IntakeErrorKind
+
+
+@derive(Eq)
+pub enum RustDependencyRole(str):
+    """Original declaration roles; build dependencies belong to a distinct host activation domain."""
+
+    Normal = "normal"
+    Build = "build"
+    Dev = "dev"
+
+
+@derive(Eq)
+pub enum RustGitReference:
+    """Authored Git selectors remain unresolved until the source provider admits an exact revision."""
+
+    Branch(str)
+    Tag(str)
+    Rev(str)
+
+
+@derive(Eq)
+pub enum RustRegistryRequest:
+    """A registry declaration still needs the original Loaf registry policy to name an admitted registry."""
+
+    Default
+    Named(str)
+    Index(str)
+
+
+@derive(Eq)
+pub enum RustDependencySource:
+    """Authored coordinates only; none of these variants authenticates a selected source."""
+
+    Registry(RustRegistryRequest)
+    Path(str, RustRegistryRequest)
+    Git(str, Option[RustGitReference], RustRegistryRequest)
+    Workspace
+
+
+@derive(Eq)
+pub model RustDependencyDeclaration:
+    """
+    One original literal table/alias slot, before inheritance, activation or child selection.
+
+    The finalized producer binds index to the complete definition digest. A target condition remains source text
+    until Incan evaluates it against explicit target facts. Absent flags remain absent so inherited defaults are
+    not guessed here. Path spelling is preserved even when absolute or outside the diagnostic manifest's parent.
+    """
+
+    pub index: int
+    pub field: list[str]
+    pub role: RustDependencyRole
+    pub target_condition: Option[str]
+    pub alias: str
+    pub package: str
+    pub version_requirement: Option[str]
+    pub features: list[str]
+    pub default_features: Option[bool]
+    pub optional: Option[bool]
+    pub source: RustDependencySource
+
+
+pub model RustDependencyCatalog:
+    """
+    Complete dependency/feature declarations plus the still-unchecked unit/configuration document.
+
+    Keeping package, targets, build candidates, profiles and other tables is intentional. The later source-facet
+    producer must validate and classify them before constructing checked semantic inputs. This type carries no
+    completeness claim about source files, crate units, inheritance, feature activation or selected dependencies.
+    """
+
+    pub document: TomlValue
+    pub dependencies: list[RustDependencyDeclaration]
+    pub features: Dict[str, list[str]]
+
+
+def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+    """Use the existing source-located intake error vocabulary for a literal Cargo metadata field."""
+    return IntakeError(kind=kind, manifest=manifest, field=field, location=None, detail=detail)
+
+
+def table(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, TomlValue], IntakeError]:
+    """Require a table without treating malformed or inactive declarations as absent."""
+    return value.as_table().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
+
+
+def text(value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Read nonempty source text without parsing a version, cfg expression or physical path."""
+    result = value.as_str().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+    if result == "":
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "empty declaration value"))
+    return Ok(result)
+
+
+def optional_text(
+    values: Dict[str, TomlValue],
+    key: str,
+    manifest: str,
+    field: list[str],
+) -> Result[Option[str], IntakeError]:
+    """Preserve the difference between omitted source metadata and a present nonempty string."""
+    if key not in values:
+        return Ok(None)
+    return Ok(Some(text(values[key], manifest, field + [key])?))
+
+
+def optional_bool(
+    values: Dict[str, TomlValue],
+    key: str,
+    manifest: str,
+    field: list[str],
+) -> Result[Option[bool], IntakeError]:
+    """Preserve omission until the original inheritance and defaults have been checked."""
+    if key not in values:
+        return Ok(None)
+    value = values[key]
+        .as_bool()
+        .map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))?
+    return Ok(Some(value))
+
+
+def strings(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """Retain the original sequence of named feature expansions; interpretation belongs to activation."""
+    items = value.as_array().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+    mut result: list[str] = []
+    for item in items:
+        result.append(text(item, manifest, field)?)
+    return Ok(result)
+
+
+def allowed(
+    values: Dict[str, TomlValue],
+    keys: list[str],
+    manifest: str,
+    field: list[str],
+) -> Result[None, IntakeError]:
+    """Refuse unsupported meaning in a declaration table instead of losing it in projection."""
+    for key in sorted([item for item in values.keys()]):
+        if key not in keys:
+            return Err(
+                refusal(manifest, field + [key], IntakeErrorKind.Unsupported, "unsupported Rust declaration field"),
+            )
+    return Ok(None)
+
+
+def source_request(
+    values: Dict[str, TomlValue],
+    manifest: str,
+    field: list[str],
+) -> Result[RustDependencySource, IntakeError]:
+    """
+    Preserve source requests, including the registry location attached to a path/Git version requirement.
+
+    The registry location does not override the authored path or Git request. Selecting a publication form or a
+    source owner is a later producer decision; this reader must not erase an alternate registry declaration.
+    """
+    mut selectors: list[str] = []
+    for key in ["path", "git", "workspace"]:
+        if key in values:
+            selectors.append(key)
+    if len(selectors) > 1:
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "conflicting dependency source selectors"))
+    if "registry" in values and "registry-index" in values:
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "conflicting registry selectors"))
+    mut registry = RustRegistryRequest.Default
+    if "registry" in values:
+        registry = RustRegistryRequest.Named(text(values["registry"], manifest, field + ["registry"])?)
+    if "registry-index" in values:
+        registry = RustRegistryRequest.Index(text(values["registry-index"], manifest, field + ["registry-index"])?)
+    mut references: list[str] = []
+    for key in ["branch", "tag", "rev"]:
+        if key in values:
+            references.append(key)
+    if len(references) > 1 or (len(references) > 0 and "git" not in values):
+        return Err(
+            refusal(manifest, field, IntakeErrorKind.Invalid, "Git reference requires one Git source and selector"),
+        )
+    if "workspace" in values:
+        inherited = optional_bool(values, "workspace", manifest, field)?
+        if inherited != Some(true):
+            return Err(refusal(manifest, field + ["workspace"], IntakeErrorKind.Invalid, "workspace must be true"))
+        if "version" in values or "package" in values or "registry" in values or "registry-index" in values:
+            return Err(
+                refusal(manifest, field, IntakeErrorKind.Invalid, "inherited identity cannot be overridden locally"),
+            )
+        if "default-features" in values or "default_features" in values:
+            return Err(
+                refusal(
+                    manifest,
+                    field,
+                    IntakeErrorKind.Unsupported,
+                    "inherited default-feature override needs edition-aware validation",
+                ),
+            )
+        return Ok(RustDependencySource.Workspace)
+    if "path" in values:
+        return Ok(RustDependencySource.Path(text(values["path"], manifest, field + ["path"])?, registry))
+    if "git" in values:
+        url = text(values["git"], manifest, field + ["git"])?
+        mut reference: Option[RustGitReference] = None
+        if "branch" in values:
+            reference = Some(RustGitReference.Branch(text(values["branch"], manifest, field + ["branch"])?))
+        if "tag" in values:
+            reference = Some(RustGitReference.Tag(text(values["tag"], manifest, field + ["tag"])?))
+        if "rev" in values:
+            reference = Some(RustGitReference.Rev(text(values["rev"], manifest, field + ["rev"])?))
+        return Ok(RustDependencySource.Git(url, reference, registry))
+    return Ok(RustDependencySource.Registry(registry))
+
+
+def read_dependency(
+    value: TomlValue,
+    alias: str,
+    index: int,
+    role: RustDependencyRole,
+    target_condition: Option[str],
+    manifest: str,
+    field: list[str],
+) -> Result[RustDependencyDeclaration, IntakeError]:
+    """Read one complete request without turning its coordinates into a selected dependency."""
+    if alias == "":
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "empty dependency alias"))
+    mut package = alias
+    mut version: Option[str] = None
+    mut features: list[str] = []
+    mut default_features: Option[bool] = None
+    mut optional: Option[bool] = None
+    mut source = RustDependencySource.Registry(RustRegistryRequest.Default)
+    if value.kind() == TomlKind.String:
+        version = Some(text(value, manifest, field)?)
+    else:
+        values = table(value, manifest, field)?
+        allowed(
+            values,
+            ["version", "package", "features", "default-features", "default_features", "optional", "path", "git", "branch", "tag", "rev", "registry", "registry-index", "workspace"],
+            manifest,
+            field,
+        )?
+        source = source_request(values, manifest, field)?
+        if "package" in values:
+            package = text(values["package"], manifest, field + ["package"])?
+        version = optional_text(values, "version", manifest, field)?
+        if "features" in values:
+            declared_features = strings(values["features"], manifest, field + ["features"])?
+            for feature in declared_features:
+                if feature not in features:
+                    features.append(feature)
+            features = sorted(features)
+        if "default-features" in values and "default_features" in values:
+            return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "duplicate default-features spellings"))
+        if "default_features" in values:
+            default_features = optional_bool(values, "default_features", manifest, field)?
+        else:
+            default_features = optional_bool(values, "default-features", manifest, field)?
+        optional = optional_bool(values, "optional", manifest, field)?
+    return Ok(
+        RustDependencyDeclaration(
+            index=index,
+            field=field,
+            role=role,
+            target_condition=target_condition,
+            alias=alias,
+            package=package,
+            version_requirement=version,
+            features=features,
+            default_features=default_features,
+            optional=optional,
+            source=source,
+        ),
+    )
+
+
+def read_groups(
+    values: Dict[str, TomlValue],
+    target_condition: Option[str],
+    manifest: str,
+    prefix: list[str],
+    start: int,
+) -> Result[list[RustDependencyDeclaration], IntakeError]:
+    """Enumerate role tables in fixed order while retaining every original literal field path."""
+    mut result: list[RustDependencyDeclaration] = []
+    if "build-dependencies" in values and "build_dependencies" in values:
+        return Err(refusal(manifest, prefix, IntakeErrorKind.Invalid, "duplicate build-dependencies spellings"))
+    if "dev-dependencies" in values and "dev_dependencies" in values:
+        return Err(refusal(manifest, prefix, IntakeErrorKind.Invalid, "duplicate dev-dependencies spellings"))
+    for name, role in [("dependencies", RustDependencyRole.Normal), ("build-dependencies", RustDependencyRole.Build), ("build_dependencies", RustDependencyRole.Build), ("dev-dependencies", RustDependencyRole.Dev), ("dev_dependencies", RustDependencyRole.Dev)]:
+        if name in values:
+            declarations = table(values[name], manifest, prefix + [name])?
+            for alias in sorted([key for key in declarations.keys()]):
+                slot = start + len(result)
+                declaration = read_dependency(
+                    declarations[alias],
+                    alias,
+                    slot,
+                    role,
+                    target_condition,
+                    manifest,
+                    prefix + [name, alias],
+                )?
+                result.append(declaration)
+    return Ok(result)
+
+
+def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:
+    """Read all dependency/feature tables and retain the rest for the later checked facet producer."""
+    document = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    root = table(document, manifest, [])?
+    mut dependencies = read_groups(root, None, manifest, [], 0)?
+    if "target" in root:
+        targets = table(root["target"], manifest, ["target"])?
+        for condition in sorted([key for key in targets.keys()]):
+            if condition == "":
+                return Err(refusal(manifest, ["target", condition], IntakeErrorKind.Invalid, "empty target condition"))
+            values = table(targets[condition], manifest, ["target", condition])?
+            allowed(
+                values,
+                ["dependencies", "build-dependencies", "build_dependencies", "dev-dependencies", "dev_dependencies"],
+                manifest,
+                ["target", condition],
+            )?
+            qualified = read_groups(values, Some(condition), manifest, ["target", condition], len(dependencies))?
+            for dependency in qualified:
+                dependencies.append(dependency)
+    mut features: Dict[str, list[str]] = {}
+    if "features" in root:
+        declarations = table(root["features"], manifest, ["features"])?
+        for name in sorted([key for key in declarations.keys()]):
+            if name == "":
+                return Err(refusal(manifest, ["features", name], IntakeErrorKind.Invalid, "empty feature name"))
+            features[name] = strings(declarations[name], manifest, ["features", name])?
+    return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features))
+
+
+pub def read_dependency_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:
+    """
+    Read declarations from supplied metadata without establishing a source selection or semantic identity.
+
+    Args:
+        source: One selected source owner's manifest snapshot supplied by the caller, or an explicit test fixture.
+        manifest: Diagnostic provenance only; this function never reads or resolves this path.
+
+    Returns:
+        All original dependency slots and feature expansions plus the complete parsed document. Unit/configuration
+        validation and activation are still required before a source-facet record can enter semantic projection.
+    """
+    return read_catalog(source, manifest).map_err((error) => error.with_source(source))
