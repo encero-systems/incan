@@ -126,7 +126,7 @@ A unit has three distinct identities, and the store must name them separately:
 
 - **Publication provenance**: the registry checksum, source Loaf digest, or path source, together with the signer or attestation that vouches for it. Provenance must be recorded with every unit and checked against trust policy; it must not enter the unit identity.
 - **Unit identity**: the digest over effective compilation inputs defined below. It decides reuse.
-- **Payload digest**: the `sha256:` of the produced bytes. It verifies storage and transport.
+- **Payload digest**: the `sha256:` of the produced bytes, uncompressed. It verifies storage and transport. Compression is a storage and transport encoding chosen per store or per registry and never enters any identity, so a unit compressed at one level locally and at another for publication is one unit.
 
 A unit identity must be a `sha256:` digest over a canonical serialization of at least:
 
