@@ -6825,6 +6825,69 @@ mod tests {
         Ok(())
     }
 
+    /// Round-trip a host-issued named-member ID while retaining its actual publisher, role and bytes.
+    #[test]
+    fn compiler_runtime_member_roundtrip_preserves_original_role_and_rechecks_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = native_input_fixture("debug")?;
+        let view = super::OvenNativeInputView::from_store_payload(&fixture.owner)?;
+        let members = view.named_candidates("generated-root")?;
+        let member = members.first().ok_or("original runtime member absent")?;
+        let request = serde_json::json!({
+            "grant_id": "original-member-0",
+            "plan_identity": view.identity(),
+            "source_role": member.source_role,
+            "extern_name": member.artifact().crate_name,
+            "artifact_digest": member.artifact().digest,
+        });
+        let decoded: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&request)?)?;
+        assert_eq!(decoded["source_role"], "generated-root");
+        assert_eq!(decoded["extern_name"], "runtime");
+        assert_eq!(decoded["artifact_digest"], digest_bytes(b"runtime bytes"));
+        // The selector returns an ID, never replacement member bytes or an executable path.
+        let selected_ids: Vec<String> = serde_json::from_slice(br#"["original-member-0"]"#)?;
+        let mut table = BTreeMap::from([(
+            "original-member-0".to_string(),
+            members.into_iter().next().ok_or("member absent")?,
+        )]);
+        let selected = selected_ids
+            .into_iter()
+            .map(|id| {
+                table
+                    .remove(&id)
+                    .ok_or("unknown or repeated member ID")?
+                    .with_alias("runtime".to_string())
+                    .map_err(Into::into)
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        assert!(table.remove("child-invented-member").is_none());
+        let attached = view.attach_for_source("generated-root", &selected)?;
+        assert!(
+            attached
+                .artifact_plan()
+                .externs
+                .iter()
+                .any(|(name, _)| name == "runtime")
+        );
+        assert!(
+            !attached
+                .artifact_plan()
+                .externs
+                .iter()
+                .any(|(name, _)| name == "private")
+        );
+        assert!(view.attach_for_source("compiler-helper", &selected).is_err());
+        fs::write(
+            fixture.owner.artifact_root.join("release/deps/libruntime.rlib"),
+            b"changed named runtime",
+        )?;
+        assert!(matches!(
+            view.attach_for_source("generated-root", &selected),
+            Err(OvenRustcError::ArtifactDigestMismatch { .. })
+        ));
+        Ok(())
+    }
+
     #[test]
     fn native_input_view_queries_are_read_free_but_attachment_rechecks_selected_bytes()
     -> Result<(), Box<dyn std::error::Error>> {

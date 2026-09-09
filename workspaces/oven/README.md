@@ -97,3 +97,21 @@ A private compiler bridge now implements the host side of file exchange in sourc
 An explicit version 2 Engine publisher declaration records support for the current version 2 selection and batch protocols alongside version 1. Existing version 1 descriptors retain their original version and protocol binding; changing only their role is refused. The private bridge does not infer this declaration from an executable path, environment value, source filename or child response, and it does not turn a descriptor or command receipt into permission to launch.
 
 The bridge's phase report is internal and non-serialized. Versioned kernel receipt encoding, sealing and persistence remain unwired; the report does not complete that receipt contract. The exchange currently contains no permit issuer or construction path. The permit has no JSON decoder or deserialization implementation. Rust child-module access to its parent-owned private fields does not itself prohibit future permit construction code.
+
+
+## Compiler support source capture (source implementation)
+
+New native source definitions use schema 2 to retain compiler support at the original emission sites: the runtime
+version check, and `incan_derive` only where the compiler emits its derives. Required runtime features come from the
+existing collected project requirements. Schema 1 remains readable with support evidence explicitly absent.
+
+`incan.oven.source-unit-batch/3` adds compiler-runtime needs and grants alongside checked SDK provider needs.
+Matching stays in Incan and uses the existing runtime or exact build-unit evidence. The v3 decoder requires explicit
+support slots; older wire versions cannot silently consume a v2 definition while dropping its support obligations.
+Runtime grants refer to original named members and source roles. Their digests are host-supplied evidence, not proof
+conferred by JSON. Host integration must retain the original owner and resolve returned IDs to its handles; the existing attachment
+API rechecks original roles and bytes. The new published-store control exercises that boundary.
+
+The new emitter, real artifact-only publisher, selector and published-store controls are source-only and unexecuted.
+The ordinary command grant table and Engine exchange invocation remain to be connected. This slice does not restore
+Cargo preparation or claim complete source authority for external build-script, environment or generated-output inputs.

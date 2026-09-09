@@ -215,10 +215,34 @@ pub(crate) struct IrGenerationMetadata {
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
     emitted_declaration_types: Vec<super::emit::native_unions::EmittedDeclarationTypes>,
     native_unions: Vec<crate::library_manifest::NativeUnionExport>,
+    emitted_compiler_support: BTreeSet<crate::library_manifest::NativeCompilerSupport>,
     provider_plan: Option<Arc<ProviderPlan>>,
 }
 
 impl IrGenerationMetadata {
+    /// Retain actual emitted compiler support with the same collected features used by native input construction.
+    pub(crate) fn compiler_support_requirements(
+        &self,
+        runtime_features: &[String],
+    ) -> Vec<crate::library_manifest::NativeCompilerSupportRequirement> {
+        self.emitted_compiler_support
+            .iter()
+            .map(|support| {
+                let mut features = if *support == crate::library_manifest::NativeCompilerSupport::Stdlib {
+                    runtime_features.to_vec()
+                } else {
+                    Vec::new()
+                };
+                features.sort();
+                features.dedup();
+                crate::library_manifest::NativeCompilerSupportRequirement {
+                    support: *support,
+                    features,
+                }
+            })
+            .collect()
+    }
+
     /// Publish exact implementation headers into the checked trait adoptions that consumers already resolve.
     pub(crate) fn apply_to_library_manifest(&self, manifest: &mut LibraryManifest) -> Result<(), String> {
         for captured in &self.implementation_bound_requirements {
@@ -594,6 +618,7 @@ pub struct IrCodegen<'a> {
     native_union_origins: HashMap<Vec<String>, BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>>,
     emitted_declaration_types: Vec<super::emit::native_unions::EmittedDeclarationTypes>,
     native_unions: Vec<crate::library_manifest::NativeUnionExport>,
+    emitted_compiler_support: BTreeSet<crate::library_manifest::NativeCompilerSupport>,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -637,6 +662,7 @@ impl<'a> IrCodegen<'a> {
             native_union_origins: HashMap::new(),
             emitted_declaration_types: Vec::new(),
             native_unions: Vec::new(),
+            emitted_compiler_support: BTreeSet::new(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
@@ -686,13 +712,14 @@ impl<'a> IrCodegen<'a> {
         self.publication_package_name = package_name;
     }
 
-    /// Capture module-scoped public representations after the emitter has finalized its native wrapper table.
+    /// Retain actual emitted support and module-scoped public representations after native wrapper emission.
     fn capture_native_union_metadata(
         &mut self,
         emitter: &IrEmitter<'_>,
         path: &[String],
         program: &IrProgram,
     ) -> Result<(), EmitError> {
+        self.emitted_compiler_support.extend(emitter.emitted_compiler_support());
         self.emitted_union_definitions
             .extend(emitter.emitted_native_union_types());
         let Some(module) = self
@@ -1580,6 +1607,7 @@ impl<'a> IrCodegen<'a> {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
                 emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
                 native_unions: std::mem::take(&mut self.native_unions),
+                emitted_compiler_support: std::mem::take(&mut self.emitted_compiler_support),
                 provider_plan: self.provider_plan.clone(),
             },
         ))
@@ -1589,6 +1617,7 @@ impl<'a> IrCodegen<'a> {
     fn try_generate_internal(&mut self, program: &'a Program) -> Result<String, GenerationError> {
         self.current_program = Some(program);
         self.implementation_bound_requirements.clear();
+        self.emitted_compiler_support.clear();
 
         // Scan for emission-relevant features
         self.update_serde_requirement(program);
@@ -2308,6 +2337,7 @@ impl<'a> IrCodegen<'a> {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
                 emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
                 native_unions: std::mem::take(&mut self.native_unions),
+                emitted_compiler_support: std::mem::take(&mut self.emitted_compiler_support),
                 provider_plan: self.provider_plan.clone(),
             },
         ))
@@ -2325,6 +2355,7 @@ impl<'a> IrCodegen<'a> {
         self.current_program = Some(program);
         self.source_dependency_module_paths.clear();
         self.implementation_bound_requirements.clear();
+        self.emitted_compiler_support.clear();
 
         // Backfill nested module path segments for dependency modules when they were registered
         // via the legacy `add_module()` API (flat names only).
@@ -4546,6 +4577,47 @@ pub def add(a: int, b: int) -> int:
             "{code}"
         );
         assert!(code.contains("a + b"));
+    }
+
+    /// Capture compiler support from real emission and use only the caller's collected runtime features.
+    #[test]
+    fn emitted_compiler_support_tracks_actual_macro_sites_and_features() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::library_manifest::{NativeCompilerSupport, NativeCompilerSupportRequirement};
+        let mut generator = IrCodegen::new();
+        for (source, needs_derive) in [
+            ("pub def answer() -> int:\n  return 42\n", false),
+            ("pub model Sample:\n  pub value: int\n", true),
+            ("pub class Sample:\n  pub value: int\n", true),
+            ("pub enum Choice:\n  Left\n  Right\n", false),
+            ("pub def answer() -> int:\n  return 7\n", false),
+        ] {
+            let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+            let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+            let (code, metadata) = generator.try_generate_with_metadata(&ast, &["support".to_string()])?;
+            assert!(code.contains("__incan_stdlib_version_check"), "{source}");
+            assert_eq!(code.contains("incan_derive::"), needs_derive, "{source}");
+            let mut expected = vec![NativeCompilerSupportRequirement {
+                support: NativeCompilerSupport::Stdlib,
+                features: Vec::new(),
+            }];
+            if needs_derive {
+                expected.push(NativeCompilerSupportRequirement {
+                    support: NativeCompilerSupport::Derive,
+                    features: Vec::new(),
+                });
+            }
+            assert_eq!(metadata.compiler_support_requirements(&[]), expected, "{source}");
+            expected[0].features = vec!["json".to_string(), "testing".to_string()];
+            assert_eq!(
+                metadata.compiler_support_requirements(&[
+                    "testing".to_string(),
+                    "json".to_string(),
+                    "json".to_string()
+                ]),
+                expected
+            );
+        }
+        Ok(())
     }
 
     #[test]

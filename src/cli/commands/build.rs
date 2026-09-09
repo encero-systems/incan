@@ -90,13 +90,15 @@ use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{diagnostics, typechecker};
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
+#[cfg(test)]
+use crate::library_manifest::NativeCompilerSupport;
 use crate::library_manifest::{
     CompiledProviderMetadata, LibraryManifest, NATIVE_SOURCE_UNIT_PATH, NATIVE_SOURCE_UNIT_SCHEMA_VERSION,
-    NativeGitReference, NativeRequirementRole, NativeRequirementSource, NativeSourceCrateKind, NativeSourceInput,
-    NativeSourcePackage, NativeSourceRequirement, NativeSourceUnitDefinition, NativeUnboundPathReason,
-    ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyKind, ProviderDependencyMetadata,
-    ProviderFactKind, ProviderFactRequirement, ProviderImplementationFacet, ProviderModuleClaim,
-    ProviderOperationMetadata, digest_cargo_path_source_tree_with_cache, digest_provider_artifact,
+    NativeCompilerSupportRequirement, NativeGitReference, NativeRequirementRole, NativeRequirementSource,
+    NativeSourceCrateKind, NativeSourceInput, NativeSourcePackage, NativeSourceRequirement, NativeSourceUnitDefinition,
+    NativeUnboundPathReason, ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyKind,
+    ProviderDependencyMetadata, ProviderFactKind, ProviderFactRequirement, ProviderImplementationFacet,
+    ProviderModuleClaim, ProviderOperationMetadata, digest_cargo_path_source_tree_with_cache, digest_provider_artifact,
     digest_provider_source_inputs,
 };
 use crate::lockfile::{
@@ -10464,6 +10466,7 @@ fn prepare_library_project(
         normal: &rust_dependencies,
         dev: &rust_dev_dependencies,
         source_evidence: &generated_source_evidence,
+        compiler_support: &generation_metadata.compiler_support_requirements(&project_requirements.stdlib_features),
     })?;
     record_timing(
         &mut timings_ms,
@@ -10690,6 +10693,7 @@ struct NativeSourceDefinitionInputs<'a> {
     normal: &'a [DependencySpec],
     dev: &'a [DependencySpec],
     source_evidence: &'a OvenGeneratedProjectSourceEvidence,
+    compiler_support: &'a [NativeCompilerSupportRequirement],
 }
 
 /// Capture one physical definition from emitted source evidence and retained requirements, without selecting sources.
@@ -10752,6 +10756,7 @@ fn capture_native_source_definition(inputs: NativeSourceDefinitionInputs<'_>) ->
                 .to_string(),
         },
         requirements,
+        compiler_support: Some(inputs.compiler_support.to_vec()),
     };
     definition
         .validate_against_manifest(manifest)
@@ -17983,6 +17988,10 @@ headers = ["interop/include/bridge.h"]
                 path: "src".to_string(),
                 digest: crate::generated_source::digest_tree(&root.join("src"))?,
             },
+            compiler_support: Some(vec![NativeCompilerSupportRequirement {
+                support: NativeCompilerSupport::Stdlib,
+                features: Vec::new(),
+            }]),
             requirements: Vec::new(),
         };
         let artifact = LibraryArtifactMetadata::from_crate_root("renamed", &manifest.name, root);
@@ -18511,6 +18520,10 @@ support = { path = "../absent-support" }
             normal: &normal,
             dev: &dev,
             source_evidence: &evidence,
+            compiler_support: &[NativeCompilerSupportRequirement {
+                support: NativeCompilerSupport::Stdlib,
+                features: Vec::new(),
+            }],
         })?;
         definition.validate_sources(&output)?;
         assert_eq!(definition.edition, "2021");
@@ -19808,6 +19821,13 @@ impl ChildId {
             definition.validate_sources(&prepared.out_dir)?;
             let emitted = fs::read_to_string(prepared.generator.crate_root_path())?;
             assert!(emitted.contains("incan_stdlib::__incan_stdlib_version_check!"));
+            assert_eq!(
+                definition.compiler_support,
+                Some(vec![NativeCompilerSupportRequirement {
+                    support: NativeCompilerSupport::Stdlib,
+                    features: Vec::new(),
+                }])
+            );
         }
         Ok(())
     }

@@ -26,10 +26,10 @@ pub(crate) use artifact::{
 };
 pub use model::*;
 pub use native_source::{
-    NATIVE_SOURCE_UNIT_PATH, NATIVE_SOURCE_UNIT_SCHEMA_VERSION, NativeGitReference, NativePathAnchor,
-    NativeRequirementRole, NativeRequirementSource, NativeSourceCrateKind, NativeSourceDefinitionError,
-    NativeSourceInput, NativeSourcePackage, NativeSourceRequirement, NativeSourceUnitDefinition,
-    NativeUnboundPathReason,
+    NATIVE_SOURCE_UNIT_PATH, NATIVE_SOURCE_UNIT_SCHEMA_VERSION, NativeCompilerSupport,
+    NativeCompilerSupportRequirement, NativeGitReference, NativePathAnchor, NativeRequirementRole,
+    NativeRequirementSource, NativeSourceCrateKind, NativeSourceDefinitionError, NativeSourceInput,
+    NativeSourcePackage, NativeSourceRequirement, NativeSourceUnitDefinition, NativeUnboundPathReason,
 };
 pub(crate) use type_projection::{
     VisitTypeRefs, with_checked_native_unions, with_checked_type_origins, with_checked_type_routes,

@@ -317,3 +317,193 @@ def fixture_v2() -> JsonValue:
     versioned = put(foundation, "schema", JsonValue.string("incan.oven.selection/2"))
     result = put(value, "foundation", put(versioned, "request", changed))
     return put(result, "schema", JsonValue.string("incan.oven.source-unit-batch/2"))
+
+
+pub def test_runtime_support_plain_unit_has_no_synthetic_sdk_need() -> None:
+    """A plain emitted provider binds its actual runtime slot without inventing an SDK provider identity."""
+    value = fixture_v3()
+    response = run(value)
+    assert text(response, "schema") == "incan.oven.source-unit-batch/3"
+    assert text(response, "status") == "selected"
+    assert text(get(response, "foundation"), "schema") == "incan.oven.selection/2"
+    units = items(response, "units")
+    assert len(units) == 1
+    grants = items(units[0], "grant_ids")
+    assert len(grants) == 1
+    assert grants[0].as_str() == Some("runtime-catalog")
+    assert len(items(value, "needs")) == 0
+    match decode_batch(value):
+        Err(error) => fail(error.message())
+        Ok(batch) =>
+            assert batch.requires_compiler_support
+            match select_source_units(batch):
+                Err(error) => fail(error.message())
+                Ok(selected) =>
+                    assert selected.foundation.candidate_id == "usable"
+                    assert selected.units[0].grant_ids == ["runtime-catalog"]
+
+
+pub def test_runtime_support_keeps_facade_edges_and_private_sdk_grants() -> None:
+    """Both emitted units bind runtime slots while the existing checked public/private graph stays intact."""
+    response = run(fixture_v3(keep_graph=true))
+    assert text(response, "status") == "selected"
+    units = items(response, "units")
+    assert len(units) == 2
+    assert len(items(units[1], "slots")) == 2
+    assert len(items(units[1], "grant_ids")) == 2
+    assert text(items(units[1], "slots")[0], "edge_id") == "public"
+    assert text(items(units[1], "slots")[1], "edge_id") == "private"
+
+
+pub def test_runtime_support_missing_or_different_named_member_refuses() -> None:
+    """A selected foundation alone cannot satisfy a required emitted support slot."""
+    value = fixture_v3()
+    require_refused(put(value, "runtime_grants", JsonValue.array([])), "no_compatible_candidate")
+    grant = items(value, "runtime_grants")[0]
+    wrong = put(grant, "extern_name", JsonValue.string("private_helper"))
+    require_refused(put(value, "runtime_grants", JsonValue.array([wrong])), "no_compatible_candidate")
+    for field in ["candidate_evidence_id", "plan_identity"]:
+        wrong = put(grant, field, JsonValue.string("another-owner"))
+        require_refused(put(value, "runtime_grants", JsonValue.array([wrong])), "invalid_input")
+
+
+pub def test_runtime_support_runtime_and_feature_inputs_remain_original() -> None:
+    """Runtime or feature-input evidence cannot be borrowed from a different supplier."""
+    value = fixture_v3(recipe=true)
+    grant = items(value, "runtime_grants")[0]
+    assert text(run(value), "status") == "selected"
+    foundation = get(value, "foundation")
+    request = get(foundation, "request")
+    candidate = items(request, "candidates")[0]
+    evidence = get(candidate, "evidence")
+    wrong_runtime = put(get(evidence, "runtime"), "core_source_digest", JsonValue.string("changed-core"))
+    wrong = put(candidate, "evidence", put(evidence, "runtime", wrong_runtime))
+    changed = put(request, "candidates", JsonValue.array([wrong]))
+    require_refused(put(value, "foundation", put(foundation, "request", changed)), "no_compatible_candidate")
+    wrong = put(grant, "runtime_features_input", JsonValue.string("changed-features"))
+    require_refused(put(value, "runtime_grants", JsonValue.array([wrong])), "no_compatible_candidate")
+    unit = items(value, "units")[0]
+    definition = get(unit, "definition")
+    request = put(items(definition, "compiler_support")[0], "features", JsonValue.array([JsonValue.string("json")]))
+    definition = put(definition, "compiler_support", JsonValue.array([request]))
+    require_refused(put(value, "units", JsonValue.array([put(unit, "definition", definition)])), "invalid_input")
+
+
+pub def test_runtime_support_exact_candidate_never_borrows_recipe_facts() -> None:
+    """Hash-only candidates stay visible without a fabricated recipe, and Incan still rejects a different unit key."""
+    value = fixture_v3()
+    foundation = get(value, "foundation")
+    request = get(foundation, "request")
+    candidates = items(get(get(fixture_v2(), "foundation"), "request"), "candidates")
+    grant = items(value, "runtime_grants")[0]
+    narrow_grant = put(grant, "grant_id", JsonValue.string("runtime-narrow"))
+    narrow_grant = put(narrow_grant, "candidate_id", get(candidates[0], "candidate_id"))
+    narrow_grant = put(narrow_grant, "candidate_evidence_id", get(candidates[0], "evidence_id"))
+    narrow_grant = put(narrow_grant, "plan_identity", get(candidates[0], "plan_identity"))
+    changed = put(request, "candidates", JsonValue.array(candidates))
+    changed = put(value, "foundation", put(foundation, "request", changed))
+    changed = put(changed, "runtime_grants", JsonValue.array([narrow_grant, grant]))
+    response = run(changed)
+    assert text(response, "status") == "selected"
+    assert text(get(get(response, "foundation"), "selection"), "candidate_id") == "usable"
+    wrong = put(grant, "runtime_features_input", JsonValue.string("borrowed-recipe"))
+    require_refused(put(value, "runtime_grants", JsonValue.array([wrong])), "invalid_input")
+    wrong_request = put(request, "build_unit_identity", JsonValue.string("another-current-unit"))
+    require_refused(put(value, "foundation", put(foundation, "request", wrong_request)), "no_compatible_candidate")
+
+
+pub def test_runtime_support_new_emission_slot_requires_its_own_grant() -> None:
+    """Changing a plain source definition to require a derive cannot reuse the previous one-slot binding."""
+    value = fixture_v3()
+    unit = items(value, "units")[0]
+    definition = get(unit, "definition")
+    requests = items(definition, "compiler_support")
+    derive = JsonValue.object({"support": JsonValue.string("derive"), "features": JsonValue.array([])})
+    definition = put(definition, "compiler_support", JsonValue.array(requests + [derive]))
+    changed = put(value, "units", JsonValue.array([put(unit, "definition", definition)]))
+    need = items(value, "runtime_needs")[0]
+    derive_need = put(put(need, "need_id", JsonValue.string("derive-catalog")), "support_index", JsonValue.int(1))
+    changed = put(changed, "runtime_needs", JsonValue.array([need, derive_need]))
+    require_refused(changed, "no_compatible_candidate")
+
+
+pub def test_runtime_support_wire_version_cannot_downgrade_obligations() -> None:
+    """Only the decoder chooses support validation; neither a flag nor a legacy version can erase a v2 source slot."""
+    value = fixture_v3()
+    require_refused(put(value, "requires_compiler_support", JsonValue.bool(false)), "invalid_input")
+    mut legacy = put(value, "schema", JsonValue.string("incan.oven.source-unit-batch/2"))
+    legacy.remove("runtime_needs")
+    legacy.remove("runtime_grants")
+    require_refused(legacy, "invalid_input")
+    unit = items(value, "units")[0]
+    mut old_definition = put(get(unit, "definition"), "schema_version", JsonValue.int(1))
+    old_definition.remove("compiler_support")
+    changed = put(value, "units", JsonValue.array([put(unit, "definition", old_definition)]))
+    require_refused(changed, "unsupported_intent")
+
+
+def items(value: JsonValue, key: str) -> list[JsonValue]:
+    """Read a required fixture collection while keeping failures explicit."""
+    match get(value, key).as_array():
+        None => return fail_t[list[JsonValue]]("missing fixture array: " + key)
+        Some(values) => return values
+
+
+def fixture_v3(keep_graph: bool = false, recipe: bool = false) -> JsonValue:
+    """Offer synthetic runtime facts; physical member authentication is exercised separately by the host store control."""
+    value = fixture_v2()
+    foundation = get(value, "foundation")
+    request = get(foundation, "request")
+    mut candidates = [candidate for candidate in items(request, "candidates") if text(candidate, "candidate_id") == "usable"]
+    mut features_input = JsonValue.null()
+    if recipe:
+        evidence = JsonValue.object({
+            "kind": JsonValue.string("runtime_provider_recipe"),
+            "runtime": get(request, "runtime"),
+            "providers": get(request, "providers"),
+        })
+        candidates = [put(candidates[0], "evidence", evidence)]
+        features_input = JsonValue.string("original-empty-features-input")
+    request = put(request, "candidates", JsonValue.array(candidates))
+    value = put(value, "foundation", put(foundation, "request", request))
+    source_units = items(value, "units")
+    if not keep_graph:
+        source_units = [source_units[0]]
+        value = put(value, "edges", JsonValue.array([]))
+        value = put(value, "needs", JsonValue.array([]))
+        value = put(value, "grants", JsonValue.array([]))
+    mut units: list[JsonValue] = []
+    mut needs: list[JsonValue] = []
+    mut grants: list[JsonValue] = []
+    for unit in source_units:
+        support = JsonValue.object({"support": JsonValue.string("stdlib"), "features": JsonValue.array([])})
+        definition = put(get(unit, "definition"), "schema_version", JsonValue.int(2))
+        definition = put(definition, "compiler_support", JsonValue.array([support]))
+        units.append(put(unit, "definition", definition))
+        unit_id = text(unit, "unit_id")
+        owner_id = text(unit, "owner_id")
+        need_id = "need-runtime-" + unit_id
+        needs.append(JsonValue.object({
+            "need_id": JsonValue.string(need_id),
+            "unit_id": JsonValue.string(unit_id),
+            "unit_owner_id": JsonValue.string(owner_id),
+            "support_index": JsonValue.int(0),
+            "features": JsonValue.array([]),
+            "runtime_features_input": JsonValue.string("original-empty-features-input"),
+        }))
+        grants.append(JsonValue.object({
+            "grant_id": JsonValue.string("runtime-" + unit_id),
+            "candidate_id": get(candidates[0], "candidate_id"),
+            "candidate_evidence_id": get(candidates[0], "evidence_id"),
+            "plan_identity": get(candidates[0], "plan_identity"),
+            "need_id": JsonValue.string(need_id),
+            "unit_owner_id": JsonValue.string(owner_id),
+            "extern_name": JsonValue.string("incan_stdlib"),
+            "source_role": JsonValue.string("provider-compilation"),
+            "artifact_digest": JsonValue.string("original-named-runtime-bytes"),
+            "runtime_features_input": features_input,
+        }))
+    value = put(value, "schema", JsonValue.string("incan.oven.source-unit-batch/3"))
+    value = put(value, "units", JsonValue.array(units))
+    value = put(value, "runtime_needs", JsonValue.array(needs))
+    return put(value, "runtime_grants", JsonValue.array(grants))

@@ -23,6 +23,10 @@ from source_unit import (
     NativeRequirementSource,
     ProviderIdentity,
     Requirement,
+    CompilerSupport,
+    CompilerSupportRequest,
+    RuntimeNeed,
+    RuntimeGrant,
     SourceUnit,
     CheckedEdge,
     ReservedNeed,
@@ -36,6 +40,7 @@ const BATCH_SCHEMA: str = "incan.oven.source-unit-batch/1"
 const SCHEMA: str = "incan.oven.selection/1"
 const SCHEMA_V2: str = "incan.oven.selection/2"
 const BATCH_SCHEMA_V2: str = "incan.oven.source-unit-batch/2"
+const BATCH_SCHEMA_V3: str = "incan.oven.source-unit-batch/3"
 
 
 pub def evaluate(source: str) -> JsonValue:
@@ -53,7 +58,7 @@ pub def evaluate(source: str) -> JsonValue:
     if let Ok(document) = parse(source):
         if let Some(schema) = document.get("schema"):
             if let Some(schema_name) = schema.as_str():
-                if schema_name == BATCH_SCHEMA or schema_name == BATCH_SCHEMA_V2:
+                if schema_name == BATCH_SCHEMA or schema_name == BATCH_SCHEMA_V2 or schema_name == BATCH_SCHEMA_V3:
                     return evaluate_batch(document)
                 if schema_name == SCHEMA_V2:
                     response_schema = SCHEMA_V2
@@ -314,7 +319,7 @@ pub def evaluate_batch(document: JsonValue) -> JsonValue:
                 Err(error) => return batch_refusal(batch.foundation.request_id, batch.foundation.evidence_id, error, schema)
                 Ok(result) =>
                     mut foundation_schema: str = SCHEMA
-                    if schema == BATCH_SCHEMA_V2:
+                    if schema == BATCH_SCHEMA_V2 or schema == BATCH_SCHEMA_V3:
                         foundation_schema = SCHEMA_V2
                     foundation = selected(result.foundation, foundation_schema)
                     units = [JsonValue.object(
@@ -354,20 +359,23 @@ def batch_response_schema(document: JsonValue) -> str:
     """Preserve a recognized batch wire version even when decoding refuses."""
     if let Some(value) = document.get("schema"):
         if let Some(name) = value.as_str():
-            if name == BATCH_SCHEMA_V2:
-                return BATCH_SCHEMA_V2
+            if name == BATCH_SCHEMA_V2 or name == BATCH_SCHEMA_V3:
+                return name
     return BATCH_SCHEMA
 
 
 pub def decode_batch(document: JsonValue) -> Result[SourceBatch, SelectionError]:
-    """Bind each batch version to the same foundation version; persisted source definitions stay schema1."""
-    exact_object(document, ["schema", "foundation", "purpose", "units", "edges", "needs", "grants"], [])?
+    """Version3 adds runtime ownership; legacy batches retain their exact earlier SDK-only contract."""
     schema = text_field(document, "schema", [])?
-    if schema != BATCH_SCHEMA and schema != BATCH_SCHEMA_V2:
+    if schema != BATCH_SCHEMA and schema != BATCH_SCHEMA_V2 and schema != BATCH_SCHEMA_V3:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["schema"]))
+    mut keys: list[str] = ["schema", "foundation", "purpose", "units", "edges", "needs", "grants"]
+    if schema == BATCH_SCHEMA_V3:
+        keys.extend(["runtime_needs", "runtime_grants"])
+    exact_object(document, keys, [])?
     foundation_json = field(document, "foundation", [])?
     mut expected_schema: str = SCHEMA
-    if schema == BATCH_SCHEMA_V2:
+    if schema == BATCH_SCHEMA_V2 or schema == BATCH_SCHEMA_V3:
         expected_schema = SCHEMA_V2
     if text_field(foundation_json, "schema", ["foundation"])? != expected_schema:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["foundation", "schema"]))
@@ -380,7 +388,16 @@ pub def decode_batch(document: JsonValue) -> Result[SourceBatch, SelectionError]
     edges = decode_edges(field(document, "edges", [])?, ["edges"])?
     needs = decode_needs(field(document, "needs", [])?, ["needs"])?
     grants = decode_grants(field(document, "grants", [])?, ["grants"])?
-    return Ok(SourceBatch(foundation=foundation, purpose=purpose, units=units, edges=edges, needs=needs, grants=grants))
+    mut runtime_needs: list[RuntimeNeed] = []
+    mut runtime_grants: list[RuntimeGrant] = []
+    if schema == BATCH_SCHEMA_V3:
+        runtime_needs = decode_runtime_needs(field(document, "runtime_needs", [])?, ["runtime_needs"])?
+        runtime_grants = decode_runtime_grants(field(document, "runtime_grants", [])?, ["runtime_grants"])?
+    return Ok(SourceBatch(
+        foundation=foundation, purpose=purpose, units=units, edges=edges, needs=needs, grants=grants,
+        runtime_needs=runtime_needs, runtime_grants=runtime_grants,
+        requires_compiler_support=schema == BATCH_SCHEMA_V3,
+    ))
 
 
 def integer(value: JsonValue, path: list[str]) -> Result[int, SelectionError]:
@@ -542,6 +559,7 @@ def decode_units(value: JsonValue, path: list[str]) -> Result[list[SourceUnit], 
         definition_digest = text_field(item, "definition_digest", at)?
         definition = field(item, "definition", at)?
         requirements = decode_definition(definition, identity, at + ["definition"])?
+        compiler_support = decode_definition_support(definition, at + ["definition"])?
         result.append(
             SourceUnit(
                 unit_id=unit_id,
@@ -551,6 +569,7 @@ def decode_units(value: JsonValue, path: list[str]) -> Result[list[SourceUnit], 
                 definition_digest=definition_digest,
                 definition=definition,
                 requirements=requirements,
+                compiler_support=compiler_support,
             ),
         )
     return Ok(result)
@@ -561,15 +580,14 @@ def decode_definition(
     identity: ProviderIdentity,
     path: list[str],
 ) -> Result[list[Requirement], SelectionError]:
-    """Check schema1 before its body; physical digest/path validity remains the host reader's responsibility."""
+    """Check the version before its body; physical digest/path validity remains the host reader's responsibility."""
     version = integer(field(value, "schema_version", path)?, path + ["schema_version"])?
-    if version != 1:
+    if version != 1 and version != 2:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + ["schema_version"]))
-    exact_object(
-        value,
-        ["schema_version", "package", "crate_name", "crate_kind", "edition", "authored_source_digest", "entrypoint", "source_tree", "requirements"],
-        path,
-    )?
+    mut keys: list[str] = ["schema_version", "package", "crate_name", "crate_kind", "edition", "authored_source_digest", "entrypoint", "source_tree", "requirements"]
+    if version == 2:
+        keys.append("compiler_support")
+    exact_object(value, keys, path)?
     package = field(value, "package", path)?
     exact_object(package, ["name", "version"], path + ["package"])?
     name = text_field(package, "name", path + ["package"])?
@@ -589,6 +607,79 @@ def decode_definition(
             if text_field(item, member, path + [key])? == "":
                 return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [key, member]))
     return decode_requirements(field(value, "requirements", path)?, path + ["requirements"])
+
+
+def decode_definition_support(value: JsonValue, path: list[str]) -> Result[Option[list[CompilerSupportRequest]], SelectionError]:
+    """Preserve legacy absence; version2 contains the original compiler emission requests."""
+    if integer(field(value, "schema_version", path)?, path + ["schema_version"])? == 1:
+        return Ok(None)
+    values = array(field(value, "compiler_support", path)?, path + ["compiler_support"])?
+    mut result: list[CompilerSupportRequest] = []
+    for index in range(len(values)):
+        at = path + ["compiler_support", str(index)]
+        item = values[index]
+        exact_object(item, ["support", "features"], at)?
+        mut support: CompilerSupport = CompilerSupport.Stdlib
+        match text_field(item, "support", at)?:
+            "stdlib" => support = CompilerSupport.Stdlib
+            "derive" => support = CompilerSupport.Derive
+            _ => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=at + ["support"]))
+        features = strings(field(item, "features", at)?, at + ["features"])?
+        result.append(CompilerSupportRequest(support=support, features=features))
+    return Ok(Some(result))
+
+
+def decode_runtime_needs(value: JsonValue, path: list[str]) -> Result[list[RuntimeNeed], SelectionError]:
+    """Read exact unit/definition positions and the current receipt's original feature input."""
+    mut result: list[RuntimeNeed] = []
+    values = array(value, path)?
+    for index in range(len(values)):
+        at = path + [str(index)]
+        item = values[index]
+        exact_object(item, ["need_id", "unit_id", "unit_owner_id", "support_index", "features", "runtime_features_input"], at)?
+        need_id = text_field(item, "need_id", at)?
+        unit_id = text_field(item, "unit_id", at)?
+        owner = text_field(item, "unit_owner_id", at)?
+        position = integer(field(item, "support_index", at)?, at + ["support_index"])?
+        features = strings(field(item, "features", at)?, at + ["features"])?
+        feature_input = text_field(item, "runtime_features_input", at)?
+        result.append(RuntimeNeed(
+            need_id=need_id, unit_id=unit_id, unit_owner_id=owner, support_index=position,
+            features=features, runtime_features_input=feature_input,
+        ))
+    return Ok(result)
+
+
+def decode_runtime_grants(value: JsonValue, path: list[str]) -> Result[list[RuntimeGrant], SelectionError]:
+    """Decode original native member evidence; a runtime owner never becomes an SDK ProviderIdentity."""
+    mut result: list[RuntimeGrant] = []
+    values = array(value, path)?
+    for index in range(len(values)):
+        at = path + [str(index)]
+        item = values[index]
+        exact_object(
+            item,
+            ["grant_id", "candidate_id", "candidate_evidence_id", "plan_identity", "need_id", "unit_owner_id",
+             "extern_name", "source_role", "artifact_digest", "runtime_features_input"],
+            at,
+        )?
+        grant_id = text_field(item, "grant_id", at)?
+        candidate_id = text_field(item, "candidate_id", at)?
+        evidence_id = text_field(item, "candidate_evidence_id", at)?
+        plan_id = text_field(item, "plan_identity", at)?
+        need_id = text_field(item, "need_id", at)?
+        owner = text_field(item, "unit_owner_id", at)?
+        extern_name = text_field(item, "extern_name", at)?
+        source_role = text_field(item, "source_role", at)?
+        artifact_digest = text_field(item, "artifact_digest", at)?
+        feature_input = optional_text(field(item, "runtime_features_input", at)?, at + ["runtime_features_input"])?
+        result.append(RuntimeGrant(
+            grant_id=grant_id, candidate_id=candidate_id, candidate_evidence_id=evidence_id,
+            plan_identity=plan_id, need_id=need_id, unit_owner_id=owner, extern_name=extern_name,
+            source_role=source_role, artifact_digest=artifact_digest,
+            runtime_features_input=feature_input,
+        ))
+    return Ok(result)
 
 
 def decode_requirements(value: JsonValue, path: list[str]) -> Result[list[Requirement], SelectionError]:

@@ -3,6 +3,7 @@
 from std.json import JsonValue
 from plan import (
     NativeCandidate,
+    NativeCandidateEvidence,
     NativeSelection,
     ProviderCapability,
     SelectionRequest,
@@ -84,6 +85,20 @@ pub model Requirement:
     pub source: NativeRequirementSource
 
 
+pub enum CompilerSupport(str):
+    """Original compiler emission sites, independent of SDK provider identities."""
+
+    Stdlib = "stdlib"
+    Derive = "derive"
+
+
+pub model CompilerSupportRequest:
+    """Actual emitted support and features consumed by native runtime input construction."""
+
+    pub support: CompilerSupport
+    pub features: list[str]
+
+
 pub model SourceUnit:
     """Original owner and definition evidence; the JSON definition is never rewritten."""
 
@@ -94,6 +109,7 @@ pub model SourceUnit:
     pub definition_digest: str
     pub definition: JsonValue
     pub requirements: list[Requirement]
+    pub compiler_support: Option[list[CompilerSupportRequest]] = None
 
 
 pub model CheckedEdge:
@@ -114,7 +130,7 @@ pub model CheckedEdge:
 
 
 pub model ReservedNeed:
-    """Checked SDK/compiler policy requirement independent of an offered foundation."""
+    """Checked SDK requirement independent of an offered foundation."""
 
     pub need_id: str
     pub unit_id: str
@@ -140,6 +156,40 @@ pub model ReservedGrant:
     pub extern_name: str
 
 
+pub model RuntimeNeed:
+    """One emitted support slot joined to its original unit and verified current feature input.
+
+    The feature input is the existing runtime receipt field, not a newly computed macro-specific key.
+    """
+
+    pub need_id: str
+    pub unit_id: str
+    pub unit_owner_id: str
+    pub support_index: int
+    pub features: list[str]
+    pub runtime_features_input: str
+
+
+pub model RuntimeGrant:
+    """A named member of one admitted native supplier, without a fabricated SDK identity.
+
+    The host supplies source_role and artifact_digest from the retained original member handle and validates
+    selected IDs against that table before attachment. JSON text alone authenticates neither field.
+    """
+
+    pub grant_id: str
+    pub candidate_id: str
+    pub candidate_evidence_id: str
+    pub plan_identity: str
+    pub need_id: str
+    pub unit_owner_id: str
+    pub extern_name: str
+    pub source_role: str
+    pub artifact_digest: str
+    # Exact-unit candidates have no recipe fields; recipe suppliers retain the original feature input.
+    pub runtime_features_input: Option[str]
+
+
 pub model SourceBatch:
     """One selected-profile command request with all units and original checked associations."""
 
@@ -149,6 +199,10 @@ pub model SourceBatch:
     pub edges: list[CheckedEdge]
     pub needs: list[ReservedNeed]
     pub grants: list[ReservedGrant]
+    pub runtime_needs: list[RuntimeNeed] = []
+    pub runtime_grants: list[RuntimeGrant] = []
+    # The wire decoder derives this from the batch version; the JSON object has no override field.
+    pub requires_compiler_support: bool = false
 
 
 pub model SlotBinding:
@@ -216,11 +270,12 @@ def validate_batch(batch: SourceBatch) -> Result[None, SelectionError]:
         return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=["purpose"]))
     unique([unit.unit_id for unit in batch.units], ["units"])?
     unique([edge.edge_id for edge in batch.edges], ["edges"])?
-    unique([need.need_id for need in batch.needs], ["needs"])?
-    unique([grant.grant_id for grant in batch.grants], ["grants"])?
+    unique([grant.grant_id for grant in batch.grants] + [grant.grant_id for grant in batch.runtime_grants], ["grants"])?
+    unique([need.need_id for need in batch.needs] + [need.need_id for need in batch.runtime_needs], ["needs"])?
     unique([candidate.candidate_id for candidate in batch.foundation.candidates], ["candidates"])?
     if len(batch.units) == 0:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units"]))
+    validate_runtime_bindings(batch)?
     for unit in batch.units:
         identity_valid(unit.identity)?
         if unit.owner_id == "" or unit.definition_id == "" or unit.definition_digest == "":
@@ -280,13 +335,137 @@ def validate_batch(batch: SourceBatch) -> Result[None, SelectionError]:
     return Ok(None)
 
 
+def validate_runtime_bindings(batch: SourceBatch) -> Result[None, SelectionError]:
+    """Require complete source slots and original candidate ownership before any candidate can be filtered."""
+    if not batch.requires_compiler_support:
+        if len(batch.runtime_needs) != 0 or len(batch.runtime_grants) != 0:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime_needs"]))
+        for unit in batch.units:
+            if unit.compiler_support.is_some():
+                return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units", unit.unit_id, "compiler_support"]))
+        return Ok(None)
+    for unit in batch.units:
+        match unit.compiler_support:
+            None => return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=["units", unit.unit_id, "compiler_support"]))
+            Some(requests) =>
+                if len(requests) == 0 or requests[0].support != CompilerSupport.Stdlib:
+                    return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units", unit.unit_id, "compiler_support"]))
+                unique([request.support.value() for request in requests], ["units", unit.unit_id, "compiler_support"])?
+                for index in range(len(requests)):
+                    request = requests[index]
+                    unique(request.features, ["units", unit.unit_id, "compiler_support", str(index), "features"])?
+                    if request.support == CompilerSupport.Derive and len(request.features) != 0:
+                        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units", unit.unit_id, "compiler_support", str(index), "features"]))
+                    matches = [need for need in batch.runtime_needs if runtime_need_matches(
+                        need, unit, index, request,
+                    )]
+                    if len(matches) != 1:
+                        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units", unit.unit_id, "compiler_support", str(index)]))
+    for need in batch.runtime_needs:
+        unique(need.features, ["runtime_needs", need.need_id, "features"])?
+        if need.runtime_features_input == "" or not runtime_need_has_unit(batch, need):
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime_needs", need.need_id]))
+    for grant in batch.runtime_grants:
+        unique(
+            [grant.source_role], ["runtime_grants", grant.grant_id, "source_role"],
+        )?
+        if "" in [grant.extern_name, grant.artifact_digest]:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime_grants", grant.grant_id]))
+        if grant.need_id not in [need.need_id for need in batch.runtime_needs]:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime_grants", grant.grant_id]))
+        if not runtime_grant_has_supplier(batch, grant):
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime_grants", grant.grant_id, "supplier"]))
+    return Ok(None)
+
+
+def runtime_need_matches(
+    need: RuntimeNeed, unit: SourceUnit, index: int, request: CompilerSupportRequest,
+) -> bool:
+    """Bind an original support position to the exact emitted unit and collected request features."""
+    return need.unit_id == unit.unit_id and need.unit_owner_id == unit.owner_id and need.support_index == index and same_set(
+        need.features, request.features,
+    )
+
+
+def runtime_need_has_unit(batch: SourceBatch, need: RuntimeNeed) -> bool:
+    """Check the original definition position instead of identifying compiler support by an alias search."""
+    for unit in batch.units:
+        if unit.unit_id == need.unit_id and unit.owner_id == need.unit_owner_id:
+            if let Some(requests) = unit.compiler_support:
+                if need.support_index < 0 or need.support_index >= len(requests):
+                    return false
+                return same_set(need.features, requests[need.support_index].features)
+    return false
+
+
+def runtime_grant_has_supplier(batch: SourceBatch, grant: RuntimeGrant) -> bool:
+    """Keep runtime evidence attached to its original admitted candidate and immutable plan."""
+    for candidate in batch.foundation.candidates:
+        if candidate.candidate_id == grant.candidate_id and candidate.evidence_id == grant.candidate_evidence_id and candidate.plan_identity == grant.plan_identity:
+            match candidate.evidence:
+                NativeCandidateEvidence.RuntimeProviderRecipe(_, _) =>
+                    match grant.runtime_features_input:
+                        None => return false
+                        Some(value) => return value != ""
+                NativeCandidateEvidence.ExactBuildUnit => return grant.runtime_features_input.is_none()
+    return false
+
+
+def compiler_extern(support: CompilerSupport) -> str:
+    """Return the alias written by that exact compiler emission site, never a discovered native filename."""
+    match support:
+        CompilerSupport.Stdlib => return "incan_stdlib"
+        CompilerSupport.Derive => return "incan_derive"
+
+
+def bind_runtime_grants(batch: SourceBatch, unit: SourceUnit, candidate: NativeCandidate) -> Option[list[str]]:
+    """Bind emitted runtime slots using the same runtime/build-unit comparison as the foundation selector."""
+    mut result: list[str] = []
+    if not batch.requires_compiler_support:
+        return Some(result)
+    match unit.compiler_support:
+        None => return None
+        Some(requests) =>
+            for need in batch.runtime_needs:
+                if need.unit_id != unit.unit_id:
+                    continue
+                request = requests[need.support_index]
+                matches = [grant.grant_id for grant in batch.runtime_grants if runtime_grant_matches(
+                    grant, candidate, need, unit, request,
+                )]
+                if len(matches) != 1:
+                    return None
+                result.append(matches[0])
+    return Some(result)
+
+
+def runtime_grant_matches(
+    grant: RuntimeGrant, candidate: NativeCandidate, need: RuntimeNeed, unit: SourceUnit,
+    request: CompilerSupportRequest,
+) -> bool:
+    """Compare required support and receipt facts; the retained host handle owns physical member validation."""
+    if grant.candidate_id != candidate.candidate_id or grant.need_id != need.need_id:
+        return false
+    if grant.unit_owner_id != unit.owner_id or grant.extern_name != compiler_extern(request.support):
+        return false
+    match candidate.evidence:
+        NativeCandidateEvidence.ExactBuildUnit =>
+            # The existing foundation selector still requires its exact request/build-unit match.
+            return true
+        NativeCandidateEvidence.RuntimeProviderRecipe(_, _) =>
+            return grant.runtime_features_input == Some(need.runtime_features_input)
+
+
 def bind_candidate(batch: SourceBatch, candidate: NativeCandidate) -> Option[list[UnitBinding]]:
     """Compute complete bindings once for this candidate, including empty-authored foundation requirements."""
     mut result: list[UnitBinding] = []
     for unit in batch.units:
         mut slots: list[SlotBinding] = []
         mut grant_ids: list[str] = []
-        mut need_count = 0
+        match bind_runtime_grants(batch, unit, candidate):
+            None => return None
+            Some(runtime_ids) => grant_ids.extend(runtime_ids)
+        mut need_count = len(grant_ids)
         for need in batch.needs:
             if need.unit_id == unit.unit_id:
                 need_count += 1

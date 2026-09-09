@@ -16,7 +16,7 @@ use crate::generated_source;
 /// Artifact-relative location of an emitted library's physical source definition.
 pub const NATIVE_SOURCE_UNIT_PATH: &str = "native/source-unit.json";
 /// Supported physical source-unit schema; independent of semantic executable formats.
-pub const NATIVE_SOURCE_UNIT_SCHEMA_VERSION: u32 = 1;
+pub const NATIVE_SOURCE_UNIT_SCHEMA_VERSION: u32 = 2;
 /// Maximum accepted source-definition payload size.
 const MAX_DEFINITION_BYTES: usize = 4 * 1024 * 1024;
 
@@ -59,6 +59,29 @@ pub struct NativeSourceUnitDefinition {
     pub source_tree: NativeSourceInput,
     /// Retained requirements, sorted by role and alias without merging those roles.
     pub requirements: Vec<NativeSourceRequirement>,
+    /// Compiler support actually used by emitted Rust; absent in legacy schema1, never inferred empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiler_support: Option<Vec<NativeCompilerSupportRequirement>>,
+}
+
+/// Compiler-owned Rust support requested at its original emission site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeCompilerSupport {
+    /// Runtime support used by the unconditional generated version check and runtime helpers.
+    Stdlib,
+    /// Host derives emitted by the checked structure/enum emitter.
+    Derive,
+}
+
+/// Required support and actual collected feature requests, without selected native or source authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCompilerSupportRequirement {
+    /// Typed compiler emission site, distinct from an authored dependency or an SDK provider identity.
+    pub support: NativeCompilerSupport,
+    /// Actual request features consumed by native runtime input construction, excluding unused generator defaults.
+    pub features: Vec<String>,
 }
 
 /// Name and version bound to the containing checked manifest.
@@ -208,8 +231,11 @@ impl NativeSourceUnitDefinition {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| invalid("schema_version must be an unsigned integer"))?;
-        if version != u64::from(NATIVE_SOURCE_UNIT_SCHEMA_VERSION) {
+        if version != 1 && version != u64::from(NATIVE_SOURCE_UNIT_SCHEMA_VERSION) {
             return Err(NativeSourceDefinitionError::UnsupportedVersion(version));
+        }
+        if version == 1 && value.get("compiler_support").is_some() {
+            return Err(invalid("schema1 does not declare compiler support"));
         }
         let definition: Self = serde_json::from_value(value)?;
         definition.validate()?;
@@ -273,7 +299,7 @@ impl NativeSourceUnitDefinition {
 
     /// Validate the schema and portable record shape without reading unresolved dependency sources.
     pub fn validate(&self) -> Result<(), NativeSourceDefinitionError> {
-        if self.schema_version != NATIVE_SOURCE_UNIT_SCHEMA_VERSION {
+        if self.schema_version != 1 && self.schema_version != NATIVE_SOURCE_UNIT_SCHEMA_VERSION {
             return Err(NativeSourceDefinitionError::UnsupportedVersion(
                 self.schema_version.into(),
             ));
@@ -297,6 +323,33 @@ impl NativeSourceUnitDefinition {
         }
         if self.entrypoint.path != "src/lib.rs" || self.source_tree.path != "src" {
             return Err(invalid("source inputs must name src/lib.rs and src"));
+        }
+        match (self.schema_version, &self.compiler_support) {
+            (1, None) => {}
+            (2, Some(requirements)) => {
+                if requirements.first().map(|request| request.support) != Some(NativeCompilerSupport::Stdlib) {
+                    return Err(invalid("compiler support must include the emitted stdlib requirement"));
+                }
+                if requirements.windows(2).any(|pair| pair[0].support >= pair[1].support) {
+                    return Err(invalid("compiler support must be sorted and unique"));
+                }
+                for request in requirements {
+                    if request.features.windows(2).any(|pair| pair[0] >= pair[1]) {
+                        return Err(invalid("compiler support features must be sorted and unique"));
+                    }
+                    for feature in &request.features {
+                        require_text("compiler support feature", feature)?;
+                    }
+                    if request.support == NativeCompilerSupport::Derive && !request.features.is_empty() {
+                        return Err(invalid("compiler derive has no declared feature requests"));
+                    }
+                }
+            }
+            _ => {
+                return Err(invalid(
+                    "compiler support presence must match the source-definition version",
+                ));
+            }
         }
         let mut keys = BTreeSet::new();
         let mut previous = None;
@@ -480,6 +533,10 @@ mod tests {
                 digest: generated_source::digest_tree(&root.join("src"))?,
             },
             requirements: Vec::new(),
+            compiler_support: Some(vec![NativeCompilerSupportRequirement {
+                support: NativeCompilerSupport::Stdlib,
+                features: Vec::new(),
+            }]),
         };
         Ok((manifest, definition))
     }
@@ -496,6 +553,45 @@ mod tests {
             optional: false,
             source,
         }
+    }
+
+    /// Preserve v1 absence while requiring explicit, complete support requests in v2.
+    #[test]
+    fn native_source_definition_versions_preserve_support_obligations() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        let (_, current) = fixture(tmp.path())?;
+        let encoded = current.to_json_bytes()?;
+        assert_eq!(NativeSourceUnitDefinition::from_json_bytes(&encoded)?, current);
+        let mut legacy = current.clone();
+        legacy.schema_version = 1;
+        legacy.compiler_support = None;
+        let legacy_bytes = legacy.to_json_bytes()?;
+        assert!(!String::from_utf8(legacy_bytes.clone())?.contains("compiler_support"));
+        assert_eq!(NativeSourceUnitDefinition::from_json_bytes(&legacy_bytes)?, legacy);
+        let mut unknown_legacy_field = serde_json::to_value(&legacy)?;
+        unknown_legacy_field["compiler_support"] = serde_json::Value::Null;
+        assert!(NativeSourceUnitDefinition::from_json_bytes(&serde_json::to_vec(&unknown_legacy_field)?).is_err());
+        legacy.compiler_support = current.compiler_support.clone();
+        assert!(legacy.to_json_bytes().is_err());
+        for support in [
+            None,
+            Some(Vec::new()),
+            Some(vec![NativeCompilerSupportRequirement {
+                support: NativeCompilerSupport::Derive,
+                features: Vec::new(),
+            }]),
+        ] {
+            let mut changed = current.clone();
+            changed.compiler_support = support;
+            assert!(changed.to_json_bytes().is_err());
+        }
+        let mut changed = current;
+        changed.compiler_support = Some(vec![NativeCompilerSupportRequirement {
+            support: NativeCompilerSupport::Stdlib,
+            features: vec!["json".to_string(), "json".to_string()],
+        }]);
+        assert!(changed.to_json_bytes().is_err());
+        Ok(())
     }
 
     #[test]

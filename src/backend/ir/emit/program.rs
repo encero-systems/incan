@@ -3966,6 +3966,7 @@ impl<'a> IrEmitter<'a> {
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
         self.emitted_native_unions.borrow_mut().clear();
+        self.emitted_compiler_support.borrow_mut().clear();
         self.set_static_projections(program)?;
         let mut items = Vec::new();
         let analysis =
@@ -4009,6 +4010,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         let compiler_version = crate::version::INCAN_VERSION;
+        self.record_compiler_support(crate::library_manifest::NativeCompilerSupport::Stdlib);
         items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#compiler_version); });
         if program.uses_checked_c_strings {
             items.push(Self::emit_checked_c_string_constructor());

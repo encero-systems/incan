@@ -52,8 +52,14 @@ impl<'a> IrEmitter<'a> {
             // Validated newtypes must reconstruct through their checked ingress rather than Serde's tuple derive.
             .filter(|d| checked_deserialize_plan.is_none() || d.as_str() != SERDE_DESERIALIZE_DERIVE)
             .map(|d| match derives::from_str(d.as_str()) {
-                _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
-                _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
+                _ if d == derives::FIELD_INFO_DERIVE_NAME => {
+                    self.record_compiler_support(crate::library_manifest::NativeCompilerSupport::Derive);
+                    quote! { incan_derive::FieldInfo }
+                }
+                _ if d == derives::INCAN_CLASS_DERIVE_NAME => {
+                    self.record_compiler_support(crate::library_manifest::NativeCompilerSupport::Derive);
+                    quote! { incan_derive::IncanClass }
+                }
                 _ if d.contains("::") => {
                     let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
                     super::join_path_tokens(&segs)
@@ -551,8 +557,14 @@ impl<'a> IrEmitter<'a> {
                     && derives::from_str(d.as_str()) != Some(DeriveId::Display)
             })
             .map(|d| match derives::from_str(d.as_str()) {
-                _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
-                _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
+                _ if d == derives::FIELD_INFO_DERIVE_NAME => {
+                    self.record_compiler_support(crate::library_manifest::NativeCompilerSupport::Derive);
+                    quote! { incan_derive::FieldInfo }
+                }
+                _ if d == derives::INCAN_CLASS_DERIVE_NAME => {
+                    self.record_compiler_support(crate::library_manifest::NativeCompilerSupport::Derive);
+                    quote! { incan_derive::IncanClass }
+                }
                 _ if d.contains("::") => {
                     let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
                     super::join_path_tokens(&segs)

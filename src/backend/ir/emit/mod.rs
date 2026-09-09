@@ -648,6 +648,8 @@ pub struct IrEmitter<'a> {
     generated_union_types: HashMap<String, IrType>,
     /// Exact local wrappers passed to definition emission after alias resolution and generated-use filtering.
     emitted_native_unions: RefCell<HashMap<String, IrType>>,
+    /// Actual compiler-owned support emitted in this module, collected without another IR/source walk.
+    emitted_compiler_support: RefCell<std::collections::BTreeSet<crate::library_manifest::NativeCompilerSupport>>,
     /// Exact consumer nominal bindings retained by this source module's lowering pass.
     native_nominal_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
 
@@ -677,6 +679,18 @@ pub struct IrEmitter<'a> {
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Retain one actual compiler-owned dependency at its original emission site.
+    fn record_compiler_support(&self, support: crate::library_manifest::NativeCompilerSupport) {
+        self.emitted_compiler_support.borrow_mut().insert(support);
+    }
+
+    /// Return support collected by this emitter, without interpreting generated Rust or traversing the IR again.
+    pub(crate) fn emitted_compiler_support(
+        &self,
+    ) -> std::collections::BTreeSet<crate::library_manifest::NativeCompilerSupport> {
+        self.emitted_compiler_support.borrow().clone()
+    }
+
     /// Create an emitter using the function registry that drives call-site default argument filling and type-aware
     /// argument conversion.
     pub fn new(function_registry: &'a FunctionRegistry) -> Self {
@@ -753,6 +767,7 @@ impl<'a> IrEmitter<'a> {
             qualify_union_types_from_crate: false,
             generated_union_types: HashMap::new(),
             emitted_native_unions: RefCell::new(HashMap::new()),
+            emitted_compiler_support: RefCell::new(std::collections::BTreeSet::new()),
             native_nominal_origins: Default::default(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
