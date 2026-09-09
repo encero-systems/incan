@@ -1028,6 +1028,7 @@ pub fn prepare_loaf_from_generated_project(
         } else {
             OvenLegacyCargoDirectDependencyClosure::GeneratedSource
         },
+        provider_compilations: &[],
         compact_debug_info: true,
         source_compiler_vocab_support: false,
         base_loaf: None,
