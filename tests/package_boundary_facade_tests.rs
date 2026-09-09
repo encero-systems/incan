@@ -307,3 +307,69 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
     }
     Ok(())
 }
+
+/// Private child-module derives survive both direct and transitive source-free package consumption.
+#[test]
+fn child_module_derive_is_available_when_only_a_function_crosses_the_package_boundary() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let provider = temporary.path().join("provider");
+    write_fixture_file(
+        &provider,
+        "loaf.toml",
+        "[project]\nname = \"derive_child_provider\"\nversion = \"0.1.0\"\n",
+    )?;
+    write_fixture_file(&provider, "src/lib.incn", "pub from defs import answer\n")?;
+    write_fixture_file(
+        &provider,
+        "src/defs.incn",
+        "model Item:\n    value: int\n\npub def answer() -> int:\n    return Item(value=42).value\n",
+    )?;
+    assert_success(&run_explicit_oven_bake(&provider)?, "provider with a child-only derive");
+    let artifact = provider.join("target/lib");
+    let before = artifact_inventory(&artifact)?;
+    let facade = temporary.path().join("facade");
+    write_fixture_file(
+        &facade,
+        "loaf.toml",
+        "[project]\nname = \"derive_child_facade\"\nversion = \"0.1.0\"\n\n[dependencies]\nleaf = { path = \"../provider\" }\n",
+    )?;
+    write_fixture_file(&facade, "src/lib.incn", "pub from api import answer\n")?;
+    write_fixture_file(
+        &facade,
+        "src/api.incn",
+        "from pub::leaf import answer as leaf_answer\n\npub def answer() -> int:\n    return leaf_answer()\n",
+    )?;
+    assert_success(
+        &run_explicit_oven_bake(&facade)?,
+        "facade over the child-derive provider",
+    );
+    assert_eq!(artifact_inventory(&artifact)?, before);
+    let facade_artifact = facade.join("target/lib");
+    let facade_before = artifact_inventory(&facade_artifact)?;
+    for producer in [&provider, &facade] {
+        fs::remove_dir_all(producer.join("src"))?;
+        fs::remove_file(producer.join("loaf.toml"))?;
+    }
+    for route in ["provider", "facade"] {
+        let consumer = temporary.path().join(format!("consumer_{route}"));
+        write_fixture_file(
+            &consumer,
+            "loaf.toml",
+            &format!(
+                "[project]\nname = \"derive_child_consumer_{route}\"\nversion = \"0.1.0\"\n\n[dependencies]\nsupplier = {{ path = \"../{route}\" }}\n"
+            ),
+        )?;
+        write_fixture_file(
+            &consumer,
+            "src/main.incn",
+            "from pub::supplier import answer\n\ndef main() -> None:\n    println(answer())\n",
+        )?;
+        assert_success(&run_explicit_oven_bake(&consumer)?, "fresh consumer without models");
+        let output = run_incan(&consumer, &["run", "--locked", "src/main.incn"])?;
+        assert_success(&output, "source-free provider child derive");
+        assert_eq!(String::from_utf8(output.stdout)?.trim(), "42");
+        assert_eq!(artifact_inventory(&artifact)?, before);
+        assert_eq!(artifact_inventory(&facade_artifact)?, facade_before);
+    }
+    Ok(())
+}

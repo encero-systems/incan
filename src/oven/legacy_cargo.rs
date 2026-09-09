@@ -147,6 +147,171 @@ pub struct OvenLegacyCargoInspectionPackage {
     pub version_requirement: String,
 }
 
+/// A compiler-owned macro dependency required by an already checked provider compilation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OvenCompilerMacroDependency {
+    /// Dependency alias retained by the provider's generated manifest.
+    pub alias: String,
+    /// Declared package name, before the publisher binds its locked package ID.
+    pub package: String,
+    /// Canonical compiler-owned source root authenticated by the provider and consumer runtime facts.
+    #[serde(skip)]
+    pub source_root: PathBuf,
+    /// Checked macro source content identity, independent of its installed location.
+    pub source_digest: String,
+    /// Checked compiler-core source used by the macro implementation.
+    pub core_source_digest: String,
+    /// Checked runtime lock content that owns the macro's private dependency closure.
+    pub runtime_lock_digest: String,
+}
+
+/// Source-evidence projection reserved for rebuilding checked providers rather than the consumer root.
+pub(crate) const OVEN_PROVIDER_COMPILATION_KEY: &str = "provider-compilation";
+
+/// Hash only macro dependency content; provider bodies, publication labels and physical roots do not enter reuse.
+pub(crate) fn provider_compilation_requirements_digest(
+    requirements: &[OvenCompilerMacroDependency],
+) -> Result<String, OvenLegacyCargoError> {
+    let records = requirements
+        .iter()
+        .map(serde_json::to_vec)
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("cannot encode provider macro requirements: {error}")))?;
+    serde_json::to_vec(&records)
+        .map(|bytes| digest_bytes(&bytes))
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("cannot encode provider macro requirement set: {error}")))
+}
+
+/// Require the publication receipt to own the exact content-bound provider request before warm selection or effects.
+fn validate_provider_compilation_requirements(
+    receipt: &OvenReceipt,
+    requirements: &[OvenCompilerMacroDependency],
+) -> Result<(), OvenLegacyCargoError> {
+    if requirements.is_empty() {
+        return Ok(());
+    }
+    let digest = provider_compilation_requirements_digest(requirements)?;
+    if receipt
+        .sources
+        .build_unit_inputs
+        .get("provider-compilation-requirements")
+        != Some(&digest)
+    {
+        return Err(OvenLegacyCargoError::ReceiptMismatch {
+            message: "provider compilation requirements differ from the publication receipt".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Preserve consumer roots and expose the checked macro set only to provider compilations.
+fn provider_compilation_externs(
+    requirements: &[OvenCompilerMacroDependency],
+    consumer: &BTreeMap<String, String>,
+    all_dependencies: &BTreeMap<String, String>,
+    consumer_key: &str,
+) -> Result<BTreeMap<String, Vec<String>>, OvenLegacyCargoError> {
+    if requirements.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut provider_names = consumer.keys().cloned().collect::<BTreeSet<_>>();
+    for dependency in requirements {
+        if all_dependencies.get(&dependency.alias) != Some(&dependency.package) {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "provider compilation has no selected macro {}",
+                dependency.alias
+            )));
+        }
+        provider_names.insert(dependency.alias.clone());
+    }
+    Ok(BTreeMap::from([
+        (consumer_key.to_string(), consumer.keys().cloned().collect()),
+        (
+            OVEN_PROVIDER_COMPILATION_KEY.to_string(),
+            provider_names.into_iter().collect(),
+        ),
+    ]))
+}
+
+/// Bind required compiler macros to the exact declared package and actual publisher-reported host artifacts.
+fn validate_provider_macro_artifacts(
+    providers: &[OvenCompilerMacroDependency],
+    metadata: &CargoMetadata,
+    resolved: &BTreeMap<String, ResolvedDirectDependency>,
+    outputs: &[CargoInvocationOutput],
+    staging: &Path,
+    externs: &[OvenRustcArtifactExtern],
+    base: Option<&OvenLegacyCargoBaseLoaf<'_>>,
+) -> Result<(), OvenLegacyCargoError> {
+    for dependency in providers {
+        let selected = resolved.get(&dependency.alias).ok_or_else(|| {
+            OvenLegacyCargoError::Plan(format!("required provider macro {} is unresolved", dependency.alias))
+        })?;
+        let package = metadata
+            .packages
+            .iter()
+            .find(|package| package.id == selected.package_id)
+            .ok_or_else(|| {
+                OvenLegacyCargoError::Plan("selected macro package is absent from publisher metadata".to_string())
+            })?;
+        let package_root = package
+            .manifest_path
+            .parent()
+            .ok_or_else(|| OvenLegacyCargoError::Plan("selected macro manifest has no source root".to_string()))?;
+        if package.name != dependency.package
+            || canonical_directory(package_root, "selected macro source root")? != dependency.source_root
+        {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "provider macro {} does not resolve to its checked compiler-owned source",
+                dependency.alias
+            )));
+        }
+        let named = externs
+            .iter()
+            .find(|artifact| artifact.crate_name == dependency.alias)
+            .ok_or_else(|| {
+                OvenLegacyCargoError::Plan(format!(
+                    "required provider macro {} has no named artifact",
+                    dependency.alias
+                ))
+            })?;
+        if base.is_some_and(|base| base.artifacts.externs.iter().any(|artifact| artifact == named)) {
+            // The existing base admission already owns this exact named artifact and its compatibility closure.
+            // Never replace it with a separately emitted package copy merely to obtain a new report.
+            continue;
+        }
+        let source_relative =
+            rerooted_artifact_staging_source(&named.relative_path).unwrap_or_else(|| named.relative_path.clone());
+        let actual_path = verified_regular_file(&staging.join(source_relative), "selected provider macro")?;
+        let mut matched = false;
+        for output in outputs {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let Ok(artifact) = serde_json::from_str::<CargoCompilerArtifact>(line) else {
+                    continue;
+                };
+                if artifact.reason != "compiler-artifact"
+                    || artifact.package_id != selected.package_id
+                    || !artifact.target.kind.iter().any(|kind| kind == "proc-macro")
+                {
+                    continue;
+                }
+                for filename in artifact.filenames {
+                    if verified_regular_file(&filename, "reported provider macro")? == actual_path {
+                        matched = true;
+                    }
+                }
+            }
+        }
+        if !matched {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "required provider macro {} has no matching reported proc-macro artifact",
+                dependency.alias
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Explicit input to the hidden `legacy_cargo` publisher.
 pub struct OvenLegacyCargoPrepareRequest<'a> {
     /// Bounded Oven store that will own the immutable result.
@@ -191,6 +356,8 @@ pub struct OvenLegacyCargoPrepareRequest<'a> {
     /// This controls the Rustc `--extern` surface only at the named publisher boundary. Normal consumers merely
     /// select the already sealed plan and never inspect a generated Cargo manifest or target directory.
     pub direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure,
+    /// Checked provider compilation requirements whose native artifacts this publisher must expose privately.
+    pub provider_compilations: &'a [OvenCompilerMacroDependency],
     /// Whether the named Loaf publisher may omit debug information from a debug-profile dependency closure.
     ///
     /// This affects only private `legacy_cargo` publisher artifacts; direct-rustc receipt identity and normal command
@@ -1304,6 +1471,7 @@ pub fn prepare_direct_rustc_plan(
         .map_err(|error| OvenLegacyCargoError::ReceiptMismatch {
             message: error.to_string(),
         })?;
+    validate_provider_compilation_requirements(&request.receipt, request.provider_compilations)?;
     let supported_compatibility = matches!(
         request.receipt.compatibility.kind,
         OvenCompatibilityKind::GeneratedIncanProject | OvenCompatibilityKind::NativeCompilerTestSuite
@@ -1366,6 +1534,16 @@ pub fn prepare_direct_rustc_plan(
         request.publication_kind,
         request.direct_dependency_closure,
     )?;
+    let consumer_direct_dependencies = direct_dependencies.clone();
+    for dependency in request.provider_compilations {
+        if declared_direct_dependencies.get(&dependency.alias) != Some(&dependency.package) {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "provider compilation requires undeclared compiler macro {} from package {}",
+                dependency.alias, dependency.package,
+            )));
+        }
+        direct_dependencies.insert(dependency.alias.clone(), dependency.package.clone());
+    }
     if request.publication_kind == OvenLegacyCargoPublicationKind::LibraryTests {
         // The direct-rustc compiler CLI is a binary target in this same package. Cargo emits its library as
         // `libincan-*` during the explicit publisher build; recording that self-library lets normal test setup bake
@@ -1468,6 +1646,12 @@ pub fn prepare_direct_rustc_plan(
             &cargo_outputs,
         )?
     };
+    let provider_entrypoints = provider_compilation_externs(
+        request.provider_compilations,
+        &consumer_direct_dependencies,
+        &direct_dependencies,
+        &request.source_evidence_key,
+    )?;
     let (registry_leaves, registry_source_artifacts) =
         publisher_registry_leaf_catalog(PublisherRegistryLeafCatalogRequest {
             outputs: &cargo_outputs,
@@ -1538,7 +1722,7 @@ pub fn prepare_direct_rustc_plan(
         dependency_search_paths,
         native_search_paths: Vec::new(),
         externs,
-        entrypoint_externs: BTreeMap::new(),
+        entrypoint_externs: provider_entrypoints,
         registry_leaves: registry_leaves.clone(),
         registry_sources,
         compile_environment: request.compile_environment.clone(),
@@ -1582,6 +1766,15 @@ pub fn prepare_direct_rustc_plan(
         let complete_plan = plan
             .with_release_cohort_from_base(base.artifacts, &root_registry_packages)
             .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
+        validate_provider_macro_artifacts(
+            request.provider_compilations,
+            &metadata,
+            &resolved_direct_dependencies,
+            &cargo_outputs,
+            &staging,
+            &complete_plan.externs,
+            Some(base),
+        )?;
         let partition = complete_plan
             .partition_against_base(base.artifacts)
             .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
@@ -1657,6 +1850,15 @@ pub fn prepare_direct_rustc_plan(
         .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
         (OvenArtifactKind::ProjectPayload, payload, materialized_plan)
     } else {
+        validate_provider_macro_artifacts(
+            request.provider_compilations,
+            &metadata,
+            &resolved_direct_dependencies,
+            &cargo_outputs,
+            &staging,
+            &plan.externs,
+            None,
+        )?;
         let payload = serde_json::to_vec(&plan).map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
         (OvenArtifactKind::DirectRustcPlan, payload, plan)
     };
@@ -8946,6 +9148,12 @@ fn round_physical(bytes: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
+        OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency, provider_compilation_externs,
+        provider_compilation_requirements_digest, validate_provider_compilation_requirements,
+        validate_provider_macro_artifacts,
+    };
+
+    use super::{
         CargoInvocationOutput, CargoMetadata, CargoMetadataPackage, CargoMetadataResolve,
         CargoMetadataResolveDependency, CargoMetadataResolveNode, CargoUnitGraph, CargoUnitGraphDependency,
         CargoUnitGraphTarget, CargoUnitGraphUnit, CompilerSuiteArtifactCatalog, InspectionPackageScope,
@@ -9003,6 +9211,220 @@ mod tests {
         path::{Path, PathBuf},
         process::Command,
     };
+
+    /// A declared macro uses content identities independently of installation or provider source coordinates.
+    fn provider_macro_requirement(root: &Path) -> OvenCompilerMacroDependency {
+        OvenCompilerMacroDependency {
+            alias: "incan_derive".to_string(),
+            package: "incan_derive".to_string(),
+            source_root: root.to_path_buf(),
+            source_digest: "sha256:macro-source".to_string(),
+            core_source_digest: "sha256:core-source".to_string(),
+            runtime_lock_digest: "sha256:runtime-lock".to_string(),
+        }
+    }
+
+    /// Body/publication data is absent from foundation identity, and a zero-macro graph adds no publisher roots.
+    #[test]
+    fn provider_macro_requirements_preserve_reuse_and_consumer_visibility() -> Result<(), Box<dyn std::error::Error>> {
+        let original = provider_macro_requirement(Path::new("/publisher/one"));
+        let digest = provider_compilation_requirements_digest(std::slice::from_ref(&original))?;
+        let mut relocated = original.clone();
+        relocated.source_root = PathBuf::from("/publisher/two");
+        assert_eq!(
+            provider_compilation_requirements_digest(&[original.clone(), relocated])?,
+            digest
+        );
+        let mut changed = original.clone();
+        changed.source_digest.push_str("-changed");
+        assert_ne!(provider_compilation_requirements_digest(&[changed])?, digest);
+        let consumer = BTreeMap::from([("incan_stdlib".to_string(), "incan_stdlib".to_string())]);
+        let mut selected = consumer.clone();
+        selected.insert("incan_derive".to_string(), "incan_derive".to_string());
+        let projections =
+            provider_compilation_externs(std::slice::from_ref(&original), &consumer, &selected, "generated-root")?;
+        assert_eq!(projections["generated-root"], ["incan_stdlib"]);
+        assert_eq!(
+            projections[OVEN_PROVIDER_COMPILATION_KEY],
+            ["incan_derive", "incan_stdlib"]
+        );
+        assert!(
+            provider_compilation_externs(std::slice::from_ref(&original), &consumer, &consumer, "generated-root")
+                .is_err()
+        );
+        assert!(provider_compilation_externs(&[], &consumer, &selected, "generated-root")?.is_empty());
+        let project = tempfile::tempdir()?;
+        let source = project.path().join("main.rs");
+        fs::write(&source, "fn main() {}")?;
+        let request = OvenGeneratedProjectRequest::new(
+            project.path(),
+            "consumer",
+            "0.1.0",
+            "target",
+            "rustc",
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", &source)
+        .with_build_unit_input("provider-compilation-requirements", digest);
+        let receipt = receipt_generated_project(&request)?;
+        fs::write(&source, "fn main() { /* body changed */ }")?;
+        let edited = receipt_generated_project(&request)?;
+        assert_ne!(receipt.identity, edited.identity);
+        assert_eq!(receipt.build_unit_identity, edited.build_unit_identity);
+        validate_provider_compilation_requirements(&edited, std::slice::from_ref(&original))?;
+        let mut wrong_lock = original;
+        wrong_lock.runtime_lock_digest.push_str("-changed");
+        assert!(validate_provider_compilation_requirements(&edited, &[wrong_lock]).is_err());
+        Ok(())
+    }
+
+    /// The publisher must associate the named macro with its locked package, source and actual proc-macro report.
+    #[test]
+    fn provider_macro_artifact_requires_exact_reported_package_kind_and_path() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let staging = tempfile::tempdir()?;
+        let package_root = fs::canonicalize(staging.path())?;
+        let requirement = provider_macro_requirement(&package_root);
+        let artifact_path = staging.path().join("reported-macro");
+        let other_path = staging.path().join("other-macro");
+        fs::write(&artifact_path, b"reported host macro")?;
+        fs::write(&other_path, b"different host macro")?;
+        let metadata = CargoMetadata {
+            packages: vec![CargoMetadataPackage {
+                id: "locked-macro-id".to_string(),
+                name: "incan_derive".to_string(),
+                version: "1.0.0".to_string(),
+                manifest_path: package_root.join("Cargo.toml"),
+                source: None,
+            }],
+            resolve: None,
+        };
+        let resolved = BTreeMap::from([(
+            "incan_derive".to_string(),
+            ResolvedDirectDependency {
+                package: "incan_derive".to_string(),
+                package_id: "locked-macro-id".to_string(),
+            },
+        )]);
+        let externs = vec![OvenRustcArtifactExtern {
+            crate_name: "incan_derive".to_string(),
+            relative_path: "reported-macro".to_string(),
+            digest: digest_bytes(b"reported host macro"),
+        }];
+        let report =
+            |package_id: &str, kind: &str, path: &Path| -> Result<Vec<CargoInvocationOutput>, serde_json::Error> {
+                Ok(vec![CargoInvocationOutput {
+                    stdout: serde_json::to_vec(&serde_json::json!({
+                        "reason": "compiler-artifact", "package_id": package_id,
+                        "target": { "name": "incan_derive", "kind": [kind] }, "filenames": [path],
+                    }))?,
+                }])
+            };
+        let outputs = report("locked-macro-id", "proc-macro", &artifact_path)?;
+        validate_provider_macro_artifacts(
+            std::slice::from_ref(&requirement),
+            &metadata,
+            &resolved,
+            &outputs,
+            staging.path(),
+            &externs,
+            None,
+        )?;
+        for bad in [
+            report("another-package-id", "proc-macro", &artifact_path)?,
+            report("locked-macro-id", "lib", &artifact_path)?,
+            report("locked-macro-id", "proc-macro", &other_path)?,
+        ] {
+            assert!(
+                validate_provider_macro_artifacts(
+                    std::slice::from_ref(&requirement),
+                    &metadata,
+                    &resolved,
+                    &bad,
+                    staging.path(),
+                    &externs,
+                    None
+                )
+                .is_err()
+            );
+        }
+        let base_plan = OvenRustcArtifactManifest {
+            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: OvenBuildIntent {
+                target: "target".to_string(),
+                toolchain: "rustc".to_string(),
+                profile: "debug".to_string(),
+                features: Vec::new(),
+            },
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: externs.clone(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: Vec::new(),
+            registry_sources: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: Vec::new(),
+        };
+        let base = OvenLegacyCargoBaseLoaf {
+            loaf_identity: "sha256:admitted-base".to_string(),
+            build_unit_identity: "sha256:base-inputs".to_string(),
+            artifacts: &base_plan,
+            artifact_root: staging.path(),
+        };
+        validate_provider_macro_artifacts(
+            std::slice::from_ref(&requirement),
+            &metadata,
+            &resolved,
+            &[],
+            &staging.path().join("absent-new-staging"),
+            &externs,
+            Some(&base),
+        )?;
+        let mut different = externs.clone();
+        different[0].digest = digest_bytes(b"another macro");
+        assert!(
+            validate_provider_macro_artifacts(
+                std::slice::from_ref(&requirement),
+                &metadata,
+                &resolved,
+                &[],
+                staging.path(),
+                &different,
+                Some(&base),
+            )
+            .is_err()
+        );
+        let mut wrong_source = requirement.clone();
+        wrong_source.source_root = package_root.join("other-source");
+        assert!(
+            validate_provider_macro_artifacts(
+                &[wrong_source],
+                &metadata,
+                &resolved,
+                &outputs,
+                staging.path(),
+                &externs,
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            validate_provider_macro_artifacts(
+                &[requirement],
+                &metadata,
+                &resolved,
+                &outputs,
+                staging.path(),
+                &[],
+                None
+            )
+            .is_err()
+        );
+        validate_provider_macro_artifacts(&[], &metadata, &BTreeMap::new(), &[], staging.path(), &[], None)?;
+        Ok(())
+    }
 
     #[test]
     fn source_compiler_vocab_support_requires_a_binary_beneath_the_source_target()
@@ -11593,6 +12015,7 @@ version = "1.0.0"
             compile_environment: Default::default(),
             inspection_packages: Some(Vec::new()),
             direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
+            provider_compilations: &[],
             compact_debug_info: false,
             source_compiler_vocab_support: false,
             base_loaf: None,
@@ -11835,6 +12258,7 @@ version = "1.0.0"
             compile_environment: Default::default(),
             inspection_packages: None,
             direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
+            provider_compilations: &[],
             compact_debug_info: false,
             source_compiler_vocab_support: false,
             base_loaf: None,
