@@ -9812,7 +9812,7 @@ fn prepare_library_project(
     // lock collection would request this still-unpublished artifact recursively. The command owning the full project
     // remains responsible for canonical lock observation and publication, including SDK publisher invocations.
     record_timing(&mut timings_ms, "library_observe_lock_facts", lock_start);
-    let oven_build_inputs = normal_oven
+    let mut oven_build_inputs = normal_oven
         .then(|| oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved))
         .transpose()?;
     let oven_rustc = normal_oven
