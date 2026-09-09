@@ -4,7 +4,7 @@
 //! test dependencies, and generated output directory -- as recorded for one schema version.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 use super::super::OvenReceipt;
 use super::super::store::{OvenArtifactKind, OvenStoreExecutionPayload, OvenStoreLease};
@@ -153,15 +153,37 @@ pub(crate) struct OvenProjectInspectionAuthorityRef {
 
 /// Source-current singular project authority with every bounded-store constituent leased in one batch.
 pub(crate) struct OvenLoadedProjectInspectionAuthority {
-    pub(crate) identity: String,
-    pub(crate) artifact_root: PathBuf,
+    source_owner: OvenStoreExecutionPayload,
     pub(crate) payload: OvenProjectInspectionAuthorityPayload,
     pub(crate) stored_constituents: Vec<OvenStoreExecutionPayload>,
-    pub(super) _authority_lease: OvenStoreLease,
     pub(super) lineage_leases: Vec<OvenStoreLease>,
 }
 
 impl OvenLoadedProjectInspectionAuthority {
+    /// Retain one validated authority owner together with every store-owned constituent it names.
+    pub(super) fn new(
+        source_owner: OvenStoreExecutionPayload,
+        payload: OvenProjectInspectionAuthorityPayload,
+        stored_constituents: Vec<OvenStoreExecutionPayload>,
+    ) -> Self {
+        Self {
+            source_owner,
+            payload,
+            stored_constituents,
+            lineage_leases: Vec::new(),
+        }
+    }
+
+    /// Return the immutable Store identity that owns the authority payload and materialized files.
+    pub(crate) fn identity(&self) -> &str {
+        &self.source_owner.manifest.identity
+    }
+
+    /// Return the materialized root derived from the retained authority owner.
+    pub(crate) fn artifact_root(&self) -> &Path {
+        &self.source_owner.artifact_root
+    }
+
     /// Retain completed-output leases for the complete inspection command.
     pub(crate) fn retain_lineage_leases(&mut self, leases: Vec<OvenStoreLease>) {
         self.lineage_leases = leases;
