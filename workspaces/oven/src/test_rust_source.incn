@@ -7,7 +7,7 @@ from rust_source import (
     RustGitReference,
     RustRegistryRequest,
 )
-from intake import IntakeErrorKind
+from manifest_errors import IntakeErrorKind
 from std.fs import Path
 from std.testing import fail
 

@@ -1,6 +1,7 @@
 """Local intake contracts; these do not establish a selected Rust compilation plan."""
 
-from intake import parse_intent, parse_document, intake, IntakeErrorKind
+from intake import parse_intent, parse_document, intake
+from manifest_errors import IntakeErrorKind
 from std.fs import Path
 from std.testing import fail
 

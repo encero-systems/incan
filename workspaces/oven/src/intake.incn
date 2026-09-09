@@ -1,55 +1,12 @@
 """Read local Loaf intent without selecting Rust versions or authorizing compilation."""
 
 from std import toml
-from std.toml import TomlValue, TomlKind, TomlLocation
+from std.toml import TomlValue, TomlKind
 from std.fs import Path
 from std.hash import sha256
 from std.graph import Dag, NodeId
-from std.traits.error import Error
 from rust::std::str import from_utf8
-
-
-pub enum IntakeErrorKind(str):
-    """Stable refusal categories without unvalidated string states."""
-
-    Invalid = "invalid"
-    Missing = "missing"
-    Unsupported = "unsupported"
-    Cycle = "cycle"
-
-    def as_str(self) -> str:
-        """Return the stable diagnostic category spelling."""
-        return self.value()
-
-
-pub model IntakeError with Error:
-    """A manifest-local refusal; unsupported intent is never silently discarded."""
-
-    pub kind: IntakeErrorKind
-    pub manifest: str
-    pub field: list[str]
-    pub location: Option[TomlLocation]
-    pub detail: str
-
-    def message(self) -> str:
-        """Render the manifest, literal key segments, category and refusal detail."""
-        return f"{self.manifest}: {self.field}: {self.kind.as_str()}: {self.detail}"
-
-    def with_source(self, source: str) -> Self:
-        """Attach a literal-key source location; missing fields legitimately have no span."""
-        mut location: Option[TomlLocation] = None
-        match toml.locate(source, self.field):
-            Ok(found) =>
-                location = found
-            Err(_) =>
-                location = self.location.clone()
-        return IntakeError(
-            kind=self.kind,
-            manifest=self.manifest,
-            field=self.field,
-            detail=self.detail,
-            location=location,
-        )
+from manifest_errors import IntakeError, IntakeErrorKind
 
 
 pub model ManifestEvidence:

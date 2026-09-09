@@ -8,7 +8,7 @@ for the later unit/configuration producer; a dependency catalog alone cannot pro
 
 from std import toml
 from std.toml import TomlValue, TomlKind
-from intake import IntakeError, IntakeErrorKind
+from manifest_errors import IntakeError, IntakeErrorKind
 
 
 @derive(Eq)
