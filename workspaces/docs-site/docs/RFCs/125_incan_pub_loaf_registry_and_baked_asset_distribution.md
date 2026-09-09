@@ -31,9 +31,8 @@
 4. **Versions are immutable; state is events.** A `(name, version)` pair is published once and never overwritten. Yank, unyank, ownership, advisory, and supersession are signed registry events. The index and the web site are projections over the event stream and the immutable artifacts, never a database that can drift from them.
 5. **Names are scoped.** Community packages live under an owner scope. Unscoped names are reserved for the toolchain's own Loaves.
 6. **Resolution executes nothing.** Resolving, fetching, verifying, and staging never run package-provided code, as RFC 117 already requires. Build-time code runs only through an explicitly selected host provider under RFC 119.
-7. **Two service tiers with different failure modes.** The *essential tier* is everything a build needs to resolve: index files, asset manifests, the event log, and source Loaves for native packages. It is small and must always be served. The *convenience tier* is baked assets. It carries all the bandwidth, and its unavailability is never a build failure: an asset that cannot be fetched is inapplicable, and an inapplicable asset means baking from source.
-8. **Provider neutrality is a contract.** Everything the registry serves is immutable, content-addressed, and reachable by relative path under a configured base URL. No behaviour a client depends on may live in a hosting provider's proprietary feature. Switching or mirroring the registry is a copy of static objects and a change of endpoint.
-9. **One client, several sources.** `incan.pub` and crates.io are two index formats over one transport, one TLS policy, one store, and one lockfile. Registered compatible sources from RFC 117 configuration plug into the same client.
+7. **Assets are optional; the rest is not.** A build must be resolvable and bakeable from the index, manifests, event log, and source publications alone. An asset that cannot be fetched, for whatever reason, is inapplicable, and inapplicable means baking from source. No asset outage is a build failure.
+8. **One client, several sources.** `incan.pub` and crates.io are two index formats over one transport, one TLS policy, one store, and one lockfile. Registered compatible sources from RFC 117 configuration plug into the same client.
 
 ## Motivation
 
@@ -54,7 +53,7 @@ Second, the ecosystems Incan learns from have spent a decade discovering what a 
 - Define registry state as signed events over immutable artifacts, consistent with RFC 079.
 - Define how the same Oven client, cache, and lockfile serve `incan.pub`, crates.io, and registered compatible sources.
 - Define what the registry web surface shows, as a projection of the same data.
-- Define the essential and convenience tiers, the degradation rule that keeps convenience-tier outages from failing builds, and the provider-neutrality rules that keep the registry movable between hosts.
+- Define the degradation rule: an unavailable asset is a miss, never a build failure.
 - Preserve the hosting constraints from RFC 034: predictable capped cost, EU hosting, provider portability, and static distribution of everything immutable.
 
 ## Non-Goals
@@ -204,27 +203,9 @@ The Loaf store is the only cache and the only offline source. An offline mode mu
 
 Registered compatible sources under RFC 117 configuration must implement this index and artifact protocol for `kind = "loaf"` or the crates.io sparse protocol for `kind = "crate"`.
 
-### Service tiers and degradation
+### Asset unavailability
 
-The registry must serve two tiers and must be deployable with different capacity and spending limits for each.
-
-The **essential tier** comprises index files, asset manifests, the event log, external-source records, and source Loaves of native packages. Oven must be able to resolve and bake any project from this tier alone. Its bandwidth is bounded by the size of the ecosystem's metadata and source, not by build traffic, and operators should serve it without a bandwidth cap.
-
-The **convenience tier** comprises baked assets. Operators may cap it by bandwidth, by request budget, per client, or by monthly spend. When a cap or quota is reached the registry must answer with a clear unavailable status, and Oven must treat that answer as the asset being inapplicable: it must bake the affected units from source, must record the fallback in the receipt as `baked` with the reason, and must not fail the build or retry in a way that amplifies load. A convenience-tier outage must be indistinguishable, in outcome, from the asset never having existed.
-
-Asset downloads must not be reachable through stable, guessable URLs. The registry must issue asset locations to a client that presents a plan, either through short-lived signed URLs or through per-client credentials at the manifest, so that an asset cannot be hotlinked from outside Oven and the convenience tier's traffic is always Oven traffic. Operators should enforce per-client request and byte budgets at the edge; those budgets are operational configuration, not part of this contract, and the degradation rule above is what makes them safe to apply.
-
-### Provider neutrality
-
-The registry must be movable between hosting providers, and mirrorable, without changing client behaviour. To that end:
-
-- Every served object must be immutable and content-addressed, and every path must be relative to a configured base URL. Clients must locate the registry only through RFC 117 registry configuration.
-- The registry must not rely on a provider's proprietary URL signing, access control, edge logic, or database for any behaviour a client observes. Signing and quota enforcement must be implemented in registry-owned code that can run on any host, or be replaced by digest verification plus client credentials.
-- The event log, index, manifests, and artifacts must be stored in an S3-compatible object store or equivalent plain object storage, so that a complete copy is a bucket-to-bucket sync verifiable by digest.
-- The publish and event service must be an ordinary program against plain HTTPS and object storage, deployable as a container or edge function without provider-specific APIs.
-- Operators should keep at least one synchronised copy of the essential tier at a second provider at all times, so that a provider change or failure is an endpoint change with no data migration.
-
-Rate limits, caching rules, and abuse controls are operational configuration that may be provider-specific; they must be documented as such and must never be the mechanism that keeps a build from failing. That mechanism is the degradation rule above.
+Oven must treat any failure to obtain an asset, including a registry answering that the asset is unavailable, throttled, or over quota, exactly as it treats an inapplicable asset: it bakes the affected units from source, records the fallback in the receipt as `baked` with the reason, and neither fails the build nor retries in a way that amplifies load. The registry may make asset locations available only to clients that present a plan, through short-lived signed locations or per-client credentials at the manifest, so that assets are not reachable through stable guessable URLs; clients must not assume asset paths are stable. Index files, asset manifests, the event log, external-source records, and source publications must always be served and must be sufficient on their own to resolve and bake any project.
 
 ### Web surface
 
@@ -282,7 +263,6 @@ Nothing was published under RFC 034, so there is no migration. The constraints R
 - **Trust complexity.** Three builder kinds and per-kind policy are more to explain than "download the tarball". The default policy should make the safe choice invisible.
 - **Scoped names are longer.** `encero/widgets` is less pretty than `widgets`. The reserved unscoped tier keeps the standard library short, and every other registry that started flat has wished it had not.
 - **A registry is infrastructure.** Even a mostly static one needs a publish service, an event log, and operations. RFC 034's cost and hosting constraints are carried forward for this reason.
-- **Bandwidth is the only cost that scales with adoption**, and at retail CDN prices a popular convenience tier could cost thousands a month. The two-tier design and the degradation rule make that a chosen ceiling rather than an exposure, and the neutrality rules keep the option of moving to a zero-egress or sponsored provider open at any time. Storage and baking are small at every plausible scale.
 
 ## Implementation architecture
 
@@ -309,7 +289,6 @@ Non-normative. The registry client belongs in Oven's build-system ring rather th
 - Should running a published tool without a project (`oven run <scope>/<name>@<version>`) be defined here or in an RFC 118 amendment?
 - Which documentation asset format does the web surface render, and does RFC 082 define it?
 - Should asset locations be protected by short-lived signed URLs issued per plan, or by per-client credentials presented at the manifest? The first resists hotlinking better; the second is simpler to keep provider-neutral.
-- Where does the essential tier live at launch, and where is its synchronised second copy? The contract admits any pair of plain object stores; the choice is operational and may be constrained by funding conditions on data location.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
