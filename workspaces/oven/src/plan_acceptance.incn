@@ -1,0 +1,25 @@
+"""Run every pure native-selection assertion in one native process."""
+
+from test_plan import (
+    test_superset_selection_preserves_evidence,
+    test_missing_capabilities_and_runtime_refuse,
+    test_narrowest_choice_and_ties,
+    test_malformed_sets_and_unknown_intent_refuse,
+    test_rank_dimension_order,
+    test_context_and_semantic_owner_mismatch_refuse,
+    test_each_runtime_field_is_exact,
+    test_native_features_are_exact_validated_sets,
+)
+
+
+pub def main() -> None:
+    """Execute all eight assertion functions before the success marker."""
+    test_superset_selection_preserves_evidence()
+    test_missing_capabilities_and_runtime_refuse()
+    test_narrowest_choice_and_ties()
+    test_malformed_sets_and_unknown_intent_refuse()
+    test_rank_dimension_order()
+    test_context_and_semantic_owner_mismatch_refuse()
+    test_each_runtime_field_is_exact()
+    test_native_features_are_exact_validated_sets()
+    println("selector: 8 contracts passed")

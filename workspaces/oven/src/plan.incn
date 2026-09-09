@@ -1,0 +1,266 @@
+"""Compare supplied intact native closures without exposing roots or authorizing publication."""
+
+from std.traits.error import Error
+
+
+@derive(Eq)
+pub model RuntimeCompatibility:
+    """Exact runtime inputs retained by the existing compiler-owned Loaf compatibility record."""
+
+    pub compiler_version: str
+    pub sdk_provider_codegen_revision: str
+    pub runtime_lock_digest: str
+    pub core_source_digest: str
+    pub derive_source_digest: str
+    pub stdlib_source_digest: str
+    pub unknown_input_keys: list[str] = []
+
+
+@derive(Eq)
+pub model NativeContext:
+    """Exact native build intent, including feature sets; source edition remains a separate compilation input."""
+
+    pub target: str
+    pub toolchain: str
+    pub profile: str
+    pub features: list[str]
+
+
+@derive(Eq)
+pub model ProviderCapability:
+    """Checked semantic provider identity with module, facet and direct-link capabilities."""
+
+    pub semantic_identity: str
+    pub modules: list[str]
+    pub facets: list[str]
+    pub direct_link: bool
+
+
+pub model NativeCandidate:
+    """Host-authenticated evidence offered for comparison, without a host compatibility decision."""
+
+    pub candidate_id: str
+    pub evidence_id: str
+    pub plan_identity: str
+    pub build_unit_identity: str
+    pub context: NativeContext
+    pub runtime: RuntimeCompatibility
+    pub providers: list[ProviderCapability]
+
+
+pub model SelectionRequest:
+    """One bound comparison request; unsupported intent is preserved rather than silently ignored."""
+
+    pub request_id: str
+    pub evidence_id: str
+    pub context: NativeContext
+    pub runtime: RuntimeCompatibility
+    pub providers: list[ProviderCapability]
+    pub candidates: list[NativeCandidate]
+    pub unsupported_intent: list[str] = []
+
+
+@derive(Eq)
+pub model CapabilityExcess:
+    """Lexicographic excess in providers, modules, facets and direct links, in that order."""
+
+    pub providers: int
+    pub modules: int
+    pub facets: int
+    pub direct_links: int
+
+    def precedes(self, other: CapabilityExcess) -> bool:
+        """Prefer the narrowest admitted capability set without sorting or choosing by path."""
+        if self.providers != other.providers:
+            return self.providers < other.providers
+        if self.modules != other.modules:
+            return self.modules < other.modules
+        if self.facets != other.facets:
+            return self.facets < other.facets
+        return self.direct_links < other.direct_links
+
+
+pub model NativeSelection:
+    """Selected evidence and rank only; no extern, native-ready flag or publication permission."""
+
+    pub request_id: str
+    pub request_evidence_id: str
+    pub candidate_id: str
+    pub candidate_evidence_id: str
+    pub plan_identity: str
+    pub build_unit_identity: str
+    pub excess: CapabilityExcess
+
+
+pub enum SelectionErrorKind(str):
+    """Stable distinctions between malformed, unsupported, incompatible and ambiguous input."""
+
+    InvalidInput = "invalid_input"
+    UnsupportedIntent = "unsupported_intent"
+    NoCompatibleCandidate = "no_compatible_candidate"
+    AmbiguousCandidate = "ambiguous_candidate"
+
+
+pub model SelectionError with Error:
+    """A comparison refusal with literal field segments and no filesystem effects."""
+
+    pub kind: SelectionErrorKind
+    pub fields: list[str]
+
+    def message(self) -> str:
+        """Describe the refusal without turning supplied evidence into authority."""
+        return f"native selection refused: {self.kind} at {self.fields}"
+
+
+pub def select_native(request: SelectionRequest) -> Result[NativeSelection, SelectionError]:
+    """
+    Choose the least excess intact closure from actual supplied facts.
+
+    Runtime/context equality and provider module/facet/direct-link inclusion mirror the bounded Loaf policy. Equally
+    ranked distinct candidates refuse rather than invent a physical-path tie-breaker absent from this protocol. The
+    host must retain leases, authenticate evidence and supply checked facts in the same compilation session. This
+    result does not expose native roots, construct missing units or authorize execution/publication.
+
+    Example:
+        selection = select_native(request)?
+        assert selection.request_id == request.request_id
+    """
+    if request.request_id == "" or request.evidence_id == "":
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["request"]))
+    if len(request.unsupported_intent) > 0:
+        return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=request.unsupported_intent))
+    validate_facts(request.runtime, request.providers)?
+    validate_names([candidate.candidate_id for candidate in request.candidates], ["candidates", "candidate_id"])?
+    for candidate in request.candidates:
+        validate_facts(candidate.runtime, candidate.providers)?
+        if candidate.evidence_id == "" or candidate.plan_identity == "" or candidate.build_unit_identity == "":
+            return Err(
+                SelectionError(
+                    kind=SelectionErrorKind.InvalidInput,
+                    fields=["candidates", candidate.candidate_id, "evidence"],
+                ),
+            )
+    for context in [request.context] + [candidate.context for candidate in request.candidates]:
+        validate_names(context.features, ["context", "features"])?
+        if context.target == "" or context.toolchain == "" or context.profile == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["context"]))
+    choices = [candidate for candidate in request.candidates if compatible(request, candidate)]
+    if len(choices) == 0:
+        return Err(SelectionError(kind=SelectionErrorKind.NoCompatibleCandidate, fields=["candidates"]))
+    mut best = 0
+    mut rank = excess(request.providers, choices[0].providers)
+    mut tied = false
+    for index in range(1, len(choices)):
+        current = excess(request.providers, choices[index].providers)
+        if current.precedes(rank):
+            best = index
+            rank = current
+            tied = false
+        elif current == rank:
+            tied = true
+    if tied:
+        return Err(SelectionError(kind=SelectionErrorKind.AmbiguousCandidate, fields=["candidates"]))
+    chosen = choices[best]
+    return Ok(
+        NativeSelection(
+            request_id=request.request_id,
+            request_evidence_id=request.evidence_id,
+            candidate_id=chosen.candidate_id,
+            candidate_evidence_id=chosen.evidence_id,
+            plan_identity=chosen.plan_identity,
+            build_unit_identity=chosen.build_unit_identity,
+            excess=rank,
+        ),
+    )
+
+
+def validate_names(values: list[str], fields: list[str]) -> Result[None, SelectionError]:
+    """Reject empty or repeated set members so excess counts represent sets."""
+    mut seen: list[str] = []
+    for value in values:
+        if value == "" or value in seen:
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=fields))
+        seen.append(value)
+    return Ok(None)
+
+
+def validate_facts(runtime: RuntimeCompatibility, providers: list[ProviderCapability]) -> Result[None, SelectionError]:
+    """Require all known runtime fields and unique capabilities; unknown runtime inputs refuse."""
+    if len(runtime.unknown_input_keys) > 0:
+        return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=runtime.unknown_input_keys))
+    values = [runtime.compiler_version, runtime.sdk_provider_codegen_revision, runtime.runtime_lock_digest, runtime.core_source_digest, runtime.derive_source_digest, runtime.stdlib_source_digest]
+    for value in values:
+        if value == "":
+            return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime"]))
+    identities = [provider.semantic_identity for provider in providers]
+    validate_names(identities, ["providers", "semantic_identity"])?
+    for provider in providers:
+        validate_names(provider.modules, ["providers", provider.semantic_identity, "modules"])?
+        validate_names(provider.facets, ["providers", provider.semantic_identity, "facets"])?
+    return Ok(None)
+
+
+def covers(available: ProviderCapability, required: ProviderCapability) -> bool:
+    """Compare one exact semantic owner without treating broad candidate features as requirements."""
+    if available.semantic_identity != required.semantic_identity:
+        return false
+    if required.direct_link and not available.direct_link:
+        return false
+    for module in required.modules:
+        if module not in available.modules:
+            return false
+    for facet in required.facets:
+        if facet not in available.facets:
+            return false
+    return true
+
+
+def compatible(request: SelectionRequest, candidate: NativeCandidate) -> bool:
+    """Require exact runtime/context and a provider capability superset."""
+    if request.runtime != candidate.runtime or not same_context(request.context, candidate.context):
+        return false
+    for required in request.providers:
+        matches = [available for available in candidate.providers if covers(available, required)]
+        if len(matches) != 1:
+            return false
+    return true
+
+
+def excess(requested: list[ProviderCapability], available: list[ProviderCapability]) -> CapabilityExcess:
+    """Count extra capabilities after subset compatibility has been established."""
+    provider_count = len(available) - len(requested)
+    mut module_count = 0
+    mut facet_count = 0
+    mut direct_count = 0
+    for provider in available:
+        module_count += len(provider.modules)
+        facet_count += len(provider.facets)
+        if provider.direct_link:
+            direct_count += 1
+    for provider in requested:
+        module_count -= len(provider.modules)
+        facet_count -= len(provider.facets)
+        if provider.direct_link:
+            direct_count -= 1
+    return CapabilityExcess(
+        providers=provider_count,
+        modules=module_count,
+        facets=facet_count,
+        direct_links=direct_count,
+    )
+
+
+def same_context(required: NativeContext, available: NativeContext) -> bool:
+    """Compare the full native intent; validated feature lists are sets rather than ordered evidence."""
+    if required.target != available.target:
+        return false
+    if required.toolchain != available.toolchain:
+        return false
+    if required.profile != available.profile:
+        return false
+    if len(required.features) != len(available.features):
+        return false
+    for feature in required.features:
+        if feature not in available.features:
+            return false
+    return true
