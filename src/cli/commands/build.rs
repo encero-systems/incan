@@ -128,7 +128,7 @@ impl EngineCommandAuthority {
 /// SDK-only commands return before module lookup. Other retained native carrier forms remain explicit until they
 /// expose their original batch candidate owners; a composed manifest alone cannot substitute for those owners.
 #[allow(clippy::too_many_arguments)]
-fn materialize_provider_sources_with_installed_engine(
+pub(crate) fn materialize_provider_sources_with_installed_engine(
     provider_plan: &ProviderPlan,
     receipt: &crate::oven::OvenReceipt,
     semantic_identities: &BTreeMap<String, String>,
@@ -4068,7 +4068,7 @@ pub(crate) fn oven_native_provider_records(
 ///
 /// Lookups retain full physical identity keys even when equivalent providers share a semantic identity. Callers with a
 /// retained producer map avoid another traversal; the convenience API still computes the map for callers without one.
-fn oven_native_provider_records_with_identities(
+pub(crate) fn oven_native_provider_records_with_identities(
     provider_plan: &ProviderPlan,
     semantic_identities: &BTreeMap<String, String>,
 ) -> CliResult<Vec<String>> {

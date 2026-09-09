@@ -2358,10 +2358,12 @@ fn run_file_tests_batch_oven(
         Ok(identity) => identity,
         Err(error) => return failure(error.to_string()),
     };
-    let mut build_unit_inputs = match oven_test_build_unit_inputs(&provider_plan, &requirements, &resolved) {
+    let prepared_inputs = match oven_test_build_unit_inputs(&provider_plan, &requirements, &resolved) {
         Ok(inputs) => inputs,
         Err(error) => return failure(error),
     };
+    let mut build_unit_inputs = prepared_inputs.build_unit_inputs;
+    let provider_semantic_identities = prepared_inputs.provider_semantic_identities;
     if let Err(error) = crate::cli::commands::build::append_oven_interop_execution_build_inputs(
         &mut build_unit_inputs,
         manifest.as_ref(),
@@ -2645,15 +2647,14 @@ fn run_file_tests_batch_oven(
     if crate::cli::commands::build::has_caller_owned_project_libraries(&provider_plan)
         && !plan_selection.uses_packaged_provider_closure()
     {
-        let re_materialized = match crate::cli::commands::build::rematerialize_caller_owned_libraries(
+        let re_materialized = match crate::cli::commands::build::materialize_provider_sources_with_installed_engine(
             &provider_plan,
-            "debug",
-            plan_selection.artifacts(),
-            plan_selection.output_guard_root(),
-            plan_selection.artifact_plan(),
+            &receipt,
+            &provider_semantic_identities,
+            plan_selection,
             &rustc,
             &generated_root,
-            registry_authority.as_ref(),
+            None,
         ) {
             Ok(libraries) => libraries,
             Err(error) => return failure(error.message),
@@ -2768,21 +2769,34 @@ fn run_file_tests_batch_oven(
     )
 }
 
-/// Build the portable native-closure identity used by Oven test batches.
+/// One test preparation's native inputs and original semantic map, retained through hosted provider selection.
+struct OvenTestBuildUnitInputs {
+    build_unit_inputs: BTreeMap<String, String>,
+    provider_semantic_identities: BTreeMap<String, String>,
+}
+
+/// Build the portable native-closure identity once and retain its provider projection for the later Engine exchange.
 fn oven_test_build_unit_inputs(
     provider_plan: &ProviderPlan,
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
-) -> Result<BTreeMap<String, String>, String> {
-    let records = crate::cli::commands::build::oven_native_provider_records(
+) -> Result<OvenTestBuildUnitInputs, String> {
+    let provider_semantic_identities = crate::lockfile::provider_semantic_identities(
         provider_plan,
         &common::semantic_sdk_path_dependencies(requirements),
+    )?;
+    let records = crate::cli::commands::build::oven_native_provider_records_with_identities(
+        provider_plan,
+        &provider_semantic_identities,
     )
     .map_err(|error| error.message)?;
     let mut dependencies = resolved.dependencies.clone();
     dependencies.extend(resolved.dev_dependencies.clone());
     let dependency_digest = digest_dependency_specs(&dependencies).map_err(|error| error.to_string())?;
-    runtime_build_unit_inputs(records, &requirements.stdlib_features, dependency_digest)
+    Ok(OvenTestBuildUnitInputs {
+        build_unit_inputs: runtime_build_unit_inputs(records, &requirements.stdlib_features, dependency_digest)?,
+        provider_semantic_identities,
+    })
 }
 
 /// Select only caller-imported Rust dependencies for the direct path-crate materializer.
@@ -2976,6 +2990,7 @@ def captured_resource() -> int:
             artifact: None,
             implementation_facets: Vec::new(),
         };
+        let project_identity = project.identity.stable_key();
         let provider_plan = ProviderPlan::new(
             LibraryManifestIndex::default(),
             vec![sdk, project],
@@ -2989,10 +3004,14 @@ def captured_resource() -> int:
                 dev_dependencies: Vec::new(),
             },
         )?;
-        let records = inputs.get("providers").ok_or("test receipt has no provider records")?;
+        let records = inputs
+            .build_unit_inputs
+            .get("providers")
+            .ok_or("test receipt has no provider records")?;
 
         assert!(records.contains("incan_stdlib_testing"));
         assert!(!records.contains("json_provider"));
+        assert!(inputs.provider_semantic_identities.contains_key(&project_identity));
         Ok(())
     }
 
