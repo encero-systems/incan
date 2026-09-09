@@ -31,8 +31,9 @@
 4. **Versions are immutable; state is events.** A `(name, version)` pair is published once and never overwritten. Yank, unyank, ownership, advisory, and supersession are signed registry events. The index and the web site are projections over the event stream and the immutable artifacts, never a database that can drift from them.
 5. **Names are scoped.** Community packages live under an owner scope. Unscoped names are reserved for the toolchain's own Loaves.
 6. **Resolution executes nothing.** Resolving, fetching, verifying, and staging never run package-provided code, as RFC 117 already requires. Build-time code runs only through an explicitly selected host provider under RFC 119.
-7. **Assets are optional; the rest is not.** A build must be resolvable and bakeable from the index, manifests, event log, and source publications alone. An asset that cannot be fetched, for whatever reason, is inapplicable, and inapplicable means baking from source. No asset outage is a build failure.
-8. **One client, several sources.** `incan.pub` and crates.io are two index formats over one transport, one TLS policy, one store, and one lockfile. Registered compatible sources from RFC 117 configuration plug into the same client.
+7. **The registry is a key, not a hostname.** A registry is identified by a root public key and an id derived from it. Every registry statement, from events to index files to a periodic checkpoint, is signed by a key delegated from that root, and clients pin the id and root key through RFC 117 configuration. Hostnames are transport: any endpoint whose content verifies under the pinned root is the registry, and mirrors need no separate trust.
+8. **Assets are optional; the rest is not.** A build must be resolvable and bakeable from the index, manifests, event log, and source publications alone. An asset that cannot be fetched, for whatever reason, is inapplicable, and inapplicable means baking from source. No asset outage is a build failure.
+9. **One client, several sources.** `incan.pub` and crates.io are two index formats over one transport, one TLS policy, one store, and one lockfile. Registered compatible sources from RFC 117 configuration plug into the same client.
 
 ## Motivation
 
@@ -54,6 +55,7 @@ Second, the ecosystems Incan learns from have spent a decade discovering what a 
 - Define how the same Oven client, cache, and lockfile serve `incan.pub`, crates.io, and registered compatible sources.
 - Define what the registry web surface shows, as a projection of the same data.
 - Define the degradation rule: an unavailable asset is a miss, never a build failure.
+- Define the registry's own identity and signing model, so that state assertions are verifiable independently of the host serving them.
 - Preserve the hosting constraints from RFC 034: predictable capped cost, EU hosting, provider portability, and static distribution of everything immutable.
 
 ## Non-Goals
@@ -176,9 +178,21 @@ Index lines must stay small: no descriptions, readmes, or asset tables. The per-
 
 The resolver must filter candidates by the dependency's version requirement and by `requires` against the installed toolchain, must skip yanked versions unless the lockfile already pins them, and should select the maximal satisfying version. It must record the selected version, source, digest, and satisfaction kind (asset or source) in `oven.lock`.
 
+### Registry identity and signing
+
+A registry must publish a root public key and must derive its id from the digest of that key, so that the id is self-certifying. The root key must sign only key-management events: delegation to online signing keys, and rotation or revocation of any key including itself. Every registry event, every index file, every asset manifest, and a periodic **checkpoint** naming the event-log head, its length, and a timestamp must be signed by a key delegated from the root.
+
+Clients must pin a registry's id and root key through RFC 117 registry configuration and must verify the signature on any index file, manifest, or event before using it. Clients must verify the checkpoint and must refuse content whose checkpoint is older than one already observed for that registry, or older than a configured staleness bound, so that a stale or frozen copy cannot suppress a yank or an advisory. Clients must learn endpoints only from configuration and must treat every endpoint whose content verifies as equivalent; a mirror is therefore any endpoint serving the registry's signed content and requires no trust of its own. Key rotation and revocation must be signed events, and the registry should anchor its events in a public transparency log so that a compromised online key can be bounded to the events it signed.
+
+Publisher signatures under the source-Loaf rules above are unchanged by this section; they establish who published, while registry signatures establish what the registry currently asserts.
+
+### Encrypted artifacts
+
+A registry may serve artifacts encrypted for its authorised clients, for example a private registry protecting its assets against disclosure of the storage behind it. When it does, unit identities, payload digests, receipts, and attestations remain over the plaintext, so that verification and reuse are identical to the unencrypted case, and the asset manifest must additionally carry the digest of the ciphertext as the transport digest. Clients must verify the transport digest before decryption and the payload digest after it. Key distribution is outside this RFC.
+
 ### Registry events
 
-Every state change other than a first publish is a signed event: `asset`, `yank`, `unyank`, `ownership`, `trusted-publisher`, `advisory`, and `supersede`. Events must be signed by an identity authorised for the scope at the time of the event, must be append-only, and must be publicly readable. The index, the asset manifests, and the web site must be derivable from the event log plus the immutable artifacts alone. This is the package-level substrate the RFC 079 artifact graph projects from.
+Every state change other than a first publish is a signed event: `asset`, `yank`, `unyank`, `ownership`, `trusted-publisher`, `advisory`, `supersede`, and the key-management events `delegate`, `rotate`, and `revoke`. Events must be signed by an identity authorised for the scope at the time of the event, must be append-only, and must be publicly readable. The index, the asset manifests, and the web site must be derivable from the event log plus the immutable artifacts alone. This is the package-level substrate the RFC 079 artifact graph projects from.
 
 ### Publishing protocol
 
@@ -201,7 +215,7 @@ The Loaf store is the only cache and the only offline source. An offline mode mu
 
 `crate` dependencies resolve against the crates.io sparse index and download archives from crates.io through the same client, transport, verification, and store. Oven must parse a crate's manifest only as provider metadata under the constraints RFC 119 places on it. The registry must not mirror crates.io source. The registry may publish registry-built assets for crates.io crates at selected closures. Such an asset does not descend from a publisher-signed source Loaf and must not be presented as if it did. Instead it descends from a signed **external-source record** that binds the upstream registry identity, package name, version, and the crates.io checksum of the archive the bakery consumed, together with the registry's builder attestation. External-source records and their assets must be indexed separately from scoped packages, at a path that names the upstream registry, and the consumer's selected source kind in `loaf.toml` remains authoritative: a `crate` dependency is always resolved against crates.io for its source of truth, and an `incan.pub` asset for it is only ever an admitted shortcut for units whose identities match.
 
-Registered compatible sources under RFC 117 configuration must implement this index and artifact protocol for `kind = "loaf"` or the crates.io sparse protocol for `kind = "crate"`.
+Registered compatible sources under RFC 117 configuration must implement this index and artifact protocol for `kind = "loaf"` or the crates.io sparse protocol for `kind = "crate"`. A private registry is a registered compatible source with its own root key and id; it implements the same protocol and is not a variant of it.
 
 ### Asset unavailability
 
@@ -288,6 +302,7 @@ Non-normative. The registry client belongs in Oven's build-system ring rather th
 - Should assets be offered per unit, per package bundle, or both? Per-unit assets maximise cross-project hits; bundles keep the asset manifest small. Shared with RFC 124.
 - Should running a published tool without a project (`oven run <scope>/<name>@<version>`) be defined here or in an RFC 118 amendment?
 - Which documentation asset format does the web surface render, and does RFC 082 define it?
+- What staleness bound should clients apply to checkpoints by default, and how is a root-key rotation delivered to clients whose pinned root is the old one: through the toolchain release, through a signed rotation event accepted under the old root, or both?
 - Should asset locations be protected by short-lived signed URLs issued per plan, or by per-client credentials presented at the manifest? The first resists hotlinking better; the second is simpler to keep provider-neutral.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
