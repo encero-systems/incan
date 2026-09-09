@@ -213,8 +213,6 @@ struct OvenInteropBakeReport {
     bundles: Vec<String>,
     /// Whether this command reused an existing verified interop plan without starting a native tool.
     reused: bool,
-    /// The explicit base-receipt route does not invoke Cargo.
-    cargo_process_started: bool,
 }
 
 /// Stable terminal and JSON evidence emitted after staging a selected interop plan for one native adapter.
@@ -232,8 +230,6 @@ struct OvenInteropStageReport {
     plan_identity: String,
     /// Number of digest-verified bundled runtime files staged.
     bundled_files: usize,
-    /// The staging operation never invokes Cargo, Gradle, Xcode, or a signing tool.
-    cargo_process_started: bool,
     /// The staging operation never starts a platform build tool.
     platform_build_process_started: bool,
 }
@@ -275,7 +271,6 @@ pub fn oven_interop_bake(options: OvenInteropBakeCommandOptions) -> CliResult<Ex
         archives: baked.archive_names,
         bundles: baked.bundle_names,
         reused: baked.reused,
-        cargo_process_started: false,
     };
     match options.format {
         OvenOutputFormat::Text => println!("{}", interop_bake_terminal_message(&report)),
@@ -325,7 +320,6 @@ pub fn oven_interop_stage(options: OvenInteropStageCommandOptions) -> CliResult<
         final_receipt_identity: staged.receipt.identity,
         plan_identity: staged.plan_identity,
         bundled_files: staged.bundled_files,
-        cargo_process_started: false,
         platform_build_process_started: false,
     };
     match options.format {
@@ -495,7 +489,6 @@ struct OvenLoafBakeReport {
     /// Cold-baker phase ledger. These phases are measured by Oven itself so CI never has to infer work from shell
     /// command boundaries or Cargo's human output.
     phase_timing: OvenLoafBakePhaseTiming,
-    cargo_process_started: bool,
     evidence: OvenLoafEnvelopeEvidence,
     loafs: Vec<OvenLoafBakeEntryReport>,
 }
@@ -777,7 +770,6 @@ fn reuse_complete_loaf_envelope(
             preflight_elapsed_ms: started.elapsed().as_millis(),
             ..OvenLoafBakePhaseTiming::default()
         },
-        cargo_process_started: false,
         evidence: evidence.clone(),
         loafs: reports,
     }))
@@ -1385,7 +1377,6 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         "suite_schema_version": suite.schema_version,
         "shard_count": shard_executions.len(),
         "compiler_cli_reused": cli_bake.reused,
-        "cargo_process_started": false,
         "timing": timing,
         "timing_scope": "command entry through store inspection; excludes report publication, process teardown and wrapper retention",
         "store": store_inspection,
@@ -4620,7 +4611,6 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
         OvenOutputFormat::Text => println!("Oven ran {} without a Cargo consumer.", executable.display()),
         OvenOutputFormat::Json => print_json(&serde_json::json!({
             "executable": executable,
-            "cargo_process_started": bake.cargo_process_started,
             "reused": bake.reused,
         }))?,
     }
@@ -4696,13 +4686,11 @@ mod tests {
             archives: Vec::new(),
             bundles: Vec::new(),
             reused: false,
-            cargo_process_started: false,
         };
 
         let message = interop_bake_terminal_message(&report);
 
         assert!(message.contains("without invoking Cargo"));
-        assert_eq!(serde_json::to_value(&report)?["cargo_process_started"], false);
         Ok(())
     }
 
@@ -6312,7 +6300,6 @@ mod tests {
             features: &target.features,
             prefer_dynamic: false,
         })?;
-        assert!(!bake.cargo_process_started);
         let result = Command::new(&bake.output).output()?;
         assert!(result.status.success());
         assert_eq!(String::from_utf8(result.stdout)?.trim(), "84");

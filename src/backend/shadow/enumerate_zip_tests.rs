@@ -148,7 +148,6 @@ fn assert_native_list_profile(
     assert!(route.authority.oven_receipt_identity.starts_with("sha256:"));
     assert!(route.authority.oven_build_unit_identity.starts_with("sha256:"));
     assert!(route.authority.direct_rustc_plan_identity.starts_with("sha256:"));
-    assert!(!route.authority.cargo_process_started);
     assert_eq!(route.process.exit_code, Some(0));
     assert_eq!(route.process.stdout, expected_stdout);
     assert!(route.process.stderr.is_empty());

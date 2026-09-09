@@ -65,12 +65,5 @@ fn check_bool_truthiness() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert_ne!(legacy_receipt.identity, replacement_receipt.identity);
     assert_ne!(legacy_receipt.output_identity, replacement_receipt.output_identity);
-    assert!(
-        !comparison
-            .legacy_authority
-            .as_ref()
-            .ok_or("missing bool-truthiness Oven authority")?
-            .cargo_process_started
-    );
     Ok(())
 }

@@ -88,7 +88,6 @@ fn observe_native(
     assert!(route.authority.oven_build_unit_identity.starts_with("sha256:"));
     assert!(route.authority.direct_rustc_plan_identity.starts_with("sha256:"));
     assert!(route.authority.output_digest.starts_with("sha256:"));
-    assert!(!route.authority.cargo_process_started);
     Ok(route)
 }
 

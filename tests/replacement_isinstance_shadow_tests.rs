@@ -61,12 +61,5 @@ fn check_isinstance_targets() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert_ne!(legacy_receipt.identity, replacement_receipt.identity);
     assert_ne!(legacy_receipt.output_identity, replacement_receipt.output_identity);
-    assert!(
-        !comparison
-            .legacy_authority
-            .as_ref()
-            .ok_or("missing isinstance Oven authority")?
-            .cargo_process_started
-    );
     Ok(())
 }

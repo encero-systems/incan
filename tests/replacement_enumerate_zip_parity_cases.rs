@@ -45,7 +45,6 @@ fn assert_matched_case(source: &str, result: &str, stdout: &[u8]) -> Result<(), 
         .legacy_authority
         .as_ref()
         .ok_or("native observation needs its Oven authority")?;
-    assert!(!authority.cargo_process_started);
     assert!(authority.direct_rustc_plan_identity.starts_with("sha256:"));
     Ok(())
 }

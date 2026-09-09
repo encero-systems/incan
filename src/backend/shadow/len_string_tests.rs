@@ -51,7 +51,6 @@ fn assert_native_string_length(expression: &str) -> Result<(), Box<dyn std::erro
     )?;
     let route =
         legacy_oven::observe_legacy_route(&profile, &prepared, &materialization, &capability, workspace.path())?;
-    assert!(!route.authority.cargo_process_started);
     assert_eq!(route.process.exit_code, Some(0));
     assert_eq!(route.process.stdout, b"native len\n");
     assert!(route.process.stderr.is_empty());

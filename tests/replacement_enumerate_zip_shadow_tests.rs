@@ -98,7 +98,6 @@ fn selected_enumerate_and_zip_match_through_the_staged_legacy_route() -> Result<
     assert!(authority.oven_receipt_identity.starts_with("sha256:"));
     assert!(authority.oven_build_unit_identity.starts_with("sha256:"));
     assert!(authority.direct_rustc_plan_identity.starts_with("sha256:"));
-    assert!(!authority.cargo_process_started);
 
     let process = comparison
         .legacy_process

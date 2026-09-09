@@ -218,7 +218,6 @@ fn authority() -> LegacyExecutionAuthority {
         oven_build_unit_identity: "sha256:build-unit".to_string(),
         direct_rustc_plan_identity: "sha256:plan".to_string(),
         output_digest: "sha256:output".to_string(),
-        cargo_process_started: false,
     }
 }
 

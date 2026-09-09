@@ -73,7 +73,6 @@ fn native_json_stringify_evaluates_its_operand_once() -> Result<(), Box<dyn std:
     assert!(route.authority.oven_receipt_identity.starts_with("sha256:"));
     assert!(route.authority.oven_build_unit_identity.starts_with("sha256:"));
     assert!(route.authority.direct_rustc_plan_identity.starts_with("sha256:"));
-    assert!(!route.authority.cargo_process_started);
     assert_eq!(route.process.exit_code, Some(0));
     assert!(route.process.stderr.is_empty());
     assert_eq!(
@@ -163,13 +162,6 @@ fn scalar_json_stringify_matches_the_receipt_backed_native_route() -> Result<(),
         assert_eq!(receipt.shadow_comparison, comparison.state);
     }
     assert_ne!(legacy.receipt()?.identity, replacement.receipt()?.identity);
-    assert!(
-        !comparison
-            .legacy_authority
-            .as_ref()
-            .ok_or("missing scalar JSON Oven authority")?
-            .cargo_process_started
-    );
     Ok(())
 }
 

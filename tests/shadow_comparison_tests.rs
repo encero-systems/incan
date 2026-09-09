@@ -116,10 +116,6 @@ fn assert_receipts_are_independent_but_bound(comparison: &ShadowComparison) -> R
     assert!(authority.oven_build_unit_identity.starts_with("sha256:"));
     assert!(authority.direct_rustc_plan_identity.starts_with("sha256:"));
     assert!(authority.output_digest.starts_with("sha256:"));
-    assert!(
-        !authority.cargo_process_started,
-        "Oven-owned legacy execution must not start a Cargo process"
-    );
     Ok(())
 }
 

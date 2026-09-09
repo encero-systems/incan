@@ -65,12 +65,5 @@ fn check_collection_len() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert_ne!(legacy_receipt.identity, replacement_receipt.identity);
     assert_ne!(legacy_receipt.output_identity, replacement_receipt.output_identity);
-    assert!(
-        !comparison
-            .legacy_authority
-            .as_ref()
-            .ok_or("missing collection-length Oven authority")?
-            .cargo_process_started
-    );
     Ok(())
 }

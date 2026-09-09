@@ -948,8 +948,6 @@ pub struct LegacyExecutionAuthority {
     pub direct_rustc_plan_identity: String,
     /// Digest of the caller-owned native output Oven produced.
     pub output_digest: String,
-    /// Whether any Cargo process participated; Oven-owned execution requires `false`.
-    pub cargo_process_started: bool,
 }
 
 /// Raw evidence from one Oven-produced legacy process.

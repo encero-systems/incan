@@ -37,12 +37,6 @@ fn string_len_matches_the_receipt_backed_native_route() -> Result<(), Box<dyn st
     assert_eq!(legacy.observation.stdout, replacement.observation.stdout);
     assert!(legacy.observation.stderr.is_empty());
     assert!(replacement.observation.stderr.is_empty());
-    assert!(
-        comparison
-            .legacy_authority
-            .as_ref()
-            .is_some_and(|authority| !authority.cargo_process_started)
-    );
     legacy.receipt()?.verify_identity()?;
     replacement.receipt()?.verify_identity()?;
     Ok(())

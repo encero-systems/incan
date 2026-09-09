@@ -2704,7 +2704,6 @@ fn main() {
             edition: "2024".to_string(),
             source_evidence_key: "generated-root".to_string(),
         })?;
-        assert!(!direct.cargo_process_started);
         assert!(Command::new(&direct.output).status()?.success());
         Ok(())
     }
@@ -2828,7 +2827,6 @@ fn main() {
             edition: "2024".to_string(),
             source_evidence_key: "generated-root".to_string(),
         })?;
-        assert!(!direct.cargo_process_started);
         assert!(Command::new(&direct.output).status()?.success());
         Ok(())
     }
@@ -3078,7 +3076,6 @@ fn main() {
             edition: "2024".to_string(),
             source_evidence_key: "generated-root".to_string(),
         })?;
-        assert!(!direct.cargo_process_started);
         assert!(Command::new(&direct.output).status()?.success());
         Ok(())
     }
@@ -3327,7 +3324,6 @@ fn main() {
             edition: "2024".to_string(),
             source_evidence_key: "generated-root".to_string(),
         })?;
-        assert!(!direct.cargo_process_started);
         assert!(Command::new(&direct.output).status()?.success());
         Ok(())
     }
@@ -3500,7 +3496,6 @@ fn main() {
             edition: "2024".to_string(),
             source_evidence_key: "generated-root".to_string(),
         })?;
-        assert!(!direct.cargo_process_started);
         let output = Command::new(&direct.output)
             .env_remove("DYLD_LIBRARY_PATH")
             .env_remove("DYLD_FALLBACK_LIBRARY_PATH")
@@ -3841,7 +3836,6 @@ fn main() {
             edition: "2024".to_string(),
             source_evidence_key: "generated-root".to_string(),
         })?;
-        assert!(!direct.cargo_process_started);
         assert!(Command::new(&direct.output).arg(&model).status()?.success());
         Ok(())
     }

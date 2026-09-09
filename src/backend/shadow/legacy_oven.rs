@@ -285,14 +285,7 @@ where
         oven_build_unit_identity: receipt.build_unit_identity.clone(),
         direct_rustc_plan_identity: plan_identity,
         output_digest: bake.output_digest.clone(),
-        cargo_process_started: bake.cargo_process_started,
     };
-    if authority.cargo_process_started {
-        return Err(ShadowUnavailable::new(
-            "a Cargo process participated in the legacy build, so the result is not Oven-owned execution evidence"
-                .to_string(),
-        ));
-    }
 
     let mut command = Command::new(&bake.output);
     clear_inherited_cargo_environment(&mut command);

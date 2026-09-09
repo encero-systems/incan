@@ -4873,10 +4873,6 @@ fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output() -> Result
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(
-        !legacy_authority.cargo_process_started,
-        "the native observation must be attributable to Oven rather than a Cargo process"
-    );
     Ok(())
 }
 
@@ -4932,10 +4928,6 @@ fn the_compared_row_carries_two_route_receipts_and_its_oven_authority() -> Resul
     assert!(legacy_authority.oven_receipt_identity.starts_with("sha256:"));
     assert!(legacy_authority.oven_build_unit_identity.starts_with("sha256:"));
     assert!(legacy_authority.direct_rustc_plan_identity.starts_with("sha256:"));
-    assert!(
-        !legacy_authority.cargo_process_started,
-        "Oven-owned legacy execution must not start a Cargo process"
-    );
     Ok(())
 }
 
@@ -4988,7 +4980,6 @@ fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output() -> Re
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5042,7 +5033,6 @@ fn the_string_helper_row_carries_two_route_receipts_and_exact_output() -> Result
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5095,7 +5085,6 @@ fn the_scalar_json_row_carries_two_route_receipts_and_exact_output() -> Result<(
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5153,7 +5142,6 @@ fn the_collection_len_row_carries_two_route_receipts_and_exact_output() -> Resul
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5211,7 +5199,6 @@ fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output() -> Resu
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5269,7 +5256,6 @@ fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output() -> Resu
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5326,7 +5312,6 @@ fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts() -> Result<(
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5384,7 +5369,6 @@ fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output() -> R
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5438,7 +5422,6 @@ fn the_string_len_row_carries_two_route_receipts_and_exact_output() -> Result<()
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 
@@ -5499,7 +5482,6 @@ fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output() -> R
     }
     assert_ne!(legacy_receipt_identity, replacement_receipt_identity);
     assert_ne!(legacy_output_identity, replacement_output_identity);
-    assert!(!legacy_authority.cargo_process_started);
     Ok(())
 }
 

@@ -1200,8 +1200,6 @@ pub struct OvenDirectRustcBake {
     pub output: PathBuf,
     /// Digest of the regular caller-owned output, established before it is exposed to another direct-Rustc step.
     pub output_digest: String,
-    /// The command cleared all Cargo process variables before starting rustc.
-    pub cargo_process_started: bool,
     /// Whether the receipt- and plan-verified caller-owned native output was reused without launching rustc.
     pub reused: bool,
     /// Held for stored consumers until their caller finishes executing the native test binary.
@@ -4779,7 +4777,6 @@ fn bake_direct_rustc(
             source_digest,
             output,
             output_digest,
-            cargo_process_started: false,
             reused: true,
             lease: None,
         });
@@ -4875,7 +4872,6 @@ fn bake_direct_rustc(
         source_digest,
         output,
         output_digest,
-        cargo_process_started: false,
         reused: false,
         lease: None,
     })
@@ -8887,7 +8883,6 @@ mod tests {
         };
 
         let bake = bake_direct_rustc_test(&request)?;
-        assert!(!bake.cargo_process_started);
         assert!(!bake.reused);
         assert!(Command::new(&bake.output).status()?.success());
         let reused = bake_direct_rustc_test(&request)?;
@@ -8995,7 +8990,6 @@ mod tests {
         };
 
         let bake = bake_trusted_direct_rustc_library(&request)?;
-        assert!(!bake.cargo_process_started);
         assert!(!bake.reused);
         assert!(bake.output.is_file());
         let sidecar = super::caller_output_receipt_path(&bake.output)?;
@@ -9016,7 +9010,6 @@ mod tests {
         fs::write(&bake.output, b"changed output bytes")?;
         let rebuilt = bake_trusted_direct_rustc_library(&request)?;
         assert!(!rebuilt.reused);
-        assert!(!rebuilt.cargo_process_started);
         assert_eq!(rebuilt.output_digest, bake.output_digest);
         assert_eq!(rebuilt.output_digest, digest_bytes(&fs::read(&rebuilt.output)?));
         let record: serde_json::Value = serde_json::from_slice(&fs::read(&sidecar)?)?;
@@ -9181,8 +9174,6 @@ mod tests {
             features: &[],
             prefer_dynamic: false,
         })?;
-        assert!(!library.cargo_process_started);
-        assert!(!consumer.cargo_process_started);
         let first_run = Command::new(&consumer.output).output()?;
         assert!(first_run.status.success());
         assert_eq!(String::from_utf8(first_run.stdout)?.trim(), "42");
@@ -9403,8 +9394,6 @@ mod tests {
             features: &[],
             prefer_dynamic: false,
         })?;
-        assert!(!proc_macro.cargo_process_started);
-        assert!(!consumer.cargo_process_started);
         let output = Command::new(&consumer.output).output()?;
         assert!(output.status.success());
         assert_eq!(String::from_utf8(output.stdout)?.trim(), "43");
@@ -9786,7 +9775,6 @@ mod tests {
         };
         let bake = bake_stored_direct_rustc_test(&request)?;
 
-        assert!(!bake.cargo_process_started);
         assert!(!bake.reused);
         let reused = bake_stored_direct_rustc_test(&request)?;
         assert!(reused.reused);
@@ -9893,7 +9881,6 @@ mod tests {
             source_evidence_key: "direct-rustc-source".to_string(),
         })?;
 
-        assert!(!bake.cargo_process_started);
         let first_physical = store.inspect()?.physical_bytes;
         let bounded = OvenStore::new(
             store_root.path(),
