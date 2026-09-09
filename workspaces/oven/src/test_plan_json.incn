@@ -97,7 +97,7 @@ pub def test_malformed_json_and_schema_refuse() -> None:
     """Parse/schema failures have no binding or selected payload."""
     require_unbound(evaluate("{"))
     require_invalid(JsonValue.null(), [])
-    require_invalid(put(envelope(), "schema", JsonValue.string("incan.oven.selection/2")), ["schema"])
+    require_invalid(put(envelope(), "schema", JsonValue.string("incan.oven.selection/3")), ["schema"])
     require_invalid(put(envelope(), "schema", JsonValue.int(1)), ["schema"])
 
 
