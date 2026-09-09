@@ -11,6 +11,7 @@ The compile session: module graph, parsed modules, build orchestration, generate
 - `src/generated_cache.rs`
 - `src/replacement_compatibility.rs`
 - `src/compiler_stack.rs`
+- `src/backend/project/generator.rs` (renders the generated Rust project from the checked program and provider facts)
 
 ## May depend on
 

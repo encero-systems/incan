@@ -12,6 +12,7 @@ The pipeline from checked AST to emitted Rust, plus the session and provider mac
 | `incan_format/` | Source formatter. |
 | `incan_provider/` | Provider and SDK contracts (manifest types, component catalog, inventory) and their loaders. |
 | `incan_inspect/` | Rust signature inspection for `rust::` imports and codegraph export. |
+| `incan_oven_facet/` | Implements Oven's provider interface for Incan: stdlib extra crate sources, SDK-provider and library-manifest lock sections, diagnostics mapping, rust_inspect hooks. The one place Oven learns about Incan. |
 | `incan_driver/` | The compile session: module graph, parsed modules, build orchestration, generated cache, replacement compatibility. No clap, no terminal I/O. |
 
 See [`LAYOUT.md`](../LAYOUT.md) for the ring rules and the migration order.

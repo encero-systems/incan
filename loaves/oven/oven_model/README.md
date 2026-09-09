@@ -8,14 +8,14 @@ loaf.toml, oven.lock, workspace discovery, dependency resolution, lifecycle, too
 
 - `src/manifest.rs`
 - `src/workspace.rs`
-- `src/lockfile.rs`
-- `src/dependency_resolver.rs`
+- `src/lockfile.rs` (generic lock only; SDK-provider and library-manifest sections go to `incan_oven_facet`)
+- `src/dependency_resolver.rs` (resolution only; the compiler-diagnostics adapter and stdlib registry lookup go to `incan_oven_facet`)
 - `src/project_lifecycle/`
 - `src/toolchain_layout.rs`
 
 ## May depend on
 
-`kernel (incan_lang for vocabulary)`
+none
 
 Sole owner of `toml` and `toml_edit`.
 

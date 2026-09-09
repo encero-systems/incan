@@ -1,6 +1,6 @@
 # Oven ring
 
-The build system: project model, resolution, store, direct-rustc execution, registry access. Depends on kernel for shared vocabulary only. Never on the compiler pipeline.
+The build system: project model, resolution, store, direct-rustc execution, registry access. Depends on **no Incan ring**. Everything Oven needs to know about Incan arrives through the provider interface that `compiler/incan_oven_facet` implements. See *The Oven boundary* in `LAYOUT.md` for the measured edges and their disposition.
 
 **Versioning:** Own line. RFC 118 gives Oven its own command surface; its versions move independently of the compiler.
 

@@ -11,7 +11,7 @@ The `incan` binary: clap surface, terminal rendering, exit codes.
 
 ## May depend on
 
-`compiler`, `oven`
+`compiler` (including `incan_oven_facet`), `oven`
 
 Should be small. If a command body grows, it belongs in the driver.
 

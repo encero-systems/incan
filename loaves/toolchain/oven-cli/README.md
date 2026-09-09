@@ -2,7 +2,7 @@
 
 Ring: **toolchain**
 
-The `oven` binary: the command surface from RFC 118.
+The `oven`, plus `compiler/incan_oven_facet` for the Incan provider wiring binary: the command surface from RFC 118.
 
 ## Moves here from
 
@@ -12,6 +12,6 @@ The `oven` binary: the command surface from RFC 118.
 
 ## May depend on
 
-`oven`
+`oven`, plus `compiler/incan_oven_facet` for the Incan provider wiring
 
 This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
