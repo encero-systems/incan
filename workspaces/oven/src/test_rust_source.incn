@@ -112,7 +112,7 @@ pub def test_workspace_request_preserves_unresolved_overrides() -> None:
             assert dependency.optional == Some(true)
             assert dependency.default_features == None
             match dependency.source:
-                RustDependencySource.Workspace => None
+                RustDependencySource.Workspace => pass
                 _ => fail("inherited request was changed into a selected registry source")
 
 
@@ -158,7 +158,7 @@ pub def test_unknown_target_metadata_and_wrong_value_types_refuse() -> None:
     for source in ["[dependencies]\np={version='1', optional='yes'}\n", "[features]\nx='not-an-array'\n", "[target.'cfg(unix)']\nlinker='custom'\n", "dependencies=['bad']\n", "[dependencies]\n''='1'\n"]:
         match read_dependency_catalog(source, "Cargo.toml"):
             Ok(_) => fail("malformed or unsupported declaration was accepted")
-            Err(_) => None
+            Err(_) => pass
 
 
 pub def test_manifest_location_does_not_change_the_declaration_catalog() -> None:

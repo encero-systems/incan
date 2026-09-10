@@ -149,7 +149,7 @@ pub def test_host_target_dev_and_absent_build_unit_keep_separate_outcomes() -> N
         _ => fail("host build request used the target cfg")
     test_result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Test, false), "Cargo.toml"))
     match test_result.slots[0].activation:
-        SlotActivation.Active(_, _, _) => None
+        SlotActivation.Active(_, _, _) => pass
         _ => fail("test purpose dropped its dev slot")
     match test_result.slots[2].activation:
         SlotActivation.Inactive(reason) =>
@@ -164,7 +164,7 @@ pub def test_cfg_uses_actual_supplied_values_and_exact_target_triple() -> None:
     result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Normal, true), "Cargo.toml"))
     for slot in result.slots:
         match slot.activation:
-            SlotActivation.Active(_, _, _) => None
+            SlotActivation.Active(_, _, _) => pass
             _ => fail("explicit matching target fact was not used")
 
 
@@ -192,7 +192,7 @@ pub def test_missing_feature_alias_or_inherited_source_refuses() -> None:
         catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
         match activate_unit(catalog, context([], false, ActivationPurpose.Normal, false), "Cargo.toml"):
             Ok(_) => fail("unbound declaration entered activation")
-            Err(_) => None
+            Err(_) => pass
 
 
 pub def test_real_regex_default_demands_keep_every_dev_slot_inactive() -> None:
@@ -205,7 +205,7 @@ pub def test_real_regex_default_demands_keep_every_dev_slot_inactive() -> None:
     assert len(result.slots) == 9
     for index in range(4):
         match result.slots[index].activation:
-            SlotActivation.Active(_, _, _) => None
+            SlotActivation.Active(_, _, _) => pass
             _ => fail("default regex normal dependency was dropped")
     for index in range(4, 9):
         match result.slots[index].activation:
@@ -260,7 +260,7 @@ pub def test_cfg_named_fields_use_supplied_snapshot_without_builtin_target_looku
     )
     result = require_ok(activate_unit(catalog, selected, "Cargo.toml"))
     match result.slots[0].activation:
-        SlotActivation.Active(_, _, _) => None
+        SlotActivation.Active(_, _, _) => pass
         _ => fail("supplied custom target facts were not evaluated")
 
 

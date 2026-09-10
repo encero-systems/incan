@@ -240,7 +240,7 @@ def slot_restrictions(
                         "original inherited dependency metadata",
                     ),
                 )
-            _ => None
+            _ => pass
         if let Some(requirement) = declaration.version_requirement:
             VersionReq
                 .parse(requirement)
@@ -321,7 +321,7 @@ def feature_catalog(catalog: RustDependencyCatalog, manifest: str) -> Result[Fea
                                 "feature forwarding names no dependency",
                             ),
                         )
-                _ => None
+                _ => pass
             symbols.append(symbol)
         expansions[name] = symbols
     mut names = OrderedSet[str].from_iter([name for name in catalog.features.keys()])
@@ -341,7 +341,7 @@ def feature_catalog(catalog: RustDependencyCatalog, manifest: str) -> Result[Fea
                                 "feature expansion names no local feature",
                             ),
                         )
-                _ => None
+                _ => pass
     return Ok(FeatureCatalog(names=names, expansions=expansions, optional_aliases=optional))
 
 
@@ -416,7 +416,7 @@ def slot_demand(
             FeatureSymbol.DependencyFeature(alias, feature, _) =>
                 if alias == declaration.alias:
                     requested.append(feature)
-            _ => None
+            _ => pass
     domain = dependency_domain(declaration.role)
     defaults = declaration.default_features != Some(false)
     return SlotDemand(index=declaration.index, activation=SlotActivation.Active(unique(requested), defaults, domain))
