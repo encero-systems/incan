@@ -428,16 +428,23 @@ pub def test_runtime_support_new_emission_slot_requires_its_own_grant() -> None:
 
 
 pub def test_runtime_support_wire_version_cannot_downgrade_obligations() -> None:
-    """Only the decoder chooses support validation; neither a flag nor a legacy version can erase a v2 source slot."""
+    """Only the decoder chooses support validation; neither a flag nor a legacy version can erase a current source slot."""
     value = fixture_v3()
+    assert text(run(value), "status") == "selected"
     require_refused(put(value, "requires_compiler_support", JsonValue.bool(false)), "invalid_input")
     mut legacy = put(value, "schema", JsonValue.string("incan.oven.source-unit-batch/2"))
     legacy.remove("runtime_needs")
     legacy.remove("runtime_grants")
     require_refused(legacy, "invalid_input")
     unit = items(value, "units")[0]
+    mut missing_members = get(unit, "definition")
+    missing_members.remove("source_members")
+    require_refused(put(value, "units", JsonValue.array([put(unit, "definition", missing_members)])), "invalid_input")
+    empty_members = put(get(unit, "definition"), "source_members", JsonValue.array([]))
+    require_refused(put(value, "units", JsonValue.array([put(unit, "definition", empty_members)])), "invalid_input")
     mut old_definition = put(get(unit, "definition"), "schema_version", JsonValue.int(1))
     old_definition.remove("compiler_support")
+    old_definition.remove("source_members")
     changed = put(value, "units", JsonValue.array([put(unit, "definition", old_definition)]))
     require_refused(changed, "unsupported_intent")
 
@@ -477,8 +484,9 @@ def fixture_v3(keep_graph: bool = false, recipe: bool = false) -> JsonValue:
     mut grants: list[JsonValue] = []
     for unit in source_units:
         support = JsonValue.object({"support": JsonValue.string("stdlib"), "features": JsonValue.array([])})
-        definition = put(get(unit, "definition"), "schema_version", JsonValue.int(2))
+        definition = put(get(unit, "definition"), "schema_version", JsonValue.int(3))
         definition = put(definition, "compiler_support", JsonValue.array([support]))
+        definition = put(definition, "source_members", JsonValue.array([get(definition, "entrypoint")]))
         units.append(put(unit, "definition", definition))
         unit_id = text(unit, "unit_id")
         owner_id = text(unit, "owner_id")

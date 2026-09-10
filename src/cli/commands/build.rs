@@ -10954,6 +10954,18 @@ fn capture_native_source_definition(inputs: NativeSourceDefinitionInputs<'_>) ->
                 .ok_or_else(|| CliError::failure("generated source-tree evidence is absent"))?
                 .to_string(),
         },
+        source_members: Some(
+            inputs
+                .source_evidence
+                .tree_members("generated-source-tree")
+                .ok_or_else(|| CliError::failure("generated source-tree members are absent"))?
+                .iter()
+                .map(|(path, digest)| NativeSourceInput {
+                    path: format!("src/{path}"),
+                    digest: digest.clone(),
+                })
+                .collect(),
+        ),
         requirements,
         compiler_support: Some(inputs.compiler_support.to_vec()),
     };
@@ -18474,6 +18486,15 @@ rust_shadow = { path = "never-opened-rust-shadow" }
                 path: "src".to_string(),
                 digest: crate::generated_source::digest_tree(&root.join("src"))?,
             },
+            source_members: Some(
+                crate::generated_source::tree_records(&root.join("src"))?
+                    .into_iter()
+                    .map(|(path, digest)| NativeSourceInput {
+                        path: format!("src/{path}"),
+                        digest,
+                    })
+                    .collect(),
+            ),
             compiler_support: Some(vec![NativeCompilerSupportRequirement {
                 support: NativeCompilerSupport::Stdlib,
                 features: Vec::new(),
@@ -18924,7 +18945,7 @@ rust_shadow = { path = "never-opened-rust-shadow" }
 name = "hyphenated-library"
 version = "1.2.3"
 [build]
-rust_edition = "2021"
+rust-edition = "2021"
 [rust-dependencies]
 regex = { version = "1", features = ["unicode", "std"], default-features = false }
 support = { path = "../absent-support" }
@@ -18972,6 +18993,17 @@ support = { path = "../absent-support" }
         })?;
         definition.validate_sources(&output)?;
         assert_eq!(definition.edition, "2021");
+        let expected_root_digest = crate::generated_source::digest_file(&generator.crate_root_path())?;
+        assert_eq!(
+            definition
+                .source_members
+                .as_deref()
+                .ok_or("source members missing")?
+                .iter()
+                .map(|member| (member.path.as_str(), member.digest.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("src/lib.rs", expected_root_digest.as_str())]
+        );
         assert_eq!(
             definition.crate_name,
             ProjectGenerator::rust_target_name("hyphenated-library")

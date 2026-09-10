@@ -61,6 +61,7 @@ impl Fixture {
                     path: "src".to_string(),
                     digest: digest('d'),
                 },
+                source_members: None,
                 requirements: Vec::new(),
                 compiler_support: Some(vec![NativeCompilerSupportRequirement {
                     support: NativeCompilerSupport::Stdlib,
@@ -518,8 +519,16 @@ fn compiler_support_context_and_coverage_are_explicit() -> TestResult {
         SemanticProjectionBuilder::new().register(&input),
         Err(SemanticProjectionError::Invalid { .. })
     ));
+    fixture.definition.schema_version = 3;
+    fixture.definition.source_members = Some(vec![fixture.definition.entrypoint.clone()]);
+    assert_eq!(
+        baseline.value(),
+        fixture.project(&mut SemanticProjectionBuilder::new())?.value(),
+        "physical code-member evidence must not create a second semantic identity path"
+    );
     fixture.definition.schema_version = 1;
     fixture.definition.compiler_support = None;
+    fixture.definition.source_members = None;
     assert!(matches!(
         SemanticProjectionBuilder::new().register(&fixture.input()),
         Err(SemanticProjectionError::Missing { .. })

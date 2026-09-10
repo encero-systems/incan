@@ -137,6 +137,7 @@ pub(crate) struct OvenGeneratedProjectSourceEvidence {
     files: BTreeMap<String, PathBuf>,
     trees: BTreeMap<String, PathBuf>,
     supplemental_digests: BTreeMap<String, String>,
+    tree_members: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 /// Compiler-owned request for the repository's Rust libtest suite receipt.
@@ -481,11 +482,12 @@ pub(crate) fn generated_source_evidence_for_inputs(
 ) -> Result<OvenGeneratedProjectSourceEvidence, OvenError> {
     let files = normalized_generated_source_bindings(files)?;
     let trees = normalized_generated_source_bindings(trees)?;
-    let supplemental_digests = generated_source_evidence(&files, &trees)?;
+    let (supplemental_digests, tree_members) = generated_source_evidence(&files, &trees)?;
     Ok(OvenGeneratedProjectSourceEvidence {
         files,
         trees,
         supplemental_digests,
+        tree_members,
     })
 }
 
@@ -493,6 +495,14 @@ impl OvenGeneratedProjectSourceEvidence {
     /// Read a verified named digest without exposing mutable proof records.
     pub(crate) fn digest(&self, name: &str) -> Option<&str> {
         self.supplemental_digests.get(name).map(String::as_str)
+    }
+
+    /// Borrow one verified generated tree's logical member-to-byte-digest projection.
+    ///
+    /// These records were collected while deriving the receipt's aggregate tree digest. Returning the same map lets
+    /// the declaring compilation publish member-granular JEC evidence without a second filesystem traversal.
+    pub(crate) fn tree_members(&self, name: &str) -> Option<&BTreeMap<String, String>> {
+        self.tree_members.get(name)
     }
 }
 
@@ -758,8 +768,9 @@ fn normalized_build_unit_inputs(inputs: &BTreeMap<String, String>) -> Result<BTr
 fn generated_source_evidence(
     files: &BTreeMap<String, PathBuf>,
     trees: &BTreeMap<String, PathBuf>,
-) -> Result<BTreeMap<String, String>, OvenError> {
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, BTreeMap<String, String>>), OvenError> {
     let mut digests = BTreeMap::new();
+    let mut tree_members = BTreeMap::new();
     for (name, path) in files {
         let name = normalized_generated_source_name(name)?;
         let digest = digest_generated_source_file(path)?;
@@ -772,13 +783,15 @@ fn generated_source_evidence(
     }
     for (name, path) in trees {
         let name = normalized_generated_source_name(name)?;
-        let digest = digest_source_tree(path)?;
+        let members = crate::generated_source::tree_records(path).map_err(OvenError::from)?;
+        let digest = crate::generated_source::digest_tree_records(&members).map_err(OvenError::from)?;
         if digests.insert(name.clone(), digest).is_some() {
             return Err(OvenError::InvalidGeneratedSource {
                 path: path.clone(),
                 message: format!("duplicate generated source evidence key `{name}`"),
             });
         }
+        tree_members.insert(name, members);
     }
     if digests.is_empty() {
         return Err(OvenError::InvalidGeneratedSource {
@@ -786,7 +799,7 @@ fn generated_source_evidence(
             message: "must declare at least one generated source file or tree".to_string(),
         });
     }
-    Ok(digests)
+    Ok((digests, tree_members))
 }
 
 /// Normalize proof keys while retaining exact command-local paths and input kinds.

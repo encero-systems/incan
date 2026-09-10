@@ -3,7 +3,7 @@
 //! These definitions retain source bytes and dependency requests. They neither select a Rust closure nor confer
 //! native readiness; selected provider identities remain in the containing checked manifest.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use crate::generated_source;
 /// Artifact-relative location of an emitted library's physical source definition.
 pub const NATIVE_SOURCE_UNIT_PATH: &str = "native/source-unit.json";
 /// Supported physical source-unit schema; independent of semantic executable formats.
-pub const NATIVE_SOURCE_UNIT_SCHEMA_VERSION: u32 = 2;
+pub const NATIVE_SOURCE_UNIT_SCHEMA_VERSION: u32 = 3;
 /// Maximum accepted source-definition payload size.
 const MAX_DEFINITION_BYTES: usize = 4 * 1024 * 1024;
 
@@ -57,6 +57,12 @@ pub struct NativeSourceUnitDefinition {
     pub entrypoint: NativeSourceInput,
     /// The explicitly named generated tree and its portable tree digest.
     pub source_tree: NativeSourceInput,
+    /// Exact logical members and byte digests of the emitted source tree.
+    ///
+    /// Schema 3 publishes this projection from the declaring compilation. Legacy definitions remain usable for
+    /// native compilation, but their absent member evidence cannot authorize member-granular JEC reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_members: Option<Vec<NativeSourceInput>>,
     /// Retained requirements, sorted by role and alias without merging those roles.
     pub requirements: Vec<NativeSourceRequirement>,
     /// Compiler support actually used by emitted Rust; absent in legacy schema1, never inferred empty.
@@ -231,11 +237,14 @@ impl NativeSourceUnitDefinition {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| invalid("schema_version must be an unsigned integer"))?;
-        if version != 1 && version != u64::from(NATIVE_SOURCE_UNIT_SCHEMA_VERSION) {
+        if ![1, 2, u64::from(NATIVE_SOURCE_UNIT_SCHEMA_VERSION)].contains(&version) {
             return Err(NativeSourceDefinitionError::UnsupportedVersion(version));
         }
         if version == 1 && value.get("compiler_support").is_some() {
             return Err(invalid("schema1 does not declare compiler support"));
+        }
+        if version < 3 && value.get("source_members").is_some() {
+            return Err(invalid("legacy schemas do not declare source members"));
         }
         let definition: Self = serde_json::from_value(value)?;
         definition.validate()?;
@@ -299,7 +308,7 @@ impl NativeSourceUnitDefinition {
 
     /// Validate the schema and portable record shape without reading unresolved dependency sources.
     pub fn validate(&self) -> Result<(), NativeSourceDefinitionError> {
-        if self.schema_version != 1 && self.schema_version != NATIVE_SOURCE_UNIT_SCHEMA_VERSION {
+        if ![1, 2, NATIVE_SOURCE_UNIT_SCHEMA_VERSION].contains(&self.schema_version) {
             return Err(NativeSourceDefinitionError::UnsupportedVersion(
                 self.schema_version.into(),
             ));
@@ -324,9 +333,9 @@ impl NativeSourceUnitDefinition {
         if self.entrypoint.path != "src/lib.rs" || self.source_tree.path != "src" {
             return Err(invalid("source inputs must name src/lib.rs and src"));
         }
-        match (self.schema_version, &self.compiler_support) {
-            (1, None) => {}
-            (2, Some(requirements)) => {
+        match (self.schema_version, &self.compiler_support, &self.source_members) {
+            (1, None, None) => {}
+            (2, Some(requirements), None) | (3, Some(requirements), Some(_)) => {
                 if requirements.first().map(|request| request.support) != Some(NativeCompilerSupport::Stdlib) {
                     return Err(invalid("compiler support must include the emitted stdlib requirement"));
                 }
@@ -347,8 +356,32 @@ impl NativeSourceUnitDefinition {
             }
             _ => {
                 return Err(invalid(
-                    "compiler support presence must match the source-definition version",
+                    "compiler support and source-member presence must match the source-definition version",
                 ));
+            }
+        }
+        if let Some(members) = &self.source_members {
+            if members.is_empty() {
+                return Err(invalid("source members must not be empty"));
+            }
+            let mut previous = None;
+            let mut entrypoint_matches = 0;
+            for member in members {
+                require_portable_source_path(&member.path)?;
+                require_digest(&member.digest)?;
+                if previous.is_some_and(|path| path >= member.path.as_str()) {
+                    return Err(invalid("source members must be sorted and unique"));
+                }
+                previous = Some(member.path.as_str());
+                if member.path == self.entrypoint.path {
+                    entrypoint_matches += 1;
+                    if member.digest != self.entrypoint.digest {
+                        return Err(invalid("source member entrypoint digest differs from its named input"));
+                    }
+                }
+            }
+            if entrypoint_matches != 1 {
+                return Err(invalid("source members must contain the exact named entrypoint"));
             }
         }
         let mut keys = BTreeSet::new();
@@ -447,11 +480,36 @@ impl NativeSourceUnitDefinition {
         require_directory(artifact_root)?;
         let tree = artifact_root.join(&self.source_tree.path);
         // Validate the parent before opening src/lib.rs so a symlinked src cannot escape the artifact.
-        let tree_digest = generated_source::digest_tree(&tree).map_err(|error| invalid(error.to_string()))?;
-        let root_digest = generated_source::digest_file(&artifact_root.join(&self.entrypoint.path))
-            .map_err(|error| invalid(error.to_string()))?;
-        if tree_digest != self.source_tree.digest || root_digest != self.entrypoint.digest {
+        let records = generated_source::tree_records(&tree).map_err(|error| invalid(error.to_string()))?;
+        let tree_digest =
+            generated_source::digest_tree_records(&records).map_err(|error| invalid(error.to_string()))?;
+        let entrypoint_relative = self
+            .entrypoint
+            .path
+            .strip_prefix("src/")
+            .ok_or_else(|| invalid("entrypoint is outside the emitted source tree"))?;
+        let root_digest = records
+            .get(entrypoint_relative)
+            .ok_or_else(|| invalid("generated source tree omits its named entrypoint"))?;
+        if tree_digest != self.source_tree.digest || root_digest != &self.entrypoint.digest {
             return Err(invalid("generated source bytes differ from their recorded digests"));
+        }
+        if let Some(members) = &self.source_members {
+            let expected = members
+                .iter()
+                .map(|member| {
+                    member
+                        .path
+                        .strip_prefix("src/")
+                        .map(|path| (path.to_string(), member.digest.clone()))
+                        .ok_or_else(|| invalid("source member is outside the emitted source tree"))
+                })
+                .collect::<Result<BTreeMap<_, _>, _>>()?;
+            if expected != records {
+                return Err(invalid(
+                    "generated source members differ from their recorded byte digests",
+                ));
+            }
         }
         Ok(())
     }
@@ -483,6 +541,24 @@ fn require_digest(value: &str) -> Result<(), NativeSourceDefinitionError> {
     Ok(())
 }
 
+/// Require one artifact-relative emitted-code path beneath the fixed source root.
+fn require_portable_source_path(value: &str) -> Result<(), NativeSourceDefinitionError> {
+    require_text("source member path", value)?;
+    let Some(relative) = value.strip_prefix("src/") else {
+        return Err(invalid("source member paths must be beneath src/"));
+    };
+    if relative.is_empty() || value.contains('\\') || value.contains(':') {
+        return Err(invalid("source member path must be portable and relative"));
+    }
+    if relative
+        .split('/')
+        .any(|component| matches!(component, "" | "." | ".."))
+    {
+        return Err(invalid("source member path contains an invalid component"));
+    }
+    Ok(())
+}
+
 /// Prove a named artifact directory is real before traversing its fixed child paths.
 fn require_directory(path: &Path) -> Result<(), NativeSourceDefinitionError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| NativeSourceDefinitionError::Io {
@@ -505,6 +581,7 @@ mod tests {
     /// Construct a real emitted-source binding without needing a compiler, SDK or native selector.
     fn fixture(root: &Path) -> TestResult<(LibraryManifest, NativeSourceUnitDefinition)> {
         fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("src/defs.rs"), "pub const ANSWER: i64 = 42;\n")?;
         fs::write(root.join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
         let mut manifest = LibraryManifest::new("pricing", "0.1.0");
         manifest.contract_metadata.provider.semantic_source_digest =
@@ -532,6 +609,15 @@ mod tests {
                 path: "src".to_string(),
                 digest: generated_source::digest_tree(&root.join("src"))?,
             },
+            source_members: Some(
+                generated_source::tree_records(&root.join("src"))?
+                    .into_iter()
+                    .map(|(path, digest)| NativeSourceInput {
+                        path: format!("src/{path}"),
+                        digest,
+                    })
+                    .collect(),
+            ),
             requirements: Vec::new(),
             compiler_support: Some(vec![NativeCompilerSupportRequirement {
                 support: NativeCompilerSupport::Stdlib,
@@ -555,16 +641,27 @@ mod tests {
         }
     }
 
-    /// Preserve v1 absence while requiring explicit, complete support requests in v2.
+    /// Preserve legacy absence while requiring explicit support and code-member evidence in schema 3.
     #[test]
     fn native_source_definition_versions_preserve_support_obligations() -> TestResult {
         let tmp = tempfile::tempdir()?;
         let (_, current) = fixture(tmp.path())?;
         let encoded = current.to_json_bytes()?;
         assert_eq!(NativeSourceUnitDefinition::from_json_bytes(&encoded)?, current);
+        assert_eq!(
+            current
+                .source_members
+                .as_deref()
+                .ok_or("source members missing")?
+                .iter()
+                .map(|member| member.path.as_str())
+                .collect::<Vec<_>>(),
+            ["src/defs.rs", "src/lib.rs"]
+        );
         let mut legacy = current.clone();
         legacy.schema_version = 1;
         legacy.compiler_support = None;
+        legacy.source_members = None;
         let legacy_bytes = legacy.to_json_bytes()?;
         assert!(!String::from_utf8(legacy_bytes.clone())?.contains("compiler_support"));
         assert_eq!(NativeSourceUnitDefinition::from_json_bytes(&legacy_bytes)?, legacy);
@@ -573,6 +670,13 @@ mod tests {
         assert!(NativeSourceUnitDefinition::from_json_bytes(&serde_json::to_vec(&unknown_legacy_field)?).is_err());
         legacy.compiler_support = current.compiler_support.clone();
         assert!(legacy.to_json_bytes().is_err());
+        let mut schema_two = current.clone();
+        schema_two.schema_version = 2;
+        schema_two.source_members = None;
+        assert_eq!(
+            NativeSourceUnitDefinition::from_json_bytes(&schema_two.to_json_bytes()?)?,
+            schema_two
+        );
         for support in [
             None,
             Some(Vec::new()),
@@ -591,6 +695,10 @@ mod tests {
             features: vec!["json".to_string(), "json".to_string()],
         }]);
         assert!(changed.to_json_bytes().is_err());
+        let (_, mut changed) = fixture(tmp.path())?;
+        changed.source_members.as_mut().ok_or("source members missing")?[0].digest =
+            generated_source::digest_bytes(b"other");
+        assert!(changed.validate_sources(tmp.path()).is_err());
         Ok(())
     }
 

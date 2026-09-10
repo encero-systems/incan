@@ -711,7 +711,7 @@ fn project_provider(inputs: &ProviderSemanticInputs<'_>) -> Result<String, Seman
     let definition = inputs
         .definition
         .ok_or_else(|| missing("native source-unit definition"))?;
-    if !matches!(definition.schema_version, 1 | 2) {
+    if !matches!(definition.schema_version, 1 | 2 | 3) {
         return Err(SemanticProjectionError::Unsupported {
             field: format!("source-unit schema {}", definition.schema_version),
         });

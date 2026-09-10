@@ -48,6 +48,16 @@ pub(crate) fn digest_file(path: &Path) -> Result<String, GeneratedSourceError> {
 
 /// Hash every regular file in an explicitly named generated tree, rejecting symlinks and empty trees.
 pub(crate) fn digest_tree(root: &Path) -> Result<String, GeneratedSourceError> {
+    let records = tree_records(root)?;
+    digest_tree_records(&records)
+}
+
+/// Return every sorted portable member and exact byte digest in one explicitly named generated tree.
+///
+/// This is content membership, not dependency discovery. Callers that need both the established aggregate tree
+/// identity and member-granular reuse evidence should retain this one verified projection instead of walking the
+/// generated directory a second time.
+pub(crate) fn tree_records(root: &Path) -> Result<BTreeMap<String, String>, GeneratedSourceError> {
     let metadata = fs::symlink_metadata(root).map_err(|error| GeneratedSourceError::Invalid {
         path: root.to_path_buf(),
         message: error.to_string(),
@@ -66,6 +76,11 @@ pub(crate) fn digest_tree(root: &Path) -> Result<String, GeneratedSourceError> {
             message: "must contain at least one regular file".to_string(),
         });
     }
+    Ok(records)
+}
+
+/// Hash an already verified portable member projection using the established generated-tree encoding.
+pub(crate) fn digest_tree_records(records: &BTreeMap<String, String>) -> Result<String, GeneratedSourceError> {
     let payload = serde_json::to_vec(&records).map_err(|error| GeneratedSourceError::Serialize(error.to_string()))?;
     Ok(digest_bytes(&payload))
 }
@@ -109,14 +124,7 @@ fn collect_generated_source_tree(
                 message: "may contain only regular files and directories".to_string(),
             });
         }
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| GeneratedSourceError::Invalid {
-                path: path.clone(),
-                message: "escaped the declared generated source root".to_string(),
-            })?
-            .to_string_lossy()
-            .replace('\\', "/");
+        let relative = portable_member_path(root, &path)?;
         let digest =
             fs::read(&path)
                 .map(|bytes| digest_bytes(&bytes))
@@ -132,4 +140,42 @@ fn collect_generated_source_tree(
         }
     }
     Ok(())
+}
+
+/// Convert one proven descendant to its exact portable identity without lossy display replacement.
+fn portable_member_path(root: &Path, path: &Path) -> Result<String, GeneratedSourceError> {
+    let relative = path.strip_prefix(root).map_err(|_| GeneratedSourceError::Invalid {
+        path: path.to_path_buf(),
+        message: "escaped the declared generated source root".to_string(),
+    })?;
+    relative
+        .to_str()
+        .map(|value| value.replace('\\', "/"))
+        .ok_or_else(|| GeneratedSourceError::Invalid {
+            path: path.to_path_buf(),
+            message: "member path must be valid UTF-8".to_string(),
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// A lossy display spelling is not an exact portable identity for JEC member evidence.
+    #[cfg(unix)]
+    #[test]
+    fn tree_records_reject_non_utf8_member_paths() -> TestResult {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = PathBuf::from("generated-source");
+        let path = root.join(OsString::from_vec(vec![b'm', b'e', b'm', b'b', b'e', b'r', 0xff]));
+        let error = portable_member_path(&root, &path)
+            .err()
+            .ok_or("non-UTF-8 source member was accepted")?;
+        assert!(error.to_string().contains("must be valid UTF-8"));
+        Ok(())
+    }
 }

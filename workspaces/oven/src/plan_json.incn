@@ -586,11 +586,13 @@ def decode_definition(
 ) -> Result[list[Requirement], SelectionError]:
     """Check the version before its body; physical digest/path validity remains the host reader's responsibility."""
     version = integer(field(value, "schema_version", path)?, path + ["schema_version"])?
-    if version != 1 and version != 2:
+    if version != 1 and version != 2 and version != 3:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + ["schema_version"]))
     mut keys: list[str] = ["schema_version", "package", "crate_name", "crate_kind", "edition", "authored_source_digest", "entrypoint", "source_tree", "requirements"]
-    if version == 2:
+    if version == 2 or version == 3:
         keys.append("compiler_support")
+    if version == 3:
+        keys.append("source_members")
     exact_object(value, keys, path)?
     package = field(value, "package", path)?
     exact_object(package, ["name", "version"], path + ["package"])?
@@ -610,11 +612,28 @@ def decode_definition(
         for member in ["path", "digest"]:
             if text_field(item, member, path + [key])? == "":
                 return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [key, member]))
+    if version == 3:
+        decode_definition_source_members(field(value, "source_members", path)?, path + ["source_members"])?
     return decode_requirements(field(value, "requirements", path)?, path + ["requirements"])
 
 
+def decode_definition_source_members(value: JsonValue, path: list[str]) -> Result[None, SelectionError]:
+    """Require the producer's exact member-table shape; the host remains responsible for physical path and digest proof."""
+    values = array(value, path)?
+    if len(values) == 0:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
+    for index in range(len(values)):
+        at = path + [str(index)]
+        item = values[index]
+        exact_object(item, ["path", "digest"], at)?
+        for key in ["path", "digest"]:
+            if text_field(item, key, at)? == "":
+                return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=at + [key]))
+    return Ok(None)
+
+
 def decode_definition_support(value: JsonValue, path: list[str]) -> Result[Option[list[CompilerSupportRequest]], SelectionError]:
-    """Preserve legacy absence; version2 contains the original compiler emission requests."""
+    """Preserve schema1 absence; schemas 2 and 3 contain the original compiler emission requests."""
     if integer(field(value, "schema_version", path)?, path + ["schema_version"])? == 1:
         return Ok(None)
     values = array(field(value, "compiler_support", path)?, path + ["compiler_support"])?
