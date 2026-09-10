@@ -55,8 +55,6 @@ use incan_core::lang::{
     surface::result_methods,
 };
 
-use super::vocab_extraction::collect_library_vocab_metadata_for_parser;
-
 /// Maximum source file size (100 MB)
 ///
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
@@ -1316,15 +1314,12 @@ impl DependencyManifestMode {
     }
 }
 
-/// Build a parser-only dependency manifest index for formatting and other collection-only entrypoints.
-///
-/// This deliberately does not write `.incnlib` artifacts. A source-derived parser manifest contains vocab
-/// registrations and soft-keyword activations only, because collection parsing needs syntax context but not generated
-/// Rust artifacts, checked exports, Rust ABI metadata, or a packaged desugarer.
 /// Load source dependency manifests without materializing their legacy library artifacts.
 ///
 /// This is intentionally available to Oven's lock validator so `--locked` and `--frozen` can retain canonical
-/// freshness semantics without starting Cargo merely to inspect dependency metadata.
+/// freshness semantics without starting a producer build merely to inspect dependency metadata. A dependency that
+/// declares vocabulary must already have published its `.incnlib`: parser-only consumers never compile or reconstruct
+/// producer-owned vocabulary metadata from source.
 pub(crate) fn parser_only_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
@@ -1365,7 +1360,7 @@ pub(crate) fn parser_only_library_manifest_index(
     Ok(LibraryManifestIndex::from_entries(entries))
 }
 
-/// Derive the parser-visible portion of one source dependency's library manifest without writing package artifacts.
+/// Derive the parser-visible portion of a source dependency that has no producer-owned vocabulary metadata.
 fn parser_only_library_manifest_entry(
     dependency_key: &str,
     dependency_root: &Path,
@@ -1393,13 +1388,14 @@ fn parser_only_library_manifest_entry(
         .as_ref()
         .and_then(|project| project.version.clone())
         .unwrap_or_else(|| "0.1.0".to_string());
-    let mut manifest = LibraryManifest::new(project_name.clone(), project_version);
-
-    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(&dependency_manifest, &project_root)? {
-        manifest.vocab = Some(vocab_extraction.payload);
-        manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
+    if dependency_manifest.vocab().is_some() {
+        return Err(CliError::failure(format!(
+            "parser-only dependency `pub::{dependency_key}` at {} declares `[vocab]`, but no producer-published library manifest is available; build and publish that dependency before collecting this consumer",
+            dependency_root.display()
+        )));
     }
 
+    let manifest = LibraryManifest::new(project_name.clone(), project_version);
     let metadata =
         LibraryArtifactMetadata::for_parser_source(dependency_key.to_string(), project_name, dependency_root);
     Ok(LibraryManifestIndexEntry::Loaded {
@@ -3510,6 +3506,22 @@ mod tests {
             .parse_source(&main_path, source, false)
             .map_err(|errors| format!("expected session parse to use imported vocab: {errors:?}"))?;
 
+        Ok(())
+    }
+
+    #[test]
+    fn parser_only_source_dependency_requires_published_vocab_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let dependency = tempfile::tempdir()?;
+        std::fs::write(
+            dependency.path().join(LOAF_MANIFEST_FILENAME),
+            "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+
+        let error = parser_only_library_manifest_entry("widgets", dependency.path())
+            .err()
+            .ok_or("parser-only collection unexpectedly rebuilt producer vocab metadata")?;
+        assert!(error.message.contains("producer-published library manifest"));
+        assert!(error.message.contains("pub::widgets"));
         Ok(())
     }
 
