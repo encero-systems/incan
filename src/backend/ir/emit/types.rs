@@ -414,7 +414,15 @@ impl<'a> IrEmitter<'a> {
                 quote! { (#(#ps),*) }
             }
             Pattern::Struct { name, fields } => {
-                let n = format_ident!("{}", name);
+                // The name may be a bare struct or a qualified enum variant such as `Predicate::KeyValue`; a
+                // qualified one must emit as a path, because `format_ident!` cannot carry `::`.
+                let n: TokenStream = if name.contains("::") {
+                    let idents: Vec<_> = name.split("::").map(|segment| format_ident!("{}", segment)).collect();
+                    quote! { #(#idents)::* }
+                } else {
+                    let ident = format_ident!("{}", name);
+                    quote! { #ident }
+                };
                 let fs: Vec<_> = fields
                     .iter()
                     .map(|(fname, fpat)| {
