@@ -154,7 +154,7 @@ Every asset must carry an attestation that binds the asset digest to the source 
 - **registry**: built by the registry's own bakery from the signed source Loaf; the attestation identity is the registry.
 - **local**: built on the publishing machine; the attestation identity is the publisher's keyless identity.
 
-Consumers may apply different trust policy to each builder kind through RFC 117 registry configuration. The registry must publish which kind produced each asset and must not relabel one kind as another.
+Consumers may apply different trust policy to each builder kind through RFC 117 registry configuration. The registry must publish which kind produced each asset and must not relabel one kind as another. All three builder kinds exist from the first release. Whether a given registry-built asset was produced for a publisher on request, from a curated public list, or as part of a paid service is registry operating policy and is outside this RFC; the attestation, admission rule, and trust treatment are the same in every case.
 
 Toolchain identity, target triple, profile, and feature closure are **discovery facts**: the asset manifest is filtered by them to find candidates cheaply. An asset is **admitted** to a consumer plan only when, for every unit the plan would take from it, the asset's recorded RFC 124 unit identity equals the identity the plan computed, and the asset's attestation satisfies the project's trust policy for its builder kind. Discovery facts alone are never sufficient: two assets can share all of them and differ in dependency identities, provider outputs, or native inputs. Oven must treat any unit-identity inequality as inapplicable for that unit and bake it from source, and must never admit an asset by version alone. A unit RFC 124 marks machine-local must not be present in a published asset.
 
@@ -306,7 +306,6 @@ Non-normative. The registry client belongs in Oven's build-system ring rather th
 ## Unresolved questions
 
 - Should Oven offer minimal-version resolution as an opt-in mode alongside the default maximal selection, and if so should the lockfile record which mode produced it?
-- Is the registry bakery in scope for the 0.6 release, or is publisher-built plus local the first shipped set of builder kinds?
 - How is a Rust-facet Loaf from `incan.pub` imported in Incan source? The dependency key selects the registry; whether `rust::` or `pub::` selects the surface needs a rule.
 - How are scopes claimed and verified: free claim on first publish, linked to a source-forge organisation, or both with different display?
 - What is the retention policy for assets whose toolchain is no longer supported, given that source Loaves are retained forever?
