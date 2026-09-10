@@ -3153,6 +3153,8 @@ version = "0.6.0-dev.3"
 dependencies = [
  "hex",
  "incan_core",
+ "proc-macro2",
+ "quote",
  "ra_ap_hir",
  "ra_ap_ide_db",
  "ra_ap_load-cargo",
@@ -3164,6 +3166,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "syn",
  "tempfile",
  "thiserror 2.0.18",
  "toml",
