@@ -15,6 +15,8 @@
     - RFC 105 (architect rule engine)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
+    - RFC 120 (canonical source symbol identity)
+    - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
 - **Issue:** #573
 - **RFC PR:** #766
 - **Written against:** v0.3
@@ -214,7 +216,6 @@ The graph should support these node kinds as the compiler exposes enough informa
 - `test`
 - `artifact`
 - `generated_source`
-- `rust_item`
 - `stdlib_item`
 - `architecture_finding`
 - `risk_signal`
@@ -256,7 +257,6 @@ The graph should support these edge kinds when available:
 - `moves_to`
 - `generated_from`
 - `materializes`
-- `uses_rust_item`
 - `uses_stdlib_item`
 - `dispatches_on`
 - `matches_pattern`
@@ -285,9 +285,17 @@ Future implementations may add tiers such as `runtime_observed`, `lsp_resolved`,
 
 ### Identity
 
-Graph object identity should be content-addressed. A node identity should include enough logical information to distinguish package, module path, stable declaration anchor, node kind, and relevant source identity. An edge identity should include source node identity, target node identity, edge kind, and provenance tier. A diagnostic identity should include diagnostic code, affected source span, module path, and message-stable details.
+**Identity and content digest are different fields and must not be conflated.** Identity answers *is this the same declaration*; a digest answers *has its meaning changed*. One content-addressed field cannot answer both: if identity changes when content changes, a consumer cannot distinguish an edited declaration from a deletion plus an addition, and nothing can be keyed on it across edits.
 
-Physical file movement should not unnecessarily destroy identity for declarations that retain the same package, module, and stable anchor. The v0.4 export may start with deterministic record IDs plus schema and compiler versions; exact content-addressing inputs and snapshot-root hashing remain follow-up design work.
+A node identity must include enough logical information to distinguish package, module path, stable declaration anchor, node kind, and relevant source identity. An edge identity must include source node identity, target node identity, edge kind, and provenance tier. A diagnostic identity must include diagnostic code, affected source span, module path, and message-stable details — a diagnostic is anchored to an occurrence, so a span belongs in its identity and not in a declaration's.
+
+A declaration identity must be stable across edits. It must not include a source span, a byte offset, or any value derived from traversal order. Three consequences follow, and none is hypothetical: each was found by measuring the current compiler against one standard library.
+
+- **A span is not an identity input.** RFC 120's `CanonicalSymbolId` carries `declaration_span` inside its equality. That is correct within its own scope — it states plainly that identity is stable across the stages of one compilation, not across edits — but it makes the value unusable as a graph identity. A graph declaration identity must be derived from it with the span removed.
+- **Removing the span alone is not sufficient, because of overloads.** Two module-level declarations sharing namespace, origin, name, and kind become indistinguishable once the span is gone. A declaration identity must therefore include the declaration's signature. Measured across 2,078 checked declarations, this is the only class of collision that arises, and it arises reliably wherever a language admits overloads.
+- **A traversal counter is a span by another name.** A scope discriminant assigned as an index into a module-wide table is positional: inserting or moving any declaration renumbers every declaration traversed after it, so an untouched sibling appears to change. Only the *presence* of a discriminant may enter an identity, never its value. Where a value is needed to separate sibling scopes, it must be renumbered densely within its own declaration.
+
+Physical file movement must not destroy identity for declarations that retain the same package, module, and stable anchor. The layering rule below is what makes that achievable rather than aspirational.
 
 ### Checked and tolerant export
 
@@ -463,6 +471,101 @@ That single-observer position is the substantive advantage over the alternative.
 
 SCIP remains the reference for symbol naming and for separating definitions from reference occurrences, and remains an export adapter rather than the internal model, consistent with native JSONL being the source of truth. Following its conventions where they fit keeps a future exporter a projection rather than a translation.
 
+## Semantic digests
+
+Identity says which declaration a fact is about. A **semantic digest** says whether that declaration's meaning has changed. Together they let a consumer answer *what changed* rather than *what was touched*, which is the difference between a build system that reuses work and one that rebuilds on any edit.
+
+RFC 124 is the first such consumer: it names the semantic digest as the source input to a compiled unit's identity, in place of a hash of the unit's source bytes. It deliberately defines no digest of its own, so this section is the normative source for both.
+
+### Logical and physical layering
+
+Every graph fact belongs to one of two layers, and only one of them carries identity.
+
+| Layer | Facts | Carries identity | Enters a digest |
+| --- | --- | --- | --- |
+| Logical | module, declaration, signature, visibility, reference, call | yes | yes |
+| Physical | file, byte span, line, on-disk path | no — provenance only | no |
+
+This is a rule about anchoring, not a second graph. The schema already separates the layers — `CodegraphFileRecord` and `CodegraphModuleRecord` are distinct node kinds — and a view over the graph is a projection, never a parallel structure. Splitting into multiple graphs would reintroduce the identity-reconciliation problem that one compiler observing every language exists to avoid.
+
+The rule has a consequence the current compiler does not satisfy: a logical module identity must not be derived from a file path. Deriving it that way is ordinary language design, and it is how a reader finds a declaration, but it makes a pure refactor — splitting one module into two files with an unchanged public surface — look like the deletion of every declaration in it. Where a logical module identity cannot yet be established independently of layout, an implementation must report the affected declarations as changed rather than silently reuse them.
+
+### The semantic digest
+
+A declaration's semantic digest must be a digest over its **checked meaning**: the declaration as the compiler resolved it, after type checking, before code generation.
+
+It must be computed from checked values, not by normalising rendered text. Rendered forms embed positional data inside composite strings — an identity spelling that carries its own declaration span, for example — and scrubbing those after the fact reliably misses cases that omitting the field cannot. A digest built by text substitution over a debug rendering is not conformant even where it happens to produce the same answer.
+
+The digest must exclude everything the compiler cannot observe in its output: comments, documentation, formatting, declaration order, and physical location. It must include everything it can: signatures, types, visibility, control flow, ownership and borrowing facts, and resolved call and reference targets.
+
+The digest must be language-neutral. An Incan declaration and a Rust declaration contribute the same kind of fact and are compared the same way; a consumer asking whether a declaration changed must not need to know which language it is written in. A digest that covers only one language is not partial but **unsound**, because a consumer folding it will report a hit for a change it cannot see.
+
+Where an implementation cannot compute a declaration's semantic digest, it must report the declaration as changed. Erring toward changed costs redundant work; erring the other way yields a wrong build.
+
+### The documentation digest
+
+Documentation is output for some consumers and invisible to others. A declaration must therefore carry a separate `doc_digest` covering its documentation, excluded from the semantic digest.
+
+A consumer gating a compiled artifact uses the semantic digest alone, because documentation cannot change compiled output. A consumer gating published reference documentation or a manifest surface uses both. One digest per consumer, rather than one digest with a policy attached.
+
+### Composition
+
+A declaration's own digest answers a narrow question. Consumers ask a wider one: has anything this declaration depends on changed. A **closure digest** must therefore be defined as a fold over the graph's own dependency edges:
+
+> `closure_digest(n)` is a digest over `semantic_digest(n)` followed by the closure digests of `n`'s dependencies, ordered by dependency identity.
+
+Ordering by identity rather than by traversal makes the fold order-free, which is required: a fold sensitive to traversal order reintroduces exactly the positional dependency the identity rules remove. A cycle folds over its strongly connected component as a unit.
+
+Dependencies are the graph's outgoing `references`, `calls`, `imports`, `contains`, and `resolves_to` edges. Unresolved edges are covered by the reachability rules above: an edge the graph could not resolve is not an edge that does not exist, so a closure containing one must be reported as changed.
+
+### External identity and the resilience boundary
+
+A change confined to a declaration's internals must not force its dependents to rebuild. Expressing that requires a second closure, and the boundary is not the `pub` keyword.
+
+A consumer does not merely link against public signatures; it instantiates parts of what it depends on. Generic bodies are monomorphised in the consumer, inlinable bodies are code-generated there, and compile-time-evaluated bodies are evaluated there. A private declaration reachable from any of those is externally observable although no signature names it.
+
+The external closure must therefore be rooted at public declarations and extended by reachability: public signatures, plus the bodies of declarations a consumer can instantiate or inline, plus everything reachable from those bodies whatever its visibility. Visibility marks the roots; reachability decides membership. A private declaration a public generic calls is an instance of the rule, not an exception to it.
+
+An implementation may follow every edge out of every public declaration instead. That is sound and looser: because most private declarations are reachable from some public one, it places nearly everything in the external closure and the distinction stops paying. How far the closure follows is a tightness decision, not a correctness one.
+
+### Invariants
+
+An implementation must satisfy all of the following. Each is stated at declaration granularity deliberately: an implementation that leaks positional data still moves the digest of the declaration actually edited, so an assertion at module or package granularity passes it.
+
+| Change | Edited declaration | Every other declaration |
+| --- | --- | --- |
+| add or remove a comment | unchanged | unchanged |
+| add or remove documentation | unchanged | unchanged |
+| reformat without changing code | unchanged | unchanged |
+| reorder declarations within a module | unchanged | unchanged |
+| move a declaration between files, module unchanged | unchanged | unchanged |
+| add a declaration | — | unchanged |
+| remove a declaration | — | unchanged |
+| change a declaration's body | changed | unchanged |
+| change a public signature | changed | unchanged |
+
+Two conditions are load-bearing when testing these, and an implementation that omits them is untested rather than passing. A fixture must retain a declaration positioned **after** the edit, because positional leakage only contaminates declarations traversed later. That trailing declaration must own a **nested scope**, because a declaration with no scope discriminant cannot detect traversal-order renumbering. A body-change fixture must additionally **introduce or remove a scope**, since an edit that leaves the scope count unchanged shifts no later index and cannot detect the leak at all.
+
+Separately, a distinct declaration identity must exist for every declaration a compilation admits, including overloads. Collisions must be measured over a corpus rather than reasoned about.
+
+### Schema versioning
+
+The digest projection is a compatibility surface. Every exported digest must carry a `digest_schema` identifying the projection that produced it.
+
+A change to the projection must not invalidate every stored digest. An implementation must retain the previous projection and, on a mismatch under the current one, compare under the previous; a match there is a hit, reported with a notice that the digest is stale and should be refreshed. Without this, a normalisation improvement is indistinguishable from a change to every declaration in existence.
+
+### Prior art
+
+`insta`, already a development dependency, solves the same problems for snapshots and its internals are the reference for three of these rules.
+
+Its `MetaData::trim_for_persistence` strips the assertion line before writing a snapshot, retaining it only for display — volatile positional data is kept for humans and never persisted. That is the layering rule: keep spans in what a maintainer reads, keep them out of what is compared.
+
+Its redactions apply to a structured value tree and only then serialise, rather than rewriting rendered output. That is the checked-values rule, and the reason for it: normalising text after rendering misses positional data embedded inside composite strings.
+
+Its snapshot comparison keeps the previous normalisation alongside the current one and accepts a match under either, warning rather than failing when only the older rule matches. That is the schema-versioning rule.
+
+What does not transfer is the library itself. Digests are computed and compared in memory as cache keys, not written as reviewable files. The one artifact worth keeping is a committed golden of normalised digests, which turns a change to the projection into a visible diff in review rather than a silently cold cache.
+
 ## Alternatives considered
 
 ### Depend directly on CodeGraph
@@ -550,6 +653,7 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - Live LSP graph snapshots should materialize the same fact model as persisted or exported graph snapshots. Dirty editor buffers require partial/stale markers and must not be silently mixed with checked persisted facts.
 - Feedback and learned usefulness signals belong in the agent-context or MCP layer rather than the core compiler export. The compiler may expose stable graph identities that make feedback expiry possible, but it should not own agent memory policy.
 - Compact task-context format is a consumer contract layered on top of JSONL. The JSONL graph export is the compatibility-stable contract for Planned status; compact context packing should become stable only when the MCP/task-context layer is implemented and evaluated.
+- Identity and digest are separate fields. Identity answers which declaration a fact is about and must survive edits; a semantic digest answers whether its meaning changed. A single content-addressed field cannot do both, and the graph is the normative source of the digest RFC 124 folds into unit identity.
 - One graph spans both languages. A declaration is a `Declaration` whatever its surface syntax, and `language` is an attribute of the fact rather than a partition of the schema. The reserved `rust_item` node kind and `uses_rust_item` edge kind are retired: they encode the distinction `language` exists to dissolve, and would leave two ways to state one relationship.
 - Reachability over Rust is a lower bound, not an exact answer. Unresolved edges count as reachable and affectedness propagates downstream. This binds consumers: anything skipping work on a reachability answer must err toward doing the work, because a missed node is a wrong build while a spurious one is only slow.
 - Rust-side facts should come from what `rust_inspect` already resolves through rust-analyzer before any independent analysis is written. Re-deriving name resolution would reproduce the low-trust rediscovery this RFC exists to avoid.
