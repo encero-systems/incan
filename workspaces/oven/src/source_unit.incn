@@ -341,7 +341,7 @@ def validate_runtime_bindings(batch: SourceBatch) -> Result[None, SelectionError
         if len(batch.runtime_needs) != 0 or len(batch.runtime_grants) != 0:
             return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["runtime_needs"]))
         for unit in batch.units:
-            if unit.compiler_support.is_some():
+            if let Some(_) = unit.compiler_support:
                 return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units", unit.unit_id, "compiler_support"]))
         return Ok(None)
     for unit in batch.units:
@@ -407,7 +407,10 @@ def runtime_grant_has_supplier(batch: SourceBatch, grant: RuntimeGrant) -> bool:
                     match grant.runtime_features_input:
                         None => return false
                         Some(value) => return value != ""
-                NativeCandidateEvidence.ExactBuildUnit => return grant.runtime_features_input.is_none()
+                NativeCandidateEvidence.ExactBuildUnit =>
+                    match grant.runtime_features_input:
+                        None => return true
+                        Some(_) => return false
     return false
 
 

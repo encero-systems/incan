@@ -33,6 +33,8 @@ from source_unit import (
     ReservedNeed,
     ReservedGrant,
     SourceBatch,
+    SlotBinding,
+    UnitBinding,
     BatchSelection,
     select_source_units,
 )
@@ -321,29 +323,47 @@ pub def evaluate_batch(document: JsonValue) -> JsonValue:
         Ok(batch) =>
             match select_source_units(batch):
                 Err(error) => return batch_refusal(batch.foundation.request_id, batch.foundation.evidence_id, error, schema)
-                Ok(result) =>
-                    mut foundation_schema: str = SCHEMA
-                    if schema == BATCH_SCHEMA_V2 or schema == BATCH_SCHEMA_V3:
-                        foundation_schema = SCHEMA_V2
-                    foundation = selected(result.foundation, foundation_schema)
-                    units = [JsonValue.object(
-                        {"unit_id": JsonValue.string(unit.unit_id), "owner_id": JsonValue.string(unit.owner_id), "definition_id": JsonValue.string(
-                            unit.definition_id,
-                        ), "definition_digest": JsonValue.string(unit.definition_digest), "slots": JsonValue.array(
-                            [JsonValue.object(
-                                {"role": JsonValue.string(slot.role.value()), "alias": JsonValue.string(slot.alias), "edge_id": JsonValue.string(
-                                    slot.edge_id,
-                                )},
-                            ) for slot in unit.slots],
-                        ), "grant_ids": JsonValue.array([JsonValue.string(value) for value in unit.grant_ids])},
-                    ) for unit in result.units]
-                    return JsonValue.object(
-                        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(
-                            result.foundation.request_id,
-                        ), "request_evidence_id": JsonValue.string(result.foundation.request_evidence_id), "status": JsonValue.string(
-                            "selected",
-                        ), "foundation": foundation, "units": JsonValue.array(units)},
-                    )
+                Ok(result) => return batch_selection(result, schema)
+
+
+def foundation_schema_for(schema: str) -> str:
+    """The foundation wire version a given batch version carries; both are versioned together."""
+    if schema == BATCH_SCHEMA_V2 or schema == BATCH_SCHEMA_V3:
+        return SCHEMA_V2
+    return SCHEMA
+
+
+def batch_selection(result: BatchSelection, schema: str) -> JsonValue:
+    """Encode one atomic selection: the chosen foundation and every bound unit."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(
+            result.foundation.request_id,
+        ), "request_evidence_id": JsonValue.string(result.foundation.request_evidence_id), "status": JsonValue.string(
+            "selected",
+        ), "foundation": selected(result.foundation, foundation_schema_for(schema)), "units": JsonValue.array(
+            [batch_unit(unit) for unit in result.units],
+        )},
+    )
+
+
+def batch_unit(unit: UnitBinding) -> JsonValue:
+    """Encode one bound unit with its original handles; no physical path is projected here."""
+    return JsonValue.object(
+        {"unit_id": JsonValue.string(unit.unit_id), "owner_id": JsonValue.string(unit.owner_id), "definition_id": JsonValue.string(
+            unit.definition_id,
+        ), "definition_digest": JsonValue.string(unit.definition_digest), "slots": JsonValue.array(
+            [batch_slot(slot) for slot in unit.slots],
+        ), "grant_ids": JsonValue.array([JsonValue.string(value) for value in unit.grant_ids])},
+    )
+
+
+def batch_slot(slot: SlotBinding) -> JsonValue:
+    """Encode one dependency slot and the checked edge it resolved to."""
+    return JsonValue.object(
+        {"role": JsonValue.string(slot.role.value()), "alias": JsonValue.string(slot.alias), "edge_id": JsonValue.string(
+            slot.edge_id,
+        )},
+    )
 
 
 def batch_refusal(request_id: str, evidence_id: str, error: SelectionError, schema: str) -> JsonValue:
@@ -378,10 +398,7 @@ pub def decode_batch(document: JsonValue) -> Result[SourceBatch, SelectionError]
         keys.extend(["runtime_needs", "runtime_grants"])
     exact_object(document, keys, [])?
     foundation_json = field(document, "foundation", [])?
-    mut expected_schema: str = SCHEMA
-    if schema == BATCH_SCHEMA_V2 or schema == BATCH_SCHEMA_V3:
-        expected_schema = SCHEMA_V2
-    if text_field(foundation_json, "schema", ["foundation"])? != expected_schema:
+    if text_field(foundation_json, "schema", ["foundation"])? != foundation_schema_for(schema):
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["foundation", "schema"]))
     foundation_text = foundation_json
         .to_json()

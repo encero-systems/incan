@@ -360,7 +360,7 @@ pub def test_runtime_support_missing_or_different_named_member_refuses() -> None
     value = fixture_v3()
     require_refused(put(value, "runtime_grants", JsonValue.array([])), "no_compatible_candidate")
     grant = items(value, "runtime_grants")[0]
-    wrong = put(grant, "extern_name", JsonValue.string("private_helper"))
+    mut wrong = put(grant, "extern_name", JsonValue.string("private_helper"))
     require_refused(put(value, "runtime_grants", JsonValue.array([wrong])), "no_compatible_candidate")
     for field in ["candidate_evidence_id", "plan_identity"]:
         wrong = put(grant, field, JsonValue.string("another-owner"))
@@ -373,17 +373,17 @@ pub def test_runtime_support_runtime_and_feature_inputs_remain_original() -> Non
     grant = items(value, "runtime_grants")[0]
     assert text(run(value), "status") == "selected"
     foundation = get(value, "foundation")
-    request = get(foundation, "request")
+    mut request = get(foundation, "request")
     candidate = items(request, "candidates")[0]
     evidence = get(candidate, "evidence")
     wrong_runtime = put(get(evidence, "runtime"), "core_source_digest", JsonValue.string("changed-core"))
-    wrong = put(candidate, "evidence", put(evidence, "runtime", wrong_runtime))
+    mut wrong = put(candidate, "evidence", put(evidence, "runtime", wrong_runtime))
     changed = put(request, "candidates", JsonValue.array([wrong]))
     require_refused(put(value, "foundation", put(foundation, "request", changed)), "no_compatible_candidate")
     wrong = put(grant, "runtime_features_input", JsonValue.string("changed-features"))
     require_refused(put(value, "runtime_grants", JsonValue.array([wrong])), "no_compatible_candidate")
     unit = items(value, "units")[0]
-    definition = get(unit, "definition")
+    mut definition = get(unit, "definition")
     request = put(items(definition, "compiler_support")[0], "features", JsonValue.array([JsonValue.string("json")]))
     definition = put(definition, "compiler_support", JsonValue.array([request]))
     require_refused(put(value, "units", JsonValue.array([put(unit, "definition", definition)])), "invalid_input")
@@ -396,11 +396,11 @@ pub def test_runtime_support_exact_candidate_never_borrows_recipe_facts() -> Non
     request = get(foundation, "request")
     candidates = items(get(get(fixture_v2(), "foundation"), "request"), "candidates")
     grant = items(value, "runtime_grants")[0]
-    narrow_grant = put(grant, "grant_id", JsonValue.string("runtime-narrow"))
+    mut narrow_grant = put(grant, "grant_id", JsonValue.string("runtime-narrow"))
     narrow_grant = put(narrow_grant, "candidate_id", get(candidates[0], "candidate_id"))
     narrow_grant = put(narrow_grant, "candidate_evidence_id", get(candidates[0], "evidence_id"))
     narrow_grant = put(narrow_grant, "plan_identity", get(candidates[0], "plan_identity"))
-    changed = put(request, "candidates", JsonValue.array(candidates))
+    mut changed = put(request, "candidates", JsonValue.array(candidates))
     changed = put(value, "foundation", put(foundation, "request", changed))
     changed = put(changed, "runtime_grants", JsonValue.array([narrow_grant, grant]))
     response = run(changed)
@@ -416,11 +416,11 @@ pub def test_runtime_support_new_emission_slot_requires_its_own_grant() -> None:
     """Changing a plain source definition to require a derive cannot reuse the previous one-slot binding."""
     value = fixture_v3()
     unit = items(value, "units")[0]
-    definition = get(unit, "definition")
+    mut definition = get(unit, "definition")
     requests = items(definition, "compiler_support")
     derive = JsonValue.object({"support": JsonValue.string("derive"), "features": JsonValue.array([])})
     definition = put(definition, "compiler_support", JsonValue.array(requests + [derive]))
-    changed = put(value, "units", JsonValue.array([put(unit, "definition", definition)]))
+    mut changed = put(value, "units", JsonValue.array([put(unit, "definition", definition)]))
     need = items(value, "runtime_needs")[0]
     derive_need = put(put(need, "need_id", JsonValue.string("derive-catalog")), "support_index", JsonValue.int(1))
     changed = put(changed, "runtime_needs", JsonValue.array([need, derive_need]))
@@ -458,9 +458,9 @@ def items(value: JsonValue, key: str) -> list[JsonValue]:
 
 def fixture_v3(keep_graph: bool = false, recipe: bool = false) -> JsonValue:
     """Offer synthetic runtime facts; physical member authentication is exercised separately by the host store control."""
-    value = fixture_v2()
+    mut value = fixture_v2()
     foundation = get(value, "foundation")
-    request = get(foundation, "request")
+    mut request = get(foundation, "request")
     mut candidates = [candidate for candidate in items(request, "candidates") if text(candidate, "candidate_id") == "usable"]
     mut features_input = JsonValue.null()
     if recipe:
@@ -473,7 +473,7 @@ def fixture_v3(keep_graph: bool = false, recipe: bool = false) -> JsonValue:
         features_input = JsonValue.string("original-empty-features-input")
     request = put(request, "candidates", JsonValue.array(candidates))
     value = put(value, "foundation", put(foundation, "request", request))
-    source_units = items(value, "units")
+    mut source_units = items(value, "units")
     if not keep_graph:
         source_units = [source_units[0]]
         value = put(value, "edges", JsonValue.array([]))
@@ -484,7 +484,7 @@ def fixture_v3(keep_graph: bool = false, recipe: bool = false) -> JsonValue:
     mut grants: list[JsonValue] = []
     for unit in source_units:
         support = JsonValue.object({"support": JsonValue.string("stdlib"), "features": JsonValue.array([])})
-        definition = put(get(unit, "definition"), "schema_version", JsonValue.int(3))
+        mut definition = put(get(unit, "definition"), "schema_version", JsonValue.int(3))
         definition = put(definition, "compiler_support", JsonValue.array([support]))
         definition = put(definition, "source_members", JsonValue.array([get(definition, "entrypoint")]))
         units.append(put(unit, "definition", definition))
