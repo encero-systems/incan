@@ -275,17 +275,26 @@ def effective_source_members(
     mut members: list[list[JsonValue]] = []
     members.extend(source)
     for row in generated:
-        mut present: bool = false
-        for member in source:
-            if member[0].equals(row[0]):
-                if not member[1].equals(row[1]):
-                    return Err(
-                        CompilationError(fields=["inputs", "generated", string(row[0], ["inputs", "generated"])?]),
-                    )
-                present = true
-        if not present:
+        if not already_admitted(source, row)?:
             members.append([row[0], row[1]])
     return Ok(members)
+
+
+def already_admitted(source: list[list[JsonValue]], row: list[JsonValue]) -> Result[bool, CompilationError]:
+    """
+    Whether one generated row is already an admitted source member.
+
+    A logical path present in both tables must carry the same content digest. Every match is checked rather than
+    only the first, so a later conflicting row cannot pass behind an earlier agreeing one.
+    """
+    mut present: bool = false
+    for member in source:
+        if not member[0].equals(row[0]):
+            continue
+        if not member[1].equals(row[1]):
+            return Err(CompilationError(fields=["inputs", "generated", string(row[0], ["inputs", "generated"])?]))
+        present = true
+    return Ok(present)
 
 
 def native_rows(value: JsonValue) -> Result[list[list[JsonValue]], CompilationError]:
