@@ -27,6 +27,7 @@ use incan_core::lang::keywords::KeywordId;
 
 pub mod authority;
 pub mod body_ir;
+pub mod closure_digest;
 pub mod emitted_symbol;
 mod facts;
 mod hir;
