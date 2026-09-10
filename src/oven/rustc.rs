@@ -6247,15 +6247,20 @@ fn direct_rustc_compiler_domain(closure_digest: &str) -> Result<String, OvenRust
     Ok(format!("{OVEN_DIRECT_RUSTC_COMPILER_DOMAIN_PREFIX}.{hex}"))
 }
 
-/// Materialize the active compiler closure once into the immutable Store and retain its lease for native execution.
+/// Select or materialize one compiler closure in the immutable Store and retain its lease for native execution.
 ///
 /// Discovery, capacity or Store availability failures disable JEC and leave ordinary deterministic direct-Rustc
-/// compilation available. A selected owner is admitted against the freshly observed closure before it can replace
-/// the mutable compiler path.
+/// compilation available. A single compatible Store closure is verified and preferred before the ambient sysroot is
+/// hashed. Multiple byte-distinct closures with the same host/target/toolchain identity force a cold observation so
+/// the ambient compiler bytes disambiguate them.
+///
+/// Once selected, that verified Store closure is Oven's compiler authority for the batch. The caller's mutable Rustc
+/// path proposes the host/toolchain identity and supplies bytes only for a cold or ambiguous selection; it is never
+/// executed in place after a warm owner has been admitted.
 pub(crate) fn retain_direct_rustc_compiler(
     store: &OvenStore,
     receipt: &OvenReceipt,
-    rustc: &Path,
+    candidate_rustc: &Path,
     target: &str,
 ) -> Result<OvenDirectRustcCompilerRetention, OvenRustcError> {
     receipt
@@ -6267,7 +6272,51 @@ pub(crate) fn retain_direct_rustc_compiler(
     if receipt.intent.target != target {
         return Err(OvenRustcError::IntentMismatch);
     }
-    let evidence = match direct_rustc_compiler_evidence(rustc, target) {
+    let toolchain = rustc_identity(candidate_rustc)?;
+    if receipt.intent.toolchain != toolchain {
+        return Err(OvenRustcError::ToolchainMismatch {
+            expected: receipt.intent.toolchain.clone(),
+            actual: toolchain,
+        });
+    }
+    let host = rustc_host_target(candidate_rustc)?;
+    let mut selected = match store.select_payloads_matching_for_execution(|manifest| {
+        manifest.kind == OvenArtifactKind::NativeCompilerClosure
+            && manifest.intent.target == target
+            && manifest.intent.toolchain == toolchain
+    }) {
+        Ok(mut selected) => {
+            selected.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+            selected
+        }
+        Err(error) => {
+            return Ok(OvenDirectRustcCompilerRetention::Unavailable {
+                reason: format!("cannot inspect retained compiler closures: {error}"),
+            });
+        }
+    };
+    let compatible = selected
+        .iter()
+        .enumerate()
+        .filter_map(|(index, owner)| {
+            matching_direct_rustc_compiler_owner_payload(owner, target, &toolchain, &host)
+                .map(|payload| (index, payload))
+        })
+        .collect::<Vec<_>>();
+    let closure_digests = compatible
+        .iter()
+        .map(|(_, payload)| payload.closure_digest.as_str())
+        .collect::<BTreeSet<_>>();
+    if closure_digests.len() == 1
+        && let Some((index, _)) = compatible.first()
+    {
+        let owner = selected.remove(*index);
+        if let Some(owned) = admit_direct_rustc_compiler_owner(owner, target, &toolchain, &host, None)? {
+            return Ok(OvenDirectRustcCompilerRetention::Retained(owned));
+        }
+    }
+
+    let evidence = match direct_rustc_compiler_evidence(candidate_rustc, target) {
         Ok(evidence) => evidence,
         Err(error) => {
             return Ok(OvenDirectRustcCompilerRetention::Unavailable {
@@ -6275,11 +6324,9 @@ pub(crate) fn retain_direct_rustc_compiler(
             });
         }
     };
-    let toolchain = rustc_identity(rustc)?;
-    if receipt.intent.toolchain != toolchain {
-        return Err(OvenRustcError::ToolchainMismatch {
-            expected: receipt.intent.toolchain.clone(),
-            actual: toolchain,
+    if evidence.host != host {
+        return Ok(OvenDirectRustcCompilerRetention::Unavailable {
+            reason: "the selected compiler changed its reported host during closure observation".to_string(),
         });
     }
     let payload = OvenDirectRustcCompilerOwnerPayload {
@@ -6291,18 +6338,11 @@ pub(crate) fn retain_direct_rustc_compiler(
         toolchain: receipt.intent.toolchain.clone(),
     };
     let domain = direct_rustc_compiler_domain(&evidence.closure_digest)?;
-    let selected = match store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::NativeCompilerClosure && manifest.domain == domain
+    if let Some(index) = selected.iter().position(|owner| {
+        matching_direct_rustc_compiler_owner_payload(owner, target, &toolchain, &host).as_ref() == Some(&payload)
     }) {
-        Ok(selected) => selected,
-        Err(error) => {
-            return Ok(OvenDirectRustcCompilerRetention::Unavailable {
-                reason: format!("cannot inspect retained compiler closures: {error}"),
-            });
-        }
-    };
-    for owner in selected {
-        if let Some(owned) = admit_direct_rustc_compiler_owner(owner, &payload, &domain)? {
+        let owner = selected.remove(index);
+        if let Some(owned) = admit_direct_rustc_compiler_owner(owner, target, &toolchain, &host, Some(&evidence))? {
             return Ok(OvenDirectRustcCompilerRetention::Retained(owned));
         }
     }
@@ -6346,7 +6386,7 @@ pub(crate) fn retain_direct_rustc_compiler(
             reason: "the published compiler closure has no execution owner".to_string(),
         });
     };
-    match admit_direct_rustc_compiler_owner(owner, &payload, &domain)? {
+    match admit_direct_rustc_compiler_owner(owner, target, &toolchain, &host, Some(&evidence))? {
         Some(owned) => Ok(OvenDirectRustcCompilerRetention::Retained(owned)),
         None => Ok(OvenDirectRustcCompilerRetention::Unavailable {
             reason: "the published compiler closure failed final admission".to_string(),
@@ -6354,22 +6394,47 @@ pub(crate) fn retain_direct_rustc_compiler(
     }
 }
 
+/// Decode the small owner descriptor used to select a warm compiler without reading its materialized closure.
+fn matching_direct_rustc_compiler_owner_payload(
+    owner: &OvenStoreExecutionPayload,
+    target: &str,
+    toolchain: &str,
+    host: &str,
+) -> Option<OvenDirectRustcCompilerOwnerPayload> {
+    if owner.manifest.kind != OvenArtifactKind::NativeCompilerClosure
+        || owner.manifest.intent.target != target
+        || owner.manifest.intent.toolchain != toolchain
+    {
+        return None;
+    }
+    let payload = serde_json::from_slice::<OvenDirectRustcCompilerOwnerPayload>(&owner.payload).ok()?;
+    if payload.schema_version != OVEN_DIRECT_RUSTC_COMPILER_OWNER_SCHEMA_VERSION
+        || payload.target != target
+        || payload.toolchain != toolchain
+        || payload.host != host
+        || direct_rustc_compiler_domain(&payload.closure_digest).ok().as_deref() != Some(owner.manifest.domain.as_str())
+    {
+        return None;
+    }
+    Some(payload)
+}
+
 fn admit_direct_rustc_compiler_owner(
     owner: OvenStoreExecutionPayload,
-    expected: &OvenDirectRustcCompilerOwnerPayload,
-    expected_domain: &str,
+    target: &str,
+    toolchain: &str,
+    host: &str,
+    expected: Option<&OvenDirectRustcCompilerEvidence>,
 ) -> Result<Option<OvenOwnedDirectRustcCompiler>, OvenRustcError> {
-    if owner.manifest.kind != OvenArtifactKind::NativeCompilerClosure
-        || owner.manifest.domain != expected_domain
-        || owner.manifest.intent.target != expected.target
-        || owner.manifest.intent.toolchain != expected.toolchain
-    {
-        return Ok(None);
-    }
-    let Ok(payload) = serde_json::from_slice::<OvenDirectRustcCompilerOwnerPayload>(&owner.payload) else {
+    let Some(payload) = matching_direct_rustc_compiler_owner_payload(&owner, target, toolchain, host) else {
         return Ok(None);
     };
-    if &payload != expected || payload.schema_version != OVEN_DIRECT_RUSTC_COMPILER_OWNER_SCHEMA_VERSION {
+    if expected.is_some_and(|expected| {
+        payload.binary_digest != expected.binary_digest
+            || payload.closure_digest != expected.closure_digest
+            || payload.host != expected.host
+            || payload.target != expected.target
+    }) {
         return Ok(None);
     }
     if owner.verify_materialized_files().is_err() {
@@ -7403,7 +7468,8 @@ fi
 "#,
         )?;
         fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))?;
-        fs::write(sysroot.join("lib/libdriver.dylib"), b"driver bytes")?;
+        let ambient_driver = sysroot.join("lib/libdriver.dylib");
+        fs::write(&ambient_driver, b"driver bytes")?;
         fs::write(
             sysroot.join("lib/rustlib/test-target/lib/libstd-test.rlib"),
             b"standard-library bytes",
@@ -7451,6 +7517,13 @@ fi
             first.evidence.sysroot
         );
         let first_identity = first._owner.manifest.identity.clone();
+
+        // A warm Store compiler is the batch authority. A mutable ambient sysroot that still reports the same
+        // host/toolchain must neither be rescanned nor silently replace the already admitted closure for a new
+        // project-version receipt.
+        fs::write(&ambient_driver, b"different ambient driver bytes")?;
+        let changed_ambient = super::direct_rustc_compiler_evidence(&rustc, "test-target")?;
+        assert_ne!(changed_ambient.closure_digest(), first.evidence.closure_digest());
 
         let super::OvenDirectRustcCompilerRetention::Retained(second) =
             super::retain_direct_rustc_compiler(&store, &receipt("0.2.0")?, &rustc, "test-target")?
