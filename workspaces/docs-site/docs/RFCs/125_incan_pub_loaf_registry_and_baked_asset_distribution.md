@@ -15,7 +15,7 @@
     - RFC 123 (package executable representation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
 - **Issue:** —
-- **RFC PR:** [#1477](https://github.com/encero-systems/incan/pull/1477)
+- **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —
 
@@ -258,6 +258,17 @@ Yank, advisory, and supersede events are the source of the recovery information 
 ### Compatibility with RFC 034
 
 Nothing was published under RFC 034, so there is no migration. The constraints RFC 034 established for hosting remain in force as goals of this RFC. The `.incanpkg` format, `.incnlib` manifest dependency, flat namespace, and token-first phasing are withdrawn.
+
+## Prior art
+
+- **crates.io and Cargo.** The sparse index (one small static file per package) and the flat, identity-keyed lockfile with a checksum per artifact are copied here almost verbatim; immutability with yank is kept. crates.io added trusted publishing in 2025, so the trust posture this RFC starts from is arriving on the Rust side too. What crates.io never had is a compiled tier, and this RFC exists to add one beside it, not to replace it.
+- **uv.** One HTTPS client with pure-Rust TLS and an opt-in for the platform certificate store; retries and caching in the client; a content-addressed cache that installs by linking; one universal lockfile valid on every platform; static metadata first and isolated builds second; no package code executed during resolution. The client and cache design here follows it.
+- **npm.** Content-addressed cache with integrity on every lock entry; scoped names as organisations; granular expiring tokens; provenance through Sigstore and trusted publishing; a typo guard before running anything not local. Its history also supplies the cautions: install-time scripts, mutable tags, oversized metadata documents, flat namespaces, and long-lived tokens each caused an incident class, and each is excluded here by design.
+- **PyPI wheels, Maven Central, Homebrew bottles, Nix binary caches.** Four ecosystems that added a compiled or prebuilt tier above a source ecosystem without displacing it. Nix is the closest in identity model; wheels are the closest in how a source-first registry grew an artifact tier.
+- **Conan.** Binary packages selected by an identity over compiler, settings, options, and dependencies, with build-from-source as the fallback, in an ecosystem with no stable ABI. The asset applicability rule is that model stated over RFC 124 unit identities.
+- **TUF, Go's checksum database, and Sigstore.** Offline root and online delegated keys, a signed timestamp against freeze and rollback, and proxies that are deliberately untrusted caches because every statement is signed; keyless publisher identity with a public transparency log. The registry identity and signing section is assembled from these three.
+- **warg.** A registry for compiled WebAssembly components with content addressing and a Certificate-Transparency-style log; the same tamper-evidence goal for compiled artifacts.
+- **The serde_derive episode of 2023.** A widely used Rust package shipped a precompiled artifact with no source of record, no verifiable link to source, and no way to decline; the ecosystem rejected it within a month and its maintainer asked for a first-class mechanism. The two-tier design, builder-kind attestations, and bake-from-source fallback here are that mechanism.
 
 ## Alternatives considered
 
