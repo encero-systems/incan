@@ -12,7 +12,7 @@ The fixture uses the committed `workbench/app`, `pricing` and `catalog` projects
 
 The first filesystem intake accepts a conventional `src/lib.incn` or explicit script. A conventional `src/main.incn` without a declared script remains outside this prototype and refuses explicitly. Absent target/profile/edition remain `None`; the prototype does not select defaults.
 
-The current source contains small adaptations tracked by #1455 (optional-value reassignment), #1461/#1464 (materializing dictionary keys before sorting), and #1462 (preserving constructor evaluation order with sequential bindings). Generated Rust is never edited.
+Generated Rust is never edited.
 
 `plan.select_native` is a pure, partial intact-closure selector. It compares explicit runtime/target/toolchain/profile/features facts and checked provider semantic identities, accepting module/facet/direct-link supersets and choosing the least excess. It returns the request and candidate evidence references plus rank. Unknown input classes, malformed sets, incompatible candidates and equal best ranks refuse. A retained bootstrap compiler and genuine generation-7 SDK baked the assertion driver and ran all eight source assertions successfully. This is authoring evidence, not current hot-path compiler acceptance.
 
@@ -20,7 +20,7 @@ This component does not expose roots or publish a plan. The same-session host tr
 
 Native feature lists are required on both request and candidate contexts and compared as validated sets; provider modules/facets retain their separate subset relation. `tests/fixtures/plan_missing_features/main.incn` is the validated negative frontend fixture: its check used the normal `src/plan.incn` module and required the missing required field diagnostic, not an import failure. With the normal plan module resolved, this fixture produced exactly the missing `features` field diagnostic. The positive driver called all eight assertion functions and printed `selector: 8 contracts passed` through a locked native run.
 
-The selector assertions retain two tracked source adaptations: #1470 binds an expected model value before equality, and #1471 explicitly types nested string-list test cases. Neither changes the assertions or generated Rust by hand. The complete authoring gate passed, including input reconciliation, using the existing bootstrap compatibility baker. This does not restore Cargo authority to the current Oven implementation.
+The assertions and the generated Rust are never edited by hand. The complete authoring gate passed, including input reconciliation, using the existing bootstrap compatibility baker. This does not restore Cargo authority to the current Oven implementation.
 
 The retained native assertion entrypoint is `src/plan_acceptance.incn`. Its eight calls were executed from the bounded authoring project using the same selector/test modules. The repository copy preserves that driver, with formatting-only separation before `main`; current Oven request/response transport remains unimplemented. The existing intake acceptance driver and project manifest are unchanged.
 
