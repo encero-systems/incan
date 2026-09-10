@@ -132,7 +132,11 @@ fn stable_declaration_identity_is_unique_across_the_standard_library() -> TestRe
     let collisions: Vec<_> = claims.iter().filter(|(_, claimants)| claimants.len() > 1).collect();
 
     println!("CORPUS modules_checked={modules_checked} modules_skipped={modules_skipped} declarations={total}");
-    println!("CORPUS distinct_identities={} colliding={}", claims.len(), collisions.len());
+    println!(
+        "CORPUS distinct_identities={} colliding={}",
+        claims.len(),
+        collisions.len()
+    );
 
     if !collisions.is_empty() {
         let detail = collisions
@@ -186,12 +190,7 @@ def internal(value: int) -> int:
         Ok::<_, String>(
             hir.declarations
                 .iter()
-                .filter_map(|declaration| {
-                    declaration
-                        .name
-                        .clone()
-                        .map(|name| (name, declaration.visibility))
-                })
+                .filter_map(|declaration| declaration.name.clone().map(|name| (name, declaration.visibility)))
                 .collect::<Vec<_>>(),
         )
     })

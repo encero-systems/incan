@@ -14,14 +14,14 @@
 //!
 //! - **The declaration span.** Removing it is necessary and is the obvious part.
 //! - **The signature, which removing the span makes necessary.** Two module-level declarations sharing namespace,
-//!   origin, name, and kind become indistinguishable once the span is gone. Measured across the 1,252 declarations
-//!   one standard library actually declares — imports, aliases, and re-exports share their target's identity by
-//!   design and cannot collide — overloads are the only collision class that arises, and it arises twice. A
-//!   signature discriminant is therefore required rather than defensive.
-//! - **The scope discriminant's value.** [`ScopeDiscriminant`] indexes a module-wide table filled in traversal
-//!   order, so inserting or moving any declaration renumbers every declaration traversed after it and untouched
-//!   siblings appear to change. Only whether a declaration is nested may enter the identity, never where its scope
-//!   sat in the traversal.
+//!   origin, name, and kind become indistinguishable once the span is gone. Measured across the 1,252 declarations one
+//!   standard library actually declares — imports, aliases, and re-exports share their target's identity by design and
+//!   cannot collide — overloads are the only collision class that arises, and it arises twice. A signature discriminant
+//!   is therefore required rather than defensive.
+//! - **The scope discriminant's value.** [`ScopeDiscriminant`] indexes a module-wide table filled in traversal order,
+//!   so inserting or moving any declaration renumbers every declaration traversed after it and untouched siblings
+//!   appear to change. Only whether a declaration is nested may enter the identity, never where its scope sat in the
+//!   traversal.
 
 use serde::{Deserialize, Serialize};
 
@@ -58,11 +58,7 @@ impl DeclarationSignature {
         parameters: impl IntoIterator<Item = &'a IncanType>,
         return_type: &IncanType,
     ) -> Self {
-        let rendered = parameters
-            .into_iter()
-            .map(render_type)
-            .collect::<Vec<_>>()
-            .join(",");
+        let rendered = parameters.into_iter().map(render_type).collect::<Vec<_>>().join(",");
         Self(format!("({rendered})->{}", render_type(return_type)))
     }
 
@@ -230,7 +226,10 @@ mod tests {
             StableDeclarationId::from_canonical(&one_argument, None),
             StableDeclarationId::from_canonical(&two_arguments, None),
         );
-        assert_eq!(without.0, without.1, "without a signature the overloads are indistinguishable");
+        assert_eq!(
+            without.0, without.1,
+            "without a signature the overloads are indistinguishable"
+        );
 
         let str_type = IncanType::Primitive(IncanPrimitiveType::Str);
         let result = IncanType::Named("Result".to_string());
@@ -241,7 +240,10 @@ mod tests {
             ),
             StableDeclarationId::from_canonical(
                 &two_arguments,
-                Some(DeclarationSignature::from_callable_types([&str_type, &str_type], &result)),
+                Some(DeclarationSignature::from_callable_types(
+                    [&str_type, &str_type],
+                    &result,
+                )),
             ),
         );
         assert_ne!(with.0, with.1, "the signature separates them");
@@ -254,7 +256,10 @@ mod tests {
         let int_type = IncanType::Primitive(IncanPrimitiveType::Int);
         let unit = IncanType::Named("None".to_string());
         let signature = DeclarationSignature::from_callable_types([&str_type, &int_type], &unit);
-        assert!(!signature.as_str().contains("key"), "no parameter name reaches the rendering");
+        assert!(
+            !signature.as_str().contains("key"),
+            "no parameter name reaches the rendering"
+        );
         assert_eq!(
             signature,
             DeclarationSignature::from_callable_types([&str_type, &int_type], &unit),
@@ -280,8 +285,15 @@ mod tests {
     /// The rendering is persisted and compared across edits, so it must carry no offset at all.
     #[test]
     fn rendering_carries_no_offset() {
-        let rendered = StableDeclarationId::from_canonical(&canonical("read", (1234, 5678), None), None).render_compact();
-        assert!(!rendered.contains("1234") && !rendered.contains("5678"), "rendered: {rendered}");
-        assert!(!rendered.contains('@'), "an `@start..end` suffix would defeat the purpose: {rendered}");
+        let rendered =
+            StableDeclarationId::from_canonical(&canonical("read", (1234, 5678), None), None).render_compact();
+        assert!(
+            !rendered.contains("1234") && !rendered.contains("5678"),
+            "rendered: {rendered}"
+        );
+        assert!(
+            !rendered.contains('@'),
+            "an `@start..end` suffix would defeat the purpose: {rendered}"
+        );
     }
 }
