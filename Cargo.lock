@@ -1530,9 +1530,11 @@ dependencies = [
 name = "incan_semantics_core"
 version = "0.6.0-dev.3"
 dependencies = [
+ "hex",
  "incan_core",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

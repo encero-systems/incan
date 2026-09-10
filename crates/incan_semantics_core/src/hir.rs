@@ -128,7 +128,7 @@ pub struct HirDeclaration {
 }
 
 /// Top-level declaration categories represented by HIR v0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum HirDeclarationKind {
     Import,
     Const,

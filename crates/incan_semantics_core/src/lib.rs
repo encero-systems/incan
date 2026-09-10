@@ -31,6 +31,7 @@ pub mod emitted_symbol;
 mod facts;
 mod hir;
 pub mod receipts;
+pub mod semantic_digest;
 pub mod stable_identity;
 mod types;
 
