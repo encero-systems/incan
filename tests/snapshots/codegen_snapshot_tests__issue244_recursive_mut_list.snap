@@ -33,7 +33,7 @@ fn main() {
             }
         }),
     );
-    let mut q: Vec<i64> = vec![];
+    let mut q: Vec<i64> = Vec::<i64>::new();
     let mut seen: Vec<bool> = vec![false, false, false];
     let _ = walk(0, &mut q, &mut seen);
     let _ = println!("{}", "ok");

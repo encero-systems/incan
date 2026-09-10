@@ -7,12 +7,21 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub fn columns(input_columns: Vec<String>) -> Vec<String> {
-    let mut columns: Vec<String> = Vec::<String>::new();
-    let _ = columns
-        .push(incan_stdlib::collections::list_get(&input_columns, (0) as i64).clone());
-    let _ = columns.push("count".to_string());
-    return columns.clone();
+use ::cfg_expr::Predicate;
+pub fn key_value_of(predicate: &Predicate) -> Option<String> {
+    let _ = match predicate {
+        Predicate::KeyValue { key: key, val: value } => {
+            return Some(
+                incan_stdlib::strings::str_concat(
+                    &incan_stdlib::strings::str_concat(&key.to_string(), &"="),
+                    &value.to_string(),
+                ),
+            );
+        }
+        _ => {
+            return None::<_>;
+        }
+    };
 }
 fn main() {
     std::panic::set_hook(
@@ -26,5 +35,5 @@ fn main() {
             }
         }),
     );
-    let _ = columns(vec!["orders_total".to_string()]);
+    let _ = ();
 }

@@ -507,6 +507,7 @@ impl TypeChecker {
                             name.node.as_str(),
                             sub_patterns,
                             Some(fields.as_slice()),
+                            self.pattern_subject_is_rust_backed(expected_ty),
                         );
                     }
                     None => {
@@ -522,7 +523,12 @@ impl TypeChecker {
                                 pattern.span,
                             ));
                         }
-                        self.check_constructor_subpatterns_enum_like(name.node.as_str(), sub_patterns, None);
+                        self.check_constructor_subpatterns_enum_like(
+                            name.node.as_str(),
+                            sub_patterns,
+                            None,
+                            self.pattern_subject_is_rust_backed(expected_ty),
+                        );
                     }
                 }
             }
@@ -647,6 +653,7 @@ impl TypeChecker {
         ctor_label: &str,
         sub_patterns: &[PatternArg],
         known_fields: Option<&[ResolvedType]>,
+        rust_backed: bool,
     ) {
         let mut idx = 0usize;
         for arg in sub_patterns {
@@ -662,10 +669,38 @@ impl TypeChecker {
                     idx += 1;
                 }
                 PatternArg::Named(_, pat) => {
-                    self.errors
-                        .push(errors::named_pattern_not_supported(ctor_label, pat.span));
+                    // A Rust enum may use struct variants, whose fields are named and cannot be destructured
+                    // positionally. Rust variant metadata records payload shapes in declaration order but not field
+                    // names, so the payload is checked permissively here and `rustc` validates the names, matching
+                    // how the rest of Rust-interop payload checking already behaves.
+                    if rust_backed {
+                        self.check_pattern(pat, &ResolvedType::Unknown);
+                    } else {
+                        self.errors
+                            .push(errors::named_pattern_not_supported(ctor_label, pat.span));
+                    }
                 }
             }
+        }
+    }
+
+    /// Return whether a match subject is backed by a Rust type, directly or through a `rusttype` newtype.
+    ///
+    /// Rust-backed subjects get permissive payload treatment throughout pattern checking, because Rust metadata
+    /// records payload shapes without the detail an Incan declaration would carry.
+    fn pattern_subject_is_rust_backed(&self, expected_ty: &ResolvedType) -> bool {
+        let (expected_ty, _) = borrowed_pattern_subject(expected_ty);
+        match expected_ty {
+            ResolvedType::RustPath(_) => true,
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
+                self.lookup_type_info(type_name).is_some_and(|info| {
+                    matches!(
+                        info,
+                        TypeInfo::Newtype(nt) if nt.is_rusttype && matches!(&nt.underlying, ResolvedType::RustPath(_))
+                    )
+                })
+            }
+            _ => false,
         }
     }
 
@@ -678,20 +713,7 @@ impl TypeChecker {
         pattern_full_name: &str,
         rust_resolution: Option<&RustEnumPatternResolution>,
     ) -> bool {
-        let (expected_ty, _) = borrowed_pattern_subject(expected_ty);
-        let is_rust_backed = match expected_ty {
-            ResolvedType::RustPath(_) => true,
-            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
-                self.lookup_type_info(type_name).is_some_and(|info| {
-                    matches!(
-                        info,
-                        TypeInfo::Newtype(nt) if nt.is_rusttype && matches!(&nt.underlying, ResolvedType::RustPath(_))
-                    )
-                })
-            }
-            _ => false,
-        };
-        if !is_rust_backed {
+        if !self.pattern_subject_is_rust_backed(expected_ty) {
             return false;
         }
 
