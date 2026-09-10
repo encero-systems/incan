@@ -129,7 +129,8 @@ def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str)
 
 def unique(values: list[str]) -> list[str]:
     """Normalize a feature set deterministically without changing the declaration's source order."""
-    return sorted(OrderedSet[str].from_iter(values).to_list())
+    items: list[str] = OrderedSet[str].from_iter(values).to_list()
+    return sorted(items)
 
 
 def cfg_value(snapshot: CfgSnapshot, key: str, value: str) -> bool:
@@ -161,6 +162,9 @@ def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:
         Predicate.Target(value) => return Some(target_predicate(value, snapshot))
         Predicate.TargetFeature(value) => return Some(cfg_value(snapshot, "target_feature", str(value)))
         Predicate.Flag(value) => return Some(str(value) in snapshot.flags)
+        # TODO: blocked by #1491. `Predicate::KeyValue` is a Rust struct variant, and neither spelling compiles:
+        # named fields are refused by the typechecker, positional emits Rust that rustc refuses. The named form is
+        # kept because it says what the match means.
         Predicate.KeyValue(key=key, val=value) => return Some(cfg_value(snapshot, str(key), str(value)))
         Predicate.Feature(_) => return None
         Predicate.Test => return None
@@ -261,7 +265,7 @@ def slot_restrictions(
 def feature_symbol(value: str, manifest: str, field: list[str]) -> Result[FeatureSymbol, IntakeError]:
     """Parse feature expansion syntax in Incan without selecting or enabling any dependency yet."""
     if value.startswith("dep:"):
-        alias = value.__slice__(4, len(value))
+        alias: str = value.__slice__(4, len(value))
         if alias == "" or "/" in alias or "?" in alias:
             return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed dependency feature token"))
         return Ok(FeatureSymbol.Dependency(alias))
@@ -321,7 +325,7 @@ def feature_catalog(catalog: RustDependencyCatalog, manifest: str) -> Result[Fea
             symbols.append(symbol)
         expansions[name] = symbols
     mut names = OrderedSet[str].from_iter([name for name in catalog.features.keys()])
-    for alias in optional:
+    for alias in optional.to_list():
         if alias not in suppressed:
             names.add(alias)
     for name in sorted([key for key in expansions.keys()]):
