@@ -12,7 +12,7 @@
     - RFC 123 (package executable representation)
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
 - **Issue:** —
-- **RFC PR:** [#1477](https://github.com/encero-systems/incan/pull/1477)
+- **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —
 
@@ -22,12 +22,12 @@ Oven already reuses compiled work safely: a sealed plan carries a receipt whose 
 
 ## Core model
 
-1. **The unit is the object.** A compiled unit is one rustc invocation's durable output for one crate in one domain: a library, a procedural macro, a build-script executable and its recorded output, a binary, or a test harness. The store addresses units, not plans.
-2. **Three identities, kept apart.** A unit has a *publication provenance* (which registry checksum, source Loaf, or path it came from, and who signed it), a *unit identity* (a digest over its effective compilation inputs: the source bytes it compiles, the manifest facts that reach compilation, toolchain, target, domain, codegen facts, features, crate type, and the unit identities of every dependency it links), and a *payload digest* (the bytes it produced). Reuse is decided by unit identity alone. Provenance is recorded and checked for trust; it is not an identity input, so a republication that changes only version metadata or documentation does not invalidate unchanged code. Because dependency identities are inputs, identity is a Merkle root over the closure.
+1. **The unit is the object.** A compiled unit is one compiler invocation's durable output for one unit of a Loaf's build graph in one domain: a library, a procedural macro, a build-script executable and its recorded output, a binary, or a test harness. In rustc's own vocabulary a unit is a crate; this RFC uses the RFC 119 term throughout. The store addresses units, not plans.
+2. **Three identities, kept apart.** A unit has a *publication provenance* (which registry checksum, source Loaf, or path it came from, and who signed it), a *unit identity* (a digest over its effective compilation inputs: the source bytes it compiles, the manifest facts that reach compilation, toolchain, target, domain, codegen facts, features, artifact kind, and the unit identities of every dependency it links), and a *payload digest* (the bytes it produced). Reuse is decided by unit identity alone. Provenance is recorded and checked for trust; it is not an identity input, so a republication that changes only version metadata or documentation does not invalidate unchanged code. Because dependency identities are inputs, identity is a Merkle root over the closure.
 3. **Identity completes in stages.** Units that generate inputs for others, build scripts and procedural macros, carry a base input identity that is known before execution and a receipt identity that is known after. Downstream identities are finalised from admitted provider receipts, as RFC 119 already requires, and no unit compiles before its identity is final.
 4. **Equal identity means interchangeable; nothing less does.** Oven may substitute one unit for another only when their unit identities are equal and their payload digests agree. Same package and version with different identity is a miss, and if both would enter one link, it is a refusal that no ownership declaration waives.
-5. **A plan is a set of unit references plus a receipt.** The plan receipt records which unit identities satisfy which crates and how each was obtained: baked here, reused from the store, or imported from a registry asset. Reusing a plan output remains possible and is now a special case of every unit hitting.
-6. **The store is content-addressed with a name index.** Unit payloads live once under their identity. A separate index maps package name, version, and plan facts to identities so a planner can ask "what do I already have for this crate under these facts" without enumerating the store.
+5. **A plan is a set of unit references plus a receipt.** The plan receipt records which unit identities satisfy which units of which Loaves and how each was obtained: baked here, reused from the store, or imported from a registry asset. Reusing a plan output remains possible and is now a special case of every unit hitting.
+6. **The store is content-addressed with a name index.** Unit payloads live once under their identity. A separate index maps package name, version, and plan facts to identities so a planner can ask "what do I already have for this Loaf unit under these facts" without enumerating the store.
 7. **Sharing crosses every local boundary.** Plans, projects, worktrees, and profiles share units through identity. A unit compiled for a release plan in one checkout satisfies a release plan in another checkout of the same or a different project.
 8. **Collection is by reachability.** A unit is live while a receipt, lease, or policy pin reaches it. Everything else is collectable, and collection is a store operation a user can invoke and inspect.
 9. **Local and registry are the same identity space.** RFC 125 assets are unit-identity-addressed. Importing an asset is a store insert; publishing one is a store export. The registry never needs a second notion of what makes two compiled artifacts the same.
@@ -38,7 +38,7 @@ The current Oven store is correct and conservative in the right way: nothing is 
 
 The same audit recorded why the naive fix is wrong. Two independently resolved closures of identical source produced ABI-incompatible rlibs for the same tokio version, and linking both into one executable produced a runtime panic because a runtime object created through one instance was invisible to code compiled against the other. Oven now detects that case at link time by comparing digests and refusing. Sharing units by package and version would reintroduce the hazard everywhere; sharing them by an identity that includes the whole compilation context removes it by construction and moves the check to planning, where it can name both plans in the diagnostic.
 
-The Rust project has arrived at the same conclusion independently. The Cargo team's 2026 goal is a cross-workspace build cache, preceded in 2025 by splitting the target directory and regrouping artifacts by build unit, and early experiments with a content-addressed store behind it are under way. Oven starts from a stronger position because its receipts already encode the inputs Cargo has to reconstruct, and because RFC 125 needs exactly this identity to exchange units across machines. Without unit-level identity, a registry can only offer whole plans, and whole plans almost never match another project.
+Every ecosystem that shares compiled artifacts solved this with an identity over inputs rather than over names; the prior art section records what each got right. Oven starts from a stronger position than most because its receipts already encode those inputs, and because RFC 125 needs exactly this identity to exchange units across machines. Without unit-level identity, a registry can only offer whole plans, and whole plans almost never match another project.
 
 ## Goals
 
@@ -53,7 +53,7 @@ The Rust project has arrived at the same conclusion independently. The Cargo tea
 
 ## Non-Goals
 
-- Changing what a unit compiles to, how rustc is invoked, or which crate types exist. RFC 119 owns the unit graph; this RFC owns how its outputs are stored and reused.
+- Changing what a unit compiles to, how the compiler is invoked, or which artifact kinds exist. RFC 119 owns the unit graph; this RFC owns how its outputs are stored and reused.
 - A remote or distributed store protocol. That is RFC 125.
 - Reproducible-builds guarantees in rustc. This RFC depends on the compiler's determinism where identity must be portable and states that dependency; it does not fix compiler nondeterminism.
 - Sharing incremental-compilation state or other transient compiler caches.
@@ -63,7 +63,7 @@ The Rust project has arrived at the same conclusion independently. The Cargo tea
 
 ### The second project is fast
 
-A developer creates a second Incan project on a machine that already has one. Both depend on the same standard library components and runtime crates at the same toolchain.
+A developer creates a second Incan project on a machine that already has one. Both depend on the same standard library components and runtime Loaves at the same toolchain.
 
 ```text
 $ oven bake
@@ -86,7 +86,7 @@ $ oven bake --profile dev
     tokio 1.53.1  sha256:77aa…  miss: profile differs from stored sha256:4b1c… (release)
 ```
 
-### Two instances of one crate are refused before linking
+### Two instances of one Loaf are refused before linking
 
 ```text
 $ oven bake
@@ -118,7 +118,7 @@ When RFC 125 is in place, a unit that arrives from `incan.pub` shows in `oven st
 
 ### Compiled units
 
-A compiled unit is the durable output of one rustc invocation for one crate in one domain, together with the metadata needed to link against it. Unit kinds are library, procedural macro, build-script executable with its captured output, binary, and test harness. Every unit must record its host or target domain as RFC 119 defines them. A build-script's captured output (emitted cfgs, link directives, environment) is part of the unit that consumes it, not a separate shared object.
+A compiled unit is the durable output of one compiler invocation for one unit of a Loaf in one domain, together with the metadata needed to compile and link against it. Unit kinds are library, procedural macro, build-script executable with its captured output, binary, and test harness. Every unit must record its host or target domain as RFC 119 defines them. A build-script's captured output (emitted cfgs, link directives, environment) is part of the unit that consumes it, not a separate shared object.
 
 ### Unit identity
 
@@ -131,17 +131,17 @@ A unit has three distinct identities, and the store must name them separately:
 A unit identity must be a `sha256:` digest over a canonical serialization of at least:
 
 - the content digest of the source files the unit actually compiles, after path remapping, excluding files the compilation does not read (documentation, manifests, tests not built, publication metadata);
-- the manifest facts that reach compilation: crate name, edition, and any package fact the code or the compiler observes, such as a version string exposed through an environment macro or embedded in crate metadata. A fact the compilation does not observe must not enter the identity;
+- the manifest facts that reach compilation: the unit name, edition, and any package fact the code or the compiler observes, such as a version string exposed through an environment macro or embedded in the compiler's metadata output. A fact the compilation does not observe must not enter the identity;
 - the toolchain identity (compiler version and host, as Oven records it);
 - the target triple and the domain (host or target);
 - the profile facts that affect codegen: optimisation level, debug-info level, codegen units, panic strategy, LTO mode, target features, and any other flag Oven passes that changes output;
 - the resolved feature set of the unit;
-- the crate type and edition;
+- the artifact kind and edition;
 - the unit identities of every unit it links against, in canonical order;
 - for units that consume provider outputs, the receipt identity of each admitted provider (build script or procedural macro) whose generated inputs, cfgs, environment values, or link directives it consumes;
 - for units with native inputs, the digests of the native libraries and headers the unit links or includes.
 
-A unit identity must not include absolute paths, timestamps, hostnames, user names, publication signatures, or the identity of the plan that requested it. Oven must remap source paths so that the same source at two locations produces the same identity, and must derive the compiler's crate disambiguator from the unit identity rather than from the package version, so that a version-only republication of unchanged code yields the same unit.
+A unit identity must not include absolute paths, timestamps, hostnames, user names, publication signatures, or the identity of the plan that requested it. Oven must remap source paths so that the same source at two locations produces the same identity, and must derive the compiler's unit disambiguator (the metadata hash it embeds) from the unit identity rather than from the package version, so that a version-only republication of unchanged code yields the same unit.
 
 **Acceptance case.** A package republished at a new version whose compiled sources, observed manifest facts, features, dependencies, and provider outputs are byte-identical must resolve to the same unit identity and reuse the existing unit. A package whose new version is observed by its own code, for example through a version macro, legitimately produces a new identity, and the identity inputs make that visible.
 
@@ -197,13 +197,23 @@ Offline and locked modes resolve entirely from the store and the lockfile. Unit-
 
 The store gains a new layout version. Existing entries are not rewritten; they remain readable for whole-plan reuse until collected, and new plans populate the unit-addressed layout as they bake. No user action is required, and a `gc` after the first few bakes under the new layout reclaims the old entries.
 
+## Prior art
+
+- **Nix binary caches.** A derivation's store path is a hash over every input, including the store paths of its dependencies. That Merkle-over-the-closure identity is the model this RFC adopts, and it is what lets a cache serve outputs to strangers safely.
+- **Bazel, Buck, and Go's build cache.** Content-addressed action caches keyed by an action identity over inputs and dependency outputs, with remote sharing. Go's build cache is the closest single-language example: per-action identity, content-addressed storage, automatic collection.
+- **Conan.** C++ has no stable ABI either. Conan computes a package identity from compiler, version, architecture, options, and dependency versions; one recipe has many binaries; a consumer's profile selects a matching one and otherwise builds from source. The store described here is that model with a stricter identity.
+- **uv and npm's caches.** uv keeps one content-addressed cache and links artifacts into every environment rather than copying; npm's cache stores each blob once under its integrity hash with a separate index from names to hashes and verifies on read. This RFC's payload-plus-index shape and its "install by linking" materialisation follow both.
+- **sccache.** A compiler-wrapper cache keyed on the reconstructed command line. It demonstrates demand for cross-project reuse in Rust and the limits of inferring identity after the fact rather than from the plan.
+- **The Rust project's own direction.** A long-open request for pre-built dependencies, a per-user compiled-artifact cache issue, a 2025 split of the build directory by unit, and a 2026 goal of a cross-workspace cache that may later be pre-populated remotely. Oven arrives at the same shape from a stronger starting point because its receipts already carry the inputs that work has to reconstruct.
+- **The tokio incident recorded in this repository.** Two independently resolved closures of identical source produced ABI-incompatible units for the same version, and linking both left a runtime object invisible to half the program. It is the concrete case the identity rule and the two-instance refusal exist to prevent.
+
 ## Alternatives considered
 
 - **Keep plan-level Loafs as the unit of reuse.** Rejected. It is the status quo the audit measured; plans almost never match across projects, so nothing is shared and nothing can be safely collected below the plan.
-- **Deduplicate at the file level only.** A content-addressed store for payload bytes with no unit identity, hardlinking identical files. Cargo's early cache experiment took this shape and reported saving half a gigabyte of thirty. Rejected as the primary mechanism: it saves disk where bytes happen to coincide but cannot decide reuse, cannot refuse the two-instance hazard, and cannot feed a registry. It is retained as the store's physical layout beneath unit identity.
+- **Deduplicate at the file level only.** A content-addressed store for payload bytes with no unit identity, hardlinking identical files. The Rust project's early shared-cache experiment took this shape and reported saving half a gigabyte of thirty. Rejected as the primary mechanism: it saves disk where bytes happen to coincide but cannot decide reuse, cannot refuse the two-instance hazard, and cannot feed a registry. It is retained as the store's physical layout beneath unit identity.
 - **Key units by package, version, features, and target only.** Rejected. This is the identity that produced two incompatible tokio instances; it omits dependency identities and codegen facts and is exactly what makes sharing unsafe.
 - **A compiler-wrapper cache keyed on the rustc command line.** The sccache model. Rejected as the basis: it reconstructs identity from the invocation rather than from the plan, shares nothing the planner can reason about, and cannot express satisfaction kinds or attestations.
-- **Compile shared dependencies as dynamic libraries.** Proposed for Cargo in 2021. Rejected. It changes codegen and linking semantics to solve a storage problem, and does not remove the identity requirement.
+- **Compile shared dependencies as dynamic libraries.** Proposed for the Rust toolchain in 2021. Rejected. It changes codegen and linking semantics to solve a storage problem, and does not remove the identity requirement.
 
 ## Drawbacks
 
@@ -230,12 +240,12 @@ Non-normative. The identity computation belongs in the planner, computed bottom-
 ## Unresolved questions
 
 - Which codegen flags are identity inputs, and should they enter the identity verbatim or as a normalised profile description so that spelling differences do not defeat sharing?
-- How are native inputs of `-sys` crates identified when they come from the system rather than from a package: by digest of the resolved library files, by a declared toolchain fact, or by marking such units machine-local?
+- How are native inputs of system-binding units (the `-sys` convention) identified when they come from the system rather than from a package: by digest of the resolved library files, by a declared toolchain fact, or by marking such units machine-local?
 - Should build-script executables be shared units in their own right, or always rebaked and only their captured output made part of the consuming unit's identity?
 - Should RFC 125 offer assets per unit, per package bundle, or both, given that per-unit assets maximise hits and per-package bundles minimise index size?
 - What is the default collection policy: explicit only, capacity-triggered, age-based, or a combination, and how is it configured?
 - When two bakes of equal identity produce different payloads, is retaining both and marking the identity machine-local sufficient, or should Oven attempt to classify the nondeterminism (debug information, symbol ordering) and treat some classes as benign?
-- Which manifest facts count as observed by compilation? A version string read through an environment macro clearly does; the exact list of facts the compiler embeds in crate metadata without the code asking for them needs enumerating so the identity neither misses one nor includes ones that never reach output.
+- Which manifest facts count as observed by compilation? A version string read through an environment macro clearly does; the exact list of facts the compiler embeds in its metadata output without the code asking for them needs enumerating so the identity neither misses one nor includes ones that never reach output.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
