@@ -92,7 +92,13 @@ pub def project(document: JsonValue) -> Result[JsonValue, CompilationError]:
         logical(string(member[0], ["inputs", "generated"])?, ["inputs", "generated"])?
     effective_files = effective_source_members(source_files, generated)?
     search = search_rows(field(inputs, "search", ["inputs"])?, native)?
-    command = command_fields(field(inputs, "command", ["inputs"])?, source_value, native, search)?
+    command = command_fields(
+        field(inputs, "command", ["inputs"])?,
+        text(compiler_value, "target", ["inputs", "compiler"])?,
+        source_value,
+        native,
+        search,
+    )?
     output = output_fields(field(inputs, "output", ["inputs"])?)?
     physical_rows(field(execution, "source_files", ["execution"])?, source_files, 1, ["execution", "source_files"])?
     physical_rows(field(execution, "native_files", ["execution"])?, native, 3, ["execution", "native_files"])?
@@ -244,20 +250,34 @@ def search_rows(value: JsonValue, native: list[list[JsonValue]]) -> Result[list[
 
 def command_fields(
     value: JsonValue,
+    compiler_target: str,
     source: JsonValue,
     native: list[list[JsonValue]],
     search: list[list[JsonValue]],
 ) -> Result[JsonValue, CompilationError]:
-    """Use typed invocation slots; raw path-bearing argv cannot smuggle delivery locations into the content key."""
+    """Require one exact typed invocation; raw paths, omitted slots and duplicate structure cannot enter its key."""
     keys = ["cwd", "crate_name", "crate_kind", "edition", "arguments"]
     exact(value, keys, ["inputs", "command"])?
     for name in ["crate_name", "crate_kind", "edition"]:
         nonempty(text(value, name, ["inputs", "command"])?, ["inputs", "command", name])?
     if text(value, "cwd", ["inputs", "command"])? != "unit":
         return Err(CompilationError(fields=["inputs", "command", "cwd"]))
+    crate_name = text(value, "crate_name", ["inputs", "command"])?
+    crate_kind = text(value, "crate_kind", ["inputs", "command"])?
+    edition = text(value, "edition", ["inputs", "command"])?
+    mut crate_names: int = 0
+    mut crate_kinds: int = 0
+    mut editions: int = 0
+    mut targets: int = 0
     mut outputs: int = 0
     mut sources: int = 0
     mut dep_info_streams: int = 0
+    mut diagnostic_streams: int = 0
+    mut source_remaps: int = 0
+    mut toolchain_remaps: int = 0
+    mut externs: list[str] = []
+    mut searches: list[str] = []
+    mut search_remaps: list[str] = []
     for item in array(field(value, "arguments", ["inputs", "command"])?, ["inputs", "command", "arguments"])?:
         path = ["inputs", "command", "arguments"]
         row = array(item, path)?
@@ -266,16 +286,35 @@ def command_fields(
         kind = string(row[0], path)?
         name = string(row[1], path)?
         if kind == "option":
-            if len(row) != 3 or name not in ["target", "edition", "crate-name", "crate-type", "cfg", "opt-level", "debuginfo", "panic", "codegen-units", "overflow-checks", "debug-assertions", "metadata", "extra-filename"]:
+            if len(row) != 3 or name not in ["target", "edition", "crate-name", "crate-type", "cfg", "opt-level", "debuginfo", "strip", "panic", "codegen-units", "overflow-checks", "debug-assertions", "metadata", "extra-filename"]:
                 return Err(CompilationError(fields=path))
-            nonempty(string(row[2], path)?, path)?
+            option = string(row[2], path)?
+            nonempty(option, path)?
+            if name == "crate-name":
+                if option != crate_name:
+                    return Err(CompilationError(fields=path))
+                crate_names += 1
+            elif name == "crate-type":
+                if option != crate_kind:
+                    return Err(CompilationError(fields=path))
+                crate_kinds += 1
+            elif name == "edition":
+                if option != edition:
+                    return Err(CompilationError(fields=path))
+                editions += 1
+            elif name == "target":
+                if option != compiler_target:
+                    return Err(CompilationError(fields=path))
+                targets += 1
             continue
         if len(row) != 2:
             return Err(CompilationError(fields=path))
         if kind == "switch":
             if name == "dep-info-stdout":
                 dep_info_streams += 1
-            elif name != "json-diagnostics":
+            elif name == "json-diagnostics":
+                diagnostic_streams += 1
+            else:
                 return Err(CompilationError(fields=path))
         elif kind == "source":
             if name != text(source, "entrypoint", ["inputs", "source"])?:
@@ -283,20 +322,41 @@ def command_fields(
             sources += 1
         elif kind == "extern":
             member = require_member(native, name, path)?
-            if member[1].is_null():
+            if member[1].is_null() or name in externs:
                 return Err(CompilationError(fields=path))
+            externs.append(name)
         elif kind == "search":
             require_member(search, name, path)?
+            if name in searches:
+                return Err(CompilationError(fields=path))
+            searches.append(name)
         elif kind == "remap-source":
             if name != text(source, "logical_root", ["inputs", "source"])?:
                 return Err(CompilationError(fields=path))
+            source_remaps += 1
+        elif kind == "remap-toolchain":
+            if name != "incan-toolchain":
+                return Err(CompilationError(fields=path))
+            toolchain_remaps += 1
+        elif kind == "remap-search":
+            require_member(search, name, path)?
+            if name in search_remaps:
+                return Err(CompilationError(fields=path))
+            search_remaps.append(name)
         elif kind == "output":
             if name != "native":
                 return Err(CompilationError(fields=path))
             outputs += 1
         else:
             return Err(CompilationError(fields=path))
-    if outputs != 1 or sources != 1 or dep_info_streams != 1:
+    mut expected_externs: int = 0
+    for member in native:
+        if not member[1].is_null():
+            expected_externs += 1
+    for count in [crate_names, crate_kinds, editions, targets, outputs, sources, dep_info_streams, diagnostic_streams, source_remaps, toolchain_remaps]:
+        if count != 1:
+            return Err(CompilationError(fields=["inputs", "command", "arguments"]))
+    if len(externs) != expected_externs or len(searches) != len(search) or len(search_remaps) != len(search):
         return Err(CompilationError(fields=["inputs", "command", "arguments"]))
     return ordered(value, keys, ["inputs", "command"])
 

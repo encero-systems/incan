@@ -30,6 +30,9 @@ venv/
 env/
 dist/
 build/
+# Rust command modules live in a source directory named `build`.
+!src/cli/commands/build/
+!src/cli/commands/build/native_compilation.rs
 
 # Node.js / VS Code extension (editors/vscode)
 node_modules/

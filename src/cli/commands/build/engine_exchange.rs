@@ -32,7 +32,7 @@ use crate::generated_source::digest_bytes;
 use crate::oven::process::isolate_process_group;
 use crate::oven::process::terminate_process_group;
 
-const FILE_LIMIT: usize = 1024 * 1024;
+pub(super) const FILE_LIMIT: usize = 1024 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 64 * 1024;
 static SCOPE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 

@@ -20,8 +20,8 @@ pub def test_native_compilation_literal_vector_and_cold_index() -> None:
     ready = run(observed(fixture(), []))
     assert text(ready, "status") == "cacheable"
     assert text(ready, "candidate_index") == text(cold, "candidate_index")
-    assert text(ready, "compilation_key") == "sha256:88e343b3540b313583f19e0f7a3c5f1b2522ff71ae436896edbc54a0e4f54cb2"
-    assert text(ready, "candidate_index") == "sha256:6b21f1e817d6c4143025e34ff83efd4f4e48d25c827b31a7ecea2558602f1d81"
+    assert text(ready, "compilation_key") == "sha256:c88451d897750fc74c2cd16a761ecb759675f6c595de68a7b9973a9fe793c8e9"
+    assert text(ready, "candidate_index") == "sha256:2ef09aa7443147536834556b39874e0d5d9f90a838f7f63496b29d4953ea0b3c"
 
 
 pub def test_native_compilation_dispatch_matches_direct_document_policy() -> None:
@@ -254,6 +254,21 @@ pub def test_native_compilation_compiler_flags_and_output_filename_change_key() 
         JsonValue.array([arguments[1], arguments[0]] + arguments[2:]),
     )
     require_different(original, observed(reordered, []))
+
+
+pub def test_native_compilation_command_structure_is_exact_and_cross_checked() -> None:
+    """Every structural slot occurs once and its core options agree with the declared command and compiler."""
+    original = fixture()
+    arguments = values(get(get(get(original, "inputs"), "command"), "arguments"))
+    for index in range(len(arguments)):
+        missing = arguments[:index] + arguments[index + 1:]
+        require_refused(input_field(original, "command", "arguments", JsonValue.array(missing)))
+        require_refused(input_field(original, "command", "arguments", JsonValue.array(arguments + [arguments[index]])))
+
+    require_refused(input_field(original, "command", "crate_name", JsonValue.string("renamed")))
+    require_refused(input_field(original, "command", "crate_kind", JsonValue.string("dylib")))
+    require_refused(input_field(original, "command", "edition", JsonValue.string("2024")))
+    require_refused(input_field(original, "compiler", "target", JsonValue.string("other-target")))
 
 
 pub def test_native_compilation_path_effects_are_bound_not_assumed() -> None:
@@ -625,12 +640,15 @@ def fixture_compiler() -> JsonValue:
 def fixture_command() -> JsonValue:
     """Use the typed command vocabulary rather than embedding physical paths in raw arguments."""
     mut arguments: list[JsonValue] = []
+    arguments.append(texts(["option", "crate-name", "provider"]))
     arguments.append(texts(["option", "crate-type", "rlib"]))
     arguments.append(texts(["option", "edition", "2021"]))
     arguments.append(texts(["option", "target", "target"]))
     arguments.append(texts(["switch", "dep-info-stdout"]))
     arguments.append(texts(["switch", "json-diagnostics"]))
     arguments.append(texts(["remap-source", "incan-source"]))
+    arguments.append(texts(["remap-toolchain", "incan-toolchain"]))
+    arguments.append(texts(["remap-search", "dependencies"]))
     arguments.append(texts(["search", "dependencies"]))
     arguments.append(texts(["extern", "stdlib"]))
     arguments.append(texts(["source", "src/lib.rs"]))

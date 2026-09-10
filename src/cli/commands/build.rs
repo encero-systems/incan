@@ -6,6 +6,7 @@
 pub(crate) mod engine;
 pub(crate) mod engine_exchange;
 mod library_publication;
+mod native_compilation;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
@@ -135,7 +136,7 @@ impl EngineCommandAuthority {
             || admitted.descriptor().native_file_exchange_abi() != 1
             || admitted.descriptor().receipt().intent.target != host_target
             || request.is_empty()
-            || request.len() > 1024 * 1024
+            || request.len() > engine_exchange::FILE_LIMIT
         {
             return Err(CliError::failure(
                 "core selection invocation has an incompatible module, host ABI or input bound",
@@ -170,8 +171,8 @@ impl EngineCommandAuthority {
             request_digest: digest_bytes(request),
             scratch_parent,
             deadline,
-            request_limit: 1024 * 1024,
-            response_limit: 1024 * 1024,
+            request_limit: engine_exchange::FILE_LIMIT,
+            response_limit: engine_exchange::FILE_LIMIT,
             stdout_limit: 64 * 1024,
             stderr_limit: 64 * 1024,
         })
@@ -230,7 +231,15 @@ pub(crate) fn materialize_provider_sources_with_installed_engine(
         )?;
         let (report, selected) = batch.exchange(admitted, permit, &cancelled)?;
         persist_engine_exchange_observation(&output_root, &report)?;
-        selected?.materialize(rustc, &output_root, authority_context)
+        let native_compilation = native_compilation::NativeCompilationHost::new(
+            admitted,
+            receipt,
+            rustc,
+            &output_root,
+            &host_target,
+            &cancelled,
+        )?;
+        selected?.materialize(rustc, &output_root, &native_compilation, authority_context)
     })
 }
 
@@ -4896,6 +4905,36 @@ struct AdmittedProviderSourceBatch<'batch, 'plan, 'native> {
     unit_edges: Vec<Vec<(String, usize)>>,
 }
 
+/// Private physical owner for one exact generated-source and caller-owned dependency snapshot.
+struct ProviderJecInputSnapshot {
+    _owner: tempfile::TempDir,
+    source_root: PathBuf,
+    dependencies: Vec<OvenCallerOwnedRustcLibrary>,
+}
+
+fn require_jec_snapshot_digest(path: &Path, expected: &str, label: &str) -> CliResult<()> {
+    let mut file = fs::File::open(path)
+        .map_err(|error| CliError::failure(format!("cannot read JEC {label} snapshot: {error}")))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| CliError::failure(format!("cannot read JEC {label} snapshot: {error}")))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let actual = format!("sha256:{:x}", hasher.finalize());
+    if actual != expected {
+        return Err(CliError::failure(format!(
+            "JEC {label} snapshot bytes differ from admitted identity: expected {expected}, found {actual}"
+        )));
+    }
+    Ok(())
+}
+
 /// Encode one existing runtime compatibility projection without inventing unsupported input values.
 fn provider_batch_recipe_json(
     compatibility: &crate::oven::loaf::OvenLoafCompatibility,
@@ -5546,6 +5585,93 @@ impl AdmittedProviderSourceBatch<'_, '_, '_> {
         Ok(dependencies)
     }
 
+    /// Copy one schema-3 unit and its caller-owned libraries into a private, exact-member compilation snapshot.
+    ///
+    /// Store-owned foundation paths remain under their retained lease. Generated provider roots and caller-owned
+    /// outputs have no such owner, so a JEC key must compile from bytes frozen after their recorded digests are
+    /// checked. The dependency directory contains only the named libraries, preventing `-L dependency` from making
+    /// an unrelated stale neighbor an undeclared compiler input.
+    fn jec_input_snapshot(
+        definition: &NativeSourceUnitDefinition,
+        crate_root: &Path,
+        dependencies: &[OvenCallerOwnedRustcLibrary],
+        output_root: &Path,
+    ) -> CliResult<Option<ProviderJecInputSnapshot>> {
+        let Some(members) = &definition.source_members else {
+            return Ok(None);
+        };
+        let parent = output_root.join("oven/jec-inputs");
+        fs::create_dir_all(&parent)
+            .map_err(|error| CliError::failure(format!("cannot create JEC input snapshot root: {error}")))?;
+        let owner = tempfile::Builder::new()
+            .prefix("unit-")
+            .tempdir_in(&parent)
+            .map_err(|error| CliError::failure(format!("cannot create JEC input snapshot: {error}")))?;
+        let source_root = owner.path().join("source");
+        let dependency_root = owner.path().join("dependencies");
+        fs::create_dir_all(&source_root)
+            .and_then(|_| fs::create_dir_all(&dependency_root))
+            .map_err(|error| CliError::failure(format!("cannot prepare JEC input snapshot: {error}")))?;
+
+        for member in members {
+            let source = crate_root.join(&member.path);
+            let metadata = fs::symlink_metadata(&source)
+                .map_err(|error| CliError::failure(format!("cannot inspect JEC source member: {error}")))?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err(CliError::failure(format!(
+                    "JEC source member is not a regular non-symlink file: {}",
+                    source.display()
+                )));
+            }
+            let destination = source_root.join(&member.path);
+            let destination_parent = destination
+                .parent()
+                .ok_or_else(|| CliError::failure("JEC source member has no snapshot parent"))?;
+            fs::create_dir_all(destination_parent)
+                .and_then(|_| fs::copy(&source, &destination).map(|_| ()))
+                .map_err(|error| CliError::failure(format!("cannot snapshot JEC source member: {error}")))?;
+            require_jec_snapshot_digest(&destination, &member.digest, "source member")?;
+        }
+
+        let mut copied = BTreeMap::<PathBuf, String>::new();
+        let mut snapshot_dependencies = Vec::with_capacity(dependencies.len());
+        for dependency in dependencies {
+            let Some(filename) = dependency.output.file_name() else {
+                return Ok(None);
+            };
+            let destination = dependency_root.join(filename);
+            if let Some(existing) = copied.get(&destination) {
+                if existing != &dependency.digest {
+                    return Err(CliError::failure(format!(
+                        "JEC dependency snapshot has conflicting bytes for {}",
+                        destination.display()
+                    )));
+                }
+            } else {
+                let metadata = fs::symlink_metadata(&dependency.output)
+                    .map_err(|error| CliError::failure(format!("cannot inspect JEC dependency: {error}")))?;
+                if !metadata.is_file() || metadata.file_type().is_symlink() {
+                    return Err(CliError::failure(format!(
+                        "JEC dependency is not a regular non-symlink file: {}",
+                        dependency.output.display()
+                    )));
+                }
+                fs::copy(&dependency.output, &destination)
+                    .map_err(|error| CliError::failure(format!("cannot snapshot JEC dependency: {error}")))?;
+                require_jec_snapshot_digest(&destination, &dependency.digest, "caller-owned dependency")?;
+                copied.insert(destination.clone(), dependency.digest.clone());
+            }
+            let mut dependency = dependency.clone();
+            dependency.output = destination;
+            snapshot_dependencies.push(dependency);
+        }
+        Ok(Some(ProviderJecInputSnapshot {
+            _owner: owner,
+            source_root,
+            dependencies: snapshot_dependencies,
+        }))
+    }
+
     /// Materialize returned source bindings through the existing receipt-bound native publisher.
     ///
     /// The enclosing native command owns this work separately from its Engine exchange permit. Source metadata and
@@ -5556,10 +5682,12 @@ impl AdmittedProviderSourceBatch<'_, '_, '_> {
         &self,
         rustc: &Path,
         output_root: &Path,
+        native_compilation: &native_compilation::NativeCompilationHost<'_, '_>,
         mut authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
     ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
         let candidate = &self.batch.candidates[self.candidate];
         self.with_native_plans(|view, plans| {
+            let compiler = native_compilation.compiler();
             let mut required = self
                 .batch
                 .units
@@ -5588,11 +5716,29 @@ impl AdmittedProviderSourceBatch<'_, '_, '_> {
                     view.artifacts(),
                     authority_context.as_deref_mut(),
                 )?;
-                let mut native = plans[index].artifact_plan().clone();
                 let dependencies = self.native_dependencies(index, &outputs)?;
-                attach_caller_owned_rustc_libraries(&mut native, &dependencies).map_err(oven_rustc_error)?;
                 let definition = &unit.definition;
                 let macro_output = definition.crate_kind == NativeSourceCrateKind::ProcMacro;
+                let snapshot = if macro_output {
+                    None
+                } else {
+                    Self::jec_input_snapshot(
+                        definition,
+                        &unit.provider.artifact.crate_root,
+                        &dependencies,
+                        output_root,
+                    )?
+                };
+                let crate_root = snapshot
+                    .as_ref()
+                    .map_or(unit.provider.artifact.crate_root.as_path(), |snapshot| {
+                        snapshot.source_root.as_path()
+                    });
+                let dependencies = snapshot
+                    .as_ref()
+                    .map_or(dependencies.as_slice(), |snapshot| snapshot.dependencies.as_slice());
+                let mut native = plans[index].artifact_plan().clone();
+                attach_caller_owned_rustc_libraries(&mut native, &dependencies).map_err(oven_rustc_error)?;
                 let output = output_root
                     .join("oven/caller-owned-libraries")
                     .join(&view.intent().profile)
@@ -5602,13 +5748,14 @@ impl AdmittedProviderSourceBatch<'_, '_, '_> {
                     } else {
                         format!("lib{}.rlib", definition.crate_name)
                     });
-                let source = unit.provider.artifact.crate_root.join(&definition.entrypoint.path);
+                let source = crate_root.join(&definition.entrypoint.path);
+                let unit_rustc = compiler.map_or(rustc, |compiler| compiler.rustc());
                 let request = OvenTrustedDirectRustcTargetRequest {
                     receipt: &receipt,
                     artifacts: view.artifacts(),
                     artifact_root: view.artifact_root(),
                     artifact_plan: Some(&native),
-                    rustc,
+                    rustc: unit_rustc,
                     source: &source,
                     output: &output,
                     crate_name: &definition.crate_name,
@@ -5622,13 +5769,29 @@ impl AdmittedProviderSourceBatch<'_, '_, '_> {
                         &request,
                         candidate.source_role,
                     )
+                    .map_err(oven_rustc_error)?
                 } else {
-                    crate::oven::rustc::bake_trusted_direct_rustc_library_with_artifact_role(
+                    let prepared = crate::oven::rustc::prepare_trusted_direct_rustc_library_with_artifact_role(
                         &request,
                         candidate.source_role,
+                        crate_root,
+                        compiler,
                     )
-                }
-                .map_err(oven_rustc_error)?;
+                    .map_err(oven_rustc_error)?;
+                    let unit_owner_id = unit.provider.identity.stable_key();
+                    native_compilation.materialize(&native_compilation::NativeCompilationUnit {
+                        receipt: &receipt,
+                        unit_owner_id: &unit_owner_id,
+                        definition,
+                        crate_root,
+                        artifacts: view.artifacts(),
+                        artifact_root: view.artifact_root(),
+                        private_snapshot_root: snapshot.as_ref().map(|snapshot| snapshot._owner.path()),
+                        dependencies: &dependencies,
+                        prepared: &prepared,
+                        output: &output,
+                    })?
+                };
                 outputs[index] = Some(OvenCallerOwnedRustcLibrary {
                     crate_name: definition.crate_name.clone(),
                     output: result.output,
@@ -18448,6 +18611,122 @@ rust_shadow = { path = "never-opened-rust-shadow" }
                     .provider_dependencies[edge.descriptor_index]
             ));
         }
+        Ok(())
+    }
+
+    /// JEC compilation reads only the admitted source members and dependency artifacts copied into its private
+    /// snapshot. Later mutations and unrelated neighbors in the producer directories cannot enter that execution.
+    #[test]
+    fn provider_jec_snapshot_freezes_exact_admitted_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let provider_root = root.path().join("provider");
+        let (_, _, definition) = provider_source_definition_fixture(&provider_root, NativeSourceCrateKind::Rlib)?;
+        let first_root = root.path().join("first");
+        let second_root = root.path().join("second");
+        fs::create_dir_all(&first_root)?;
+        fs::create_dir_all(&second_root)?;
+        let first = first_root.join("libfirst.rlib");
+        let second = second_root.join("libsecond.rlib");
+        fs::write(&first, b"first dependency")?;
+        fs::write(&second, b"second dependency")?;
+        fs::write(first_root.join("libstale.rlib"), b"unrelated neighbor")?;
+        let dependencies = vec![
+            OvenCallerOwnedRustcLibrary {
+                crate_name: "first".to_string(),
+                output: first.clone(),
+                digest: crate::generated_source::digest_file(&first)?,
+                expose_extern: true,
+            },
+            OvenCallerOwnedRustcLibrary {
+                crate_name: "second".to_string(),
+                output: second.clone(),
+                digest: crate::generated_source::digest_file(&second)?,
+                expose_extern: false,
+            },
+        ];
+
+        let snapshot = AdmittedProviderSourceBatch::jec_input_snapshot(
+            &definition,
+            &provider_root,
+            &dependencies,
+            &root.path().join("output"),
+        )?
+        .ok_or("schema-3 provider did not produce a JEC snapshot")?;
+        let dependency_root = snapshot
+            .dependencies
+            .first()
+            .and_then(|dependency| dependency.output.parent())
+            .ok_or("snapshotted dependency has no parent")?;
+        assert_eq!(
+            fs::read(snapshot.source_root.join("src/lib.rs"))?,
+            b"pub fn marker() -> u32 { 7 }\n"
+        );
+        assert_eq!(fs::read(dependency_root.join("libfirst.rlib"))?, b"first dependency");
+        assert_eq!(fs::read(dependency_root.join("libsecond.rlib"))?, b"second dependency");
+        assert!(!dependency_root.join("libstale.rlib").exists());
+
+        fs::write(provider_root.join("src/lib.rs"), b"changed source")?;
+        fs::write(&first, b"changed dependency")?;
+        assert_eq!(
+            fs::read(snapshot.source_root.join("src/lib.rs"))?,
+            b"pub fn marker() -> u32 { 7 }\n"
+        );
+        assert_eq!(fs::read(dependency_root.join("libfirst.rlib"))?, b"first dependency");
+        Ok(())
+    }
+
+    /// A source digest mismatch or two same-named dependency files with different bytes refuses the JEC snapshot.
+    #[test]
+    fn provider_jec_snapshot_refuses_unbound_or_conflicting_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let provider_root = root.path().join("provider");
+        let (_, _, mut definition) = provider_source_definition_fixture(&provider_root, NativeSourceCrateKind::Rlib)?;
+        definition
+            .source_members
+            .as_mut()
+            .ok_or("schema-3 source members absent")?[0]
+            .digest = digest_bytes(b"different source");
+        let source_error = AdmittedProviderSourceBatch::jec_input_snapshot(
+            &definition,
+            &provider_root,
+            &[],
+            &root.path().join("source-output"),
+        )
+        .err()
+        .ok_or("source digest mismatch unexpectedly produced a snapshot")?;
+        assert!(source_error.message.contains("bytes differ"), "{source_error}");
+
+        let (_, _, definition) =
+            provider_source_definition_fixture(&root.path().join("valid-provider"), NativeSourceCrateKind::Rlib)?;
+        let first = root.path().join("first/libsame.rlib");
+        let second = root.path().join("second/libsame.rlib");
+        fs::create_dir_all(first.parent().ok_or("first dependency has no parent")?)?;
+        fs::create_dir_all(second.parent().ok_or("second dependency has no parent")?)?;
+        fs::write(&first, b"first")?;
+        fs::write(&second, b"second")?;
+        let dependencies = [
+            OvenCallerOwnedRustcLibrary {
+                crate_name: "first".to_string(),
+                output: first.clone(),
+                digest: crate::generated_source::digest_file(&first)?,
+                expose_extern: true,
+            },
+            OvenCallerOwnedRustcLibrary {
+                crate_name: "second".to_string(),
+                output: second.clone(),
+                digest: crate::generated_source::digest_file(&second)?,
+                expose_extern: true,
+            },
+        ];
+        let error = AdmittedProviderSourceBatch::jec_input_snapshot(
+            &definition,
+            &root.path().join("valid-provider"),
+            &dependencies,
+            &root.path().join("dependency-output"),
+        )
+        .err()
+        .ok_or("conflicting dependency bytes unexpectedly produced a snapshot")?;
+        assert!(error.message.contains("conflicting bytes"), "{error}");
         Ok(())
     }
 

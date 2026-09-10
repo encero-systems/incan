@@ -104,6 +104,10 @@ pub enum OvenArtifactKind {
     ProjectPayload,
     /// Completed project-native output selected before frontend work on an exact authored-source match.
     ProjectOutput,
+    /// One immutable JEC result and its compiler-produced logical dependency observation.
+    NativeCompilationOutput,
+    /// One immutable compiler/sysroot closure selected under lease for JEC lookup and execution.
+    NativeCompilerClosure,
     /// Project-level Rust inspection authority selected only through a source-current completed project output.
     ProjectInspectionAuthority,
     /// Verified direct-rustc artifact plan consumed by a later executor stage.
@@ -2663,15 +2667,23 @@ fn artifact_identity_from_manifest(manifest: &OvenArtifactManifest) -> Result<St
 
 /// Return whether two immutable entries carry the same reusable execution content despite distinct publisher receipts.
 fn reusable_manifest_equivalent(left: &OvenArtifactManifest, right: &OvenArtifactManifest) -> bool {
-    left.kind == OvenArtifactKind::DirectRustcPlan
-        && right.kind == OvenArtifactKind::DirectRustcPlan
-        && left.schema_version == right.schema_version
-        && left.build_unit_identity == right.build_unit_identity
-        && left.domain == right.domain
-        && left.kind == right.kind
-        && left.intent == right.intent
-        && left.payload == right.payload
-        && left.materialized_files == right.materialized_files
+    if left.schema_version != right.schema_version
+        || left.domain != right.domain
+        || left.kind != right.kind
+        || left.payload != right.payload
+        || left.materialized_files != right.materialized_files
+    {
+        return false;
+    }
+    match left.kind {
+        OvenArtifactKind::DirectRustcPlan => {
+            left.build_unit_identity == right.build_unit_identity && left.intent == right.intent
+        }
+        OvenArtifactKind::NativeCompilerClosure => {
+            left.intent.target == right.intent.target && left.intent.toolchain == right.intent.toolchain
+        }
+        _ => false,
+    }
 }
 
 /// Update the LRU selection time without modifying the immutable manifest or payload.
