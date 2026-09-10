@@ -23,14 +23,16 @@ Oven already reuses compiled work safely: a sealed plan carries a receipt whose 
 ## Core model
 
 1. **The unit is the object.** A compiled unit is one compiler invocation's durable output for one unit of a Loaf's build graph in one domain: a library, a procedural macro, a build-script executable and its recorded output, a binary, or a test harness. In rustc's own vocabulary a unit is a crate; this RFC uses the RFC 119 term throughout. The store addresses units, not plans.
-2. **Three identities, kept apart.** A unit has a *publication provenance* (which registry checksum, source Loaf, or path it came from, and who signed it), a *unit identity* (a digest over its effective compilation inputs: the source bytes it compiles, the manifest facts that reach compilation, toolchain, target, domain, codegen facts, features, artifact kind, and the unit identities of every dependency it links), and a *payload digest* (the bytes it produced). Reuse is decided by unit identity alone. Provenance is recorded and checked for trust; it is not an identity input, so a republication that changes only version metadata or documentation does not invalidate unchanged code. Because dependency identities are inputs, identity is a Merkle root over the closure.
+2. **Three identities, kept apart.** A unit has a *publication provenance* (which registry checksum, source Loaf, or path it came from, and who signed it), a *unit identity* (a digest over its effective compilation inputs: the semantic digest of the source it compiles, the manifest facts that reach compilation, toolchain, target, domain, codegen facts, features, artifact kind, and the external identities of every dependency it links), and a *payload digest* (the bytes it produced). Reuse is decided by unit identity alone. Provenance is recorded and checked for trust; it is not an identity input, so a republication that changes only version metadata or documentation does not invalidate unchanged code. Because dependency identities are inputs, identity is a Merkle root over the closure.
 3. **Identity completes in stages.** Units that generate inputs for others, build scripts and procedural macros, carry a base input identity that is known before execution and a receipt identity that is known after. Downstream identities are finalised from admitted provider receipts, as RFC 119 already requires, and no unit compiles before its identity is final.
 4. **Equal identity means interchangeable; nothing less does.** Oven may substitute one unit for another only when their unit identities are equal and their payload digests agree. Same package and version with different identity is a miss, and if both would enter one link, it is a refusal that no ownership declaration waives.
 5. **A plan is a set of unit references plus a receipt.** The plan receipt records which unit identities satisfy which units of which Loaves and how each was obtained: baked here, reused from the store, or imported from a registry asset. Reusing a plan output remains possible and is now a special case of every unit hitting.
 6. **The store is content-addressed with a name index.** Unit payloads live once under their identity. A separate index maps package name, version, and plan facts to identities so a planner can ask "what do I already have for this Loaf unit under these facts" without enumerating the store.
 7. **Sharing crosses every local boundary.** Plans, projects, worktrees, and profiles share units through identity. A unit compiled for a release plan in one checkout satisfies a release plan in another checkout of the same or a different project.
 8. **Collection is by reachability.** A unit is live while a receipt, lease, or policy pin reaches it. Everything else is collectable, and collection is a store operation a user can invoke and inspect.
-9. **Local and registry are the same identity space.** RFC 125 assets are unit-identity-addressed. Importing an asset is a store insert; publishing one is a store export. The registry never needs a second notion of what makes two compiled artifacts the same.
+9. **Source enters identity by meaning, not by bytes.** The source input is the RFC 106 semantic digest of what the unit compiles, not a hash of its file contents. A comment, a docstring, a reordering, or a move between files does not change what the compiler produces and must not change the unit's identity. This RFC does not define that digest; RFC 106 does, and this RFC consumes it, consistent with introducing no second analysis path.
+10. **A unit is identified twice: internally and externally.** The *unit identity* covers everything the unit compiles and decides whether the unit itself is rebaked. The *external identity* covers only what a consumer can observe — public signatures, plus the bodies of anything a consumer can instantiate or inline, plus whatever those reach — and decides whether the unit's dependents are rebaked. A change confined to a unit's internals rebakes that unit and nothing beyond it.
+11. **Local and registry are the same identity space.** RFC 125 assets are unit-identity-addressed. Importing an asset is a store insert; publishing one is a store export. The registry never needs a second notion of what makes two compiled artifacts the same.
 
 ## Motivation
 
@@ -126,24 +128,35 @@ A unit has three distinct identities, and the store must name them separately:
 
 - **Publication provenance**: the registry checksum, source Loaf digest, or path source, together with the signer or attestation that vouches for it. Provenance must be recorded with every unit and checked against trust policy; it must not enter the unit identity.
 - **Unit identity**: the digest over effective compilation inputs defined below. It decides reuse.
+- **External identity**: the digest over the subset of those inputs a consumer can observe, defined below. It decides whether *dependents* are rebaked. A unit always has both; they differ whenever a change is confined to the unit's internals.
 - **Payload digest**: the `sha256:` of the produced bytes, uncompressed. It verifies storage and transport. Compression is a storage and transport encoding chosen per store or per registry and never enters any identity, so a unit compressed at one level locally and at another for publication is one unit.
 
 A unit identity must be a `sha256:` digest over a canonical serialization of at least:
 
-- the content digest of the source files the unit actually compiles, after path remapping, excluding files the compilation does not read (documentation, manifests, tests not built, publication metadata);
+- the **semantic digest** of the source the unit actually compiles, as RFC 106 defines it, excluding sources the compilation does not read (documentation, manifests, tests not built, publication metadata). This is a digest over checked meaning, not over file bytes: a comment, a docstring, a reordering of declarations, or a move between files does not change what the compiler produces and must not change the identity. It is language-neutral — an Incan-authored and a Rust-authored unit contribute the same kind of fact — and it subsumes path remapping, because a physical location is provenance and never an identity input;
 - the manifest facts that reach compilation: the unit name, edition, and any package fact the code or the compiler observes, such as a version string exposed through an environment macro or embedded in the compiler's metadata output. A fact the compilation does not observe must not enter the identity;
 - the toolchain identity (compiler version and host, as Oven records it);
 - the target triple and the domain (host or target);
 - the profile facts that affect codegen: optimisation level, debug-info level, codegen units, panic strategy, LTO mode, target features, and any other flag Oven passes that changes output;
 - the resolved feature set of the unit;
 - the artifact kind and edition;
-- the unit identities of every unit it links against, in canonical order;
+- the **external identities** of every unit it links against, in canonical order. Folding the external rather than the full identity is what keeps a dependency's internal-only change from rebaking its dependents; folding the full identity would be sound but would propagate every private edit through the closure;
 - for units that consume provider outputs, the receipt identity of each admitted provider (build script or procedural macro) whose generated inputs, cfgs, environment values, or link directives it consumes;
 - for units with native inputs, the digests of the native libraries and headers the unit links or includes.
 
 A unit identity must not include absolute paths, timestamps, hostnames, user names, publication signatures, or the identity of the plan that requested it. Oven must remap source paths so that the same source at two locations produces the same identity, and must derive the compiler's unit disambiguator (the metadata hash it embeds) from the unit identity rather than from the package version, so that a version-only republication of unchanged code yields the same unit.
 
+**External identity.** A unit's external identity must be a `sha256:` digest over the same inputs as its unit identity, with the source input narrowed to the unit's *resilience boundary*: the public declarations it exports, plus the bodies of those a consumer can instantiate or inline (generic, `#[inline]`, and `const` items), plus everything reachable from those bodies whatever its visibility. Visibility marks the roots; reachability decides membership, and RFC 106's graph is what computes it. A private declaration a public generic calls is part of the external identity — an instance of the rule, not an exception to it.
+
+Every other identity input — toolchain, target, domain, profile facts, features, artifact kind, provider receipts, native inputs — enters the external identity unchanged, because all of them are observable by a dependent.
+
+Where the boundary cannot be determined, a unit's external identity must equal its unit identity. Erring toward equality means erring toward rebaking, which costs time; erring the other way yields a wrong build. This is the same lower-bound discipline RFC 106 imposes on reachability, applied to identity.
+
 **Acceptance case.** A package republished at a new version whose compiled sources, observed manifest facts, features, dependencies, and provider outputs are byte-identical must resolve to the same unit identity and reuse the existing unit. A package whose new version is observed by its own code, for example through a version macro, legitimately produces a new identity, and the identity inputs make that visible.
+
+**Acceptance case.** Editing a comment or a docstring, reordering two declarations, or moving a declaration between files within one unit, with no other change, must yield the same unit identity and reuse the existing unit.
+
+**Acceptance case.** Changing the body of a private function that no public generic or inlinable item reaches must change the unit's identity and not its external identity: the unit is rebaked, its dependents are not.
 
 Two units with equal unit identity must be treated as interchangeable, subject to the payload rule below. Oven must never substitute units whose identities differ, regardless of package name, version, or apparent compatibility.
 
