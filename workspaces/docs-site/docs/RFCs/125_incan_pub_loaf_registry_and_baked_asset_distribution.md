@@ -146,7 +146,7 @@ Every source Loaf must be signed by its publisher. Signing uses keyless certific
 
 ### Baked assets
 
-A baked asset is a `*.loaf` produced by Oven from exactly one source publication: a signed source Loaf, or an external-source record for a crates.io crate. Its receipt must record the source digest, the toolchain identity, the target triple, the profile, the host and target domains, and for every unit it carries the RFC 124 unit identity and payload digest. Two digests name an asset and must not be conflated: the **archive digest** is the SHA-256 of the asset archive and is what the asset manifest, attestation, and transport verify; the **unit identities** inside it are what admission compares against a plan.
+A baked asset is a `*.loaf` produced by Oven from exactly one source publication: a signed source Loaf, or an external-source record for a crates.io crate. Its receipt must record the source digest, the toolchain identity, the target triple, the profile, the host and target domains, and for every unit it carries the RFC 124 unit identity and payload digest. An asset is one compiled unit: the exchanged object is the RFC 124 unit, and the per-version asset manifest is the only bundle. A Loaf version therefore has as many assets per target and closure as it has units (typically one library unit and a few companions such as a host proc-macro build or a metadata-only check unit), each addressed by its unit identity, and a consumer downloads exactly the units its plan misses. This is the mainstream registries' model of one object per package per variant, with the variant tag replaced by the identity Rust requires. A registry may later offer packs, several units in one archive still addressed by their unit identities, as a cold-start optimisation; a pack changes no identity and no admission rule. Two digests name an asset and must not be conflated: the **archive digest** is the SHA-256 of the asset archive and is what the asset manifest, attestation, and transport verify; the **unit identity** and payload digest inside it are what admission compares against a plan.
 
 Every asset must carry an attestation that binds the asset digest to the source Loaf digest and the toolchain identity, and names the builder. Builder kinds are:
 
@@ -245,7 +245,7 @@ The Rust facet is what makes Rust-only publication possible. Asset applicability
 
 ### Interaction with RFC 124
 
-RFC 124 is the normative source for unit identity, the separation of publication provenance from compilation identity, staged identity completion, and the store's sharing and collection behaviour. This RFC depends on it: asset admission is unit-identity equality, discovery facts only narrow the search, and the store that receives imports is the store RFC 124 defines. Whether assets are offered per unit, per package bundle, or both is an open question shared between the two RFCs.
+RFC 124 is the normative source for unit identity, the separation of publication provenance from compilation identity, staged identity completion, and the store's sharing and collection behaviour. This RFC depends on it: asset admission is unit-identity equality, discovery facts only narrow the search, and the store that receives imports is the store RFC 124 defines. Assets are units and manifests are the only bundles, as decided in both RFCs.
 
 ### Interaction with RFC 123
 
@@ -310,7 +310,6 @@ Non-normative. The registry client belongs in Oven's build-system ring rather th
 - How is a Rust-facet Loaf from `incan.pub` imported in Incan source? The dependency key selects the registry; whether `rust::` or `pub::` selects the surface needs a rule.
 - How are scopes claimed and verified: free claim on first publish, linked to a source-forge organisation, or both with different display?
 - What is the retention policy for assets whose toolchain is no longer supported, given that source Loaves are retained forever?
-- Should assets be offered per unit, per package bundle, or both? Per-unit assets maximise cross-project hits; bundles keep the asset manifest small. Shared with RFC 124.
 - Should running a published tool without a project (`oven run <scope>/<name>@<version>`) be defined here or in an RFC 118 amendment?
 - Which documentation asset format does the web surface render, and does RFC 082 define it?
 - What staleness bound should clients apply to checkpoints by default, and how is a root-key rotation delivered to clients whose pinned root is the old one: through the toolchain release, through a signed rotation event accepted under the old root, or both?

@@ -187,7 +187,7 @@ A native unit in the store is evidence of a compilation, not of source or semant
 
 ### Relationship to RFC 125
 
-RFC 125 assumes a store that shares units and states so only in non-normative text. This RFC is the normative source for that property. RFC 125's applicability rule, that an asset is usable only when the plan's facts equal the receipt's facts, is the unit identity rule stated at the granularity of a published bundle.
+RFC 125 assumes a store that shares units and states so only in non-normative text. This RFC is the normative source for that property. Registry assets are units: the object RFC 125 exchanges is the unit defined here, addressed by its unit identity, and a package version's asset manifest is the only bundling construct, so import and export are store insert and store export with no repackaging. RFC 125's applicability rule, that an asset is usable only when the plan's facts equal the receipt's facts, is the unit identity rule stated at the granularity of a published bundle.
 
 ### Relationship to RFC 020
 
@@ -242,7 +242,6 @@ Non-normative. The identity computation belongs in the planner, computed bottom-
 - Which codegen flags are identity inputs, and should they enter the identity verbatim or as a normalised profile description so that spelling differences do not defeat sharing?
 - How are native inputs of system-binding units (the `-sys` convention) identified when they come from the system rather than from a package: by digest of the resolved library files, by a declared toolchain fact, or by marking such units machine-local?
 - Should build-script executables be shared units in their own right, or always rebaked and only their captured output made part of the consuming unit's identity?
-- Should RFC 125 offer assets per unit, per package bundle, or both, given that per-unit assets maximise hits and per-package bundles minimise index size?
 - What is the default collection policy: explicit only, capacity-triggered, age-based, or a combination, and how is it configured?
 - When two bakes of equal identity produce different payloads, is retaining both and marking the identity machine-local sufficient, or should Oven attempt to classify the nondeterminism (debug information, symbol ordering) and treat some classes as benign?
 - Which manifest facts count as observed by compilation? A version string read through an environment macro clearly does; the exact list of facts the compiler embeds in its metadata output without the code asking for them needs enumerating so the identity neither misses one nor includes ones that never reach output.
