@@ -98,7 +98,8 @@ def allowed(
     field: list[str],
 ) -> Result[None, IntakeError]:
     """Reject the first unsupported literal key in deterministic order."""
-    # Materialize keys before sorting while iterator sorting emission is repaired (#1461).
+    # TODO: sort the iterator directly once #1461 and #1464 are fixed. Sorting `values.keys()` emits an
+    # unsortable Rust iterator, and a list of keys emits an undefined function, so the keys are materialized.
     for key in sorted([key for key in values.keys()]):
         if key not in keys:
             return Err(refusal(manifest, field + [key], IntakeErrorKind.Unsupported, "intent is outside local intake"))
@@ -149,7 +150,8 @@ pub def parse_document(raw: bytes, manifest: str) -> Result[ManifestDocument, In
             assert document.intent.name == "catalog"
     """
     source = str(from_utf8(raw).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, str(error)))?)
-    # Preserve authored evaluation order while #1462 is open.
+    # TODO: inline this binding once #1462 is fixed. Named constructor arguments reorder evaluation and can
+    # move a value before an earlier argument reads it, so the parse is sequenced explicitly.
     intent = parse_intent(source, manifest)?
     digest = sha256.digest(raw)
     evidence = ManifestEvidence(path=manifest, raw_bytes=raw, source=source, sha256_digest=digest)

@@ -91,7 +91,8 @@ pub def test_superset_selection_preserves_evidence() -> None:
             assert selected.candidate_evidence_id == "evidence:broad"
             assert selected.plan_identity == "plan:broad"
             assert selected.build_unit_identity == "unit:broad"
-            # #1470: a local expected value preserves equality while inline constructors fail emission.
+            # TODO: inline this constructor into the assertion and delete the binding. #1470 is fixed, so the
+            # workaround is stale; it stays until this tree compiles and the change can be verified.
             expected = CapabilityExcess(providers=0, modules=1, facets=1, direct_links=0)
             assert selected.excess == expected
 
@@ -231,7 +232,8 @@ pub def test_each_runtime_field_is_exact() -> None:
 pub def test_native_features_are_exact_validated_sets() -> None:
     """Missing, extra or duplicate features refuse; reordering identical features preserves compatibility."""
     selected = candidate("selected", [], features=["alpha", "beta"])
-    # #1471: retain explicit nested element types through loop collection lowering.
+    # TODO: drop the explicit type annotation and delete this comment. #1471 is fixed, so the workaround is
+    # stale; it stays until this tree compiles and the change can be verified.
     feature_cases: list[list[str]] = [[], ["alpha"], ["alpha", "beta", "gamma"]]
     for required in feature_cases:
         require_error(request([selected], [], features=required), SelectionErrorKind.NoCompatibleCandidate)
