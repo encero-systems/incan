@@ -145,6 +145,7 @@ name = "weather_service"
 version = "0.6.0"
 description = "A service that happens to use Incan and Rust sources"
 requires-incan = ">=0.6,<0.7"
+requires-oven = ">=0.6"
 
 [dependencies]
 web = { loaf = "stdlib-web", version = "^0.6" }
@@ -225,6 +226,8 @@ root = "sources/rust"
 
 The roots must not overlap. Generated output is not an authored source root. The root's package/target authority remains in `loaf.toml`; neither source facet can select a different lock, registry, target, policy, or carrier.
 
+Each built-in facet participates in a bake through one contract, the **facet provider**: given the selected sources, the resolved dependency graph, and the plan's target and profile facts, a facet provider contributes units to the RFC 119 unit graph, each with its role, host or target domain, declared inputs, and the identity facts RFC 124 requires, and nothing else. The Rust facet provider is RFC 119's native Rust build. The Incan facet provider consumes the compiler service (checked analysis, emitted Rust, and the RFC 123 representation) and contributes the resulting units. Oven's resolver, planner, store, executor, and registry client depend on the facet-provider contract only, never on a facet's compiler, so a Loaf with no Incan facet is built by an Oven that links no Incan compiler.
+
 C is not a peer top-level source namespace. When a C integration needs authored shim source, it remains behind the deliberate C interop contract:
 
 ```toml
@@ -243,13 +246,15 @@ Loaf package  -> incan.pub
 Rust crate    -> crates.io
 ```
 
-Users or organizations explicitly register additional registries in Oven-controlled user or organization configuration. Registry configuration identifies the registry kind, endpoint/index, trust policy, and a reference to credentials held outside the project.
+Users or organizations explicitly register additional registries in Oven-controlled user or organization configuration. Registry configuration identifies the registry kind, its identity (a registry id derived from a pinned root public key, per RFC 125), one or more endpoints that serve that registry's signed content, trust policy, and a reference to credentials held outside the project. Endpoints are transport: any endpoint whose content verifies under the pinned root is the registry, so a mirror is an additional endpoint, not a separate trust decision.
 
 ```toml
 # Illustrative Oven user/organization configuration, not loaf.toml.
 [registries.encero]
 kind = "loaf"
-index = "https://packages.encero.dev/index"
+id = "sha256:9f3a…"                 # digest of the root key; never changes
+root-keys = ["ed25519:MCow…"]       # pinned; rotated only through signed events
+endpoints = ["https://packages.encero.dev", "https://mirror.example.org/encero"]
 trust = "require-signature"
 
 [registries.internal-cargo]
@@ -343,7 +348,7 @@ Oven must not parse, merge, or infer dependency, feature, source, workspace, bui
 
 `[project]` retains the project identity and publication fields from RFC 015: name, version, description, authors, maintainers, license, license files, readme, homepage, repository, documentation, issues, keywords, classifiers, toolchain constraint, privacy, entry points, and public features.
 
-`requires-incan` remains an enforceable project compatibility requirement under RFC 073. It is a language/toolchain compatibility fact, not a claim that all implementation sources must be Incan.
+`requires-incan` remains an enforceable project compatibility requirement under RFC 073. It is a language/toolchain compatibility fact, not a claim that all implementation sources must be Incan. `requires-oven` states the minimum Oven version whose plan, lock, and receipt contracts the project relies on; a Rust-only Loaf may declare it without `requires-incan`. Both are published to the registry index so a resolver can skip versions the installed toolchain cannot build (RFC 125).
 
 An Incan-only or Rust-only project uses its conventional `src/` layout without a source declaration. A project that contains both built-in source languages, uses nonstandard roots, or needs an authored C shim must declare the relevant non-overlapping root: `[incan.source]`, `[rust.source]`, or `[interop.c.source]`. A Loaf must diagnose `.incn` and `.rs` files in one undiscriminated root; it must not apply filename precedence. Generated inputs remain declared provider outputs rather than source roots.
 
@@ -379,12 +384,12 @@ Workspace inheritance remains explicit. A workspace may own a dependency identit
 
 1. Oven provides the built-in origins `incan.pub` for `loaf` dependencies and crates.io for `crate` dependencies.
 2. Additional registries are registered through Oven-controlled user or organization configuration, never by an unreviewed dependency or an implicit network lookup.
-3. A registry registration must declare a stable identity, unit kind/protocol, endpoint/index, and trust policy. Credentials are referenced from secure user/organization storage rather than copied into project files.
+3. A registry registration must declare a stable identity, unit kind/protocol, endpoint/index, and trust policy. For `loaf` registries the identity is a registry id derived from a pinned root public key and the registration may list several endpoints, all equivalent once their content verifies (RFC 125); for `crate` registries the identity is the sparse index URL. Credentials are referenced from secure user/organization storage rather than copied into project files.
 4. A Loaf or workspace may allow-list registered registry identities. It may select an allowed alias but may not define credentials, rebind an alias, or weaken a user/organization trust policy.
 5. The lock records canonical registry identity, protocol, exact resolved package/crate/provider identity, version, immutable digest, source reference, and signature/trust outcome. An alias alone is insufficient for reproducibility or audit.
 6. Resolution in locked or offline mode must not query an unrecorded registry, substitute an ambient local package, or accept a source with different trust facts.
 
-RFC 034 remains the protocol and publication authority for `incan.pub`; this RFC defines how `incan.pub` participates in the generic Loaf graph. A future Cargo-registry adapter must respect Cargo registry identity and integrity semantics without making Cargo the authority for a Loaf bake.
+RFC 125 (superseding RFC 034) is the protocol and publication authority for `incan.pub`; this RFC defines how `incan.pub` participates in the generic Loaf graph. A future Cargo-registry adapter must respect Cargo registry identity and integrity semantics without making Cargo the authority for a Loaf bake.
 
 ### Targets, carriers, profiles, and delivery policy
 

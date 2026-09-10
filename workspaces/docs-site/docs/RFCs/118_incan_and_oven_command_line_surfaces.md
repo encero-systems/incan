@@ -110,6 +110,9 @@ oven action run generate-client --dry-run
 oven inspect receipt
 oven update
 oven publish
+oven yank widgets 0.4.0 --reason "panics on empty input"
+oven store status
+oven store gc
 ```
 
 These commands operate on a selected Loaf or workspace closure. They discover `loaf.toml`, resolve the typed dependency graph, apply inherited workspace authority, and report a plan before effects where policy requires it.
@@ -178,8 +181,8 @@ Cargo compatibility is a clearly selected mode for a directory with `Cargo.toml`
 | Parsing, checking, formatting, compiler diagnostics                                | `incan`         | `check`, `fmt`                                           |
 | Language services and semantic products                                            | `incan`         | `lsp`, `inspect`, `codegraph`, `architect`               |
 | Manifest and workspace selection                                                   | `oven`          | `init`, `new`, member selection                          |
-| Dependency, lock, and registry lifecycle                                           | `oven`          | `add` (shorthand for `dependency add`), `dependency`, `remove`, `update`, `lock`, `registry`, `publish` |
-| Target, carrier, provider, and artifact lifecycle                                  | `oven`          | `plan`, `build`, `bake`, `run`, `test`, `inspect`        |
+| Dependency, lock, and registry lifecycle                                           | `oven`          | `add` (shorthand for `dependency add`), `dependency`, `remove`, `update`, `lock`, `registry`, `login`, `publish`, `yank` |
+| Target, carrier, provider, and artifact lifecycle                                  | `oven`          | `plan`, `build`, `bake`, `run`, `test`, `inspect`, `store` (`status`, `verify`, `gc`) |
 | Environments, typed actions, project mutations                                     | `oven`          | `env`, `action`, `starter`, `mix`                        |
 | Cargo compatibility                                                                | `oven`          | `cargo`                                                  |
 
