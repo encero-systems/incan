@@ -251,6 +251,11 @@ impl Omega {
         digest_map(BASE)?,
         "a declaration's position in its file must not reach any digest"
     );
+    assert_eq!(
+        digest_rust_source(MODULE, reordered)?.items(),
+        digest_rust_source(MODULE, BASE)?.items(),
+        "entries must come back in an order derived from their keys, not from the file"
+    );
     Ok(())
 }
 
@@ -557,6 +562,54 @@ pub struct After;
         single_of(original, None, RustDigestItemKind::Struct, "After")?,
         single_of(&revised, None, RustDigestItemKind::Struct, "After")?,
         "the declaration after the macro must be untouched by it"
+    );
+    Ok(())
+}
+
+/// Group delimiters must reach the digest, because they carry meaning on their own.
+///
+/// `(1, 2)` and `[1, 2]` are a tuple and an array. Their tokens are identical — `1`, `,`, `2` — and only the
+/// delimiter around them differs, so an encoding that recorded a group's contents without its delimiter would hash
+/// two different types the same. That is under-invalidation, so it gets its own test rather than relying on some
+/// other fixture happening to vary a delimiter.
+#[test]
+fn group_delimiters_reach_the_digest() -> Result<(), Box<dyn Error>> {
+    let tuple = "pub fn probe() {\n    let value = (1, 2);\n    let _ = value;\n}\n\npub struct After;\n";
+    let array = "pub fn probe() {\n    let value = [1, 2];\n    let _ = value;\n}\n\npub struct After;\n";
+
+    assert_ne!(
+        single_of(tuple, None, RustDigestItemKind::Function, "probe")?.digest,
+        single_of(array, None, RustDigestItemKind::Function, "probe")?.digest,
+        "a tuple and an array differ only by delimiter and must not share a digest"
+    );
+    assert_eq!(
+        single_of(tuple, None, RustDigestItemKind::Struct, "After")?,
+        single_of(array, None, RustDigestItemKind::Struct, "After")?,
+        "the declaration after the edit must be untouched by it"
+    );
+    Ok(())
+}
+
+/// Encoded tokens must be length-delimited, so a token boundary cannot be forged.
+///
+/// Each token contributes a kind tag followed by its text. Without a length between them, the single identifier
+/// `aIb` encodes as `I` `a` `I` `b` — byte for byte what the two identifiers `a` and `b` encode as, because `I` is
+/// the identifier tag. Macro token soup is where two adjacent identifiers and one longer identifier are both
+/// ordinary, so that is where the collision would actually be reachable.
+#[test]
+fn encoded_tokens_are_length_delimited() -> Result<(), Box<dyn Error>> {
+    let joined = "pub fn probe() {\n    stub!(aIb);\n}\n\npub struct After;\n";
+    let split = "pub fn probe() {\n    stub!(a b);\n}\n\npub struct After;\n";
+
+    assert_ne!(
+        single_of(joined, None, RustDigestItemKind::Function, "probe")?.digest,
+        single_of(split, None, RustDigestItemKind::Function, "probe")?.digest,
+        "one identifier and two identifiers must not encode to the same bytes"
+    );
+    assert_eq!(
+        single_of(joined, None, RustDigestItemKind::Struct, "After")?,
+        single_of(split, None, RustDigestItemKind::Struct, "After")?,
+        "the declaration after the edit must be untouched by it"
     );
     Ok(())
 }
