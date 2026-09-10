@@ -188,7 +188,7 @@ profile = "release"
 
 A virtual workspace omits `[project]` and retains `[workspace]`. Every member has its own `loaf.toml`; no member is inferred merely because it lives under `loaves/` or a nested group beneath it. A Rust-only member remains a Rust crate in its own source facet; `loaves/` is the repository's package hierarchy, not a replacement name for Rust compilation units.
 
-The directory name is a repository convention, not an identity rule. A member can live anywhere inside the workspace root if it is explicitly included by `members`.
+The directory name is a repository convention, not an identity rule. A member can live anywhere inside the workspace root if it is explicitly included by `members`. `default-members` is what an Oven command acts on when no member is selected; the selection flags themselves (`-p`, `--workspace`, `--exclude`, `--delivery`) are defined once in RFC 118 and shared by every command.
 
 ### Nested `loaves/` groups
 

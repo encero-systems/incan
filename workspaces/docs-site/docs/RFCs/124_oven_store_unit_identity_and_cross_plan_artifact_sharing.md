@@ -118,7 +118,7 @@ When RFC 125 is in place, a unit that arrives from `incan.pub` shows in `oven st
 
 ### Compiled units
 
-A compiled unit is the durable output of one compiler invocation for one unit of a Loaf in one domain, together with the metadata needed to compile and link against it. Unit kinds are library, procedural macro, build-script executable with its captured output, binary, and test harness. Every unit must record its host or target domain as RFC 119 defines them. A build-script's captured output (emitted cfgs, link directives, environment) is part of the unit that consumes it, not a separate shared object.
+A compiled unit is the durable output of one compiler invocation for one unit of a Loaf in one domain, together with the metadata needed to compile and link against it. Unit kinds are library, procedural macro, build-script executable with its captured output, binary, test harness, and metadata-only (the check-only output of `oven check`, which carries the compiler's metadata and no code; its identity includes the check-only emission mode so it never substitutes for a full unit, while a full unit may satisfy a later check). Every unit must record its host or target domain as RFC 119 defines them. A build-script's captured output (emitted cfgs, link directives, environment) is part of the unit that consumes it, not a separate shared object.
 
 ### Unit identity
 
