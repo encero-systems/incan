@@ -624,7 +624,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<Output>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -690,7 +690,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
     }
     fn collect(&mut self) -> Result<Vec<Output>, E> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<Output> = vec![];
+        let mut items: Vec<Output> = Vec::<Output>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
@@ -1071,7 +1071,7 @@ impl<
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<Output>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -1131,7 +1131,7 @@ impl<
     }
     fn collect(&mut self) -> Result<Vec<T>, E> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<T> = vec![];
+        let mut items: Vec<T> = Vec::<T>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
@@ -1572,7 +1572,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<Output>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -1638,7 +1638,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
     }
     fn collect(&mut self) -> Result<Vec<Output>, E> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<Output> = vec![];
+        let mut items: Vec<Output> = Vec::<Output>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
@@ -1976,7 +1976,7 @@ for TakeFallibleIterator<T, E, Source> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<Output>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -2030,7 +2030,7 @@ for TakeFallibleIterator<T, E, Source> {
     }
     fn collect(&mut self) -> Result<Vec<T>, E> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<T> = vec![];
+        let mut items: Vec<T> = Vec::<T>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
@@ -2385,7 +2385,7 @@ impl<
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<Output>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -2442,7 +2442,7 @@ impl<
     }
     fn collect(&mut self) -> Result<Vec<T>, E> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<T> = vec![];
+        let mut items: Vec<T> = Vec::<T>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
@@ -2844,7 +2844,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<Output>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -2913,7 +2913,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
     }
     fn collect(&mut self) -> Result<Vec<T>, MappedError> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<T> = vec![];
+        let mut items: Vec<T> = Vec::<T>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
@@ -3296,7 +3296,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<Output>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -3359,7 +3359,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
     }
     fn collect(&mut self) -> Result<Vec<T>, E> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<T> = vec![];
+        let mut items: Vec<T> = Vec::<T>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
@@ -5037,7 +5037,7 @@ impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
         if self.size <= 0 {
             raise_value_error("iterator batch size must be greater than zero".into());
         }
-        let mut items: Vec<T> = vec![];
+        let mut items: Vec<T> = Vec::<T>::new();
         while ::std::convert::identity(items.len() as i64) < self.size {
             let _ = match self.source.__next__() {
                 Some(item) => items.push(item.clone()),
@@ -5099,7 +5099,7 @@ impl<T: Clone, Source: Iterator<T>> Iterator<Vec<T>> for BatchIterator<T, Source
         if self.size <= 0 {
             raise_value_error("iterator batch size must be greater than zero".into());
         }
-        let mut items: Vec<T> = vec![];
+        let mut items: Vec<T> = Vec::<T>::new();
         while ::std::convert::identity(items.len() as i64) < self.size {
             let _ = match self.source.__next__() {
                 Some(item) => items.push(item.clone()),
