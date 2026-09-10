@@ -95,6 +95,8 @@ model CompatibilityFacts:
 
 def input_sections() -> list[str]:
     """The complete set of input sections a request must carry, named once for shape and absence checks alike."""
+    # TODO: make this a module const once #1488 is fixed. A const list is `FrozenList[str]`, which `exact` does
+    # not accept, and the `list[str]` annotation that would say otherwise is silently ignored.
     return ["compiler", "command", "source", "native", "search", "generated", "output"]
 
 
