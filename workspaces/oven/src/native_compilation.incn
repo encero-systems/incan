@@ -693,7 +693,9 @@ def require_member(
     """Resolve a supplied logical slot in the same checked table; missing facts never trigger discovery."""
     for row in values:
         if string(row[0], path)? == name:
-            return Ok(row)
+            # TODO: return `row` directly once #1489 is fixed. Returning the loop variable of a list-of-lists
+            # emits a borrow where an owned value is required, so the generated Rust does not compile.
+            return Ok(row.clone())
     return Err(CompilationError(fields=path + [name]))
 
 

@@ -15,7 +15,11 @@ def exchange(request_path: str, response_path: str) -> Result[None, str]:
 
 pub def main() -> None:
     """Accept exactly a request and response path; IO failure exits without claiming selection."""
-    arguments: list[str] = [argument for argument in args()]
+    # TODO: use a comprehension once #1490 is fixed. A comprehension over a `rust::` iterator emits
+    # `.iter()`, which `std::env::Args` does not have; a plain loop lowers correctly.
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
     if len(arguments) != 3:
         println("usage: plan_json_main REQUEST RESPONSE")
         exit(2)
