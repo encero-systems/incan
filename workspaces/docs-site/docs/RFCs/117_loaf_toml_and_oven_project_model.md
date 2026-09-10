@@ -465,7 +465,7 @@ The following authored concepts move into `loaf.toml` under Oven ownership. Thei
 | typed workflow actions                        | RFC 078        | resolve scope, show plan, policy-gate, and execute explicit actions            |
 | mutation policy                               | RFC 076        | evaluate receiver authority over planned changes/effects                       |
 
-RFC 015 is implemented, so RFC 117 supersedes its `incan.toml` discovery and `[tool.incan.envs]` configuration placement. RFCs 073, 076, and 078 are still Draft and must be amended to name the new Loaf tables and terminology rather than preserving legacy configuration compatibility.
+RFC 015 is implemented, so RFC 117 supersedes its `incan.toml` discovery and `[tool.incan.envs]` configuration placement. RFCs 073, 076, and 078 were brought into the v0.6 scope on 2026-09-10 and amended to name the `[envs]`, `[policy]`, and `[actions]` roots and RFC 118 command surfaces; they carry no legacy configuration compatibility.
 
 The initial table roots are `[envs]`, `[actions]`, `[policy]`, `[mixes]`, and `[templates]`. Their dedicated RFCs own the detailed schema and semantics. No `[oven.*]` prefix is needed: a `loaf.toml` is already Oven's authored project document, and roots should name their semantic domain instead. They must remain explicit, scoped, inspectable, and free of implicit lifecycle execution. RFC 118 owns whether users invoke those semantics through `incan`, `oven`, aliases, or another command arrangement.
 

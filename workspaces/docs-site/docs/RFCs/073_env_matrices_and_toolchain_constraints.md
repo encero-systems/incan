@@ -14,6 +14,7 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/401
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
+- **Target scope:** v0.6, slice 5 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[envs]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
@@ -29,7 +30,7 @@ Read this RFC as four foundations plus three mechanisms:
 3. **Foundation:** A matrix env is still one named env in the manifest, but it expands into multiple concrete env instances at execution time.
 4. **Foundation:** Matrix orchestration belongs to Oven, not to the test runner. RFC 019 remains the owner of test collection, parametrization, fixtures, reporting, and parallel test execution semantics.
 5. **Mechanism A:** Execution commands compute an effective `requires-incan` constraint and fail early when the active toolchain does not satisfy it, while inspection commands surface compatibility without being blocked by it.
-6. **Mechanism B:** `[[oven.envs.<name>.matrix]]` in `loaf.toml` declares one or more axes that generate concrete env instances by Cartesian product.
+6. **Mechanism B:** `[[envs.<name>.matrix]]` in `loaf.toml` declares one or more axes that generate concrete env instances by Cartesian product.
 7. **Mechanism C:** Selecting a concrete env instance runs one resolved env; selecting a matrix root env runs the target script across all generated env instances in deterministic order.
 
 ## Motivation
@@ -97,10 +98,10 @@ name = "foo_bar"
 version = "0.3.0"
 requires-incan = ">=0.3,<0.5"
 
-[oven.envs.release]
+[envs.release]
 requires-incan = ">=0.4,<0.5"
 
-[oven.envs.release.scripts]
+[envs.release.scripts]
 build = ["oven", "bake", "--locked"]
 ```
 
@@ -111,10 +112,10 @@ Now `oven env run release build` requires an active toolchain compatible with th
 A matrix environment defines one logical workflow that expands into multiple concrete envs:
 
 ```toml
-[oven.envs.compat]
+[envs.compat]
 scripts.test = ["oven", "test"]
 
-[[oven.envs.compat.matrix]]
+[[envs.compat.matrix]]
 incan = [
   { name = "0.3", requires-incan = ">=0.3,<0.4" },
   { name = "0.4", requires-incan = ">=0.4,<0.5" },
@@ -161,26 +162,23 @@ If an env script happens to be `["oven", "test"]`, the matrix only repeats the t
 
 ## Reference-level explanation
 
-### `requires-incan` grammar and validation
+### `requires-incan` and `requires-oven` grammar and validation
 
-Every `requires-incan` value must use the same SemVer requirement grammar accepted elsewhere in the manifest. Invalid requirement syntax makes the manifest invalid and must produce a targeted diagnostic.
+Every `requires-incan` and `requires-oven` value must use the same SemVer requirement grammar accepted elsewhere in the manifest. Invalid requirement syntax makes the manifest invalid and must produce a targeted diagnostic. `requires-oven` (RFC 117) is enforced with exactly the rules this section states for `requires-incan`: it intersects through the same layers, it is checked against the active Oven version before project-aware execution, and both requirements are published to the registry index (RFC 125) so a resolver can skip versions the installed toolchain cannot build. A Rust-only Loaf may declare `requires-oven` alone.
 
 ### Execution versus inspection commands
 
 The following commands must resolve the nearest project root and enforce an effective `requires-incan` constraint before beginning project-aware execution:
 
-- `oven run`
-- `oven bake`
-- `oven test`
-- `oven lock`
-- `oven env run`
-- any future Oven operation that reads a `loaf.toml` project
+- `oven run`, `oven build`, `oven bake`, `oven check`, `oven test`
+- `oven lock`, `oven update`, `oven add`, `oven publish`
+- `oven env run`, `oven action run`
+- any other Oven operation that compiles, executes, locks, publishes, or mutates a `loaf.toml` project (RFC 118)
 
 The following commands must resolve and report the effective constraint, but they must not require the active toolchain to satisfy it merely to inspect configuration:
 
-- `oven env list`
-- `oven env show`
-- `incan version`
+- `oven env list`, `oven env show`, `oven plan`, `oven inspect`
+- `incan check`, `incan version`
 - future read-only or manifest-maintenance commands that do not compile, execute, or lock project code
 
 If `[project].requires-incan` is absent, the project-level baseline constraint is unconstrained.
@@ -201,12 +199,12 @@ Commands that do not resolve a project root must not attempt to infer or enforce
 
 ### Environment schema additions
 
-This RFC adds the following optional fields to `[oven.envs.<name>]` in `loaf.toml`:
+This RFC adds the following optional fields to `[envs.<name>]` in `loaf.toml`:
 
 - `requires-incan: str`
 - `matrix: List[Table]`
 
-Each `[[oven.envs.<name>.matrix]]` table defines one matrix declaration. Multiple matrix tables are allowed; their generated cells are concatenated in declaration order rather than merged.
+Each `[[envs.<name>.matrix]]` table defines one matrix declaration. Multiple matrix tables are allowed; their generated cells are concatenated in declaration order rather than merged.
 
 Within a matrix table, each key is an axis name. Each axis value must be a non-empty list. Axis names must be unique within that matrix table.
 
@@ -372,11 +370,12 @@ This separation matters because the same concrete-env resolution should power `l
 - **Testing surface integration:** `oven env run ... test` must remain only an orchestration wrapper around RFC 019 semantics, not a second test-runner implementation.
 - **Documentation:** user docs and reference docs must explain the difference between project constraints, env constraints, root envs, and concrete matrix env instances.
 
-## Unresolved questions
+## Design decisions
 
-- Should matrix-root execution stop at the first failing concrete env by default, or should it continue through all cells and summarize failures at the end?
-- Should the lifecycle CLI eventually grow an explicit `--toolchain <version-or-path>` override, or should toolchain selection remain entirely external while this RFC remains a constraint-and-validation layer only?
-- Should `oven env list` eventually default to an expanded view when a project has only matrix envs, or is explicit `--expanded` always the better UX?
+Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Matrix-root execution stops at the first failing cell by default.** An explicit `--keep-going` continues through every cell and prints a per-cell summary at the end. The aggregate exit status is non-zero if any cell failed in either mode, the chosen mode is recorded in the receipt, and every Oven command that expands a matrix uses the same default. Stopping early is the conservative default for a tool whose other operations fail closed; the flag exists for CI.
+- **No `--toolchain` override.** Toolchain selection is a plan fact under RFC 117 and RFC 119, derived from the installed toolchain and the effective `requires-incan` and `requires-oven` constraints, and recorded in the receipt. A command-line override would let one invocation bypass a constraint the project declared, which is the failure this RFC exists to prevent. A future RFC may add explicit toolchain selection as a plan input; it will never be a constraint bypass.
+- **`oven env list` always shows root environments; `--expanded` is always explicit.** When a project has only matrix environments, the default listing shows each root with its cell count and the exact `--expanded` invocation, so the expanded view is one keystroke away without a mode that changes shape depending on manifest contents.
+
+Amendments made at the same time: the table root is `[envs]` (RFC 117), not `[oven.envs]`; `requires-oven` joins `requires-incan` with identical semantics; and the command lists reflect RFC 118's surfaces.
