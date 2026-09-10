@@ -13,6 +13,8 @@
     - RFC 082 (checked API documentation generation)
     - RFC 096 (declaration metadata blocks)
     - RFC 105 (architect rule engine)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
+    - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
 - **Issue:** #573
 - **RFC PR:** #766
 - **Written against:** v0.3
@@ -418,7 +420,9 @@ Graph export reads source code and may expose private structure to agents. Local
 
 ## One graph across Incan and Rust
 
-To Oven, a declaration is a declaration. It has an identity, a content digest, dependencies, and a compilation that produces it. Whether the surface syntax was Incan or Rust is a property of that declaration, not a different kind of thing. Incan is Rust and Rust is Incan at this layer, and the graph should say so.
+Oven already treats the two languages as one substrate. RFC 117 defines a project model whose package, target, lock, cache, and receipt model is language-neutral, and names Incan and Rust as its two built-in authored source facets; RFC 119 gives Rust an Oven-owned crate graph and direct-`rustc` plan on those same terms. A unit that Oven bakes has an identity, a content digest, dependencies, and a compilation that produces it, and which surface syntax it was authored in is a property of that unit rather than a different kind of unit.
+
+The graph should describe the same world. To Oven a declaration is a declaration; Incan is Rust and Rust is Incan at this layer, and a graph that partitions by language would be modelling a boundary the build system does not have.
 
 This is not an aspiration; it is what the schema already asserts. `CodegraphDeclarationRecord` and `CodegraphFileRecord` each carry a `language` field. Language is an attribute of a fact, and every relationship — containment, import, export, reference, call — is defined over facts rather than over languages.
 
