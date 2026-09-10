@@ -1,0 +1,710 @@
+"""
+Project checked native inputs while retaining physical admission and compilation provenance separately.
+
+The shared checked source projection supplies code members; this module adds no discovery or graph. The existing
+Engine returns a candidate index first, then a compilation key only after retained or current observations validate.
+"""
+
+from std.json import JsonValue, parse
+from std.traits.error import Error
+from std.hash import sha256
+from std.encoding.hex import hexlify
+from std.collections import OrdinalKey
+
+const SCHEMA: str = "incan.oven.native-compilation/2"
+const INDEX_DOMAIN: str = "incan.oven.native-compilation-candidates/2"
+const KEY_DOMAIN: str = "incan.oven.native-compilation-inputs/2"
+
+
+pub model CompilationError with Error:
+    """A malformed or contradictory field path, with no usable projection."""
+
+    pub fields: list[str]
+
+    def message(self) -> str:
+        """Describe the literal failure without claiming physical admission."""
+        return f"native compilation projection refused at {self.fields}"
+
+
+pub def evaluate(source: str) -> JsonValue:
+    """Decode one bounded Engine request; neither a lookup index nor a key grants execution."""
+    match parse(source):
+        Err(_) => return refused([])
+        Ok(document) => return evaluate_document(document)
+
+
+pub def evaluate_document(document: JsonValue) -> JsonValue:
+    """Evaluate an already decoded Engine request without reopening the wire representation."""
+    match project(document):
+        Err(error) => return refused(error.fields)
+        Ok(response) => return response
+
+
+pub def project(document: JsonValue) -> Result[JsonValue, CompilationError]:
+    """
+    Keep physical rebinding out of identity and project consumed env only after dep-info validation.
+
+    The candidate index deliberately omits observed effects and env: it finds original observations, not reusable
+    output. Current owners and the complete execution snapshot remain bound through the existing Engine exchange.
+    """
+    if text(document, "schema", [])? != SCHEMA:
+        return Err(CompilationError(fields=["schema"]))
+    exact(document, ["schema", "binding", "execution", "inputs", "evidence"], [])?
+    binding = field(document, "binding", [])?
+    exact(
+        binding,
+        ["request_id", "current_receipt_id", "original_receipt_id", "unit_owner_id", "observation_id"],
+        ["binding"],
+    )?
+    for key in ["request_id", "current_receipt_id", "unit_owner_id", "observation_id"]:
+        nonempty(text(binding, key, ["binding"])?, ["binding", key])?
+    original = field(binding, "original_receipt_id", ["binding"])?
+    if not original.is_null():
+        nonempty(string(original, ["binding", "original_receipt_id"])?, ["binding", "original_receipt_id"])?
+    inputs = field(document, "inputs", [])?
+    sections = ["compiler", "command", "source", "native", "search", "generated", "output"]
+    exact(inputs, sections, ["inputs"])?
+    evidence = field(document, "evidence", [])?
+    exact(evidence, ["dep_info", "host_effects", "path_effects"], ["evidence"])?
+    execution = field(document, "execution", [])?
+    exact(
+        execution,
+        ["invocation_id", "compiler", "cwd", "source_root", "source_files", "native_files", "search_paths", "generated_files", "output_root", "environment"],
+        ["execution"],
+    )?
+    for name in ["invocation_id", "compiler", "cwd", "source_root", "output_root"]:
+        nonempty(text(execution, name, ["execution"])?, ["execution", name])?
+    mut missing: list[str] = []
+    for name in sections:
+        if field(inputs, name, ["inputs"])?.is_null():
+            missing.append("missing_" + name + "_evidence")
+    if len(missing) > 0:
+        return Ok(uncacheable(binding, missing))
+
+    compiler_value = field(inputs, "compiler", ["inputs"])?
+    compiler = compiler_fields(compiler_value)?
+    source_value = field(inputs, "source", ["inputs"])?
+    source = source_fields(source_value)?
+    source_files = rows(field(source_value, "files", ["inputs", "source"])?, 2, [1], ["inputs", "source", "files"])?
+    native = native_rows(field(inputs, "native", ["inputs"])?)?
+    generated = rows(field(inputs, "generated", ["inputs"])?, 3, [1, 2], ["inputs", "generated"])?
+    for member in generated:
+        logical(string(member[0], ["inputs", "generated"])?, ["inputs", "generated"])?
+    effective_files = effective_source_members(source_files, generated)?
+    search = search_rows(field(inputs, "search", ["inputs"])?, native)?
+    command = command_fields(
+        field(inputs, "command", ["inputs"])?,
+        text(compiler_value, "target", ["inputs", "compiler"])?,
+        source_value,
+        native,
+        search,
+    )?
+    output = output_fields(field(inputs, "output", ["inputs"])?)?
+    physical_rows(field(execution, "source_files", ["execution"])?, source_files, 1, ["execution", "source_files"])?
+    physical_rows(field(execution, "native_files", ["execution"])?, native, 3, ["execution", "native_files"])?
+    physical_rows(field(execution, "generated_files", ["execution"])?, generated, 1, ["execution", "generated_files"])?
+    search_bindings(field(execution, "search_paths", ["execution"])?, search)?
+    environment = environment_rows(field(execution, "environment", ["execution"])?, ["execution", "environment"])?
+
+    index_material = JsonValue.array(
+        [JsonValue.string(INDEX_DOMAIN), compiler, command, source, row_json(native), row_json(search), row_json(
+            generated,
+        ), output],
+    )
+    index = content_hash(index_material)?
+    mut reasons: list[str] = []
+    if text(field(inputs, "command", ["inputs"])?, "crate_kind", ["inputs", "command"])? != "rlib":
+        reasons.append("unsupported_output_kind")
+    effects, effect_reasons = host_effects(field(evidence, "host_effects", ["evidence"])?)?
+    reasons.extend(effect_reasons)
+    paths, path_reasons = path_effects(field(evidence, "path_effects", ["evidence"])?, compiler_value, execution)?
+    reasons.extend(path_reasons)
+    consumed, dep_reasons = dep_info(
+        field(evidence, "dep_info", ["evidence"])?,
+        binding,
+        index,
+        source_value,
+        effective_files,
+        environment,
+    )?
+    reasons.extend(dep_reasons)
+    if len(reasons) > 0:
+        return Ok(
+            JsonValue.object(
+                {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("uncacheable"), "binding": binding, "reasons": texts(
+                    reasons,
+                ), "candidate_index": JsonValue.string(index), "index_material": index_material},
+            ),
+        )
+    validate_original_key(field(evidence, "dep_info", ["evidence"])?, index_material, effects, paths)?
+    material = JsonValue.array([JsonValue.string(KEY_DOMAIN), index_material, row_json(consumed), effects, paths])
+    return Ok(
+        JsonValue.object(
+            {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("cacheable"), "binding": binding, "candidate_index": JsonValue.string(
+                index,
+            ), "index_material": index_material, "compilation_key": JsonValue.string(content_hash(material)?), "key_material": material},
+        ),
+    )
+
+
+def compiler_fields(value: JsonValue) -> Result[JsonValue, CompilationError]:
+    """Bind compiler and supplying closure bytes; installation paths and version labels are admission facts."""
+    keys = ["binary_digest", "closure_digest", "host", "target"]
+    exact(value, keys, ["inputs", "compiler"])?
+    for key in keys:
+        nonempty(text(value, key, ["inputs", "compiler"])?, ["inputs", "compiler", key])?
+    for key in ["binary_digest", "closure_digest"]:
+        digest(text(value, key, ["inputs", "compiler"])?, ["inputs", "compiler", key])?
+    return ordered(value, keys, ["inputs", "compiler"])
+
+
+def source_fields(value: JsonValue) -> Result[JsonValue, CompilationError]:
+    """Consume the shared checked code-member projection, never a manifest/package or whole-delivery digest."""
+    keys = ["projection", "logical_root", "entrypoint", "files"]
+    exact(value, keys, ["inputs", "source"])?
+    if text(value, "projection", ["inputs", "source"])? != "checked_code_members_v1":
+        return Err(CompilationError(fields=["inputs", "source", "projection"]))
+    logical(text(value, "logical_root", ["inputs", "source"])?, ["inputs", "source", "logical_root"])?
+    entrypoint = text(value, "entrypoint", ["inputs", "source"])?
+    files = rows(field(value, "files", ["inputs", "source"])?, 2, [1], ["inputs", "source", "files"])?
+    for row in files:
+        logical(string(row[0], ["inputs", "source", "files"])?, ["inputs", "source", "files"])?
+    require_member(files, entrypoint, ["inputs", "source", "entrypoint"])?
+    return ordered(value, keys, ["inputs", "source"])
+
+
+def effective_source_members(
+    source: list[list[JsonValue]],
+    generated: list[list[JsonValue]],
+) -> Result[list[list[JsonValue]], CompilationError]:
+    """
+    Join the admitted code/resource and generated content tables for observation lookup only.
+
+    Each canonical input table remains unchanged in key material. An overlapping logical member must have the
+    same content digest; neither table can silently override the other's original checked facts.
+    """
+    mut members: list[list[JsonValue]] = []
+    members.extend(source)
+    for row in generated:
+        mut present: bool = false
+        for member in source:
+            if member[0].equals(row[0]):
+                if not member[1].equals(row[1]):
+                    return Err(
+                        CompilationError(fields=["inputs", "generated", string(row[0], ["inputs", "generated"])?]),
+                    )
+                present = true
+        if not present:
+            members.append([row[0], row[1]])
+    return Ok(members)
+
+
+def native_rows(value: JsonValue) -> Result[list[list[JsonValue]], CompilationError]:
+    """Retain logical slots, actual aliases/linkage roles and bytes; hidden members have no exposed alias."""
+    values = array(value, ["inputs", "native"])?
+    mut decoded: list[list[JsonValue]] = []
+    mut previous: str = ""
+    for index in range(len(values)):
+        path = ["inputs", "native", str(index)]
+        row = array(values[index], path)?
+        if len(row) != 4:
+            return Err(CompilationError(fields=path))
+        name = string(row[0], path + ["0"])?
+        logical(name, path + ["0"])?
+        if name <= previous:
+            return Err(CompilationError(fields=path + ["0"]))
+        previous = name
+        if not row[1].is_null():
+            nonempty(string(row[1], path + ["1"])?, path + ["1"])?
+        nonempty(string(row[2], path + ["2"])?, path + ["2"])?
+        digest(string(row[3], path + ["3"])?, path + ["3"])?
+        decoded.append(row)
+    return Ok(decoded)
+
+
+def search_rows(value: JsonValue, native: list[list[JsonValue]]) -> Result[list[list[JsonValue]], CompilationError]:
+    """Require canonical search-slot membership without deriving a graph or widening the admitted member set."""
+    values = array(value, ["inputs", "search"])?
+    mut decoded: list[list[JsonValue]] = []
+    mut previous: str = ""
+    for index in range(len(values)):
+        path = ["inputs", "search", str(index)]
+        row = array(values[index], path)?
+        if len(row) != 3:
+            return Err(CompilationError(fields=path))
+        name = string(row[0], path + ["0"])?
+        logical(name, path + ["0"])?
+        if name <= previous or string(row[1], path + ["1"])? not in ["dependency", "native"]:
+            return Err(CompilationError(fields=path))
+        previous = name
+        mut previous_member: str = ""
+        for item in array(row[2], path + ["2"])?:
+            member = string(item, path + ["2"])?
+            require_member(native, member, path + ["2"])?
+            if member <= previous_member:
+                return Err(CompilationError(fields=path + ["2"]))
+            previous_member = member
+        decoded.append(row)
+    return Ok(decoded)
+
+
+def command_fields(
+    value: JsonValue,
+    compiler_target: str,
+    source: JsonValue,
+    native: list[list[JsonValue]],
+    search: list[list[JsonValue]],
+) -> Result[JsonValue, CompilationError]:
+    """Require one exact typed invocation; raw paths, omitted slots and duplicate structure cannot enter its key."""
+    keys = ["cwd", "crate_name", "crate_kind", "edition", "arguments"]
+    exact(value, keys, ["inputs", "command"])?
+    for name in ["crate_name", "crate_kind", "edition"]:
+        nonempty(text(value, name, ["inputs", "command"])?, ["inputs", "command", name])?
+    if text(value, "cwd", ["inputs", "command"])? != "unit":
+        return Err(CompilationError(fields=["inputs", "command", "cwd"]))
+    crate_name = text(value, "crate_name", ["inputs", "command"])?
+    crate_kind = text(value, "crate_kind", ["inputs", "command"])?
+    edition = text(value, "edition", ["inputs", "command"])?
+    mut crate_names: int = 0
+    mut crate_kinds: int = 0
+    mut editions: int = 0
+    mut targets: int = 0
+    mut outputs: int = 0
+    mut sources: int = 0
+    mut dep_info_streams: int = 0
+    mut diagnostic_streams: int = 0
+    mut source_remaps: int = 0
+    mut toolchain_remaps: int = 0
+    mut externs: list[str] = []
+    mut searches: list[str] = []
+    mut search_remaps: list[str] = []
+    for item in array(field(value, "arguments", ["inputs", "command"])?, ["inputs", "command", "arguments"])?:
+        path = ["inputs", "command", "arguments"]
+        row = array(item, path)?
+        if len(row) < 2:
+            return Err(CompilationError(fields=path))
+        kind = string(row[0], path)?
+        name = string(row[1], path)?
+        if kind == "option":
+            if len(row) != 3 or name not in ["target", "edition", "crate-name", "crate-type", "cfg", "opt-level", "debuginfo", "strip", "panic", "codegen-units", "overflow-checks", "debug-assertions", "metadata", "extra-filename"]:
+                return Err(CompilationError(fields=path))
+            option = string(row[2], path)?
+            nonempty(option, path)?
+            if name == "crate-name":
+                if option != crate_name:
+                    return Err(CompilationError(fields=path))
+                crate_names += 1
+            elif name == "crate-type":
+                if option != crate_kind:
+                    return Err(CompilationError(fields=path))
+                crate_kinds += 1
+            elif name == "edition":
+                if option != edition:
+                    return Err(CompilationError(fields=path))
+                editions += 1
+            elif name == "target":
+                if option != compiler_target:
+                    return Err(CompilationError(fields=path))
+                targets += 1
+            continue
+        if len(row) != 2:
+            return Err(CompilationError(fields=path))
+        if kind == "switch":
+            if name == "dep-info-stdout":
+                dep_info_streams += 1
+            elif name == "json-diagnostics":
+                diagnostic_streams += 1
+            else:
+                return Err(CompilationError(fields=path))
+        elif kind == "source":
+            if name != text(source, "entrypoint", ["inputs", "source"])?:
+                return Err(CompilationError(fields=path))
+            sources += 1
+        elif kind == "extern":
+            member = require_member(native, name, path)?
+            if member[1].is_null() or name in externs:
+                return Err(CompilationError(fields=path))
+            externs.append(name)
+        elif kind == "search":
+            require_member(search, name, path)?
+            if name in searches:
+                return Err(CompilationError(fields=path))
+            searches.append(name)
+        elif kind == "remap-source":
+            if name != text(source, "logical_root", ["inputs", "source"])?:
+                return Err(CompilationError(fields=path))
+            source_remaps += 1
+        elif kind == "remap-toolchain":
+            if name != "incan-toolchain":
+                return Err(CompilationError(fields=path))
+            toolchain_remaps += 1
+        elif kind == "remap-search":
+            require_member(search, name, path)?
+            if name in search_remaps:
+                return Err(CompilationError(fields=path))
+            search_remaps.append(name)
+        elif kind == "output":
+            if name != "native":
+                return Err(CompilationError(fields=path))
+            outputs += 1
+        else:
+            return Err(CompilationError(fields=path))
+    mut expected_externs: int = 0
+    for member in native:
+        if not member[1].is_null():
+            expected_externs += 1
+    for count in [crate_names, crate_kinds, editions, targets, outputs, sources, dep_info_streams, diagnostic_streams, source_remaps, toolchain_remaps]:
+        if count != 1:
+            return Err(CompilationError(fields=["inputs", "command", "arguments"]))
+    if len(externs) != expected_externs or len(searches) != len(search) or len(search_remaps) != len(search):
+        return Err(CompilationError(fields=["inputs", "command", "arguments"]))
+    return ordered(value, keys, ["inputs", "command"])
+
+
+def output_fields(value: JsonValue) -> Result[JsonValue, CompilationError]:
+    """Preserve the observable Rlib filename while excluding the owner-scoped attempt/cache directory."""
+    exact(value, ["policy", "filename"], ["inputs", "output"])?
+    if text(value, "policy", ["inputs", "output"])? != "fixed_rlib_filename_v1":
+        return Err(CompilationError(fields=["inputs", "output", "policy"]))
+    filename = text(value, "filename", ["inputs", "output"])?
+    if not filename.endswith(".rlib") or filename == ".rlib":
+        return Err(CompilationError(fields=["inputs", "output", "filename"]))
+    for character in filename:
+        if character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-":
+            return Err(CompilationError(fields=["inputs", "output", "filename"]))
+    return ordered(value, ["policy", "filename"], ["inputs", "output"])
+
+
+def physical_rows(
+    value: JsonValue,
+    members: list[list[JsonValue]],
+    digest_index: int,
+    path: list[str],
+) -> Result[None, CompilationError]:
+    """Cross-check supplied execution members against logical content; original owner/lease validation stays in the kernel."""
+    physical = rows(value, 3, [2], path)?
+    if len(physical) != len(members):
+        return Err(CompilationError(fields=path))
+    for index in range(len(physical)):
+        if not physical[index][0].equals(members[index][0]) or not physical[index][2].equals(
+            members[index][digest_index],
+        ):
+            return Err(CompilationError(fields=path + [str(index)]))
+    return Ok(None)
+
+
+def search_bindings(value: JsonValue, search: list[list[JsonValue]]) -> Result[None, CompilationError]:
+    """Every logical search slot has one separately admitted physical directory, without a discovery fallback."""
+    physical = rows(value, 2, [], ["execution", "search_paths"])?
+    if len(physical) != len(search):
+        return Err(CompilationError(fields=["execution", "search_paths"]))
+    for index in range(len(physical)):
+        if not physical[index][0].equals(search[index][0]):
+            return Err(CompilationError(fields=["execution", "search_paths", str(index)]))
+    return Ok(None)
+
+
+def dep_info(
+    value: JsonValue,
+    binding: JsonValue,
+    index: str,
+    source: JsonValue,
+    files: list[list[JsonValue]],
+    environment: list[list[JsonValue]],
+) -> Result[tuple[list[list[JsonValue]], list[str]], CompilationError]:
+    """
+    Revalidate original observations at the same code/command/native index, then project current consumed env.
+
+    Current observations have no original receipt and must match the captured env. Retained observations keep
+    their old values and receipt; current values are looked up separately. Observed files must belong to the
+    admitted source/generated content union, including the source entrypoint.
+    """
+    kind = text(value, "kind", ["evidence", "dep_info"])?
+    if kind == "missing":
+        exact(value, ["kind"], ["evidence", "dep_info"])?
+        return Ok(([], ["missing_rustc_dep_info"]))
+    path = ["evidence", "dep_info"]
+    exact(value, ["kind", "candidate_index", "receipt_id", "original_compilation_key", "files", "environment"], path)?
+    if kind not in ["current", "retained"] or text(value, "candidate_index", path)? != index:
+        return Err(CompilationError(fields=path))
+    receipt = field(binding, "current_receipt_id", ["binding"])?
+    if kind == "retained":
+        original = field(binding, "original_receipt_id", ["binding"])?
+        if original.is_null() or not field(value, "receipt_id", path)?.equals(original):
+            return Err(CompilationError(fields=path + ["receipt_id"]))
+        digest(text(value, "original_compilation_key", path)?, path + ["original_compilation_key"])?
+    elif not field(value, "receipt_id", path)?.equals(receipt):
+        return Err(CompilationError(fields=path + ["receipt_id"]))
+    elif not field(binding, "original_receipt_id", ["binding"])?.is_null():
+        return Err(CompilationError(fields=["binding", "original_receipt_id"]))
+    elif not field(value, "original_compilation_key", path)?.is_null():
+        return Err(CompilationError(fields=path + ["original_compilation_key"]))
+    observed_files = rows(field(value, "files", path)?, 2, [1], path + ["files"])?
+    require_member(observed_files, text(source, "entrypoint", ["inputs", "source"])?, path + ["files"])?
+    for row in observed_files:
+        member = require_member(files, string(row[0], path + ["files"])?, path + ["files"])?
+        if not member[1].equals(row[1]):
+            return Err(CompilationError(fields=path + ["files"]))
+    observed_env = environment_rows(field(value, "environment", path)?, path + ["environment"])?
+    mut consumed: list[list[JsonValue]] = []
+    for row in observed_env:
+        name = string(row[0], path + ["environment"])?
+        current = environment_value(environment, name)?
+        if kind == "current" and not current.equals(row[1]):
+            return Err(CompilationError(fields=path + ["environment", name]))
+        consumed.append([row[0], current])
+    return Ok((consumed, []))
+
+
+def validate_original_key(
+    value: JsonValue,
+    index_material: JsonValue,
+    effects: JsonValue,
+    paths: JsonValue,
+) -> Result[None, CompilationError]:
+    """
+    A retained env-read set applies only in its original code/command/native/effect context.
+
+    Reconstruct the original key using its old observed values, never the current values. A changed effect context
+    cannot borrow an old env-read set merely because its broader candidate index is equal.
+    """
+    path = ["evidence", "dep_info"]
+    if text(value, "kind", path)? == "current":
+        return Ok(None)
+    original = JsonValue.array(
+        [JsonValue.string(KEY_DOMAIN), index_material, field(value, "environment", path)?, effects, paths],
+    )
+    if content_hash(original)? != text(value, "original_compilation_key", path)?:
+        return Err(CompilationError(fields=path + ["original_compilation_key"]))
+    return Ok(None)
+
+
+def path_effects(
+    value: JsonValue,
+    compiler: JsonValue,
+    execution: JsonValue,
+) -> Result[tuple[JsonValue, list[str]], CompilationError]:
+    """Require a path-effect record bound to this compiler closure and exact prepared invocation, not path guesses."""
+    path = ["evidence", "path_effects"]
+    if value.is_null():
+        return Ok((JsonValue.null(), ["missing_path_effects"]))
+    kind = text(value, "kind", path)?
+    if kind == "unknown":
+        exact(value, ["kind", "reasons"], path)?
+        return Ok((JsonValue.null(), unknown_reasons(value, "unbound_path_effect:", path)?))
+    exact(value, ["kind", "profile", "compiler_closure_digest", "invocation_id", "effects_digest"], path)?
+    if kind != "bound" or text(value, "profile", path)? != "checked_logical_paths_v1":
+        return Err(CompilationError(fields=path))
+    if not field(value, "compiler_closure_digest", path)?.equals(
+        field(compiler, "closure_digest", ["inputs", "compiler"])?,
+    ):
+        return Err(CompilationError(fields=path + ["compiler_closure_digest"]))
+    if not field(value, "invocation_id", path)?.equals(field(execution, "invocation_id", ["execution"])?):
+        return Err(CompilationError(fields=path + ["invocation_id"]))
+    digest(text(value, "effects_digest", path)?, path + ["effects_digest"])?
+    return Ok((ordered(value, ["profile", "effects_digest"], path)?, []))
+
+
+def host_effects(value: JsonValue) -> Result[tuple[JsonValue, list[str]], CompilationError]:
+    """Dep-info never proves completeness of opaque macro/build-script/native-tool effects."""
+    path = ["evidence", "host_effects"]
+    kind = text(value, "kind", path)?
+    if kind == "none":
+        exact(value, ["kind"], path)?
+        return Ok((texts(["none"]), []))
+    if kind == "observed":
+        exact(value, ["kind", "effects_digest"], path)?
+        digest(text(value, "effects_digest", path)?, path + ["effects_digest"])?
+        return Ok((ordered(value, ["kind", "effects_digest"], path)?, []))
+    if kind == "unknown":
+        exact(value, ["kind", "reasons"], path)?
+        return Ok((JsonValue.null(), unknown_reasons(value, "unobserved_host_effect:", path)?))
+    return Err(CompilationError(fields=path + ["kind"]))
+
+
+def unknown_reasons(value: JsonValue, prefix: str, path: list[str]) -> Result[list[str], CompilationError]:
+    """Missing evidence stays explicit rather than becoming an empty successful record."""
+    mut reasons: list[str] = []
+    for item in array(field(value, "reasons", path)?, path + ["reasons"])?:
+        reason = string(item, path + ["reasons"])?
+        nonempty(reason, path + ["reasons"])?
+        reasons.append(prefix + reason)
+    if len(reasons) == 0:
+        return Err(CompilationError(fields=path + ["reasons"]))
+    return Ok(reasons)
+
+
+def environment_value(environment: list[list[JsonValue]], name: str) -> Result[JsonValue, CompilationError]:
+    """Look up one consumed name in the complete captured env; omission proves absence only through that binding."""
+    for row in environment:
+        if string(row[0], ["execution", "environment"])? == name:
+            return Ok(row[1])
+    return Ok(JsonValue.null())
+
+
+def environment_rows(value: JsonValue, path: list[str]) -> Result[list[list[JsonValue]], CompilationError]:
+    """Preserve exact value digests and observed absence without logging private values."""
+    values = array(value, path)?
+    mut decoded: list[list[JsonValue]] = []
+    mut previous: str = ""
+    for item in values:
+        row = array(item, path)?
+        if len(row) != 2:
+            return Err(CompilationError(fields=path))
+        name = string(row[0], path)?
+        if name == "" or name <= previous:
+            return Err(CompilationError(fields=path))
+        previous = name
+        if not row[1].is_null():
+            digest(string(row[1], path)?, path)?
+        decoded.append(row)
+    return Ok(decoded)
+
+
+def rows(
+    value: JsonValue,
+    width: int,
+    digests: list[int],
+    path: list[str],
+) -> Result[list[list[JsonValue]], CompilationError]:
+    """Decode canonical unique string rows, with explicit digest columns and no first-wins deduplication."""
+    values = array(value, path)?
+    mut decoded: list[list[JsonValue]] = []
+    mut previous: str = ""
+    for item in values:
+        row = array(item, path)?
+        if len(row) != width:
+            return Err(CompilationError(fields=path))
+        for column in row:
+            nonempty(string(column, path)?, path)?
+        name = string(row[0], path)?
+        if name <= previous:
+            return Err(CompilationError(fields=path))
+        previous = name
+        for column in digests:
+            digest(string(row[column], path)?, path)?
+        decoded.append(row)
+    return Ok(decoded)
+
+
+def require_member(
+    values: list[list[JsonValue]],
+    name: str,
+    path: list[str],
+) -> Result[list[JsonValue], CompilationError]:
+    """Resolve a supplied logical slot in the same checked table; missing facts never trigger discovery."""
+    for row in values:
+        if string(row[0], path)? == name:
+            return Ok(row)
+    return Err(CompilationError(fields=path + [name]))
+
+
+def logical(value: str, path: list[str]) -> Result[None, CompilationError]:
+    """Require a relative logical coordinate, not a delivery path or parent traversal."""
+    if value == "" or value.startswith("/") or "\\" in value or ":" in value:
+        return Err(CompilationError(fields=path))
+    for part in value.split("/"):
+        if part in ["", ".", ".."]:
+            return Err(CompilationError(fields=path))
+    return Ok(None)
+
+
+def content_hash(value: JsonValue) -> Result[str, CompilationError]:
+    """Hash the canonical array through the existing JSON, UTF-8 and SHA-256 implementations."""
+    match value.to_json():
+        Err(_) => return Err(CompilationError(fields=["key_material"]))
+        Ok(encoded) => return Ok("sha256:" + hexlify(sha256.digest(canonical_bytes(encoded))))
+
+
+def canonical_bytes[T with OrdinalKey](value: T) -> bytes:
+    """Use the public deterministic-byte contract; `str` is canonically encoded as UTF-8."""
+    return value.ordinal_bytes()
+
+
+def uncacheable(binding: JsonValue, reasons: list[str]) -> JsonValue:
+    """Unavailable base input has neither a candidate index nor a reusable key."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("uncacheable"), "binding": binding, "reasons": texts(
+            reasons,
+        )},
+    )
+
+
+def refused(fields: list[str]) -> JsonValue:
+    """Contradictory input carries no returned binding or usable index/key."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("refused"), "fields": texts(fields)},
+    )
+
+
+def row_json(values: list[list[JsonValue]]) -> JsonValue:
+    """Keep row order while serializing the checked projection."""
+    return JsonValue.array([JsonValue.array(row) for row in values])
+
+
+def texts(values: list[str]) -> JsonValue:
+    """Encode literal ordered strings without coercion."""
+    return JsonValue.array([JsonValue.string(value) for value in values])
+
+
+def ordered(value: JsonValue, keys: list[str], path: list[str]) -> Result[JsonValue, CompilationError]:
+    """Canonical field order is independent of request object insertion order."""
+    mut values: list[JsonValue] = []
+    for key in keys:
+        values.append(field(value, key, path)?)
+    return Ok(JsonValue.array(values))
+
+
+def exact(value: JsonValue, names: list[str], path: list[str]) -> Result[None, CompilationError]:
+    """Reject extra or missing fields before a record is used."""
+    if not value.is_object():
+        return Err(CompilationError(fields=path))
+    for name in value.keys():
+        if name not in names:
+            return Err(CompilationError(fields=path + [name]))
+    for name in names:
+        field(value, name, path)?
+    return Ok(None)
+
+
+def field(value: JsonValue, name: str, path: list[str]) -> Result[JsonValue, CompilationError]:
+    """Read one required field without defaults."""
+    match value.get(name):
+        Some(item) => return Ok(item)
+        None => return Err(CompilationError(fields=path + [name]))
+
+
+def text(value: JsonValue, name: str, path: list[str]) -> Result[str, CompilationError]:
+    """Read an exact string field."""
+    return string(field(value, name, path)?, path + [name])
+
+
+def string(value: JsonValue, path: list[str]) -> Result[str, CompilationError]:
+    """Do not turn null or arbitrary values into identity strings."""
+    match value.as_str():
+        Some(item) => return Ok(item)
+        None => return Err(CompilationError(fields=path))
+
+
+def array(value: JsonValue, path: list[str]) -> Result[list[JsonValue], CompilationError]:
+    """Require an actual array, including for a known-empty catalog."""
+    match value.as_array():
+        Some(items) => return Ok(items)
+        None => return Err(CompilationError(fields=path))
+
+
+def nonempty(value: str, path: list[str]) -> Result[None, CompilationError]:
+    """A missing coordinate is not a valid empty success fact."""
+    if value == "":
+        return Err(CompilationError(fields=path))
+    return Ok(None)
+
+
+def digest(value: str, path: list[str]) -> Result[None, CompilationError]:
+    """Validate lowercase SHA-256 syntax; only the original host owner authenticates its bytes."""
+    if len(value) != 71 or not value.startswith("sha256:"):
+        return Err(CompilationError(fields=path))
+    for character in value[7:]:
+        if character not in "0123456789abcdef":
+            return Err(CompilationError(fields=path))
+    return Ok(None)

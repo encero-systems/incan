@@ -1,0 +1,21 @@
+"""Print a deterministic quotation through Incan packages and a Rust dependency."""
+
+from rust::regex import Regex
+from orders import quotation_lines
+from presentation import print_quotation
+from settings import load_settings
+
+
+def run() -> Result[None, str]:
+    """Read the order configuration and print a quotation after validating its SKU rule."""
+    settings = load_settings("quote.toml")?
+    pattern = Regex.new(settings.sku_pattern).map_err((error) => f"Could not compile the SKU pattern: {error}")?
+    print_quotation(quotation_lines(settings.first_quantity, settings.second_quantity), pattern)
+    return Ok(None)
+
+
+def main() -> None:
+    """Print the configured quotation or the concrete input error."""
+    match run():
+        Ok(_) => pass
+        Err(error) => println(error)

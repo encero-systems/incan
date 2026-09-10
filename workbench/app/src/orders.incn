@@ -1,0 +1,9 @@
+"""Application-level order assembly through two paths to the same catalog."""
+
+from pub::stock import first_product, second_product
+from pub::pricing import Quotation, quote
+
+
+def quotation_lines(first_quantity: int, second_quantity: int) -> List[Quotation]:
+    """Build the order using a renamed direct catalog import and the pricing facade."""
+    return [quote(first_product(), first_quantity), quote(second_product(), second_quantity)]

@@ -1,0 +1,361 @@
+"""Pure selection contracts; fixture strings are comparison inputs, not admitted native artifacts."""
+
+from plan import (
+    RuntimeCompatibility,
+    NativeContext,
+    ProviderCapability,
+    NativeCandidate,
+    NativeCandidateEvidence,
+    RequestBuildUnit,
+    SelectionRequest,
+    CapabilityExcess,
+    SelectionErrorKind,
+    select_native,
+)
+from std.testing import fail
+
+
+def runtime(revision: str = "7") -> RuntimeCompatibility:
+    """Supply all six distinct runtime dimensions without claiming physical authentication."""
+    return RuntimeCompatibility(
+        compiler_version="compiler",
+        sdk_provider_codegen_revision=revision,
+        runtime_lock_digest="lock",
+        core_source_digest="core",
+        derive_source_digest="derive",
+        stdlib_source_digest="stdlib",
+    )
+
+
+def provider(modules: list[str], facets: list[str] = [], linked: bool = false) -> ProviderCapability:
+    """Keep semantic identity independent from the candidate's native plan identity."""
+    return ProviderCapability(
+        semantic_identity="core@1#source[features]",
+        modules=modules,
+        facets=facets,
+        direct_link=linked,
+    )
+
+
+def candidate(
+    name: str,
+    providers: list[ProviderCapability],
+    revision: str = "7",
+    features: list[str] = [],
+) -> NativeCandidate:
+    """Create a separately referenced candidate in a fixed comparison context."""
+    return NativeCandidate(
+        candidate_id=name,
+        evidence_id=f"evidence:{name}",
+        plan_identity=f"plan:{name}",
+        build_unit_identity=f"unit:{name}",
+        context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
+        evidence=NativeCandidateEvidence.RuntimeProviderRecipe(runtime(revision), providers),
+    )
+
+
+def request(
+    candidates: list[NativeCandidate],
+    providers: list[ProviderCapability],
+    features: list[str] = [],
+) -> SelectionRequest:
+    """Bind required facts separately from offered candidate evidence."""
+    return SelectionRequest(
+        build_unit=RequestBuildUnit.LegacyRecipe,
+        request_id="request",
+        evidence_id="request-evidence",
+        context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
+        runtime=runtime(),
+        providers=providers,
+        candidates=candidates,
+    )
+
+
+def require_error(value: SelectionRequest, kind: SelectionErrorKind) -> None:
+    """Require the intended refusal rather than accepting any failure."""
+    match select_native(value):
+        Ok(_) => fail("selection unexpectedly succeeded")
+        Err(error) =>
+            assert error.kind == kind
+
+
+pub def test_superset_selection_preserves_evidence() -> None:
+    """Additional modules and facets remain usable while evidence references come from the chosen candidate."""
+    broad = candidate("broad", [provider(["prelude", "result"], ["runtime", "result"], true)])
+    match select_native(request([broad], [provider(["prelude"], ["runtime"], true)])):
+        Err(error) => fail(error.message())
+        Ok(selected) =>
+            assert selected.request_id == "request"
+            assert selected.request_evidence_id == "request-evidence"
+            assert selected.candidate_id == "broad"
+            assert selected.candidate_evidence_id == "evidence:broad"
+            assert selected.plan_identity == "plan:broad"
+            assert selected.build_unit_identity == "unit:broad"
+            # #1470: a local expected value preserves equality while inline constructors fail emission.
+            expected = CapabilityExcess(providers=0, modules=1, facets=1, direct_links=0)
+            assert selected.excess == expected
+
+
+pub def test_missing_capabilities_and_runtime_refuse() -> None:
+    """Module, facet, direct-link and revision mismatches cannot be hidden by other available capabilities."""
+    required = [provider(["prelude"], ["runtime"], true)]
+    for offered in [provider([], ["runtime"], true), provider(["prelude"], [], true), provider(["prelude"], ["runtime"])]:
+        require_error(request([candidate("missing", [offered])], required), SelectionErrorKind.NoCompatibleCandidate)
+    require_error(request([candidate("old", required, "5")], required), SelectionErrorKind.NoCompatibleCandidate)
+    require_error(request([], required), SelectionErrorKind.NoCompatibleCandidate)
+
+
+pub def test_narrowest_choice_and_ties() -> None:
+    """A later narrower candidate clears a prior tie; equal best ranks refuse independently of input order."""
+    required = [provider(["prelude"])]
+    broad = candidate("broad", [provider(["prelude", "result"])])
+    same = candidate("same", [provider(["prelude", "result"])])
+    narrow = candidate("narrow", required)
+    for choices in [[broad, same, narrow], [narrow, broad, same]]:
+        match select_native(request(choices, required)):
+            Err(error) => fail(error.message())
+            Ok(selected) =>
+                assert selected.candidate_id == "narrow"
+    require_error(request([broad, same], required), SelectionErrorKind.AmbiguousCandidate)
+
+
+pub def test_malformed_sets_and_unknown_intent_refuse() -> None:
+    """Duplicates cannot distort ranking, and unknown input classes cannot disappear during comparison."""
+    duplicate = candidate("duplicate", [provider(["prelude", "prelude"])])
+    require_error(request([duplicate], []), SelectionErrorKind.InvalidInput)
+    valid = candidate("valid", [])
+    require_error(request([valid, valid], []), SelectionErrorKind.InvalidInput)
+    unknown = SelectionRequest(
+        build_unit=RequestBuildUnit.LegacyRecipe,
+        request_id="request",
+        evidence_id="evidence",
+        context=valid.context,
+        runtime=runtime(),
+        providers=[],
+        candidates=[valid],
+        unsupported_intent=["rust_inputs"],
+    )
+    require_error(unknown, SelectionErrorKind.UnsupportedIntent)
+    extra_runtime = RuntimeCompatibility(
+        compiler_version="compiler",
+        sdk_provider_codegen_revision="7",
+        runtime_lock_digest="lock",
+        core_source_digest="core",
+        derive_source_digest="derive",
+        stdlib_source_digest="stdlib",
+        unknown_input_keys=["new-runtime-input"],
+    )
+    unknown_runtime = SelectionRequest(
+        build_unit=RequestBuildUnit.LegacyRecipe,
+        request_id="request",
+        evidence_id="evidence",
+        context=valid.context,
+        runtime=extra_runtime,
+        providers=[],
+        candidates=[valid],
+    )
+    require_error(unknown_runtime, SelectionErrorKind.UnsupportedIntent)
+
+
+pub def test_rank_dimension_order() -> None:
+    """Provider count outranks module count, then facets, then direct links."""
+    assert CapabilityExcess(providers=0, modules=20, facets=20, direct_links=20).precedes(
+        CapabilityExcess(providers=1, modules=0, facets=0, direct_links=0),
+    )
+    assert CapabilityExcess(providers=0, modules=0, facets=20, direct_links=20).precedes(
+        CapabilityExcess(providers=0, modules=1, facets=0, direct_links=0),
+    )
+    assert CapabilityExcess(providers=0, modules=0, facets=0, direct_links=20).precedes(
+        CapabilityExcess(providers=0, modules=0, facets=1, direct_links=0),
+    )
+    assert CapabilityExcess(providers=0, modules=0, facets=0, direct_links=0).precedes(
+        CapabilityExcess(providers=0, modules=0, facets=0, direct_links=1),
+    )
+
+
+pub def test_context_and_semantic_owner_mismatch_refuse() -> None:
+    """Matching capability spellings do not override target, toolchain, profile or semantic owner identity."""
+    required = [provider(["prelude"])]
+    valid = candidate("valid", required)
+    for context in [NativeContext(target="other", toolchain="rustc", profile="debug", features=[]), NativeContext(
+        target="target",
+        toolchain="other",
+        profile="debug",
+        features=[],
+    ), NativeContext(target="target", toolchain="rustc", profile="release", features=[])]:
+        changed = SelectionRequest(
+            build_unit=RequestBuildUnit.LegacyRecipe,
+            request_id="request",
+            evidence_id="evidence",
+            context=context,
+            runtime=runtime(),
+            providers=required,
+            candidates=[valid],
+        )
+        require_error(changed, SelectionErrorKind.NoCompatibleCandidate)
+    wrong_owner = ProviderCapability(
+        semantic_identity="other@1#source[features]",
+        modules=["prelude"],
+        facets=[],
+        direct_link=false,
+    )
+    require_error(request([candidate("other", [wrong_owner])], required), SelectionErrorKind.NoCompatibleCandidate)
+
+
+pub def test_each_runtime_field_is_exact() -> None:
+    """Every retained runtime input independently prevents reuse when its value changes."""
+    valid = candidate("valid", [])
+    for field in range(0, 6):
+        mut values = ["compiler", "7", "lock", "core", "derive", "stdlib"]
+        values[field] = "changed"
+        changed_runtime = RuntimeCompatibility(
+            compiler_version=values[0],
+            sdk_provider_codegen_revision=values[1],
+            runtime_lock_digest=values[2],
+            core_source_digest=values[3],
+            derive_source_digest=values[4],
+            stdlib_source_digest=values[5],
+        )
+        changed = SelectionRequest(
+            build_unit=RequestBuildUnit.LegacyRecipe,
+            request_id="request",
+            evidence_id="evidence",
+            context=valid.context,
+            runtime=changed_runtime,
+            providers=[],
+            candidates=[valid],
+        )
+        require_error(changed, SelectionErrorKind.NoCompatibleCandidate)
+
+
+pub def test_native_features_are_exact_validated_sets() -> None:
+    """Missing, extra or duplicate features refuse; reordering identical features preserves compatibility."""
+    selected = candidate("selected", [], features=["alpha", "beta"])
+    # #1471: retain explicit nested element types through loop collection lowering.
+    feature_cases: list[list[str]] = [[], ["alpha"], ["alpha", "beta", "gamma"]]
+    for required in feature_cases:
+        require_error(request([selected], [], features=required), SelectionErrorKind.NoCompatibleCandidate)
+    match select_native(request([selected], [], features=["beta", "alpha"])):
+        Err(error) => fail(error.message())
+        Ok(value) =>
+            assert value.candidate_id == "selected"
+    require_error(request([selected], [], features=["alpha", "alpha"]), SelectionErrorKind.InvalidInput)
+    invalid_cases: list[list[str]] = [["alpha", "alpha"], [""]]
+    for invalid in invalid_cases:
+        duplicate = candidate("duplicate", [], features=invalid)
+        require_error(request([duplicate], []), SelectionErrorKind.InvalidInput)
+
+
+def exact_candidate(name: str, unit: str, features: list[str] = []) -> NativeCandidate:
+    """Retain an original Store publisher handle without manufacturing recipe facts."""
+    return NativeCandidate(
+        candidate_id=name,
+        evidence_id=f"publisher:{name}",
+        plan_identity=f"plan:{name}",
+        build_unit_identity=unit,
+        context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
+        evidence=NativeCandidateEvidence.ExactBuildUnit,
+    )
+
+
+def verified_request(
+    candidates: list[NativeCandidate],
+    unit: str = "unit",
+    features: list[str] = [],
+) -> SelectionRequest:
+    """Model synthetic facts supplied from one verified current receipt, not a native authentication proof."""
+    return SelectionRequest(
+        request_id="current-request",
+        evidence_id="current-receipt",
+        build_unit=RequestBuildUnit.VerifiedBuildUnit(unit),
+        context=NativeContext(target="target", toolchain="rustc", profile="debug", features=features),
+        runtime=runtime(),
+        providers=[provider(["prelude"])],
+        candidates=candidates,
+    )
+
+
+pub def test_exact_unit_preserves_original_publisher() -> None:
+    """Different full publisher/current receipt handles do not prevent equal prepared-unit reuse."""
+    value = verified_request([exact_candidate("stored", "unit")])
+    match select_native(value):
+        Err(error) => fail(error.message())
+        Ok(selected) =>
+            assert selected.candidate_evidence_id == "publisher:stored"
+            assert selected.request_evidence_id == "current-receipt"
+            assert selected.build_unit_identity == "unit"
+            expected = CapabilityExcess(providers=0, modules=0, facets=0, direct_links=0)
+            assert selected.excess == expected
+    require_error(
+        verified_request([exact_candidate("stored", "different-unit")]),
+        SelectionErrorKind.NoCompatibleCandidate,
+    )
+    require_error(
+        verified_request([exact_candidate("stored", "unit", ["different-feature"])]),
+        SelectionErrorKind.NoCompatibleCandidate,
+    )
+
+
+    reordered = verified_request([exact_candidate("stored", "unit", ["beta", "alpha"])], features=["alpha", "beta"])
+    match select_native(reordered):
+        Err(error) => fail(error.message())
+        Ok(selected) => assert selected.candidate_id == "stored"
+    require_error(
+        verified_request([exact_candidate("stored", "unit", ["alpha", "alpha"])]),
+        SelectionErrorKind.InvalidInput,
+    )
+
+
+pub def test_mixed_evidence_preserves_rank_and_ambiguity() -> None:
+    """Nonmatching Store evidence remains represented; equal exact/recipe ranks have no variant preference."""
+    recipe = candidate("loaf", [provider(["prelude"])])
+    mismatch = exact_candidate("stored", "other-unit")
+    match select_native(verified_request([mismatch, recipe])):
+        Err(error) => fail(error.message())
+        Ok(selected) => assert selected.candidate_id == "loaf"
+    exact = exact_candidate("stored", "unit")
+    require_error(verified_request([exact, recipe]), SelectionErrorKind.AmbiguousCandidate)
+    broad = candidate("broad", [provider(["prelude", "extra"])])
+    match select_native(verified_request([broad, exact])):
+        Err(error) => fail(error.message())
+        Ok(selected) => assert selected.candidate_id == "stored"
+
+
+pub def test_exact_equality_never_hides_invalid_intent() -> None:
+    """Validate every losing candidate and unknown request input before opaque-key comparison."""
+    good = exact_candidate("stored", "unit")
+    malformed = exact_candidate("losing", "")
+    require_error(verified_request([good, malformed]), SelectionErrorKind.InvalidInput)
+    require_error(verified_request([good], ""), SelectionErrorKind.InvalidInput)
+    original = verified_request([good])
+    unknown = SelectionRequest(
+        request_id=original.request_id,
+        evidence_id=original.evidence_id,
+        build_unit=original.build_unit,
+        context=original.context,
+        runtime=original.runtime,
+        providers=original.providers,
+        candidates=original.candidates,
+        unsupported_intent=["authored-rust"],
+    )
+    require_error(unknown, SelectionErrorKind.UnsupportedIntent)
+    unknown_runtime = RuntimeCompatibility(
+        compiler_version="compiler",
+        sdk_provider_codegen_revision="7",
+        runtime_lock_digest="lock",
+        core_source_digest="core",
+        derive_source_digest="derive",
+        stdlib_source_digest="stdlib",
+        unknown_input_keys=["unreviewed-runtime"],
+    )
+    unknown_request = SelectionRequest(
+        request_id=original.request_id,
+        evidence_id=original.evidence_id,
+        build_unit=original.build_unit,
+        context=original.context,
+        runtime=unknown_runtime,
+        providers=original.providers,
+        candidates=original.candidates,
+    )
+    require_error(unknown_request, SelectionErrorKind.UnsupportedIntent)
+    require_error(request([good], [provider(["prelude"])]), SelectionErrorKind.InvalidInput)
