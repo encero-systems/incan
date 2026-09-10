@@ -31,6 +31,7 @@ pub mod emitted_symbol;
 mod facts;
 mod hir;
 pub mod receipts;
+pub mod stable_identity;
 mod types;
 
 pub use emitted_symbol::{
