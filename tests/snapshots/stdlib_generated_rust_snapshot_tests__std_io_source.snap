@@ -446,7 +446,7 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
         return crate::__incan_std::derives::collection::FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: vec![],
+            current: Vec::<_>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -502,7 +502,7 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
     }
     fn collect(&mut self) -> Result<Vec<Vec<u8>>, IoError> {
         let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
-        let mut items: Vec<Vec<u8>> = vec![];
+        let mut items: Vec<Vec<u8>> = Vec::<_>::new();
         loop {
             let _ = match self.__next__() {
                 Ok(Some(item)) => items.push(item.clone()),
