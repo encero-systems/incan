@@ -268,14 +268,29 @@ def validate_batch(batch: SourceBatch) -> Result[None, SelectionError]:
     """Check all offered associations before candidate filtering can hide malformed facts."""
     if batch.purpose != "library":
         return Err(SelectionError(kind=SelectionErrorKind.UnsupportedIntent, fields=["purpose"]))
+    validate_unique_identifiers(batch)?
+    if len(batch.units) == 0:
+        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units"]))
+    validate_runtime_bindings(batch)?
+    validate_units(batch)?
+    validate_edges(batch)?
+    validate_needs(batch)?
+    validate_grants(batch)?
+    return Ok(None)
+
+
+def validate_unique_identifiers(batch: SourceBatch) -> Result[None, SelectionError]:
+    """Every handle the batch offers must name one thing; runtime and SDK tables share one identifier space."""
     unique([unit.unit_id for unit in batch.units], ["units"])?
     unique([edge.edge_id for edge in batch.edges], ["edges"])?
     unique([grant.grant_id for grant in batch.grants] + [grant.grant_id for grant in batch.runtime_grants], ["grants"])?
     unique([need.need_id for need in batch.needs] + [need.need_id for need in batch.runtime_needs], ["needs"])?
     unique([candidate.candidate_id for candidate in batch.foundation.candidates], ["candidates"])?
-    if len(batch.units) == 0:
-        return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["units"]))
-    validate_runtime_bindings(batch)?
+    return Ok(None)
+
+
+def validate_units(batch: SourceBatch) -> Result[None, SelectionError]:
+    """Each unit carries complete owner/definition evidence and one requirement per role and alias."""
     for unit in batch.units:
         identity_valid(unit.identity)?
         if unit.owner_id == "" or unit.definition_id == "" or unit.definition_digest == "":
@@ -284,27 +299,47 @@ def validate_batch(batch: SourceBatch) -> Result[None, SelectionError]:
             [request.role.value() + ":" + request.alias for request in unit.requirements],
             ["units", unit.unit_id, "requirements"],
         )?
-        for request in unit.requirements:
-            unique(request.features, ["requirements", request.alias, "features"])?
-            if request.role == NativeRequirementRole.Normal and not is_provider_edge(request.source):
-                return Err(
-                    SelectionError(
-                        kind=SelectionErrorKind.UnsupportedIntent,
-                        fields=["units", unit.unit_id, "requirements", request.alias],
-                    ),
-                )
+        validate_unit_requirements(unit)?
+    return Ok(None)
+
+
+def validate_unit_requirements(unit: SourceUnit) -> Result[None, SelectionError]:
+    """A normal requirement must resolve through a provider edge; nothing else may stand in for one."""
+    for request in unit.requirements:
+        unique(request.features, ["requirements", request.alias, "features"])?
+        if request.role == NativeRequirementRole.Normal and not is_provider_edge(request.source):
+            return Err(
+                SelectionError(
+                    kind=SelectionErrorKind.UnsupportedIntent,
+                    fields=["units", unit.unit_id, "requirements", request.alias],
+                ),
+            )
+    return Ok(None)
+
+
+def validate_edges(batch: SourceBatch) -> Result[None, SelectionError]:
+    """Each edge is complete, owned by a declared unit, and unique on its owner's descriptor index."""
     for edge in batch.edges:
         if edge.descriptor_index < 0 or edge.dependency_key == "" or edge.target_owner_id == "":
             return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["edges", edge.edge_id]))
         identity_valid(edge.owner)?
         identity_valid(edge.target)?
         unique(edge.requested_features, ["edges", edge.edge_id, "requested_features"])?
-        mut owner_found = false
-        for unit in batch.units:
-            if unit.owner_id == edge.owner_id and same_identity(unit.identity, edge.owner):
-                owner_found = true
-        if not owner_found:
+        if not edge_owner_declared(batch, edge):
             return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["edges", edge.edge_id, "owner"]))
+    return validate_distinct_descriptor_indexes(batch)
+
+
+def edge_owner_declared(batch: SourceBatch, edge: CheckedEdge) -> bool:
+    """Whether some declared unit owns this edge under both its owner id and its checked identity."""
+    for unit in batch.units:
+        if unit.owner_id == edge.owner_id and same_identity(unit.identity, edge.owner):
+            return true
+    return false
+
+
+def validate_distinct_descriptor_indexes(batch: SourceBatch) -> Result[None, SelectionError]:
+    """One owner cannot offer two edges for the same original descriptor index."""
     for index in range(len(batch.edges)):
         for previous in range(index):
             left = batch.edges[index]
@@ -316,6 +351,11 @@ def validate_batch(batch: SourceBatch) -> Result[None, SelectionError]:
                         fields=["edges", left.edge_id, "descriptor_index"],
                     ),
                 )
+    return Ok(None)
+
+
+def validate_needs(batch: SourceBatch) -> Result[None, SelectionError]:
+    """Each reserved need names a checked provider capability and a unit the batch actually declares."""
     for need in batch.needs:
         identity_valid(need.provider)?
         validate_capabilities([need.capability])?
@@ -323,17 +363,25 @@ def validate_batch(batch: SourceBatch) -> Result[None, SelectionError]:
             return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["needs", need.need_id]))
         if need.unit_id not in [unit.unit_id for unit in batch.units]:
             return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["needs", need.need_id, "unit_id"]))
+    return Ok(None)
+
+
+def validate_grants(batch: SourceBatch) -> Result[None, SelectionError]:
+    """Each grant answers a declared need and binds to one offered candidate by all three of its handles."""
     for grant in batch.grants:
         identity_valid(grant.provider)?
         validate_capabilities([grant.capability])?
-        mut bound = false
-        for candidate in batch.foundation.candidates:
-            if candidate.candidate_id == grant.candidate_id and candidate.evidence_id == grant.candidate_evidence_id and candidate.plan_identity == grant.plan_identity:
-                bound = true
-        if not bound or grant.need_id not in [need.need_id for need in batch.needs]:
+        if not grant_binds_candidate(batch, grant) or grant.need_id not in [need.need_id for need in batch.needs]:
             return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["grants", grant.grant_id]))
     return Ok(None)
 
+
+def grant_binds_candidate(batch: SourceBatch, grant: ReservedGrant) -> bool:
+    """Whether the grant matches an offered candidate on id, evidence and plan identity together."""
+    for candidate in batch.foundation.candidates:
+        if candidate.candidate_id == grant.candidate_id and candidate.evidence_id == grant.candidate_evidence_id and candidate.plan_identity == grant.plan_identity:
+            return true
+    return false
 
 def validate_runtime_bindings(batch: SourceBatch) -> Result[None, SelectionError]:
     """Require complete source slots and original candidate ownership before any candidate can be filtered."""
