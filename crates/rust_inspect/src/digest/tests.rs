@@ -460,7 +460,11 @@ pub struct After;
 
     let digests = [&inherent.digest, &via_trait.digest, &other_owner.digest];
     let unique: BTreeMap<&String, ()> = digests.iter().map(|digest| (*digest, ())).collect();
-    assert_eq!(unique.len(), 3, "three distinct method bodies must produce three digests");
+    assert_eq!(
+        unique.len(),
+        3,
+        "three distinct method bodies must produce three digests"
+    );
     Ok(())
 }
 
@@ -627,4 +631,3 @@ fn unparseable_source_is_reported_rather_than_partially_digested() -> Result<(),
     );
     Ok(())
 }
-
