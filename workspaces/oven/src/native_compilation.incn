@@ -47,6 +47,59 @@ pub def project(document: JsonValue) -> Result[JsonValue, CompilationError]:
     The candidate index deliberately omits observed effects and env: it finds original observations, not reusable
     output. Current owners and the complete execution snapshot remain bound through the existing Engine exchange.
     """
+    envelope = checked_envelope(document)?
+    missing = missing_input_evidence(envelope.inputs)?
+    if len(missing) > 0:
+        return Ok(uncacheable(envelope.binding, missing))
+    inputs = projected_inputs(envelope.inputs, envelope.execution)?
+    compatibility = compatibility_facts(envelope, inputs)?
+    if len(compatibility.reasons) > 0:
+        return Ok(indexed_uncacheable(envelope.binding, compatibility.reasons, inputs))
+    validate_original_key(
+        field(envelope.evidence, "dep_info", ["evidence"])?,
+        inputs.index_material,
+        compatibility.effects,
+        compatibility.paths,
+    )?
+    return cacheable(envelope.binding, inputs, compatibility)
+
+
+model Envelope:
+    """The four checked top-level sections of one Engine request."""
+
+    binding: JsonValue
+    inputs: JsonValue
+    evidence: JsonValue
+    execution: JsonValue
+
+
+model ProjectedInputs:
+    """Checked native facts and the candidate index computed from them, before any observation is consulted."""
+
+    compiler_value: JsonValue
+    source_value: JsonValue
+    effective_files: list[list[JsonValue]]
+    environment: list[list[JsonValue]]
+    index: str
+    index_material: JsonValue
+
+
+model CompatibilityFacts:
+    """Why a projection is or is not reusable, with the observed evidence that decided it."""
+
+    reasons: list[str]
+    effects: JsonValue
+    paths: JsonValue
+    consumed: list[list[JsonValue]]
+
+
+def input_sections() -> list[str]:
+    """The complete set of input sections a request must carry, named once for shape and absence checks alike."""
+    return ["compiler", "command", "source", "native", "search", "generated", "output"]
+
+
+def checked_envelope(document: JsonValue) -> Result[Envelope, CompilationError]:
+    """Admit the request shape before any field is read as a fact; a wrong schema is refused first."""
     if text(document, "schema", [])? != SCHEMA:
         return Err(CompilationError(fields=["schema"]))
     exact(document, ["schema", "binding", "execution", "inputs", "evidence"], [])?
@@ -62,8 +115,7 @@ pub def project(document: JsonValue) -> Result[JsonValue, CompilationError]:
     if not original.is_null():
         nonempty(string(original, ["binding", "original_receipt_id"])?, ["binding", "original_receipt_id"])?
     inputs = field(document, "inputs", [])?
-    sections = ["compiler", "command", "source", "native", "search", "generated", "output"]
-    exact(inputs, sections, ["inputs"])?
+    exact(inputs, input_sections(), ["inputs"])?
     evidence = field(document, "evidence", [])?
     exact(evidence, ["dep_info", "host_effects", "path_effects"], ["evidence"])?
     execution = field(document, "execution", [])?
@@ -74,13 +126,20 @@ pub def project(document: JsonValue) -> Result[JsonValue, CompilationError]:
     )?
     for name in ["invocation_id", "compiler", "cwd", "source_root", "output_root"]:
         nonempty(text(execution, name, ["execution"])?, ["execution", name])?
+    return Ok(Envelope(binding=binding, inputs=inputs, evidence=evidence, execution=execution))
+
+
+def missing_input_evidence(inputs: JsonValue) -> Result[list[str], CompilationError]:
+    """Name every absent input section; an incomplete request has no index rather than a partial one."""
     mut missing: list[str] = []
-    for name in sections:
+    for name in input_sections():
         if field(inputs, name, ["inputs"])?.is_null():
             missing.append("missing_" + name + "_evidence")
-    if len(missing) > 0:
-        return Ok(uncacheable(binding, missing))
+    return Ok(missing)
 
+
+def projected_inputs(inputs: JsonValue, execution: JsonValue) -> Result[ProjectedInputs, CompilationError]:
+    """Project the checked inputs, bind them to the physical execution snapshot, and derive the candidate index."""
     compiler_value = field(inputs, "compiler", ["inputs"])?
     compiler = compiler_fields(compiler_value)?
     source_value = field(inputs, "source", ["inputs"])?
@@ -111,38 +170,66 @@ pub def project(document: JsonValue) -> Result[JsonValue, CompilationError]:
             generated,
         ), output],
     )
-    index = content_hash(index_material)?
+    return Ok(
+        ProjectedInputs(
+            compiler_value=compiler_value,
+            source_value=source_value,
+            effective_files=effective_files,
+            environment=environment,
+            index=content_hash(index_material)?,
+            index_material=index_material,
+        ),
+    )
+
+
+def compatibility_facts(envelope: Envelope, inputs: ProjectedInputs) -> Result[CompatibilityFacts, CompilationError]:
+    """Gather every reason this projection is not reusable, together with the evidence each reason came from."""
     mut reasons: list[str] = []
-    if text(field(inputs, "command", ["inputs"])?, "crate_kind", ["inputs", "command"])? != "rlib":
+    if text(field(envelope.inputs, "command", ["inputs"])?, "crate_kind", ["inputs", "command"])? != "rlib":
         reasons.append("unsupported_output_kind")
-    effects, effect_reasons = host_effects(field(evidence, "host_effects", ["evidence"])?)?
+    effects, effect_reasons = host_effects(field(envelope.evidence, "host_effects", ["evidence"])?)?
     reasons.extend(effect_reasons)
-    paths, path_reasons = path_effects(field(evidence, "path_effects", ["evidence"])?, compiler_value, execution)?
+    paths, path_reasons = path_effects(
+        field(envelope.evidence, "path_effects", ["evidence"])?,
+        inputs.compiler_value,
+        envelope.execution,
+    )?
     reasons.extend(path_reasons)
     consumed, dep_reasons = dep_info(
-        field(evidence, "dep_info", ["evidence"])?,
-        binding,
-        index,
-        source_value,
-        effective_files,
-        environment,
+        field(envelope.evidence, "dep_info", ["evidence"])?,
+        envelope.binding,
+        inputs.index,
+        inputs.source_value,
+        inputs.effective_files,
+        inputs.environment,
     )?
     reasons.extend(dep_reasons)
-    if len(reasons) > 0:
-        return Ok(
-            JsonValue.object(
-                {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("uncacheable"), "binding": binding, "reasons": texts(
-                    reasons,
-                ), "candidate_index": JsonValue.string(index), "index_material": index_material},
-            ),
-        )
-    validate_original_key(field(evidence, "dep_info", ["evidence"])?, index_material, effects, paths)?
-    material = JsonValue.array([JsonValue.string(KEY_DOMAIN), index_material, row_json(consumed), effects, paths])
+    return Ok(CompatibilityFacts(reasons=reasons, effects=effects, paths=paths, consumed=consumed))
+
+
+def indexed_uncacheable(binding: JsonValue, reasons: list[str], inputs: ProjectedInputs) -> JsonValue:
+    """A complete but unreusable projection still returns its candidate index for observation lookup."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("uncacheable"), "binding": binding, "reasons": texts(
+            reasons,
+        ), "candidate_index": JsonValue.string(inputs.index), "index_material": inputs.index_material},
+    )
+
+
+def cacheable(
+    binding: JsonValue,
+    inputs: ProjectedInputs,
+    compatibility: CompatibilityFacts,
+) -> Result[JsonValue, CompilationError]:
+    """Derive the reusable compilation key only after every observation has validated."""
+    material = JsonValue.array(
+        [JsonValue.string(KEY_DOMAIN), inputs.index_material, row_json(compatibility.consumed), compatibility.effects, compatibility.paths],
+    )
     return Ok(
         JsonValue.object(
             {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("cacheable"), "binding": binding, "candidate_index": JsonValue.string(
-                index,
-            ), "index_material": index_material, "compilation_key": JsonValue.string(content_hash(material)?), "key_material": material},
+                inputs.index,
+            ), "index_material": inputs.index_material, "compilation_key": JsonValue.string(content_hash(material)?), "key_material": material},
         ),
     )
 
