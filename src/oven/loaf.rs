@@ -293,92 +293,6 @@ impl Drop for LoafTemporaryDirectory {
     }
 }
 
-/// Move every obsolete generation out of the authoritative envelope tree before scratch reclamation.
-pub(crate) fn retire_unreferenced_loaf_generations(
-    output: &Path,
-    generation_identity: &str,
-    scratch: &Path,
-) -> Result<(), OvenLoafError> {
-    let generations_root = output.join("generations");
-    if !generations_root.is_dir() {
-        return Ok(());
-    }
-    let active_name = generation_identity
-        .strip_prefix("sha256:")
-        .unwrap_or(generation_identity);
-    let active_generation = generations_root.join(active_name);
-    let retired_root = scratch.join("retired");
-    fs::create_dir_all(&retired_root).map_err(|source| OvenLoafError::Io {
-        path: retired_root.clone(),
-        source,
-    })?;
-    for entry in fs::read_dir(&generations_root).map_err(|source| OvenLoafError::Io {
-        path: generations_root.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| OvenLoafError::Io {
-            path: generations_root.clone(),
-            source,
-        })?;
-        let path = entry.path();
-        if path != active_generation {
-            let destination = retired_root.join(entry.file_name());
-            fs::rename(&path, &destination).map_err(|source| OvenLoafError::Io { path, source })?;
-        }
-    }
-    Ok(())
-}
-
-/// Durably publish one staged generation before atomically switching the envelope authority.
-pub(crate) fn commit_loaf_generation(
-    output: &Path,
-    generations_root: &Path,
-    generation_output: &Path,
-    staged_root: &Path,
-    manifest: &OvenLoafEnvelopeManifest,
-    scratch: &Path,
-    before_manifest_commit: impl FnOnce() -> io::Result<()>,
-) -> Result<(), OvenLoafError> {
-    super::store::sync_directory_tree(staged_root)?;
-    if generation_output.exists() {
-        let abandoned = scratch.join("abandoned-generation");
-        fs::rename(generation_output, &abandoned).map_err(|source| OvenLoafError::Io {
-            path: generation_output.to_path_buf(),
-            source,
-        })?;
-    }
-    fs::rename(staged_root, generation_output).map_err(|source| OvenLoafError::Io {
-        path: generation_output.to_path_buf(),
-        source,
-    })?;
-    super::store::sync_directory(generations_root.to_path_buf())?;
-    let staged_manifest = scratch.join("envelope.json");
-    let payload = serde_json::to_vec_pretty(manifest).map_err(|error| OvenLoafError::Preparation {
-        message: format!("could not encode Loaf envelope manifest: {error}"),
-    })?;
-    fs::write(&staged_manifest, payload).map_err(|source| OvenLoafError::Io {
-        path: staged_manifest.clone(),
-        source,
-    })?;
-    File::open(&staged_manifest)
-        .and_then(|file| file.sync_all())
-        .map_err(|source| OvenLoafError::Io {
-            path: staged_manifest.clone(),
-            source,
-        })?;
-    before_manifest_commit().map_err(|source| OvenLoafError::Io {
-        path: staged_manifest.clone(),
-        source,
-    })?;
-    let manifest_path = output.join("envelope.json");
-    fs::rename(&staged_manifest, &manifest_path).map_err(|source| OvenLoafError::Io {
-        path: manifest_path,
-        source,
-    })?;
-    super::store::sync_directory(output.to_path_buf())?;
-    Ok(())
-}
-
 /// Immutable direct-`rustc` closure shipped with one compiler/toolchain distribution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenLoaf {
@@ -463,27 +377,6 @@ impl Drop for OvenLoafGenerationLock {
     fn drop(&mut self) {
         let _ = self.file.unlock();
     }
-}
-
-/// Acquire exclusive authority to validate, switch, and retire generations below one Loaf envelope root.
-pub(crate) fn acquire_exclusive_loaf_generation_lock(root: &Path) -> Result<OvenLoafGenerationLock, OvenLoafError> {
-    fs::create_dir_all(root).map_err(|source| OvenLoafError::Io {
-        path: root.to_path_buf(),
-        source,
-    })?;
-    let path = root.join(OVEN_LOAF_ENVELOPE_LOCK_FILE);
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&path)
-        .map_err(|source| OvenLoafError::Io {
-            path: path.clone(),
-            source,
-        })?;
-    file.lock().map_err(|source| OvenLoafError::Io { path, source })?;
-    Ok(OvenLoafGenerationLock { file })
 }
 
 impl OvenToolchainLoaf {
@@ -892,23 +785,6 @@ fn parse_provider_capabilities(records: &str) -> Result<Vec<OvenLoafProviderCapa
     Ok(providers)
 }
 
-/// Result from a release-stage base-runtime loaf preparation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct OvenLoafPreparation {
-    /// Reusable native compatibility identity represented by the loaf.
-    pub build_unit_identity: String,
-    /// Content identity of the canonical Loaf metadata and its declared artifact digests.
-    pub loaf_identity: String,
-    /// Content identity of the final sealed direct-rustc plan stored in the Loaf.
-    pub plan_identity: String,
-    /// Logical bytes in the final compiler-shipped loaf directory, including its verified plan.
-    pub logical_bytes: u64,
-    /// Measured allocation in the final compiler-shipped loaf directory.
-    pub physical_bytes: u64,
-    /// Highest observed physical allocation in baker-owned transient state.
-    pub transient_peak_physical_bytes: u64,
-}
-
 /// Construct the portable runtime portion of a normal generated project's native build-unit identity.
 ///
 /// The caller contributes normalized provider records, selected stdlib features, and the digest of resolved Rust
@@ -1072,166 +948,6 @@ pub enum OvenLoafError {
     /// A release-stage Loaf could not be assembled safely.
     #[error("failed to prepare Oven Loaf: {message}")]
     Preparation { message: String },
-}
-
-/// Measure the exact directory that will be copied into a toolchain archive.
-///
-/// This intentionally includes `loaf.json`: while the plan is control metadata rather than a link input, it is a
-/// retained physical file and therefore belongs in the release accounting. Publisher source files are copied rather
-/// than linked, so summing regular-file allocation gives a conservative, portable report for this final closure.
-pub(crate) fn loaf_directory_byte_counts(root: &Path) -> Result<(u64, u64), OvenLoafError> {
-    let metadata = fs::symlink_metadata(root).map_err(|source| OvenLoafError::Io {
-        path: root.to_path_buf(),
-        source,
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err(OvenLoafError::Preparation {
-            message: format!("Loaf may not contain a symlink: {}", root.display()),
-        });
-    }
-    if metadata.is_file() {
-        return Ok((metadata.len(), loaf_file_physical_bytes(&metadata)));
-    }
-    if !metadata.is_dir() {
-        return Err(OvenLoafError::Preparation {
-            message: format!(
-                "Loaf may contain only regular files and directories: {}",
-                root.display()
-            ),
-        });
-    }
-
-    let mut logical_bytes = 0_u64;
-    let mut physical_bytes = 0_u64;
-    for child in fs::read_dir(root).map_err(|source| OvenLoafError::Io {
-        path: root.to_path_buf(),
-        source,
-    })? {
-        let child = child.map_err(|source| OvenLoafError::Io {
-            path: root.to_path_buf(),
-            source,
-        })?;
-        let (child_logical_bytes, child_physical_bytes) = loaf_directory_byte_counts(&child.path())?;
-        logical_bytes = logical_bytes.saturating_add(child_logical_bytes);
-        physical_bytes = physical_bytes.saturating_add(child_physical_bytes);
-    }
-    Ok((logical_bytes, physical_bytes))
-}
-
-/// Measure raw host allocation for the complete Loaf directory tree, including directory metadata.
-///
-/// Policy-accounted physical bytes deliberately cover retained regular artifacts. This second measurement follows
-/// the ordinary `du` hard-link rule: one inode contributes its allocated blocks once even when multiple Loaf or store
-/// paths name it. Reports therefore include directory and control-file allocation without inventing extra disk use for
-/// the store's content-preserving hard links.
-pub(crate) fn loaf_raw_disk_bytes(root: &Path) -> Result<u64, OvenLoafError> {
-    #[cfg(unix)]
-    {
-        loaf_raw_disk_bytes_unix(root, &mut std::collections::BTreeSet::new())
-    }
-
-    #[cfg(not(unix))]
-    {
-        loaf_raw_disk_bytes_portable(root)
-    }
-}
-
-/// Traverse a Unix Loaf tree while counting each allocated inode once.
-#[cfg(unix)]
-fn loaf_raw_disk_bytes_unix(
-    root: &Path,
-    seen: &mut std::collections::BTreeSet<(u64, u64)>,
-) -> Result<u64, OvenLoafError> {
-    use std::os::unix::fs::MetadataExt;
-
-    let metadata = fs::symlink_metadata(root).map_err(|source| OvenLoafError::Io {
-        path: root.to_path_buf(),
-        source,
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err(OvenLoafError::Preparation {
-            message: format!("Loaf may not contain a symlink: {}", root.display()),
-        });
-    }
-    if !seen.insert((metadata.dev(), metadata.ino())) {
-        return Ok(0);
-    }
-    if metadata.is_file() {
-        return Ok(loaf_file_physical_bytes(&metadata));
-    }
-    if !metadata.is_dir() {
-        return Err(OvenLoafError::Preparation {
-            message: format!(
-                "Loaf may contain only regular files and directories: {}",
-                root.display()
-            ),
-        });
-    }
-
-    let mut bytes = loaf_file_physical_bytes(&metadata);
-    for child in fs::read_dir(root).map_err(|source| OvenLoafError::Io {
-        path: root.to_path_buf(),
-        source,
-    })? {
-        let child = child.map_err(|source| OvenLoafError::Io {
-            path: root.to_path_buf(),
-            source,
-        })?;
-        bytes = bytes.saturating_add(loaf_raw_disk_bytes_unix(&child.path(), seen)?);
-    }
-    Ok(bytes)
-}
-
-/// Traverse a Loaf tree on hosts that do not expose a stable device/inode identity.
-#[cfg(not(unix))]
-fn loaf_raw_disk_bytes_portable(root: &Path) -> Result<u64, OvenLoafError> {
-    let metadata = fs::symlink_metadata(root).map_err(|source| OvenLoafError::Io {
-        path: root.to_path_buf(),
-        source,
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err(OvenLoafError::Preparation {
-            message: format!("Loaf may not contain a symlink: {}", root.display()),
-        });
-    }
-    if metadata.is_file() {
-        return Ok(loaf_file_physical_bytes(&metadata));
-    }
-    if !metadata.is_dir() {
-        return Err(OvenLoafError::Preparation {
-            message: format!(
-                "Loaf may contain only regular files and directories: {}",
-                root.display()
-            ),
-        });
-    }
-
-    let mut bytes = loaf_file_physical_bytes(&metadata);
-    for child in fs::read_dir(root).map_err(|source| OvenLoafError::Io {
-        path: root.to_path_buf(),
-        source,
-    })? {
-        let child = child.map_err(|source| OvenLoafError::Io {
-            path: root.to_path_buf(),
-            source,
-        })?;
-        bytes = bytes.saturating_add(loaf_raw_disk_bytes_portable(&child.path())?);
-    }
-    Ok(bytes)
-}
-
-/// Return physical allocation for one compiler-shipped loaf file, preserving a portable fallback outside Unix.
-#[cfg(unix)]
-fn loaf_file_physical_bytes(metadata: &fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-
-    metadata.blocks().saturating_mul(512)
-}
-
-/// Return logical bytes where the host cannot expose allocated Unix block counts.
-#[cfg(not(unix))]
-fn loaf_file_physical_bytes(metadata: &fs::Metadata) -> u64 {
-    metadata.len()
 }
 
 /// Validate the committed envelope authority and return only its content-addressed Loaf manifests.
@@ -1944,74 +1660,6 @@ fn source_authority_loaf_from_loaf_with_lock(
     })
 }
 
-/// Validate the small authority surface required for an exact default reuse decision.
-///
-/// This hashes `loaf.json`, checks its content-addressed directory name and typed identities, and verifies the plan
-/// digest already committed by the envelope. It deliberately does not rehash every artifact. Any later selected Loaf
-/// still performs full materialization verification while its generation lease is held; operators can likewise use
-/// the explicit inspection path for an eager whole-envelope audit.
-pub(crate) fn validate_stored_loaf_for_reuse(
-    loaf_path: &Path,
-    member: &OvenLoafEnvelopeMember,
-) -> Result<OvenLoafPreparation, OvenLoafError> {
-    let loaf = read_loaf(loaf_path)?;
-    let loaf_identity = validate_loaf_content_address(loaf_path)?;
-    if loaf_identity != member.loaf_identity {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: loaf_path.to_path_buf(),
-            message: "content identity does not match the envelope manifest".to_string(),
-        });
-    }
-    if loaf.schema_version != OVEN_LOAF_SCHEMA_VERSION || loaf.build_unit_identity != member.build_unit_identity {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: loaf_path.to_path_buf(),
-            message: "schema or build-unit identity does not match the envelope manifest".to_string(),
-        });
-    }
-    if loaf.plan.registry_leaves != loaf.registry_leaves {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: loaf_path.to_path_buf(),
-            message: "loaf registry catalog does not match its copied direct-rustc plan".to_string(),
-        });
-    }
-    let plan_identity = digest_bytes(
-        &serde_json::to_vec(&loaf.plan).map_err(|error| OvenLoafError::Preparation {
-            message: format!("could not encode reused Loaf plan identity: {error}"),
-        })?,
-    );
-    if plan_identity != member.plan_identity {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: loaf_path.to_path_buf(),
-            message: "plan identity does not match the envelope manifest".to_string(),
-        });
-    }
-    Ok(OvenLoafPreparation {
-        build_unit_identity: loaf.build_unit_identity,
-        loaf_identity,
-        plan_identity,
-        logical_bytes: member.logical_bytes,
-        physical_bytes: member.physical_bytes,
-        transient_peak_physical_bytes: 0,
-    })
-}
-
-/// Verify that a Loaf manifest's digest is also the name of its containing `.loaf` directory.
-fn validate_loaf_content_address(loaf_path: &Path) -> Result<String, OvenLoafError> {
-    let identity = loaf_file_identity(loaf_path)?;
-    let expected_name = format!("{}.loaf", identity.strip_prefix("sha256:").unwrap_or(&identity));
-    let actual_name = loaf_path
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str());
-    if actual_name != Some(expected_name.as_str()) {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: loaf_path.to_path_buf(),
-            message: format!("content identity is {identity}, but its directory is not named `{expected_name}`"),
-        });
-    }
-    Ok(identity)
-}
-
 /// Reject undeclared, missing, non-portable, or symlinked files in one immutable Loaf directory.
 fn validate_loaf_declared_file_set(loaf: &OvenLoaf, loaf_path: &Path) -> Result<(), OvenLoafError> {
     let artifact_root = loaf_path.parent().ok_or_else(|| OvenLoafError::InvalidLoaf {
@@ -2260,11 +1908,10 @@ mod tests {
     use super::{
         CompatibleLoaf, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf,
         OvenLoafCompatibility, OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafError,
-        OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafSelection, acquire_exclusive_loaf_generation_lock,
-        acquire_loaf_generation_lock, committed_loaf_envelope_compatibility_identity, committed_loaf_paths,
-        digest_runtime_crate_source, loaf_envelope_specifications, loaf_from_loaf,
-        registry_source_dependencies_supported_by_catalog, select_most_specific_compatible_loaf,
-        validate_loaf_declared_file_set,
+        OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafSelection, acquire_loaf_generation_lock,
+        committed_loaf_envelope_compatibility_identity, committed_loaf_paths, digest_runtime_crate_source,
+        loaf_envelope_specifications, loaf_from_loaf, registry_source_dependencies_supported_by_catalog,
+        select_most_specific_compatible_loaf, validate_loaf_declared_file_set,
     };
     use crate::manifest::{DependencySource, DependencySpec};
     use crate::oven::rustc::{
@@ -2274,6 +1921,19 @@ mod tests {
     };
     use crate::oven::{OvenGeneratedProjectRequest, digest_bytes, digest_source_tree, receipt_generated_project};
     use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
+
+    /// Acquire a writer lock only for reader-lifetime tests; production no longer owns an envelope publisher.
+    fn acquire_test_exclusive_loaf_generation_lock(root: &Path) -> std::io::Result<fs::File> {
+        fs::create_dir_all(root)?;
+        let file = fs::File::options()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join(super::OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
+        file.lock()?;
+        Ok(file)
+    }
 
     /// Return the canonical standard-library modules owned by checked SDK component sources.
     ///
@@ -2423,7 +2083,7 @@ mod tests {
 
     /// Publish tiny real metadata for two native profiles and one source-only member.
     fn native_candidate_envelope(root: &Path) -> Result<OvenLoafEnvelopeManifest, Box<dyn std::error::Error>> {
-        drop(acquire_exclusive_loaf_generation_lock(root)?);
+        drop(acquire_test_exclusive_loaf_generation_lock(root)?);
         let generation_identity = digest_bytes(b"native candidate generation");
         let mut envelope = OvenLoafEnvelopeManifest {
             schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
@@ -2746,13 +2406,13 @@ mod tests {
     #[test]
     fn active_generation_reader_blocks_replacement_until_release() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let exclusive = acquire_exclusive_loaf_generation_lock(root.path())?;
+        let exclusive = acquire_test_exclusive_loaf_generation_lock(root.path())?;
         drop(exclusive);
         let reader = acquire_loaf_generation_lock(root.path())?;
         let path = root.path().to_path_buf();
         let (sender, receiver) = mpsc::channel();
         let replacement = thread::spawn(move || {
-            let lock = acquire_exclusive_loaf_generation_lock(&path);
+            let lock = acquire_test_exclusive_loaf_generation_lock(&path);
             sender.send(lock.is_ok()).ok();
             lock
         });

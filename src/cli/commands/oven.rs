@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::cli::commands::interop_plan::locked_interop_plan_target;
 use crate::cli::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenOutputFormat};
@@ -34,12 +34,7 @@ use crate::oven::interop::{
     receipt_interop_execution, selected_interop_toolchain_identity, stage_interop_adapter,
     write_interop_execution_receipt,
 };
-use crate::oven::loaf::{
-    LoafTemporaryDirectory, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope, OvenLoafEnvelopeManifest,
-    OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation, acquire_committed_loaf_generation,
-    digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_specifications, loaf_raw_disk_bytes,
-    retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
-};
+use crate::oven::loaf::{LoafTemporaryDirectory, acquire_committed_loaf_generation};
 use crate::oven::native_contract::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
@@ -69,9 +64,8 @@ use crate::oven::store::{
 };
 use crate::oven::{
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
-    DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
-    DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES, OVEN_COMPILER_TEST_PROFILE,
-    OvenBuildIntent, OvenCompilerSuiteRequest, OvenReceipt, digest_bytes, receipt_native_compiler_suite,
+    DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, OVEN_COMPILER_TEST_PROFILE, OvenBuildIntent,
+    OvenCompilerSuiteRequest, OvenReceipt, digest_bytes, receipt_native_compiler_suite,
 };
 use crate::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use crate::provider::FeatureSelection;
@@ -455,340 +449,6 @@ fn selected_regular_file_identity(path: &Path, label: &str) -> CliResult<String>
     let bytes = fs::read(path)
         .map_err(|error| CliError::failure(format!("could not read {label} {}: {error}", path.display())))?;
     Ok(digest_bytes(&bytes))
-}
-
-/// Result for one checked fixture in a built-in Loaf envelope.
-#[derive(Debug, Serialize)]
-struct OvenLoafBakeEntryReport {
-    label: String,
-    profile: String,
-    action: String,
-    role: OvenLoafMemberRole,
-    result: OvenLoafPreparation,
-}
-
-/// Integrity and storage accounting for one validated committed Loaf envelope.
-#[derive(Debug, Serialize)]
-struct OvenLoafBakeReport {
-    action: String,
-    envelope: String,
-    loaf_count: usize,
-    prepared_count: usize,
-    reused_count: usize,
-    logical_bytes: u64,
-    physical_bytes: u64,
-    owned_physical_bytes: u64,
-    raw_disk_bytes: u64,
-    reclaimable_physical_bytes: u64,
-    active_lease_physical_bytes: u64,
-    transient_peak_physical_bytes: u64,
-    max_physical_bytes: u64,
-    max_domain_physical_bytes: u64,
-    max_domain_logical_bytes: u64,
-    elapsed_ms: u128,
-    /// Cold-baker phase ledger. These phases are measured by Oven itself so CI never has to infer work from shell
-    /// command boundaries or Cargo's human output.
-    phase_timing: OvenLoafBakePhaseTiming,
-    evidence: OvenLoafEnvelopeEvidence,
-    loafs: Vec<OvenLoafBakeEntryReport>,
-}
-
-/// Product-owned elapsed-time attribution for one Loaf-baker invocation.
-#[derive(Debug, Default, Serialize)]
-struct OvenLoafBakePhaseTiming {
-    /// Input validation, compatibility evidence, and exact-envelope reuse inspection.
-    preflight_elapsed_ms: u128,
-    /// Locked registry/inspection authority preparation for a cold envelope.
-    inspection_authority_elapsed_ms: u128,
-    /// Checked fixture receipt generation and direct-Rustc Loaf preparation.
-    fixture_preparation_elapsed_ms: u128,
-    /// Atomic generation publication, retirement, and owned-byte accounting.
-    envelope_publication_elapsed_ms: u128,
-    /// Receipt-bound compiler-suite index/foundation preparation after the envelope is available.
-    compiler_suite_preparation_elapsed_ms: u128,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
-struct OvenLoafEnvelopeEvidence {
-    incan_release_version: String,
-    /// Report-only provenance for the executable that performed this baker invocation.
-    ///
-    /// This must not participate in release-family compatibility: rebuilding the same Incan release locally must
-    /// not cause every complete standard-library Loaf to be republished.
-    compiler_executable_digest: String,
-    sdk_inventory_digest: String,
-    rustc_identity: String,
-    lock_digest: String,
-    /// Complete source evidence for the runtime crates compiled into every standard-library Loaf.
-    runtime_source_digest: String,
-    fixture_digest: String,
-}
-
-/// Return the stable wire name used by one built-in Loaf envelope.
-fn loaf_envelope_name(envelope: OvenLoafEnvelope) -> &'static str {
-    match envelope {
-        OvenLoafEnvelope::Release => "release",
-        OvenLoafEnvelope::CompilerSuite => "compiler-suite",
-    }
-}
-
-/// Return the release-family compatibility evidence committed into `envelope.json`.
-///
-/// The family is selected by the Incan release plus immutable SDK, Rust toolchain, lock, and checked-fixture
-/// contracts. The baker executable digest remains report provenance only, so a development rebuild of the same
-/// release does not invalidate a complete standard-library Loaf family.
-fn loaf_envelope_compatibility_map(evidence: &OvenLoafEnvelopeEvidence) -> BTreeMap<String, String> {
-    BTreeMap::from([
-        (
-            "incan_release_version".to_string(),
-            evidence.incan_release_version.clone(),
-        ),
-        (
-            "sdk_inventory_digest".to_string(),
-            evidence.sdk_inventory_digest.clone(),
-        ),
-        ("rustc_identity".to_string(), evidence.rustc_identity.clone()),
-        ("lock_digest".to_string(), evidence.lock_digest.clone()),
-        (
-            "runtime_source_digest".to_string(),
-            evidence.runtime_source_digest.clone(),
-        ),
-        ("fixture_digest".to_string(), evidence.fixture_digest.clone()),
-    ])
-}
-
-/// Gather release-family compatibility evidence and baker provenance for a built-in envelope.
-fn loaf_envelope_evidence(
-    envelope: OvenLoafEnvelope,
-    compiler_root: &Path,
-    compiler_executable: &Path,
-    sdk_inventory: &Path,
-    rustc: &Path,
-) -> CliResult<OvenLoafEnvelopeEvidence> {
-    let read_digest = |path: &Path, label: &str| -> CliResult<String> {
-        let bytes = fs::read(path)
-            .map_err(|error| CliError::failure(format!("could not read Loaf {label} {}: {error}", path.display())))?;
-        Ok(digest_bytes(&bytes))
-    };
-    let lock_path = loaf_compiler_lock_path(compiler_root)?;
-    let fixture_evidence = loaf_envelope_specifications(envelope)
-        .iter()
-        .map(|specification| {
-            serde_json::json!({
-                "label": specification.label,
-                "project_name": specification.project_name,
-                "profile": specification.profile,
-                "action": match specification.action {
-                    OvenLoafFixtureAction::Build => "build",
-                    OvenLoafFixtureAction::Run => "run",
-                },
-                "source": specification.source,
-                "manifest": specification.manifest,
-                "inspection_manifest": specification.inspection_manifest,
-                "role": specification.role,
-                "retain_complete_registry_leaves": specification.retain_complete_registry_leaves,
-                "retain_checked_direct_dependencies": specification.retain_checked_direct_dependencies,
-            })
-        })
-        .collect::<Vec<_>>();
-    Ok(OvenLoafEnvelopeEvidence {
-        incan_release_version: INCAN_VERSION.to_string(),
-        compiler_executable_digest: read_digest(compiler_executable, "compiler executable")?,
-        sdk_inventory_digest: read_digest(sdk_inventory, "SDK inventory")?,
-        rustc_identity: rustc_identity(rustc).map_err(oven_error)?,
-        lock_digest: read_digest(&lock_path, "lock input")?,
-        runtime_source_digest: loaf_runtime_source_digest(compiler_root)?,
-        fixture_digest: digest_bytes(
-            &serde_json::to_vec(&fixture_evidence)
-                .map_err(|error| CliError::failure(format!("could not encode Loaf fixture evidence: {error}")))?,
-        ),
-    })
-}
-
-/// Hash the complete compiler-runtime source closure that the Loaf fixture links into its sealed artifacts.
-///
-/// The executable digest is provenance only: rebuilding the same release binary must not invalidate an otherwise
-/// compatible envelope. The runtime crates are different: changing their source without selecting a new envelope
-/// could pair an updated compiler with stale `incan_stdlib` or support-crate archives. Keep this evidence portable by
-/// recording named content digests rather than checkout paths.
-fn loaf_runtime_source_digest(compiler_root: &Path) -> CliResult<String> {
-    let mut records = BTreeMap::new();
-    let manifest = loaf_compiler_manifest_path(compiler_root)?;
-    let manifest_bytes = fs::read(&manifest).map_err(|error| {
-        CliError::failure(format!(
-            "could not read Loaf runtime manifest {}: {error}",
-            manifest.display()
-        ))
-    })?;
-    records.insert("Cargo.toml".to_string(), digest_bytes(&manifest_bytes));
-    for (label, relative) in [
-        ("incan_core", "crates/incan_core"),
-        ("incan_derive", "crates/incan_derive"),
-        ("incan_stdlib", "crates/incan_stdlib"),
-    ] {
-        let root = compiler_root.join(relative);
-        let digest = digest_runtime_crate_source(&root).map_err(CliError::failure)?;
-        records.insert(label.to_string(), digest);
-    }
-    let bytes = serde_json::to_vec(&records)
-        .map_err(|error| CliError::failure(format!("could not encode Loaf runtime source evidence: {error}")))?;
-    Ok(digest_bytes(&bytes))
-}
-
-/// Return the checked Cargo workspace manifest for a compiler checkout or packaged toolchain.
-///
-/// Source checkouts own the complete workspace at the compiler root. Release archives intentionally ship only the
-/// runtime support workspace under `crates/`; the Loaf baker must bind to that staged workspace instead of assuming
-/// the archive contains the compiler's development-only root manifest.
-fn loaf_compiler_manifest_path(compiler_root: &Path) -> CliResult<PathBuf> {
-    [
-        compiler_root.join("Cargo.toml"),
-        compiler_root.join("crates/Cargo.toml"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-    .ok_or_else(|| CliError::failure("Loaf compiler root has no canonical Cargo.toml input".to_string()))
-}
-
-/// Return the one checked compiler lock used by both envelope identity and cold fixture publication.
-fn loaf_compiler_lock_path(compiler_root: &Path) -> CliResult<PathBuf> {
-    [
-        compiler_root.join("Cargo.lock"),
-        compiler_root.join("crates/Cargo.lock"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-    .ok_or_else(|| CliError::failure("Loaf compiler root has no canonical Cargo.lock input".to_string()))
-}
-
-/// Validate and reuse one exact committed envelope without fixture probes or a Cargo process.
-fn reuse_complete_loaf_envelope(
-    output: &Path,
-    scratch: &Path,
-    envelope: OvenLoafEnvelope,
-    evidence: &OvenLoafEnvelopeEvidence,
-    limits: OvenStoreLimits,
-    started: Instant,
-) -> CliResult<Option<OvenLoafBakeReport>> {
-    let manifest_path = output.join("envelope.json");
-    if !manifest_path.is_file() {
-        return Ok(None);
-    }
-    let manifest = serde_json::from_slice::<OvenLoafEnvelopeManifest>(&fs::read(&manifest_path).map_err(|error| {
-        CliError::failure(format!(
-            "could not read Loaf envelope manifest {}: {error}",
-            manifest_path.display()
-        ))
-    })?)
-    .map_err(|error| {
-        CliError::failure(format!(
-            "invalid Loaf envelope manifest {}: {error}",
-            manifest_path.display()
-        ))
-    })?;
-    let expected_evidence = loaf_envelope_compatibility_map(evidence);
-    if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION
-        || manifest.envelope != loaf_envelope_name(envelope)
-        || manifest.evidence != expected_evidence
-    {
-        return Ok(None);
-    }
-    let specifications = loaf_envelope_specifications(envelope);
-    if manifest.loafs.len() != specifications.len() {
-        return Err(CliError::failure("Loaf envelope manifest is incomplete".to_string()));
-    }
-    let mut reports = Vec::with_capacity(manifest.loafs.len());
-    for (entry, specification) in manifest.loafs.iter().zip(specifications) {
-        let expected_action = match specification.action {
-            OvenLoafFixtureAction::Build => "build",
-            OvenLoafFixtureAction::Run => "run",
-        };
-        if entry.label != specification.label
-            || entry.profile != specification.profile
-            || entry.action != expected_action
-            || entry.role != specification.role
-        {
-            return Err(CliError::failure(
-                "Loaf envelope manifest does not match its checked specification".to_string(),
-            ));
-        }
-        let loaf_path = output.join(&entry.path);
-        let result = validate_stored_loaf_for_reuse(&loaf_path, entry).map_err(oven_error)?;
-        if result.logical_bytes > limits.max_domain_logical_bytes
-            || result.physical_bytes > limits.max_domain_physical_bytes
-        {
-            return Err(CliError::failure(format!(
-                "stored Loaf `{}` exceeds the active compatibility-domain allowance",
-                entry.label
-            )));
-        }
-        reports.push(OvenLoafBakeEntryReport {
-            label: entry.label.clone(),
-            profile: entry.profile.clone(),
-            action: entry.action.clone(),
-            role: entry.role,
-            result,
-        });
-    }
-    let logical_bytes = reports.iter().map(|entry| entry.result.logical_bytes).sum::<u64>();
-    let physical_bytes = reports.iter().map(|entry| entry.result.physical_bytes).sum::<u64>();
-    if physical_bytes > limits.max_physical_bytes {
-        return Err(CliError::failure(format!(
-            "stored Loaf envelope uses {physical_bytes} physical bytes, exceeding its {}-byte allowance",
-            limits.max_physical_bytes
-        )));
-    }
-    retire_unreferenced_loaf_generations(output, &manifest.generation_identity, scratch).map_err(oven_error)?;
-    let (_, owned_physical_bytes) = loaf_directory_byte_counts(output).map_err(oven_error)?;
-    let raw_disk_bytes = loaf_raw_disk_bytes(output).map_err(oven_error)?;
-    if owned_physical_bytes > limits.max_physical_bytes {
-        return Err(CliError::failure(format!(
-            "stored Loaf output uses {owned_physical_bytes} physical bytes after reclaiming obsolete generations, exceeding its {}-byte allowance",
-            limits.max_physical_bytes
-        )));
-    }
-    Ok(Some(OvenLoafBakeReport {
-        action: "reused".to_string(),
-        envelope: loaf_envelope_name(envelope).to_string(),
-        loaf_count: reports.len(),
-        prepared_count: 0,
-        reused_count: reports.len(),
-        logical_bytes,
-        physical_bytes,
-        owned_physical_bytes,
-        raw_disk_bytes,
-        // Exact reuse holds the exclusive generation lock and has already reclaimed every unreferenced generation.
-        // The remaining owned overhead is the active envelope manifest/lock, not reclaimable artifact data.
-        reclaimable_physical_bytes: 0,
-        active_lease_physical_bytes: 0,
-        transient_peak_physical_bytes: 0,
-        max_physical_bytes: limits.max_physical_bytes,
-        max_domain_physical_bytes: limits.max_domain_physical_bytes,
-        max_domain_logical_bytes: limits.max_domain_logical_bytes,
-        elapsed_ms: started.elapsed().as_millis(),
-        phase_timing: OvenLoafBakePhaseTiming {
-            preflight_elapsed_ms: started.elapsed().as_millis(),
-            ..OvenLoafBakePhaseTiming::default()
-        },
-        evidence: evidence.clone(),
-        loafs: reports,
-    }))
-}
-
-/// Product-owned storage policy for each built-in Loaf envelope.
-fn loaf_envelope_default_limits(envelope: OvenLoafEnvelope) -> OvenStoreLimits {
-    match envelope {
-        OvenLoafEnvelope::Release => OvenStoreLimits::new(
-            DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
-            DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
-            DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
-        ),
-        OvenLoafEnvelope::CompilerSuite => OvenStoreLimits::new(
-            DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
-            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
-            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
-        ),
-    }
 }
 
 /// Compile and execute every stored compiler workspace native target plan through the Oven runtime suite.
@@ -4623,7 +4283,6 @@ mod tests {
         CompilerSuiteChildrenReport, CompilerSuiteNativeTestRootReport, CompilerSuiteRustdocTestRootReport,
         CompilerSuiteTimingReport, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
         DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
-        DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
         OvenCompilerSuiteTargetCapabilities, OvenPlanPublishCommandOptions, OvenRunCommandOptions,
         OvenStoreCommandOptions, OvenTestCommandOptions, attach_compiler_suite_target_workspace_libraries,
         bake_planned_compiler_suite_binaries, bake_planned_compiler_suite_workspace_libraries,
@@ -4634,20 +4293,17 @@ mod tests {
         compiler_suite_selected_shard_references, compiler_suite_selection_context, compiler_suite_selection_report,
         compiler_suite_temporary_directory, compiler_suite_uses_indexed_foundations,
         compiler_suite_workspace_library_dependency_closure, default_rustup_home, default_store_root,
-        interop_bake_terminal_message, loaf_envelope_default_limits, loaf_envelope_evidence,
-        native_test_failure_summary, oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path,
-        prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
-        restrict_compiler_suite_target_environment, reuse_complete_loaf_envelope,
-        run_compiler_suite_children_with_leases_retained, run_prepared_compiler_suite_children,
-        select_compiler_suite_shards, write_compiler_suite_report, write_native_test_transcript,
+        interop_bake_terminal_message, native_test_failure_summary, oven_publish_direct_rustc_plan, oven_run,
+        oven_test, parse_named_path, prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
+        restrict_compiler_suite_target_environment, run_compiler_suite_children_with_leases_retained,
+        run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
+        write_native_test_transcript,
     };
     use crate::cli::{CliResult, OvenOutputFormat};
     use crate::oven::loaf::{
-        OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
-        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole,
-        acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
+        OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
+        OvenLoafMemberRole,
     };
-    use crate::oven::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
     use crate::oven::native_contract::OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1;
     use crate::oven::native_contract::{
         OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OvenCompilerTestSuiteArtifactClosure,
@@ -4663,7 +4319,10 @@ mod tests {
         rustc_dynamic_library_environment, rustc_host_target,
     };
     use crate::oven::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits};
-    use crate::oven::{OvenBuildIntent, digest_bytes};
+    use crate::oven::{
+        DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+        OvenBuildIntent, digest_bytes,
+    };
     use crate::oven::{OvenCompilerSuiteRequest, receipt_native_compiler_suite};
     use std::collections::{BTreeMap, BTreeSet};
     use std::ffi::OsString;
@@ -4672,7 +4331,6 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::time::Instant;
 
     #[test]
     fn interop_bake_text_evidence_records_the_explicit_cargo_free_route() -> Result<(), Box<dyn std::error::Error>> {
@@ -4691,229 +4349,6 @@ mod tests {
         let message = interop_bake_terminal_message(&report);
 
         assert!(message.contains("without invoking Cargo"));
-        Ok(())
-    }
-
-    #[test]
-    fn loaf_compiler_manifest_accepts_packaged_support_workspace() -> Result<(), Box<dyn std::error::Error>> {
-        let compiler_root = tempfile::tempdir()?;
-        let packaged_manifest = compiler_root.path().join("crates/Cargo.toml");
-        fs::create_dir_all(packaged_manifest.parent().ok_or("packaged manifest has no parent")?)?;
-        fs::write(&packaged_manifest, "[workspace]\nresolver = \"2\"\n")?;
-
-        assert_eq!(
-            super::loaf_compiler_manifest_path(compiler_root.path())?,
-            packaged_manifest,
-            "release packaging must bind Loaf evidence to the shipped support workspace"
-        );
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn complete_envelope_reuses_nonsemantic_churn_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
-        let output = tempfile::tempdir()?;
-        let scratch = tempfile::tempdir()?;
-        let compiler_root = tempfile::tempdir()?;
-        let tools = tempfile::tempdir()?;
-        fs::write(
-            compiler_root.path().join("Cargo.toml"),
-            "[workspace]\nresolver = \"3\"\n",
-        )?;
-        fs::write(compiler_root.path().join("Cargo.lock"), "version = 4\n")?;
-        for crate_name in ["incan_core", "incan_derive", "incan_stdlib"] {
-            let crate_root = compiler_root.path().join("crates").join(crate_name);
-            fs::create_dir_all(crate_root.join("src"))?;
-            fs::write(
-                crate_root.join("Cargo.toml"),
-                format!("[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\n"),
-            )?;
-            fs::write(crate_root.join("src/lib.rs"), "pub fn fixture() {}\n")?;
-        }
-        let sdk_inventory = compiler_root.path().join("sdk-inventory.json");
-        fs::write(&sdk_inventory, "sealed sdk inventory")?;
-        let cargo_marker = tools.path().join("cargo-started");
-        let cargo = tools.path().join("cargo");
-        let rustc = tools.path().join("rustc");
-        write_executable(
-            &cargo,
-            &format!(
-                "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'cargo fixture\\n'; exit 0; fi\nprintf started > \"{}\"\nexit 97\n",
-                cargo_marker.display()
-            ),
-        )?;
-        write_executable(&rustc, "#!/bin/sh\nprintf 'rustc fixture\\n'\n")?;
-        let compiler_one = tools.path().join("incan-one");
-        let compiler_two = tools.path().join("incan-two");
-        write_executable(&compiler_one, "#!/bin/sh\nprintf 'incan one\\n'\n")?;
-        write_executable(&compiler_two, "#!/bin/sh\nprintf 'incan two\\n'\n")?;
-        let first_evidence = loaf_envelope_evidence(
-            OvenLoafEnvelope::Release,
-            compiler_root.path(),
-            &compiler_one,
-            &sdk_inventory,
-            &rustc,
-        )?;
-        let second_evidence = loaf_envelope_evidence(
-            OvenLoafEnvelope::Release,
-            compiler_root.path(),
-            &compiler_two,
-            &sdk_inventory,
-            &rustc,
-        )?;
-        let nested_output = compiler_root
-            .path()
-            .join("crates/incan_stdlib/stdlib/components/stdlib-data/target/incan_lock/rust_inspect");
-        fs::create_dir_all(&nested_output)?;
-        fs::write(
-            nested_output.join(".incan_rust_inspect_cache.json"),
-            "mutable cache output\n",
-        )?;
-        let output_churn_evidence = loaf_envelope_evidence(
-            OvenLoafEnvelope::Release,
-            compiler_root.path(),
-            &compiler_two,
-            &sdk_inventory,
-            &rustc,
-        )?;
-        let generation_identity = digest_bytes(b"generation");
-        let generation = Path::new("generations").join(
-            generation_identity
-                .strip_prefix("sha256:")
-                .unwrap_or(&generation_identity),
-        );
-        let mut members = Vec::new();
-        for specification in loaf_envelope_specifications(OvenLoafEnvelope::Release) {
-            let action = match specification.action {
-                OvenLoafFixtureAction::Build => "build",
-                OvenLoafFixtureAction::Run => "run",
-            };
-            let build_unit_identity =
-                digest_bytes(format!("{}:{}", specification.label, specification.profile).as_bytes());
-            let loaf = OvenLoaf {
-                schema_version: OVEN_LOAF_SCHEMA_VERSION,
-                build_unit_identity: build_unit_identity.clone(),
-                provenance: Default::default(),
-                accounting: Default::default(),
-                compatibility: Default::default(),
-                registry_leaves: Vec::new(),
-                plan: OvenRustcArtifactManifest {
-                    schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
-                    intent: OvenBuildIntent {
-                        target: "fixture-target".to_string(),
-                        toolchain: "rustc fixture".to_string(),
-                        profile: specification.profile.to_string(),
-                        features: Vec::new(),
-                    },
-                    dependency_search_paths: Vec::new(),
-                    native_search_paths: Vec::new(),
-                    externs: Vec::new(),
-                    entrypoint_externs: BTreeMap::new(),
-                    registry_leaves: Vec::new(),
-                    registry_sources: Vec::new(),
-                    compile_environment: BTreeMap::new(),
-                    vocab_auxiliary_targets: Vec::new(),
-                    supporting_artifacts: Vec::new(),
-                },
-            };
-            let loaf_identity = digest_bytes(&serde_json::to_vec_pretty(&loaf)?);
-            let relative_directory = generation.join(format!(
-                "{}.loaf",
-                loaf_identity.strip_prefix("sha256:").unwrap_or(&loaf_identity)
-            ));
-            let directory = output.path().join(&relative_directory);
-            fs::create_dir_all(&directory)?;
-            fs::write(directory.join("loaf.json"), serde_json::to_vec_pretty(&loaf)?)?;
-            members.push(OvenLoafEnvelopeMember {
-                label: specification.label.to_string(),
-                profile: specification.profile.to_string(),
-                action: action.to_string(),
-                role: specification.role,
-                build_unit_identity,
-                loaf_identity,
-                plan_identity: digest_bytes(&serde_json::to_vec(&loaf.plan)?),
-                logical_bytes: serde_json::to_vec_pretty(&loaf)?.len() as u64,
-                physical_bytes: 0,
-                path: relative_directory.join("loaf.json"),
-            });
-        }
-        fs::write(
-            output.path().join("envelope.json"),
-            serde_json::to_vec(&OvenLoafEnvelopeManifest {
-                schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
-                envelope: "release".to_string(),
-                generation_identity,
-                evidence: super::loaf_envelope_compatibility_map(&first_evidence),
-                loafs: members,
-            })?,
-        )?;
-
-        let report = reuse_complete_loaf_envelope(
-            output.path(),
-            scratch.path(),
-            OvenLoafEnvelope::Release,
-            &output_churn_evidence,
-            OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-            Instant::now(),
-        )?
-        .ok_or("matching release compatibility must reuse the committed envelope")?;
-
-        assert_eq!(
-            report.action, "reused",
-            "executable bytes are provenance, not release compatibility"
-        );
-        assert_eq!(
-            report.reused_count,
-            loaf_envelope_specifications(OvenLoafEnvelope::Release).len(),
-            "a compatible release envelope must reuse every complete stdlib profile variant"
-        );
-        assert_ne!(
-            first_evidence.compiler_executable_digest, second_evidence.compiler_executable_digest,
-            "the regression requires distinct compiler executable provenance"
-        );
-        assert_eq!(
-            first_evidence.runtime_source_digest, second_evidence.runtime_source_digest,
-            "executable provenance must not affect runtime-source compatibility"
-        );
-        assert_eq!(
-            first_evidence.runtime_source_digest, output_churn_evidence.runtime_source_digest,
-            "nested runtime-crate target output must not invalidate authored runtime source"
-        );
-        assert!(
-            !cargo_marker.exists(),
-            "exact reuse after nonsemantic output churn must not start the explicit publisher"
-        );
-        fs::write(
-            compiler_root.path().join("crates/incan_stdlib/src/lib.rs"),
-            "pub fn changed_runtime() {}\n",
-        )?;
-        let changed_runtime_evidence = loaf_envelope_evidence(
-            OvenLoafEnvelope::Release,
-            compiler_root.path(),
-            &compiler_two,
-            &sdk_inventory,
-            &rustc,
-        )?;
-        assert_ne!(
-            first_evidence.runtime_source_digest, changed_runtime_evidence.runtime_source_digest,
-            "a changed runtime source must not reuse stale compiled standard-library artifacts"
-        );
-        assert!(
-            reuse_complete_loaf_envelope(
-                output.path(),
-                scratch.path(),
-                OvenLoafEnvelope::Release,
-                &changed_runtime_evidence,
-                OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-                Instant::now(),
-            )?
-            .is_none(),
-            "runtime-source drift must force the explicit baker path"
-        );
-        assert!(
-            !cargo_marker.exists(),
-            "reuse rejection itself must not start the explicit publisher"
-        );
         Ok(())
     }
 
@@ -5128,107 +4563,6 @@ mod tests {
             first.build_unit_identity, third.build_unit_identity,
             "a changed sealed member plan must rebuild the suite foundation"
         );
-        Ok(())
-    }
-
-    #[test]
-    fn interrupted_envelope_commit_preserves_the_previous_manifest() -> Result<(), Box<dyn std::error::Error>> {
-        let output = tempfile::tempdir()?;
-        let scratch = tempfile::tempdir()?;
-        let generations = output.path().join("generations");
-        let generation_output = generations.join("new-generation");
-        let staged = scratch.path().join("staged");
-        fs::create_dir_all(&staged)?;
-        fs::create_dir_all(&generations)?;
-        fs::write(staged.join("payload"), "new payload")?;
-        let previous_manifest = b"previous authoritative manifest";
-        fs::write(output.path().join("envelope.json"), previous_manifest)?;
-        let manifest = OvenLoafEnvelopeManifest {
-            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
-            envelope: "release".to_string(),
-            generation_identity: "sha256:new-generation".to_string(),
-            evidence: BTreeMap::new(),
-            loafs: Vec::new(),
-        };
-
-        let result = commit_loaf_generation(
-            output.path(),
-            &generations,
-            &generation_output,
-            &staged,
-            &manifest,
-            scratch.path(),
-            || Err(std::io::Error::other("simulated interruption")),
-        );
-
-        assert!(result.is_err());
-        assert_eq!(fs::read(output.path().join("envelope.json"))?, previous_manifest);
-        assert_eq!(fs::read(generation_output.join("payload"))?, b"new payload");
-        Ok(())
-    }
-
-    #[test]
-    fn concurrent_envelope_writers_leave_one_complete_authoritative_generation()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let output = tempfile::tempdir()?;
-        fs::create_dir_all(output.path().join("generations"))?;
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let mut writers = Vec::new();
-        for index in 0..2 {
-            let output = output.path().to_path_buf();
-            let barrier = barrier.clone();
-            writers.push(std::thread::spawn(move || -> Result<(), String> {
-                let scratch = output.join(format!("writer-{index}"));
-                let staged = scratch.join("staged");
-                fs::create_dir_all(&staged).map_err(|error| error.to_string())?;
-                fs::write(staged.join("payload"), format!("generation {index}")).map_err(|error| error.to_string())?;
-                let generation_identity = format!("sha256:generation-{index}");
-                let generation_output = output.join("generations").join(format!("generation-{index}"));
-                let manifest = OvenLoafEnvelopeManifest {
-                    schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
-                    envelope: "release".to_string(),
-                    generation_identity: generation_identity.clone(),
-                    evidence: BTreeMap::new(),
-                    loafs: Vec::new(),
-                };
-                barrier.wait();
-                let _lock = acquire_exclusive_loaf_generation_lock(&output).map_err(|error| error.to_string())?;
-                commit_loaf_generation(
-                    &output,
-                    &output.join("generations"),
-                    &generation_output,
-                    &staged,
-                    &manifest,
-                    &scratch,
-                    || Ok(()),
-                )
-                .map_err(|error| error.to_string())?;
-                retire_unreferenced_loaf_generations(&output, &generation_identity, &scratch)
-                    .map_err(|error| error.to_string())
-            }));
-        }
-        for writer in writers {
-            match writer.join() {
-                Ok(result) => result.map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
-                Err(_) => return Err("concurrent Loaf writer panicked".into()),
-            }
-        }
-
-        let manifest: OvenLoafEnvelopeManifest =
-            serde_json::from_slice(&fs::read(output.path().join("envelope.json"))?)?;
-        let generation = manifest
-            .generation_identity
-            .strip_prefix("sha256:")
-            .ok_or("generation identity is not content-addressed")?;
-        assert!(
-            output
-                .path()
-                .join("generations")
-                .join(generation)
-                .join("payload")
-                .is_file()
-        );
-        assert_eq!(fs::read_dir(output.path().join("generations"))?.count(), 1);
         Ok(())
     }
 
@@ -5943,22 +5277,15 @@ mod tests {
 
     #[test]
     fn compiler_suite_storage_policy_has_measured_headroom() {
-        let limits = loaf_envelope_default_limits(OvenLoafEnvelope::CompilerSuite);
+        assert_eq!(DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, 16 * 1024 * 1024 * 1024);
         assert_eq!(
-            limits.max_physical_bytes,
-            DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES
+            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
+            6 * 1024 * 1024 * 1024
         );
-        assert_eq!(limits.max_physical_bytes, 16 * 1024 * 1024 * 1024);
         assert_eq!(
-            limits.max_domain_physical_bytes,
-            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES
+            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
+            4 * 1024 * 1024 * 1024
         );
-        assert_eq!(limits.max_domain_physical_bytes, 6 * 1024 * 1024 * 1024);
-        assert_eq!(
-            limits.max_domain_logical_bytes,
-            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES
-        );
-        assert_eq!(limits.max_domain_logical_bytes, 4 * 1024 * 1024 * 1024);
     }
 
     #[test]
