@@ -13,6 +13,8 @@
     - RFC 082 (checked API documentation generation)
     - RFC 096 (declaration metadata blocks)
     - RFC 105 (architect rule engine)
+    - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
+    - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
 - **Issue:** #573
 - **RFC PR:** #766
 - **Written against:** v0.3
@@ -79,7 +81,7 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 - Replacing LSP. The agent context graph complements editor interactions rather than replacing live language-server diagnostics and completions.
 - Matching generic cross-language indexers on language count. Incan may support adapters, but the native value is language-specific precision.
 - Freezing future MCP tool names, storage backend choices, or service command names beyond the v0.4 `incan inspect codegraph` export.
-- Indexing arbitrary non-Incan languages. Mixed-language workspaces may expose foreign artifacts through future adapters, but this RFC's normative scope is Incan source and Incan-owned metadata.
+- Indexing arbitrary non-Incan languages. Mixed-language workspaces may expose foreign artifacts through future adapters. Rust is not one of those languages: Incan compiles through it, interoperates with it, and is written in it, so Rust facts are the same facts under a `language` attribute rather than a foreign-language adapter. See *One graph across Incan and Rust*.
 
 ## Guide-level explanation
 
@@ -416,6 +418,51 @@ Process-risk records follow the same boundary. Git history, coverage reports, an
 
 Graph export reads source code and may expose private structure to agents. Local export is the default. Remote indexing, remote embedding, hosted storage, or sharing graph artifacts must be explicit and policy-visible. MCP tools that can record feedback or mutate index state should be separated from read-only resources.
 
+## One graph across Incan and Rust
+
+Oven already treats the two languages as one substrate. RFC 117 defines a project model whose package, target, lock, cache, and receipt model is language-neutral, and names Incan and Rust as its two built-in authored source facets; RFC 119 gives Rust an Oven-owned crate graph and direct-`rustc` plan on those same terms. A unit that Oven bakes has an identity, a content digest, dependencies, and a compilation that produces it, and which surface syntax it was authored in is a property of that unit rather than a different kind of unit.
+
+The graph should describe the same world. To Oven a declaration is a declaration; Incan is Rust and Rust is Incan at this layer, and a graph that partitions by language would be modelling a boundary the build system does not have.
+
+This is not an aspiration; it is what the schema already asserts. `CodegraphDeclarationRecord` and `CodegraphFileRecord` each carry a `language` field. Language is an attribute of a fact, and every relationship — containment, import, export, reference, call — is defined over facts rather than over languages.
+
+### Consequence: `rust_item` and `uses_rust_item` are retired
+
+Those two reserved kinds are withdrawn. They encode the distinction the `language` attribute exists to dissolve, and adding them would leave the graph with two ways to say the same thing and no rule for which to believe.
+
+A Rust declaration is a `Declaration` with `language: rust`. A reference to it is a `Reference`. A call into it is a `Call`. An Incan function calling a Rust one and an Incan function calling an Incan one are the same edge, and a consumer that wants only one of them filters on the endpoints' language rather than reaching for a different edge kind.
+
+The practical test: a query that answers "what does this declaration depend on" must not need to know, in advance, which language the answer is in.
+
+### What one graph makes answerable
+
+These follow from the unification rather than motivating it.
+
+- Whether a change to a compiler declaration can reach a standard-library component's compilation — the same reachability question as any other, with endpoints that happen to be Rust.
+- Whether an Incan declaration reaches the Rust declaration it names, which is a broken edge rather than an emission mystery when it fails.
+- Whether a module respects an architectural boundary, expressed as reachability between rings rather than as a text search for import statements.
+- Whether a workaround is still needed, because the defect it works around is a node with a state.
+
+### Reachability is a lower bound
+
+One property does not survive the unification unqualified. Incan declarations resolve exactly, because the compiler checked them. Rust declarations do not always: calls through function pointers, trait objects with no statically known implementor, and macro-generated code can leave an edge the graph cannot resolve.
+
+The graph therefore reports reachability as a lower bound on what is reachable, never an upper bound on what is not. Three rules follow, and they bind consumers rather than producers:
+
+- Reachable means affected.
+- Unresolved means affected. An edge the graph could not resolve is not an edge that does not exist.
+- Downstream of affected means affected.
+
+A consumer that skips work on the strength of a reachability answer must err toward doing the work. Missing an affected node yields a wrong build; a spurious one costs time.
+
+### Building it
+
+The compiler already sees both languages. `rust_inspect` loads a Cargo project through rust-analyzer — `ra_ap_hir`, `ra_ap_ide_db`, `ra_ap_syntax` and `ra_ap_project_model` are workspace dependencies — and extracts typed Rust metadata that today serves interop checking. The Rust half of this graph is mostly a question of emitting what that already resolves, in the record shapes the schema already defines.
+
+That single-observer position is the substantive advantage over the alternative. Polyglot indexers merge independently-derived per-language indexes and must reconcile their symbol identities afterwards. One compiler observing both languages has nothing to reconcile: the identity an Incan declaration uses to name a Rust one is the identity the Rust side was recorded under.
+
+SCIP remains the reference for symbol naming and for separating definitions from reference occurrences, and remains an export adapter rather than the internal model, consistent with native JSONL being the source of truth. Following its conventions where they fit keeps a future exporter a projection rather than a translation.
+
 ## Alternatives considered
 
 ### Depend directly on CodeGraph
@@ -503,4 +550,8 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - Live LSP graph snapshots should materialize the same fact model as persisted or exported graph snapshots. Dirty editor buffers require partial/stale markers and must not be silently mixed with checked persisted facts.
 - Feedback and learned usefulness signals belong in the agent-context or MCP layer rather than the core compiler export. The compiler may expose stable graph identities that make feedback expiry possible, but it should not own agent memory policy.
 - Compact task-context format is a consumer contract layered on top of JSONL. The JSONL graph export is the compatibility-stable contract for Planned status; compact context packing should become stable only when the MCP/task-context layer is implemented and evaluated.
+- One graph spans both languages. A declaration is a `Declaration` whatever its surface syntax, and `language` is an attribute of the fact rather than a partition of the schema. The reserved `rust_item` node kind and `uses_rust_item` edge kind are retired: they encode the distinction `language` exists to dissolve, and would leave two ways to state one relationship.
+- Reachability over Rust is a lower bound, not an exact answer. Unresolved edges count as reachable and affectedness propagates downstream. This binds consumers: anything skipping work on a reachability answer must err toward doing the work, because a missed node is a wrong build while a spurious one is only slow.
+- Rust-side facts should come from what `rust_inspect` already resolves through rust-analyzer before any independent analysis is written. Re-deriving name resolution would reproduce the low-trust rediscovery this RFC exists to avoid.
+- SCIP remains an export adapter rather than the internal model, but its symbol naming and its separation of definitions from reference occurrences should be followed where they fit, so an exporter stays a projection rather than a translation.
 - Planned status does not require proving all retrieval and risk-quality claims. The minimum bar for Planned is a settled architecture, a v0.4 baseline export, and explicit follow-up issues for resolved targets, LSP sharing, MCP/task packing, Architect integration, process-risk evaluation, external importer experiments, and first-class Rust records.
