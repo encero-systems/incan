@@ -14,9 +14,10 @@
 //!
 //! - **The declaration span.** Removing it is necessary and is the obvious part.
 //! - **The signature, which removing the span makes necessary.** Two module-level declarations sharing namespace,
-//!   origin, name, and kind become indistinguishable once the span is gone. Measured across 2,078 checked
-//!   declarations of one standard library, overloads are the only class of collision that arises — and they arise
-//!   reliably, so a signature discriminant is required rather than defensive.
+//!   origin, name, and kind become indistinguishable once the span is gone. Measured across the 1,252 declarations
+//!   one standard library actually declares — imports, aliases, and re-exports share their target's identity by
+//!   design and cannot collide — overloads are the only collision class that arises, and it arises twice. A
+//!   signature discriminant is therefore required rather than defensive.
 //! - **The scope discriminant's value.** [`ScopeDiscriminant`] indexes a module-wide table filled in traversal
 //!   order, so inserting or moving any declaration renumbers every declaration traversed after it and untouched
 //!   siblings appear to change. Only whether a declaration is nested may enter the identity, never where its scope
