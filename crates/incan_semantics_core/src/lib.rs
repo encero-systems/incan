@@ -45,7 +45,9 @@ pub use facts::{
     SemanticRegistryValue, SemanticSourceTarget, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
     module_identity_for_path,
 };
-pub use hir::{HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot};
+pub use hir::{
+    DeclarationVisibility, HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot,
+};
 pub use types::{
     AbiV0Ownership, AbiV0Representation, AbiV0ReservedFacts, AbiV0RuntimeRequirement, AbiV0TypeFacts,
     AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, rust_tuple_arity,

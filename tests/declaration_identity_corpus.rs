@@ -153,3 +153,61 @@ fn stable_declaration_identity_is_unique_across_the_standard_library() -> TestRe
     }
     Ok(())
 }
+
+/// Visibility must reach HIR, because it is what roots RFC 106's external closure.
+///
+/// Without it a consumer cannot tell which declarations a dependent can observe, so it cannot distinguish an
+/// internal-only change from one that propagates — the distinction RFC 124 relies on to avoid rebaking dependents.
+#[test]
+fn hir_records_declaration_visibility() -> TestResult {
+    use incan_semantics_core::DeclarationVisibility;
+
+    let source = r#"
+pub def exported(value: int) -> int:
+    return value
+
+
+def internal(value: int) -> int:
+    return value
+"#;
+    let source = source.to_string();
+    let declarations = incan::compiler_stack::run_on_compiler_stack(move || {
+        let tokens = lexer::lex(&source).map_err(|errors| format!("lex: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+        let program = apply_body_ir_input_contract(program, Path::new("visibility.incn"))
+            .map_err(|errors| format!("contract: {errors:?}"))?;
+        let module_path = vec!["visibility".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typecheck: {errors:?}"))?;
+        let hir = build_hir_v0(&program, &module_path, checker.type_info());
+        Ok::<_, String>(
+            hir.declarations
+                .iter()
+                .filter_map(|declaration| {
+                    declaration
+                        .name
+                        .clone()
+                        .map(|name| (name, declaration.visibility))
+                })
+                .collect::<Vec<_>>(),
+        )
+    })
+    .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+
+    let exported = declarations.iter().find(|(name, _)| name == "exported");
+    let internal = declarations.iter().find(|(name, _)| name == "internal");
+    assert_eq!(
+        exported.map(|(_, visibility)| *visibility),
+        Some(DeclarationVisibility::Public),
+        "in {declarations:?}"
+    );
+    assert_eq!(
+        internal.map(|(_, visibility)| *visibility),
+        Some(DeclarationVisibility::Private),
+        "in {declarations:?}"
+    );
+    Ok(())
+}

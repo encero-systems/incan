@@ -77,6 +77,31 @@ impl SemanticModuleSnapshot {
     }
 }
 
+/// Whether a declaration is part of its module's public surface.
+///
+/// This mirrors the syntax-level visibility without depending on the syntax crate: `incan_semantics_core` sits below
+/// `incan_syntax`, and the frontend bridge translates. Visibility is a *semantic* fact here — it decides which
+/// declarations are roots of the external closure under RFC 106, and therefore whether a change to a declaration
+/// can be observed by a consumer at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+pub enum DeclarationVisibility {
+    /// Not part of the module's public surface. Reachable from a public declaration only through its body.
+    #[default]
+    Private,
+    /// Exported from its module.
+    Public,
+}
+
+impl DeclarationVisibility {
+    /// Return the compact snapshot spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Public => "public",
+        }
+    }
+}
+
 /// One top-level declaration in HIR v0.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirDeclaration {
@@ -86,6 +111,12 @@ pub struct HirDeclaration {
     pub span: HirSourceSpan,
     /// Subject ID to query for a [`crate::SemanticFactKind::Type`] fact, when this declaration has one.
     pub type_fact_subject: Option<CompilerNodeId>,
+    /// Whether this declaration is part of its module's public surface.
+    ///
+    /// Present so a consumer can compute RFC 106's external closure without re-deriving visibility from syntax.
+    /// A binding that names another declaration — an import, alias, or re-export — records the visibility of the
+    /// *binding*, since that is what decides whether this module re-exports it.
+    pub visibility: DeclarationVisibility,
     /// RFC 120 canonical identity of this declaration, when the frontend proved one.
     ///
     /// For a local declaration this is the identity minted at its definition; for an import binding it is the
@@ -160,6 +191,7 @@ mod tests {
                 name: Some("run".to_string()),
                 span: HirSourceSpan::new(1, 24),
                 type_fact_subject: Some(type_fact_subject),
+                visibility: DeclarationVisibility::Public,
                 canonical: None,
             }],
         };
@@ -191,6 +223,7 @@ mod tests {
                     name: Some("run".to_string()),
                     span: HirSourceSpan::new(1, 24),
                     type_fact_subject: Some(type_fact_subject),
+                    visibility: DeclarationVisibility::Public,
                     canonical: None,
                 }],
             },
