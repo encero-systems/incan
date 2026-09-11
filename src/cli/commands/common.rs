@@ -504,13 +504,16 @@ fn sdk_provider_store_identity(
 /// The memo key is a plain byte hash of the same roots the digest reads, which makes the two agree by
 /// construction: the digest is a pure function of those bytes, so equal bytes cannot produce a different digest,
 /// and any edit — even one the digest would forgive, like a comment — misses the memo and recomputes rather than
-/// returning a stale answer.
+/// returning a stale answer. Entries are published by rename, because `make -j` puts many processes on one cache
+/// and a half-written digest is still a well-formed cache key.
 ///
-/// # Degrading without lying
+/// # The memo changes the cost, never the value
 ///
-/// When no cache directory can be resolved or written, the *byte hash* is folded in place of the digest. That is
-/// the conservative direction: it over-invalidates inside the digested roots, exactly as the memo key implies, and
-/// it never reuses components built from sources this key never saw. It is a slower cache, not a wrong one.
+/// An environment with nowhere to put the memo recomputes the digest each time and gets the same answer. That is
+/// deliberate rather than an omission: the identity must be a function of the compiler and its standard library
+/// alone. Substituting the cheaper byte hash where no cache exists would make two machines with identical source
+/// publish to two different store paths, which is exactly what
+/// [`sdk_provider_store_identity_for_compiler_root`] exists to prevent.
 fn sdk_provider_effect_digest(checkout_root: &Path) -> CliResult<String> {
     let content_key = sdk_provider_effect_input_key(checkout_root)?;
     let cached_path = sdk_provider_effect_digest_cache_root().map(|root| root.join(&content_key));
@@ -531,13 +534,36 @@ fn sdk_provider_effect_digest(checkout_root: &Path) -> CliResult<String> {
         ))
     })?;
 
-    if let Some(cached_path) = &cached_path
-        && let Some(parent) = cached_path.parent()
-        && fs::create_dir_all(parent).is_ok()
-    {
-        let _ = fs::write(cached_path, &digest);
+    if let Some(cached_path) = &cached_path {
+        write_effect_digest_memo(cached_path, &digest);
     }
     Ok(digest)
+}
+
+/// Publish one memoized digest by rename, so a concurrent reader never sees a partially written one.
+///
+/// `make -j` runs many `incan` processes against one cache, and every one of them computes this digest on a miss.
+/// A plain write can be read mid-flight, and a truncated digest is still a well-formed cache key — it would
+/// partition the store under a value no compiler will ever produce again. Writing beside the target and renaming
+/// makes the file appear whole or not at all; two processes racing write byte-identical content, so whichever
+/// rename lands last is correct either way.
+///
+/// Every failure here is ignored deliberately. This is a cache: an unwritable directory, a full disk or a losing
+/// race costs the next command a recomputation, which the caller already handles.
+fn write_effect_digest_memo(cached_path: &Path, digest: &str) {
+    let Some(parent) = cached_path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Some(name) = cached_path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let staged = parent.join(format!(".{name}.{}.staged", std::process::id()));
+    if fs::write(&staged, digest).is_ok() && fs::rename(&staged, cached_path).is_err() {
+        let _ = fs::remove_file(&staged);
+    }
 }
 
 /// Resolve where effect digests are memoized, or `None` when this environment has nowhere durable to put them.
