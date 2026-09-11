@@ -1099,12 +1099,16 @@ impl CodegraphBuilder {
                 continue;
             }
             let name = target.declaration_name.clone();
+            // `kind` is the syntactic form a reference took -- identifier, field, `self`, surface path -- and the
+            // separate `provenance` field already records that a fact came from checked analysis. Naming this one
+            // "checked" put a provenance answer in the form axis, so a consumer filtering by form saw a value that
+            // is not one. These are references to a type at an expression's span, so they are typed as such.
             self.push_reference_with_checked(
                 module,
                 module_id,
                 None,
                 &name,
-                "checked",
+                "type",
                 Span::new(span.start, span.end),
                 false,
                 Some((target, owner)),

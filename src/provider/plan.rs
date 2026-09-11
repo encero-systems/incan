@@ -287,6 +287,23 @@ pub(crate) struct PublicProviderArtifact {
     pub artifact: LibraryArtifactMetadata,
 }
 
+/// Mutable bookkeeping carried through one compiled-provider graph traversal.
+///
+/// These three answer "where have we been", not "what did we produce". Keeping them apart from
+/// [`ResolvedArtifactGraph`] is the distinction worth preserving: the graph is the result a caller keeps, while
+/// this is scaffolding discarded when the walk ends. They travelled as six separate `&mut` parameters before,
+/// which made the recursive signature ten arguments wide and gave no clue which of them a caller was meant to
+/// read afterwards.
+#[derive(Default)]
+struct ArtifactTraversal {
+    /// Roots on the current path, for cycle detection.
+    visiting: BTreeSet<PathBuf>,
+    /// Roots already decided, so a diamond is resolved once.
+    visited: BTreeSet<PathBuf>,
+    /// Artifacts projected so far, keyed by normalized root.
+    projected: BTreeMap<PathBuf, LibraryArtifactMetadata>,
+}
+
 /// Products retained from the single compiled-provider graph traversal.
 #[derive(Default)]
 struct ResolvedArtifactGraph {
@@ -1059,12 +1076,8 @@ fn resolve_artifact_graph(
         .values()
         .filter(|record| matches!(record.authority, NamespaceAuthority::SdkReserved))
         .collect::<Vec<_>>();
-    let mut public_artifacts = BTreeMap::new();
-    let mut public_dependencies = BTreeMap::new();
-    let mut rebindings = Vec::new();
-    let mut projected = BTreeMap::<PathBuf, LibraryArtifactMetadata>::new();
-    let mut visited = BTreeSet::new();
-    let mut visiting = BTreeSet::new();
+    let mut graph = ResolvedArtifactGraph::default();
+    let mut traversal = ArtifactTraversal::default();
     for library in records
         .values()
         .filter(|record| record.enabled && record.available)
@@ -1074,7 +1087,7 @@ fn resolve_artifact_graph(
         else {
             continue;
         };
-        public_artifacts.insert(
+        graph.public_artifacts.insert(
             library.identity.stable_key(),
             PublicProviderArtifact {
                 identity: library.identity.clone(),
@@ -1087,15 +1100,11 @@ fn resolve_artifact_graph(
             manifest,
             containing_artifact,
             &sdk_records,
-            &mut visiting,
-            &mut visited,
-            &mut rebindings,
-            &mut projected,
-            &mut public_artifacts,
-            &mut public_dependencies,
+            &mut traversal,
+            &mut graph,
         )?;
     }
-    rebindings.sort_by(|left, right| {
+    graph.rebindings.sort_by(|left, right| {
         (
             &left.containing_artifact.crate_root,
             &left.provider_name,
@@ -1111,17 +1120,14 @@ fn resolve_artifact_graph(
                 &right.active_crate_root,
             ))
     });
-    rebindings.dedup();
-    let projections = projected
+    graph.rebindings.dedup();
+    // Projections are the traversal's memo rendered as results; everything else the graph already holds.
+    graph.projections = traversal
+        .projected
         .into_values()
         .map(|artifact| SdkArtifactProjection { artifact })
         .collect();
-    Ok(ResolvedArtifactGraph {
-        rebindings,
-        projections,
-        public_artifacts,
-        public_dependencies,
-    })
+    Ok(graph)
 }
 
 /// Traverse one compiled provider graph and mark every ancestor that must point at a projected child artifact.
@@ -1131,18 +1137,14 @@ fn resolve_sdk_artifact_projection(
     manifest: &LibraryManifest,
     artifact: &LibraryArtifactMetadata,
     sdk_records: &[&ProviderRecord],
-    visiting: &mut BTreeSet<PathBuf>,
-    visited: &mut BTreeSet<PathBuf>,
-    rebindings: &mut Vec<SdkDependencyRebinding>,
-    projected: &mut BTreeMap<PathBuf, LibraryArtifactMetadata>,
-    public_artifacts: &mut BTreeMap<String, PublicProviderArtifact>,
-    public_dependencies: &mut BTreeMap<PathBuf, Vec<(String, String)>>,
+    traversal: &mut ArtifactTraversal,
+    graph: &mut ResolvedArtifactGraph,
 ) -> Result<bool, ProviderPlanError> {
     let artifact_root = normalize_artifact_root(&artifact.crate_root);
-    if visited.contains(&artifact_root) {
-        return Ok(projected.contains_key(&artifact_root));
+    if traversal.visited.contains(&artifact_root) {
+        return Ok(traversal.projected.contains_key(&artifact_root));
     }
-    if !visiting.insert(artifact_root.clone()) {
+    if !traversal.visiting.insert(artifact_root.clone()) {
         return Err(ProviderPlanError::ManifestLoad {
             provider: library_name.to_string(),
             path: artifact.manifest_path.clone(),
@@ -1195,7 +1197,7 @@ fn resolve_sdk_artifact_projection(
                 normalize_artifact_root(&artifact.crate_root.join(&dependency.relative_artifact_path));
             let active_crate_root = normalize_artifact_root(&active_artifact.crate_root);
             if source_crate_root != active_crate_root {
-                rebindings.push(SdkDependencyRebinding {
+                graph.rebindings.push(SdkDependencyRebinding {
                     containing_artifact: artifact.clone(),
                     source_crate_root,
                     provider_name: dependency.provider_name.clone(),
@@ -1226,11 +1228,12 @@ fn resolve_sdk_artifact_projection(
             digest: dependency.artifact_digest.clone(),
             feature_projection: dependency_manifest.contract_metadata.provider.active_features.clone(),
         };
-        public_dependencies
+        graph
+            .public_dependencies
             .entry(artifact_root.clone())
             .or_default()
             .push((dependency.dependency_key.clone(), identity.stable_key()));
-        public_artifacts.insert(
+        graph.public_artifacts.insert(
             identity.stable_key(),
             PublicProviderArtifact {
                 identity,
@@ -1243,21 +1246,17 @@ fn resolve_sdk_artifact_projection(
             &dependency_manifest,
             &dependency_artifact,
             sdk_records,
-            visiting,
-            visited,
-            rebindings,
-            projected,
-            public_artifacts,
-            public_dependencies,
+            traversal,
+            graph,
         )? {
             requires_projection = true;
         }
     }
 
-    visiting.remove(&artifact_root);
-    visited.insert(artifact_root.clone());
+    traversal.visiting.remove(&artifact_root);
+    traversal.visited.insert(artifact_root.clone());
     if requires_projection {
-        projected.insert(artifact_root, artifact.clone());
+        traversal.projected.insert(artifact_root, artifact.clone());
     }
     Ok(requires_projection)
 }

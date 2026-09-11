@@ -1938,6 +1938,18 @@ impl<'a> IrEmitter<'a> {
     /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
     /// need the same field metadata for public models/classes that source-module consumers receive from lowered
     /// dependency modules.
+    ///
+    /// This repeats work per module that cannot differ between modules, and the repetition is deliberate rather than
+    /// unnoticed. `with_checked_native_unions` depends only on the manifest, the library, the plan and the routes,
+    /// all fixed for a compilation, so its result is identical every time; only the `with_native_nominal_origins`
+    /// step that follows is module-specific. The cost is roughly modules x libraries x unions x exports.
+    ///
+    /// Caching it needs somewhere to live that outlasts this emitter, and an emitter is constructed per module. The
+    /// obvious home is `ProviderPlan`, which is shared -- but it is documented as an immutable catalog and derives
+    /// `Clone`, so adding interior mutability there trades a clear ownership story for a speedup and raises a
+    /// thread-safety question the type does not currently have to answer. The projection also belongs outside the
+    /// emitter entirely, which is where the direct-rustc work puts it; optimizing it in place would be effort spent
+    /// on a path that is being removed. Hoist it when that seam moves, not before.
     pub(crate) fn seed_public_dependency_nominal_metadata(
         &mut self,
         index: &LibraryManifestIndex,
