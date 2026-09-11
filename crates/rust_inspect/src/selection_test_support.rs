@@ -39,6 +39,7 @@ impl InspectionFixture {
         let inputs = SelectedInspectionInputs {
             project_digest: byte_digest(&project_json),
             project_json,
+            sysroot: None,
             sources: vec![InspectionSourceInput {
                 root: root.clone(),
                 digest: crate::loader::digest_oven_source_tree(&root)?,

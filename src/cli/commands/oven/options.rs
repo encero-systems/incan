@@ -88,6 +88,21 @@ pub struct OvenPlanPublishCommandOptions {
     pub format: OvenOutputFormat,
 }
 
+/// Inputs for `incan oven runtime-foundation publish`.
+#[derive(Debug, Clone)]
+pub struct OvenRuntimeFoundationPublishCommandOptions {
+    /// JSON descriptor supplied by the release provider.
+    pub asset: PathBuf,
+    /// Root containing the descriptor's exact declared foundation members.
+    pub source_foundation_root: PathBuf,
+    /// Separately held selected toolchain root.
+    pub toolchain_root: PathBuf,
+    /// New installed foundation destination; existing paths are refused.
+    pub output: PathBuf,
+    /// Requested rendering format.
+    pub format: OvenOutputFormat,
+}
+
 /// Inputs for `incan oven interop bake`.
 #[derive(Debug, Clone)]
 pub struct OvenInteropBakeCommandOptions {

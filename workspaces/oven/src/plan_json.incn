@@ -2,6 +2,10 @@
 
 from std.json import JsonValue, parse
 from native_compilation import evaluate_document
+from provider_intake import (
+    REQUEST_SCHEMA as PROVIDER_INTAKE_SCHEMA,
+    evaluate_document as evaluate_provider_intake_document,
+)
 from plan import (
     RuntimeCompatibility,
     NativeContext,
@@ -64,6 +68,8 @@ pub def evaluate(source: str) -> JsonValue:
                     return evaluate_batch(document)
                 if schema_name == NATIVE_COMPILATION_SCHEMA:
                     return evaluate_document(document)
+                if schema_name == PROVIDER_INTAKE_SCHEMA:
+                    return evaluate_provider_intake_document(document)
                 if schema_name == SCHEMA_V2:
                     response_schema = SCHEMA_V2
     match decode_request(source):
@@ -83,9 +89,7 @@ pub def decode_request(source: str) -> Result[SelectionRequest, SelectionError]:
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["schema"]))
     value = field(document, "request", [])?
     path: list[str] = ["request"]
-    mut names: list[str] = [
-        "request_id", "evidence_id", "context", "runtime", "providers", "candidates", "unsupported_intent",
-    ]
+    mut names: list[str] = ["request_id", "evidence_id", "context", "runtime", "providers", "candidates", "unsupported_intent"]
     if schema == SCHEMA_V2:
         names.append("build_unit_identity")
     exact_object(value, names, path)?
@@ -257,7 +261,11 @@ def decode_candidates(value: JsonValue, path: list[str], schema: str) -> Result[
     return Ok(candidates)
 
 
-def decode_candidate_evidence(item: JsonValue, path: list[str], schema: str) -> Result[NativeCandidateEvidence, SelectionError]:
+def decode_candidate_evidence(
+    item: JsonValue,
+    path: list[str],
+    schema: str,
+) -> Result[NativeCandidateEvidence, SelectionError]:
     """Schema1 always supplies a recipe; schema2 requires a known exact nested evidence shape."""
     if schema == SCHEMA:
         runtime = decode_runtime(field(item, "runtime", path)?, path + ["runtime"])?
@@ -275,7 +283,6 @@ def decode_candidate_evidence(item: JsonValue, path: list[str], schema: str) -> 
         providers = decode_providers(field(evidence, "providers", at)?, at + ["providers"])?
         return Ok(NativeCandidateEvidence.RuntimeProviderRecipe(runtime, providers))
     return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=at + ["kind"]))
-
 
 
 def refusal(request_id: str, evidence_id: str, error: SelectionError, schema: str) -> JsonValue:
@@ -320,7 +327,8 @@ pub def evaluate_batch(document: JsonValue) -> JsonValue:
         Err(error) => return batch_refusal("", "", error, schema)
         Ok(batch) =>
             match select_source_units(batch):
-                Err(error) => return batch_refusal(batch.foundation.request_id, batch.foundation.evidence_id, error, schema)
+                Err(error) =>
+                    return batch_refusal(batch.foundation.request_id, batch.foundation.evidence_id, error, schema)
                 Ok(result) =>
                     mut foundation_schema: str = SCHEMA
                     if schema == BATCH_SCHEMA_V2 or schema == BATCH_SCHEMA_V3:
@@ -338,11 +346,11 @@ pub def evaluate_batch(document: JsonValue) -> JsonValue:
                         ), "grant_ids": JsonValue.array([JsonValue.string(value) for value in unit.grant_ids])},
                     ) for unit in result.units]
                     return JsonValue.object(
-                        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(
-                            result.foundation.request_id,
-                        ), "request_evidence_id": JsonValue.string(result.foundation.request_evidence_id), "status": JsonValue.string(
-                            "selected",
-                        ), "foundation": foundation, "units": JsonValue.array(units)},
+                        {"schema": JsonValue.string(schema), "request_id": JsonValue.string(result.foundation.request_id), "request_evidence_id": JsonValue.string(
+                            result.foundation.request_evidence_id,
+                        ), "status": JsonValue.string("selected"), "foundation": foundation, "units": JsonValue.array(
+                            units,
+                        )},
                     )
 
 
@@ -397,11 +405,19 @@ pub def decode_batch(document: JsonValue) -> Result[SourceBatch, SelectionError]
     if schema == BATCH_SCHEMA_V3:
         runtime_needs = decode_runtime_needs(field(document, "runtime_needs", [])?, ["runtime_needs"])?
         runtime_grants = decode_runtime_grants(field(document, "runtime_grants", [])?, ["runtime_grants"])?
-    return Ok(SourceBatch(
-        foundation=foundation, purpose=purpose, units=units, edges=edges, needs=needs, grants=grants,
-        runtime_needs=runtime_needs, runtime_grants=runtime_grants,
-        requires_compiler_support=schema == BATCH_SCHEMA_V3,
-    ))
+    return Ok(
+        SourceBatch(
+            foundation=foundation,
+            purpose=purpose,
+            units=units,
+            edges=edges,
+            needs=needs,
+            grants=grants,
+            runtime_needs=runtime_needs,
+            runtime_grants=runtime_grants,
+            requires_compiler_support=schema == BATCH_SCHEMA_V3,
+        ),
+    )
 
 
 def integer(value: JsonValue, path: list[str]) -> Result[int, SelectionError]:
@@ -632,7 +648,10 @@ def decode_definition_source_members(value: JsonValue, path: list[str]) -> Resul
     return Ok(None)
 
 
-def decode_definition_support(value: JsonValue, path: list[str]) -> Result[Option[list[CompilerSupportRequest]], SelectionError]:
+def decode_definition_support(
+    value: JsonValue,
+    path: list[str],
+) -> Result[Option[list[CompilerSupportRequest]], SelectionError]:
     """Preserve schema1 absence; schemas 2 and 3 contain the original compiler emission requests."""
     if integer(field(value, "schema_version", path)?, path + ["schema_version"])? == 1:
         return Ok(None)
@@ -644,8 +663,10 @@ def decode_definition_support(value: JsonValue, path: list[str]) -> Result[Optio
         exact_object(item, ["support", "features"], at)?
         mut support: CompilerSupport = CompilerSupport.Stdlib
         match text_field(item, "support", at)?:
-            "stdlib" => support = CompilerSupport.Stdlib
-            "derive" => support = CompilerSupport.Derive
+            "stdlib" =>
+                support = CompilerSupport.Stdlib
+            "derive" =>
+                support = CompilerSupport.Derive
             _ => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=at + ["support"]))
         features = strings(field(item, "features", at)?, at + ["features"])?
         result.append(CompilerSupportRequest(support=support, features=features))
@@ -659,17 +680,27 @@ def decode_runtime_needs(value: JsonValue, path: list[str]) -> Result[list[Runti
     for index in range(len(values)):
         at = path + [str(index)]
         item = values[index]
-        exact_object(item, ["need_id", "unit_id", "unit_owner_id", "support_index", "features", "runtime_features_input"], at)?
+        exact_object(
+            item,
+            ["need_id", "unit_id", "unit_owner_id", "support_index", "features", "runtime_features_input"],
+            at,
+        )?
         need_id = text_field(item, "need_id", at)?
         unit_id = text_field(item, "unit_id", at)?
         owner = text_field(item, "unit_owner_id", at)?
         position = integer(field(item, "support_index", at)?, at + ["support_index"])?
         features = strings(field(item, "features", at)?, at + ["features"])?
         feature_input = text_field(item, "runtime_features_input", at)?
-        result.append(RuntimeNeed(
-            need_id=need_id, unit_id=unit_id, unit_owner_id=owner, support_index=position,
-            features=features, runtime_features_input=feature_input,
-        ))
+        result.append(
+            RuntimeNeed(
+                need_id=need_id,
+                unit_id=unit_id,
+                unit_owner_id=owner,
+                support_index=position,
+                features=features,
+                runtime_features_input=feature_input,
+            ),
+        )
     return Ok(result)
 
 
@@ -682,8 +713,7 @@ def decode_runtime_grants(value: JsonValue, path: list[str]) -> Result[list[Runt
         item = values[index]
         exact_object(
             item,
-            ["grant_id", "candidate_id", "candidate_evidence_id", "plan_identity", "need_id", "unit_owner_id",
-             "extern_name", "source_role", "artifact_digest", "runtime_features_input"],
+            ["grant_id", "candidate_id", "candidate_evidence_id", "plan_identity", "need_id", "unit_owner_id", "extern_name", "source_role", "artifact_digest", "runtime_features_input"],
             at,
         )?
         grant_id = text_field(item, "grant_id", at)?
@@ -696,12 +726,20 @@ def decode_runtime_grants(value: JsonValue, path: list[str]) -> Result[list[Runt
         source_role = text_field(item, "source_role", at)?
         artifact_digest = text_field(item, "artifact_digest", at)?
         feature_input = optional_text(field(item, "runtime_features_input", at)?, at + ["runtime_features_input"])?
-        result.append(RuntimeGrant(
-            grant_id=grant_id, candidate_id=candidate_id, candidate_evidence_id=evidence_id,
-            plan_identity=plan_id, need_id=need_id, unit_owner_id=owner, extern_name=extern_name,
-            source_role=source_role, artifact_digest=artifact_digest,
-            runtime_features_input=feature_input,
-        ))
+        result.append(
+            RuntimeGrant(
+                grant_id=grant_id,
+                candidate_id=candidate_id,
+                candidate_evidence_id=evidence_id,
+                plan_identity=plan_id,
+                need_id=need_id,
+                unit_owner_id=owner,
+                extern_name=extern_name,
+                source_role=source_role,
+                artifact_digest=artifact_digest,
+                runtime_features_input=feature_input,
+            ),
+        )
     return Ok(result)
 
 

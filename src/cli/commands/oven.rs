@@ -50,13 +50,14 @@ use crate::oven::native_test::{
 };
 use crate::oven::progress::{PhaseProgress, announce as announce_oven_progress};
 use crate::oven::rustc::{
-    OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenStoredDirectRustcRunRequest,
-    OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot,
-    OvenTrustedRustdocTestRequest, attach_caller_owned_rustc_libraries, bake_stored_direct_rustc_run,
-    bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
-    bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test,
-    clear_inherited_cargo_environment, resolve_active_rustc, resolve_compile_environment_value,
-    run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target, rustc_identity,
+    OvenCallerOwnedRustcLibrary, OvenRuntimeFoundationAsset, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
+    OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
+    OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, attach_caller_owned_rustc_libraries,
+    bake_stored_direct_rustc_run, bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib,
+    bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run,
+    bake_trusted_direct_rustc_test, clear_inherited_cargo_environment, publish_runtime_foundation_asset,
+    resolve_active_rustc, resolve_compile_environment_value, run_trusted_rustdoc_test,
+    rustc_dynamic_library_environment, rustc_host_target, rustc_identity,
 };
 use crate::oven::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreExecutionPayload,
@@ -181,6 +182,53 @@ pub fn oven_publish_direct_rustc_plan(options: OvenPlanPublishCommandOptions) ->
     match options.format {
         OvenOutputFormat::Text => println!("Published Oven direct-rustc plan {}.", artifact.identity),
         OvenOutputFormat::Json => print_json(&artifact)?,
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Stable evidence emitted after one explicit runtime-foundation asset publication.
+#[derive(Debug, Serialize)]
+struct OvenRuntimeFoundationPublicationReport {
+    foundation_identity: String,
+    destination: PathBuf,
+}
+
+/// Publish one provider-sealed runtime foundation without synthesising input facts.
+///
+/// The release provider supplies the complete descriptor and its two named physical roots. This command delegates
+/// all validation, staged copying and re-admission to the sealed publisher; it does not inspect a manifest, cache,
+/// target directory or ambient compiler state.
+pub fn oven_publish_runtime_foundation(options: OvenRuntimeFoundationPublishCommandOptions) -> CliResult<ExitCode> {
+    let bytes = fs::read(&options.asset).map_err(|error| {
+        CliError::failure(format!(
+            "failed to read Oven runtime-foundation descriptor {}: {error}",
+            options.asset.display()
+        ))
+    })?;
+    let asset = serde_json::from_slice::<OvenRuntimeFoundationAsset>(&bytes).map_err(|error| {
+        CliError::failure(format!(
+            "failed to parse Oven runtime-foundation descriptor {}: {error}",
+            options.asset.display()
+        ))
+    })?;
+    let published = publish_runtime_foundation_asset(
+        asset,
+        &options.source_foundation_root,
+        &options.toolchain_root,
+        &options.output,
+    )
+    .map_err(oven_error)?;
+    let report = OvenRuntimeFoundationPublicationReport {
+        foundation_identity: published.foundation_identity().to_string(),
+        destination: options.output,
+    };
+    match options.format {
+        OvenOutputFormat::Text => println!(
+            "Published Oven runtime foundation {} at {}.",
+            report.foundation_identity,
+            report.destination.display()
+        ),
+        OvenOutputFormat::Json => print_json(&report)?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -4284,17 +4332,18 @@ mod tests {
         CompilerSuiteTimingReport, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
         DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
         OvenCompilerSuiteTargetCapabilities, OvenPlanPublishCommandOptions, OvenRunCommandOptions,
-        OvenStoreCommandOptions, OvenTestCommandOptions, attach_compiler_suite_target_workspace_libraries,
-        bake_planned_compiler_suite_binaries, bake_planned_compiler_suite_workspace_libraries,
-        compiler_suite_auto_parallel_jobs, compiler_suite_child_state_root, compiler_suite_cli_output,
-        compiler_suite_completion_failures, compiler_suite_directory, compiler_suite_environment,
-        compiler_suite_environment_path, compiler_suite_exact_test_selection, compiler_suite_file,
-        compiler_suite_libtest_threads, compiler_suite_remove_generated_rust_closure,
-        compiler_suite_selected_shard_references, compiler_suite_selection_context, compiler_suite_selection_report,
-        compiler_suite_temporary_directory, compiler_suite_uses_indexed_foundations,
-        compiler_suite_workspace_library_dependency_closure, default_rustup_home, default_store_root,
-        interop_bake_terminal_message, native_test_failure_summary, oven_publish_direct_rustc_plan, oven_run,
-        oven_test, parse_named_path, prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
+        OvenRuntimeFoundationPublishCommandOptions, OvenStoreCommandOptions, OvenTestCommandOptions,
+        attach_compiler_suite_target_workspace_libraries, bake_planned_compiler_suite_binaries,
+        bake_planned_compiler_suite_workspace_libraries, compiler_suite_auto_parallel_jobs,
+        compiler_suite_child_state_root, compiler_suite_cli_output, compiler_suite_completion_failures,
+        compiler_suite_directory, compiler_suite_environment, compiler_suite_environment_path,
+        compiler_suite_exact_test_selection, compiler_suite_file, compiler_suite_libtest_threads,
+        compiler_suite_remove_generated_rust_closure, compiler_suite_selected_shard_references,
+        compiler_suite_selection_context, compiler_suite_selection_report, compiler_suite_temporary_directory,
+        compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
+        default_rustup_home, default_store_root, interop_bake_terminal_message, native_test_failure_summary,
+        oven_publish_direct_rustc_plan, oven_publish_runtime_foundation, oven_run, oven_test, parse_named_path,
+        prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
         restrict_compiler_suite_target_environment, run_compiler_suite_children_with_leases_retained,
         run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
         write_native_test_transcript,
@@ -4349,6 +4398,28 @@ mod tests {
         let message = interop_bake_terminal_message(&report);
 
         assert!(message.contains("without invoking Cargo"));
+        Ok(())
+    }
+
+    /// A publication command requires the provider-supplied descriptor before it can inspect any named root.
+    #[test]
+    fn runtime_foundation_publish_requires_an_explicit_descriptor() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let result = oven_publish_runtime_foundation(OvenRuntimeFoundationPublishCommandOptions {
+            asset: workspace.path().join("missing-foundation.json"),
+            source_foundation_root: workspace.path().join("source-foundation"),
+            toolchain_root: workspace.path().join("toolchain"),
+            output: workspace.path().join("installed-foundation"),
+            format: OvenOutputFormat::Json,
+        });
+        let error = result
+            .err()
+            .ok_or("missing foundation descriptor unexpectedly published")?;
+        assert!(
+            error
+                .to_string()
+                .contains("failed to read Oven runtime-foundation descriptor")
+        );
         Ok(())
     }
 

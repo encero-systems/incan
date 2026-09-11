@@ -12,7 +12,7 @@ use ra_ap_hir::Crate;
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace};
 use ra_ap_paths::AbsPathBuf;
-use ra_ap_project_model::{ProjectJson, ProjectWorkspace, ProjectWorkspaceKind, Sysroot};
+use ra_ap_project_model::{ProjectJson, ProjectWorkspace, ProjectWorkspaceKind, RustSourceWorkspaceConfig, Sysroot};
 use ra_ap_vfs::Vfs;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -306,11 +306,35 @@ impl RustWorkspace {
         })?;
         let data = projection.project_data()?;
         let project = ProjectJson::new(None, &base, data);
+        let sysroot = if let Some((data, source_root)) = projection.sysroot_data()? {
+            let source_text = source_root
+                .to_str()
+                .ok_or_else(|| RustMetadataError::InvalidSelectedInput {
+                    path: source_root.to_path_buf(),
+                    message: "selected sysroot source path must be UTF-8".to_string(),
+                })?;
+            let source_root =
+                AbsPathBuf::try_from(source_text).map_err(|_| RustMetadataError::InvalidSelectedInput {
+                    path: source_root.to_path_buf(),
+                    message: "selected sysroot source path must be absolute".to_string(),
+                })?;
+            let sysroot_project = ProjectJson::new(None, &source_root, data);
+            let mut sysroot = Sysroot::new(None, Some(source_root));
+            let workspace = sysroot
+                .load_workspace(&RustSourceWorkspaceConfig::Json(sysroot_project), false, progress)
+                .ok_or_else(|| RustMetadataError::SelectedInputUnavailable {
+                    path: PathBuf::from("rust-sysroot-project.json"),
+                })?;
+            sysroot.set_workspace(workspace);
+            sysroot
+        } else {
+            Sysroot::empty()
+        };
         // Construct the existing neutral consumer directly. load_workspace_at/load_inline also discover sysroot
         // metadata and can invoke Cargo even when the outer project is JSON.
         let workspace = ProjectWorkspace {
             kind: ProjectWorkspaceKind::Json(project),
-            sysroot: Sysroot::empty(),
+            sysroot,
             rustc_cfg: Vec::new(),
             toolchain: Some(Version::parse(projection.toolchain_version()).map_err(|error| {
                 RustMetadataError::InvalidSelectedInput {

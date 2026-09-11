@@ -108,6 +108,8 @@ pub enum OvenArtifactKind {
     NativeCompilationOutput,
     /// One immutable compiler/sysroot closure selected under lease for JEC lookup and execution.
     NativeCompilerClosure,
+    /// Compiler-bound Rust source, cfg, and target facts selected under lease for semantic inspection.
+    RustInspectionToolchain,
     /// Project-level Rust inspection authority selected only through a source-current completed project output.
     ProjectInspectionAuthority,
     /// Verified direct-rustc artifact plan consumed by a later executor stage.
@@ -116,6 +118,8 @@ pub enum OvenArtifactKind {
     CompilerTestSuite,
     /// One independently admitted direct-rustc compiler-suite shard referenced by a small suite index.
     CompilerTestSuiteShard,
+    /// One immutable Cargo-free runtime closure rebuilt above a sealed SDK runtime foundation.
+    NativeRuntimeClosure,
     /// One bounded compiler-test dependency foundation composed by receipt-bound root shards.
     CompilerTestSuiteFoundation,
     /// One independently policy-bounded compiler-Loaf data partition required by a stored suite child.
@@ -2679,7 +2683,9 @@ fn reusable_manifest_equivalent(left: &OvenArtifactManifest, right: &OvenArtifac
         OvenArtifactKind::DirectRustcPlan => {
             left.build_unit_identity == right.build_unit_identity && left.intent == right.intent
         }
-        OvenArtifactKind::NativeCompilerClosure => {
+        OvenArtifactKind::NativeCompilerClosure
+        | OvenArtifactKind::NativeRuntimeClosure
+        | OvenArtifactKind::RustInspectionToolchain => {
             left.intent.target == right.intent.target && left.intent.toolchain == right.intent.toolchain
         }
         _ => false,

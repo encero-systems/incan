@@ -49,6 +49,22 @@ pub enum RustDependencySource:
 
 
 @derive(Eq)
+pub enum RustBuildScriptDeclaration:
+    """
+    The source-declared build-script mode before source-member selection or execution.
+
+    `Default` retains Cargo's documented `build.rs` convention as an authored source rule; the later source-unit
+    producer must still bind it to an exact selected source member. `Disabled` is distinct from a missing package
+    record, and `Explicit` preserves its original relative spelling until that same producer validates it against
+    the selected source catalog.
+    """
+
+    Default
+    Disabled
+    Explicit(str)
+
+
+@derive(Eq)
 pub model RustDependencyDeclaration:
     """
     One original literal table/alias slot, before inheritance, activation or child selection.
@@ -73,7 +89,8 @@ pub model RustDependencyDeclaration:
 
 pub model RustDependencyCatalog:
     """
-    Complete dependency/feature declarations plus the still-unchecked unit/configuration document.
+    Complete dependency/feature declarations, build-script declaration and the still-unchecked unit/configuration
+    document.
 
     Keeping package, targets, build candidates, profiles and other tables is intentional. The later source-facet
     producer must validate and classify them before constructing checked semantic inputs. This type carries no
@@ -83,6 +100,28 @@ pub model RustDependencyCatalog:
     pub document: TomlValue
     pub dependencies: list[RustDependencyDeclaration]
     pub features: Dict[str, list[str]]
+    pub build_script: Option[RustBuildScriptDeclaration]
+
+
+@derive(Eq)
+pub model RustBuildScriptSourceMember:
+    """
+    One source member already admitted by the later source-unit inventory.
+
+    This is deliberately only the portable member coordinate and the source producer's digest. It is not a checkout
+    root, filesystem permission or build graph edge. The Rust host binds the same pair into its selected facet graph.
+    """
+
+    pub path: str
+    pub digest: str
+
+
+@derive(Eq)
+pub enum RustBuildScriptBinding:
+    """The one build-script conclusion that can flow from a supplied manifest and selected source inventory."""
+
+    NoBuildScript
+    BuildScript(RustBuildScriptSourceMember)
 
 
 def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
@@ -312,10 +351,137 @@ def read_groups(
     return Ok(result)
 
 
+def read_build_script_declaration(
+    root: Dict[str, TomlValue],
+    manifest: str,
+) -> Result[Option[RustBuildScriptDeclaration], IntakeError]:
+    """
+    Retain the package's build-script declaration without inspecting its source tree or launching Cargo.
+
+    Cargo's documented default is `build.rs`; retaining that convention here is not a filesystem discovery. The
+    later selected-source producer must prove that the resulting path names an exact source member, and may not use
+    this source declaration as permission to execute it.
+    """
+    if "package" not in root:
+        return Ok(None)
+    package = table(root["package"], manifest, ["package"])?
+    if "build" not in package:
+        return Ok(Some(RustBuildScriptDeclaration.Default))
+    value = package["build"]
+    if value.kind() == TomlKind.String:
+        return Ok(Some(RustBuildScriptDeclaration.Explicit(text(value, manifest, ["package", "build"])?)))
+    if value.kind() == TomlKind.Boolean:
+        enabled = value
+            .as_bool()
+            .map_err((error) => refusal(manifest, ["package", "build"], IntakeErrorKind.Invalid, error.message()))?
+        if enabled:
+            return Err(
+                refusal(manifest, ["package", "build"], IntakeErrorKind.Invalid, "build script boolean must be false"),
+            )
+        return Ok(Some(RustBuildScriptDeclaration.Disabled))
+    return Err(
+        refusal(manifest, ["package", "build"], IntakeErrorKind.Invalid, "build script must be a string or false"),
+    )
+
+
+def normalize_build_script_member(path: str, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Normalize harmless relative spelling while refusing a host path or any parent traversal."""
+    if path == "" or path.startswith("/") or "\\" in path or ":" in path:
+        return Err(
+            refusal(manifest, field, IntakeErrorKind.Invalid, "build script path must be a relative source member"),
+        )
+    mut parts: list[str] = []
+    for part in path.split("/"):
+        if part == "..":
+            return Err(
+                refusal(manifest, field, IntakeErrorKind.Invalid, "build script path must be a relative source member"),
+            )
+        if part not in ["", "."]:
+            parts.append(part)
+    if len(parts) == 0:
+        return Err(
+            refusal(manifest, field, IntakeErrorKind.Invalid, "build script path must be a relative source member"),
+        )
+    return Ok("/".join(parts))
+
+
+def validate_selected_build_script_members(
+    members: list[RustBuildScriptSourceMember],
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Require the host-supplied source inventory to use one canonical member coordinate per source byte record."""
+    mut seen: Dict[str, bool] = {}
+    for member in members:
+        normalized = normalize_build_script_member(member.path, manifest, ["selected-source", "member"])?
+        if normalized != member.path:
+            return Err(
+                refusal(
+                    manifest,
+                    ["selected-source", "member"],
+                    IntakeErrorKind.Invalid,
+                    "source member path is not canonical",
+                ),
+            )
+        if member.path in seen:
+            return Err(
+                refusal(manifest, ["selected-source", "member"], IntakeErrorKind.Invalid, "duplicate source member path"),
+            )
+        seen[member.path] = true
+    return Ok(None)
+
+
+def selected_build_script_member(
+    path: str,
+    members: list[RustBuildScriptSourceMember],
+    manifest: str,
+    explicit: bool,
+) -> Result[RustBuildScriptBinding, IntakeError]:
+    """Bind one conventional or explicit entrypoint to exactly one portable member from the supplied inventory."""
+    mut selected: Option[RustBuildScriptSourceMember] = None
+    for member in members:
+        if member.path == path:
+            selected = Some(member)
+    if let Some(member) = selected:
+        return Ok(RustBuildScriptBinding.BuildScript(member))
+    if explicit:
+        return Err(
+            refusal(
+                manifest,
+                ["package", "build"],
+                IntakeErrorKind.Missing,
+                "explicit build script is absent from selected source members",
+            ),
+        )
+    return Ok(RustBuildScriptBinding.NoBuildScript)
+
+
+pub def bind_build_script_source(
+    catalog: RustDependencyCatalog,
+    members: list[RustBuildScriptSourceMember],
+    manifest: str,
+) -> Result[RustBuildScriptBinding, IntakeError]:
+    """
+    Bind the retained package declaration to one exact admitted source member without discovering files or Cargo state.
+
+    An omitted build declaration uses the documented `build.rs` convention only when that source member is already
+    present in the supplied inventory. An explicit declaration requires its exact member. `Disabled` and a document
+    with no package record always yield `NoBuildScript`, even if a member happens to be named build.rs.
+    """
+    validate_selected_build_script_members(members, manifest)?
+    match catalog.build_script:
+        None | Some(RustBuildScriptDeclaration.Disabled) => return Ok(RustBuildScriptBinding.NoBuildScript)
+        Some(RustBuildScriptDeclaration.Default) =>
+            return selected_build_script_member("build.rs", members, manifest, false)
+        Some(RustBuildScriptDeclaration.Explicit(path)) =>
+            normalized = normalize_build_script_member(path, manifest, ["package", "build"])?
+            return selected_build_script_member(normalized, members, manifest, true)
+
+
 def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:
     """Read all dependency/feature tables and retain the rest for the later checked facet producer."""
     document = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
     root = table(document, manifest, [])?
+    build_script = read_build_script_declaration(root, manifest)?
     mut dependencies = read_groups(root, None, manifest, [], 0)?
     if "target" in root:
         targets = table(root["target"], manifest, ["target"])?
@@ -339,7 +505,9 @@ def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, In
             if name == "":
                 return Err(refusal(manifest, ["features", name], IntakeErrorKind.Invalid, "empty feature name"))
             features[name] = strings(declarations[name], manifest, ["features", name])?
-    return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features))
+    return Ok(
+        RustDependencyCatalog(document=document, dependencies=dependencies, features=features, build_script=build_script),
+    )
 
 
 pub def read_dependency_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:

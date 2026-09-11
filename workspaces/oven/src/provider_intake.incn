@@ -1,0 +1,410 @@
+"""
+Bind an explicit provider package inventory to one Rust manifest snapshot without discovering Cargo state.
+
+This is a narrow source-authored bridge: the Rust host retains the selected-unit identity, source owner/root,
+edition, host dependencies and every provider execution effect. The input carries no filesystem path, package graph
+or artifact location. Its `selected_identity` is an opaque correlation value which the host must authenticate against
+the original selected Rust facet graph before it can construct a runtime-foundation provider record.
+"""
+
+from std.json import JsonValue, parse
+from std.traits.error import Error
+from manifest_errors import IntakeError, IntakeErrorKind
+from rust_source import (
+    bind_build_script_source,
+    read_dependency_catalog,
+    RustBuildScriptBinding,
+    RustBuildScriptSourceMember,
+    RustDependencyCatalog,
+    RustDependencyRole,
+)
+
+pub const REQUEST_SCHEMA: str = "incan.oven.runtime-foundation-provider-intake-request/2"
+const RESPONSE_SCHEMA: str = "incan.oven.runtime-foundation-provider-intake/2"
+
+
+pub model ProviderIntakeWireError with Error:
+    """A malformed transport field has no binding and cannot become a provider declaration."""
+
+    pub fields: list[str]
+
+    def message(self) -> str:
+        """Render only the literal wire field path without copying untrusted source text into a diagnostic."""
+        return f"runtime-foundation provider intake refused at {self.fields}"
+
+
+@derive(Eq)
+pub model ProviderIntakeRequest:
+    """One host-authenticated manifest snapshot and complete package-root source inventory."""
+
+    pub selected_identity: str
+    pub manifest: RustBuildScriptSourceMember
+    pub manifest_source: str
+    pub package_members: list[RustBuildScriptSourceMember]
+    pub host_dependencies: list[ProviderIntakeHostDependency]
+
+
+@derive(Eq)
+pub model ProviderIntakeHostDependency:
+    """
+    One already-selected host unit attached to its original build-dependency declaration slot.
+
+    The source layer proves only that `declaration_index`/`alias` names a literal `build-dependencies` record. The
+    host proves that `unit` is the matching host-domain dependency in the existing selected facet graph. Target
+    condition activation therefore stays with the checked source/selection producer rather than being guessed here.
+    """
+
+    pub declaration_index: int
+    pub alias: str
+    pub unit: str
+
+
+@derive(Eq)
+pub model ProviderSourceHostDependency:
+    """A validated source-declared build dependency reduced to the existing selected host-unit reference."""
+
+    pub alias: str
+    pub unit: str
+
+
+@derive(Eq)
+pub enum ProviderSourceBinding:
+    """The source-level result before a retained compiler runs or provider effects are captured."""
+
+    NoBuildScript
+    BuildScript(RustBuildScriptSourceMember, list[RustBuildScriptSourceMember], list[ProviderSourceHostDependency])
+
+
+def provider_refusal(manifest: str, field: list[str], detail: str) -> IntakeError:
+    """Keep contradictory provider inventory in the existing source-intake diagnostic vocabulary."""
+    return IntakeError(kind=IntakeErrorKind.Invalid, manifest=manifest, field=field, location=None, detail=detail)
+
+
+def validate_package_members(
+    package_members: list[RustBuildScriptSourceMember],
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Keep the package manifest typed and separate from its ordinary package-root source inventory."""
+    for position in range(len(package_members)):
+        if package_members[position].path == "Cargo.toml":
+            return Err(
+                provider_refusal(
+                    manifest,
+                    ["package-members", str(position)],
+                    "package members must exclude the separately typed Cargo.toml manifest",
+                ),
+            )
+    return Ok(None)
+
+
+pub def bind_provider_source(
+    catalog: RustDependencyCatalog,
+    package_members: list[RustBuildScriptSourceMember],
+    declared_host_dependencies: list[ProviderIntakeHostDependency],
+    manifest: str,
+) -> Result[ProviderSourceBinding, IntakeError]:
+    """
+    Bind one complete producer-supplied package inventory without treating it as the unit's compiler-visible source catalogue.
+
+    The existing Rust declaration reader owns default/disabled/explicit build-script interpretation and canonical
+    member validation. This layer retains the full package inventory after that binding so a later
+    `rerun-if-changed` result can be checked against the same source evidence. Retaining package evidence is not a
+    build-script execution grant: a no-script declaration may carry nonempty package members, but it may not carry
+    host dependencies because no script can consume them.
+    """
+    binding = bind_build_script_source(catalog, package_members.clone(), manifest)?
+    validate_package_members(package_members, manifest)?
+    match binding:
+        RustBuildScriptBinding.NoBuildScript =>
+            if len(declared_host_dependencies) != 0:
+                return Err(
+                    provider_refusal(
+                        manifest,
+                        ["provider-source", "host-dependency"],
+                        "a no-build-script declaration cannot carry host dependencies",
+                    ),
+                )
+            return Ok(ProviderSourceBinding.NoBuildScript)
+        RustBuildScriptBinding.BuildScript(entrypoint) =>
+            source_host_dependencies = bind_host_dependencies(catalog, declared_host_dependencies, manifest)?
+            return Ok(ProviderSourceBinding.BuildScript(entrypoint, package_members, source_host_dependencies))
+
+
+def bind_host_dependencies(
+    catalog: RustDependencyCatalog,
+    declared_host_dependencies: list[ProviderIntakeHostDependency],
+    manifest: str,
+) -> Result[list[ProviderSourceHostDependency], IntakeError]:
+    """Require every supplied host reference to originate at one distinct literal build-dependency declaration."""
+    mut result: list[ProviderSourceHostDependency] = []
+    mut declaration_indices: list[int] = []
+    mut aliases: list[str] = []
+    for position in range(len(declared_host_dependencies)):
+        binding = declared_host_dependencies[position]
+        binding_path = ["provider-source", "host-dependency", str(position)]
+        if binding.declaration_index < 0 or binding.alias == "" or binding.unit == "":
+            return Err(
+                provider_refusal(manifest, binding_path, "host dependency binding must contain index, alias and unit"),
+            )
+        if binding.declaration_index in declaration_indices or binding.alias in aliases:
+            return Err(
+                provider_refusal(
+                    manifest,
+                    binding_path,
+                    "host dependency bindings must not repeat a declaration or alias",
+                ),
+            )
+        mut matched = false
+        for dependency in catalog.dependencies:
+            if dependency.index == binding.declaration_index:
+                matched = true
+                if dependency.role != RustDependencyRole.Build or dependency.alias != binding.alias:
+                    return Err(
+                        provider_refusal(
+                            manifest,
+                            binding_path,
+                            "host dependency binding does not name its original build-dependency declaration",
+                        ),
+                    )
+        if not matched:
+            return Err(
+                provider_refusal(manifest, binding_path, "host dependency binding names an unknown declaration index"),
+            )
+        declaration_indices.append(binding.declaration_index)
+        aliases.append(binding.alias)
+        result.append(ProviderSourceHostDependency(alias=binding.alias, unit=binding.unit))
+    return Ok(result)
+
+
+pub def evaluate(source: str) -> JsonValue:
+    """Decode one bounded host request and emit a declaration binding or a refusal without execution authority."""
+    match parse(source):
+        Err(_) => return wire_refusal("", ProviderIntakeWireError(fields=[]))
+        Ok(document) => return evaluate_document(document)
+
+
+pub def evaluate_document(document: JsonValue) -> JsonValue:
+    """Evaluate an already decoded exact-schema request without reopening the JSON wire representation."""
+    match decode_request(document):
+        Err(error) => return wire_refusal("", error)
+        Ok(request) =>
+            match read_dependency_catalog(request.manifest_source, request.manifest.path):
+                Err(error) => return source_refusal(request.selected_identity, error)
+                Ok(catalog) =>
+                    match bind_provider_source(
+                        catalog,
+                        request.package_members,
+                        request.host_dependencies,
+                        request.manifest.path,
+                    ):
+                        Err(error) => return source_refusal(request.selected_identity, error)
+                        Ok(ProviderSourceBinding.NoBuildScript) => return no_build_script(request.selected_identity)
+                        Ok(ProviderSourceBinding.BuildScript(entrypoint, members, source_host_dependencies)) =>
+                            return build_script(request.selected_identity, entrypoint, members, source_host_dependencies)
+
+
+pub def decode_request(document: JsonValue) -> Result[ProviderIntakeRequest, ProviderIntakeWireError]:
+    """Require every transport field and never replace host-selected evidence with source defaults."""
+    exact_object(document, ["schema", "request"], [])?
+    if text_field(document, "schema", [])? != REQUEST_SCHEMA:
+        return Err(ProviderIntakeWireError(fields=["schema"]))
+    request = field(document, "request", [])?
+    path: list[str] = ["request"]
+    exact_object(
+        request,
+        ["selected_identity", "manifest", "manifest_source", "package_members", "host_dependencies"],
+        path,
+    )?
+    selected_identity = text_field(request, "selected_identity", path)?
+    nonempty(selected_identity, path + ["selected_identity"])?
+    manifest = decode_manifest(field(request, "manifest", path)?, path + ["manifest"])?
+    manifest_source = text_field(request, "manifest_source", path)?
+    members = decode_members(field(request, "package_members", path)?, path + ["package_members"])?
+    decoded_host_dependencies = decode_host_dependencies(
+        field(request, "host_dependencies", path)?,
+        path + ["host_dependencies"],
+    )?
+    return Ok(
+        ProviderIntakeRequest(
+            selected_identity=selected_identity,
+            manifest=manifest,
+            manifest_source=manifest_source,
+            package_members=members,
+            host_dependencies=decoded_host_dependencies,
+        ),
+    )
+
+
+def exact_object(value: JsonValue, names: list[str], path: list[str]) -> Result[None, ProviderIntakeWireError]:
+    """Reject omissions and unknown fields before source declaration interpretation starts."""
+    if not value.is_object():
+        return Err(ProviderIntakeWireError(fields=path))
+    for key in value.keys():
+        if key not in names:
+            return Err(ProviderIntakeWireError(fields=path + [key]))
+    for name in names:
+        field(value, name, path)?
+    return Ok(None)
+
+
+def field(value: JsonValue, name: str, path: list[str]) -> Result[JsonValue, ProviderIntakeWireError]:
+    """Require an explicit value rather than accepting a model default or missing optional transport field."""
+    match value.get(name):
+        Some(item) => return Ok(item)
+        None => return Err(ProviderIntakeWireError(fields=path + [name]))
+
+
+def text_field(value: JsonValue, name: str, path: list[str]) -> Result[str, ProviderIntakeWireError]:
+    """Read JSON text without coercing null, booleans or numbers into source evidence."""
+    item = field(value, name, path)?
+    match item.as_str():
+        Some(text) => return Ok(text)
+        None => return Err(ProviderIntakeWireError(fields=path + [name]))
+
+
+def integer_field(value: JsonValue, name: str, path: list[str]) -> Result[int, ProviderIntakeWireError]:
+    """Read an exact JSON integer for one original manifest declaration slot."""
+    item = field(value, name, path)?
+    match item.as_int():
+        Some(integer) => return Ok(integer)
+        None => return Err(ProviderIntakeWireError(fields=path + [name]))
+
+
+def array(value: JsonValue, path: list[str]) -> Result[list[JsonValue], ProviderIntakeWireError]:
+    """Require an actual array even for an intentionally empty package inventory or host-dependency list."""
+    match value.as_array():
+        Some(items) => return Ok(items)
+        None => return Err(ProviderIntakeWireError(fields=path))
+
+
+def nonempty(value: str, path: list[str]) -> Result[None, ProviderIntakeWireError]:
+    """An empty selected identity or evidence digest cannot bind a host operation."""
+    if value == "":
+        return Err(ProviderIntakeWireError(fields=path))
+    return Ok(None)
+
+
+def decode_members(
+    value: JsonValue,
+    path: list[str],
+) -> Result[list[RustBuildScriptSourceMember], ProviderIntakeWireError]:
+    """Decode package-member records; the typed binder validates canonical path and duplicate semantics."""
+    values = array(value, path)?
+    mut members: list[RustBuildScriptSourceMember] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(item, ["path", "digest"], at)?
+        member_path = text_field(item, "path", at)?
+        nonempty(member_path, at + ["path"])?
+        digest = text_field(item, "digest", at)?
+        nonempty(digest, at + ["digest"])?
+        members.append(RustBuildScriptSourceMember(path=member_path, digest=digest))
+    return Ok(members)
+
+
+def decode_manifest(value: JsonValue, path: list[str]) -> Result[RustBuildScriptSourceMember, ProviderIntakeWireError]:
+    """Bind the parsed text to one exact package-root `Cargo.toml` evidence member."""
+    exact_object(value, ["path", "digest"], path)?
+    manifest_path = text_field(value, "path", path)?
+    if manifest_path != "Cargo.toml":
+        return Err(ProviderIntakeWireError(fields=path + ["path"]))
+    digest = text_field(value, "digest", path)?
+    nonempty(digest, path + ["digest"])?
+    return Ok(RustBuildScriptSourceMember(path=manifest_path, digest=digest))
+
+
+def decode_host_dependencies(
+    value: JsonValue,
+    path: list[str],
+) -> Result[list[ProviderIntakeHostDependency], ProviderIntakeWireError]:
+    """Retain declared-slot correlation while leaving selected graph authentication to the host."""
+    values = array(value, path)?
+    mut dependencies: list[ProviderIntakeHostDependency] = []
+    for index in range(len(values)):
+        item = values[index]
+        at = path + [str(index)]
+        exact_object(item, ["declaration_index", "alias", "unit"], at)?
+        declaration_index = integer_field(item, "declaration_index", at)?
+        alias = text_field(item, "alias", at)?
+        nonempty(alias, at + ["alias"])?
+        unit = text_field(item, "unit", at)?
+        nonempty(unit, at + ["unit"])?
+        dependencies.append(ProviderIntakeHostDependency(declaration_index=declaration_index, alias=alias, unit=unit))
+    return Ok(dependencies)
+
+
+def member_json(source_member: RustBuildScriptSourceMember) -> JsonValue:
+    """Preserve the exact portable path/digest pair for the host's selected-graph validation."""
+    return JsonValue.object(
+        {"path": JsonValue.string(source_member.path), "digest": JsonValue.string(source_member.digest)},
+    )
+
+
+def host_dependency_json(dependency: ProviderSourceHostDependency) -> JsonValue:
+    """Emit only the alias and already-selected host unit after source declaration-slot validation succeeded."""
+    return JsonValue.object({"alias": JsonValue.string(dependency.alias), "unit": JsonValue.string(dependency.unit)})
+
+
+def host_dependencies_json(dependencies: list[ProviderSourceHostDependency]) -> JsonValue:
+    """Build the canonical response list without a struct comprehension in generated Rust."""
+    mut encoded: list[JsonValue] = []
+    for dependency in dependencies:
+        encoded.append(host_dependency_json(dependency))
+    return JsonValue.array(encoded)
+
+
+def package_members_json(members: list[RustBuildScriptSourceMember]) -> JsonValue:
+    """Build the package-inventory response array without a complex struct comprehension in generated Rust."""
+    mut encoded: list[JsonValue] = []
+    for source_member in members:
+        encoded.append(member_json(source_member))
+    return JsonValue.array(encoded)
+
+
+def no_build_script(selected_identity: str) -> JsonValue:
+    """Emit a no-provider conclusion; the Rust host retains its authenticated package evidence out of band."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(RESPONSE_SCHEMA), "selected_identity": JsonValue.string(selected_identity), "status": JsonValue.string(
+            "no_build_script",
+        )},
+    )
+
+
+def build_script(
+    selected_identity: str,
+    entrypoint: RustBuildScriptSourceMember,
+    package_members: list[RustBuildScriptSourceMember],
+    source_host_dependencies: list[ProviderSourceHostDependency],
+) -> JsonValue:
+    """Emit the source declaration only; no host root, Rust edition, dependencies or effects are synthesized."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(RESPONSE_SCHEMA), "selected_identity": JsonValue.string(selected_identity), "status": JsonValue.string(
+            "build_script",
+        ), "declaration": JsonValue.object(
+            {"entrypoint": member_json(entrypoint), "package_members": package_members_json(package_members), "host_dependencies": host_dependencies_json(
+                source_host_dependencies,
+            )},
+        )},
+    )
+
+
+def wire_refusal(selected_identity: str, error: ProviderIntakeWireError) -> JsonValue:
+    """Malformed transport has no selected binding and cannot be replayed as an authorized declaration."""
+    return refusal(selected_identity, "invalid_input", error.fields)
+
+
+def source_refusal(selected_identity: str, error: IntakeError) -> JsonValue:
+    """Keep a decoded selected identity only as correlation for a source-level declaration refusal."""
+    return refusal(selected_identity, error.kind.as_str(), error.field)
+
+
+def refusal(selected_identity: str, kind: str, fields: list[str]) -> JsonValue:
+    """Use a closed refusal shape with no declaration or execution payload."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(RESPONSE_SCHEMA), "selected_identity": JsonValue.string(selected_identity), "status": JsonValue.string(
+            "refused",
+        ), "error": JsonValue.object(
+            {"kind": JsonValue.string(kind), "fields": JsonValue.array([JsonValue.string(field) for field in fields])},
+        )},
+    )

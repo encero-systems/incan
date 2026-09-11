@@ -265,6 +265,17 @@ pub(crate) struct RustInspectTypecheckRequest<'a> {
     pub selected: Option<SelectedRustInspectWorkspace>,
 }
 
+/// The lease-safe physical binding selected for one Rust inspection workspace.
+///
+/// A generic projection keeps its source owner in [`SelectedRustInspectWorkspace`]. The fixed compiler `std`
+/// projection owns a Store lease itself and intentionally exposes only cache/workspace operations, never its raw
+/// physical projection. Both variants are selected control-plane facts; neither may discover a Cargo workspace.
+#[cfg(feature = "rust_inspect")]
+pub(crate) enum SelectedRustInspectBinding {
+    Explicit(crate::rust_inspect::ValidatedInspectionProject),
+    FixedStd(Arc<crate::oven::rustc::OvenBoundFixedStdInspection>),
+}
+
 /// An already selected physical projection and the admitted owners retaining its inputs.
 ///
 /// Selection supplies the expected byte bindings and keeps every contributing source owner in these leases. This
@@ -274,7 +285,7 @@ pub(crate) struct RustInspectTypecheckRequest<'a> {
 pub(crate) struct SelectedRustInspectWorkspace {
     pub context: PathBuf,
     pub temporary_root: PathBuf,
-    pub projection: crate::rust_inspect::ValidatedInspectionProject,
+    pub binding: SelectedRustInspectBinding,
     pub source_loaf: Option<OvenToolchainLoaf>,
     pub project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
 }
@@ -316,6 +327,32 @@ impl PreparedRustInspectWorkspace {
     }
 }
 
+#[cfg(feature = "rust_inspect")]
+impl SelectedRustInspectWorkspace {
+    /// Bind this exact selection while preserving the owner whose lease makes its physical bytes usable.
+    fn bind_cache(
+        self: &Arc<Self>,
+        cache: &crate::rust_inspect::RustMetadataCache,
+    ) -> Result<(), crate::rust_inspect::RustMetadataError> {
+        match &self.binding {
+            SelectedRustInspectBinding::Explicit(projection) => cache.bind_selected_project_with_owner(
+                &self.context,
+                projection.clone(),
+                &self.temporary_root,
+                Arc::clone(self),
+            ),
+            SelectedRustInspectBinding::FixedStd(selection) => {
+                selection.bind_cache(cache, &self.context, &self.temporary_root)
+            }
+        }
+    }
+
+    /// Return whether this binding itself retains the physical source owner.
+    const fn binding_retains_source_owner(&self) -> bool {
+        matches!(&self.binding, SelectedRustInspectBinding::FixedStd(_))
+    }
+}
+
 /// Bind and prewarm an explicitly selected Rust inspection projection without acquiring missing inputs.
 ///
 /// Missing selection is terminal before any cache/output mutation. Keeping the whole selected handle in the result
@@ -338,7 +375,10 @@ pub(crate) fn prepare_rust_inspect_workspace(
             .to_string(),
         )
     })?;
-    if selected.source_loaf.is_none() && selected.project_source_authorities.is_none() {
+    if selected.source_loaf.is_none()
+        && selected.project_source_authorities.is_none()
+        && !selected.binding_retains_source_owner()
+    {
         return Err(CliError::failure(
             RustMetadataError::InvalidSelectedInput {
                 path: selected.context,
@@ -357,14 +397,8 @@ pub(crate) fn prepare_rust_inspect_workspace(
     }
     let selected = Arc::new(selected);
     let inspector = Inspector::new(InspectorConfig::new(&selected.context));
-    inspector
-        .cache()
-        .bind_selected_project_with_owner(
-            &selected.context,
-            selected.projection.clone(),
-            &selected.temporary_root,
-            Arc::clone(&selected),
-        )
+    selected
+        .bind_cache(inspector.cache())
         .map_err(|error| CliError::failure(error.to_string()))?;
     // The cache owns the lease as long as its selected database exists, even if extraction fails and this local
     // preparation handle is dropped. A later validated rebind or explicit invalidation releases that exact owner.

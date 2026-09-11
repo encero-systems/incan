@@ -1,8 +1,52 @@
 use std::fs;
 
-use crate::selection::ValidatedInspectionProject;
+use crate::selection::{InspectionSourceInput, SelectedInspectionSysrootInput, ValidatedInspectionProject};
 use crate::selection_test_support::{InspectionFixture, byte_digest};
 use crate::{RustMetadataError, RustWorkspace, extract_rust_item};
+
+/// Attach a small compiler-selected core/std graph while retaining its physical source lease.
+fn attach_json_sysroot(fixture: &mut InspectionFixture) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let sysroot = tempfile::tempdir()?;
+    let root = sysroot.path().canonicalize()?;
+    let core_dir = root.join("core");
+    let std_dir = root.join("std");
+    fs::create_dir(&core_dir)?;
+    fs::create_dir(&std_dir)?;
+    let core_module = core_dir.join("lib.rs");
+    let std_module = std_dir.join("lib.rs");
+    fs::write(
+        &core_module,
+        "#![no_core]\npub mod prelude { pub mod rust_2021 { pub struct CorePreludeMarker; } }\n",
+    )?;
+    fs::write(
+        &std_module,
+        "#![no_std]\npub mod prelude { pub mod rust_2021 { pub struct SelectedPreludeMarker; } }\n",
+    )?;
+    fs::write(root.join("Cargo.toml"), "invalid sysroot cargo manifest: do not read\n")?;
+    let project_json = serde_json::to_vec(&serde_json::json!({ "crates": [
+        {
+            "display_name": "core", "root_module": core_module, "edition": "2021", "deps": [],
+            "cfg": [], "env": {}, "is_workspace_member": false,
+            "source": { "include_dirs": [core_dir], "exclude_dirs": [] }
+        },
+        {
+            "display_name": "std", "root_module": std_module, "edition": "2021",
+            "deps": [{"crate": 0, "name": "core"}],
+            "cfg": [], "env": {}, "is_workspace_member": false,
+            "source": { "include_dirs": [std_dir], "exclude_dirs": [] }
+        }
+    ] }))?;
+    fixture.inputs.sources.push(InspectionSourceInput {
+        root: root.clone(),
+        digest: super::digest_oven_source_tree(&root)?,
+    });
+    fixture.inputs.sysroot = Some(SelectedInspectionSysrootInput {
+        project_digest: byte_digest(&project_json),
+        project_json,
+        source_root: root,
+    });
+    Ok(sysroot)
+}
 
 /// Verify path only load refuses without reading or creating inputs.
 #[test]
@@ -263,6 +307,178 @@ fn selected_source_symlink_refuses_before_database_loading() -> Result<(), Box<d
     assert!(matches!(
         fixture.load(),
         Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+    assert_eq!(fs::read_dir(fixture.output.path())?.count(), 0);
+    Ok(())
+}
+
+/// A JSON-backed selected sysroot supplies language crates, consumer edges and the edition prelude.
+#[test]
+fn selected_json_sysroot_supplies_consumer_language_semantics() -> Result<(), Box<dyn std::error::Error>> {
+    use ra_ap_hir::{Crate, ModuleDef, PathResolution, Semantics};
+    use ra_ap_ide_db::base_db::{CrateOrigin, LangCrateOrigin};
+    use ra_ap_syntax::AstNode as _;
+
+    let mut fixture = InspectionFixture::new("pub struct Consumer { pub selected: SelectedPreludeMarker }\n")?;
+    let sysroot = attach_json_sysroot(&mut fixture)?;
+    let consumer_project: serde_json::Value = serde_json::from_slice(&fixture.inputs.project_json)?;
+    assert_eq!(consumer_project["crates"][0]["deps"], serde_json::json!([]));
+
+    let workspace = fixture.load()?;
+    let db = workspace.db();
+    let core = Crate::all(db)
+        .into_iter()
+        .find(|krate| krate.origin(db) == CrateOrigin::Lang(LangCrateOrigin::Core))
+        .ok_or("selected core crate was not loaded with its language origin")?;
+    let std = Crate::all(db)
+        .into_iter()
+        .find(|krate| krate.origin(db) == CrateOrigin::Lang(LangCrateOrigin::Std))
+        .ok_or("selected std crate was not loaded with its language origin")?;
+    let consumer = workspace
+        .crate_by_name("demo")
+        .ok_or("selected consumer crate was not loaded")?;
+    let loaded_root = |krate: Crate| -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        let path = workspace.vfs.file_path(krate.root_file(db));
+        let path = path.as_path().ok_or("selected crate root was not a physical path")?;
+        let path: &std::path::Path = path.as_ref();
+        Ok(path.to_path_buf())
+    };
+    let sysroot_root = sysroot.path().canonicalize()?;
+    assert_eq!(loaded_root(core)?, sysroot_root.join("core/lib.rs"));
+    assert_eq!(loaded_root(std)?, sysroot_root.join("std/lib.rs"));
+
+    let dependencies = consumer
+        .dependencies(db)
+        .into_iter()
+        .map(|dependency| (dependency.name.as_str().to_owned(), dependency.krate.origin(db)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        dependencies,
+        std::collections::BTreeMap::from([
+            ("core".to_string(), CrateOrigin::Lang(LangCrateOrigin::Core)),
+            ("std".to_string(), CrateOrigin::Lang(LangCrateOrigin::Std)),
+        ])
+    );
+
+    let semantics = Semantics::new(db);
+    let source = semantics.parse_guess_edition(consumer.root_file(db));
+    let selected_path = source
+        .syntax()
+        .descendants()
+        .filter_map(ra_ap_syntax::ast::Path::cast)
+        .find(|path| path.syntax().text().to_string() == "SelectedPreludeMarker")
+        .ok_or("consumer prelude path was absent from its selected source")?;
+    let resolution = semantics
+        .resolve_path(&selected_path)
+        .ok_or("selected std prelude did not resolve in the consumer")?;
+    let PathResolution::Def(ModuleDef::Adt(marker)) = resolution else {
+        return Err(format!("selected std prelude resolved to the wrong item: {resolution:?}").into());
+    };
+    assert_eq!(marker.name(db).as_str(), "SelectedPreludeMarker");
+    assert_eq!(
+        marker.module(db).krate(db).origin(db),
+        CrateOrigin::Lang(LangCrateOrigin::Std)
+    );
+    Ok(())
+}
+
+/// The JSON sysroot path remains functional when every ambient Rust tool entrypoint is trapped.
+#[cfg(unix)]
+#[test]
+fn selected_json_sysroot_does_not_spawn_ambient_tools() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+    let guard = tempfile::tempdir()?;
+    let marker = guard.path().join("unexpected-tool-call");
+    let trap = guard.path().join("tool-trap");
+    fs::write(
+        &trap,
+        "#!/bin/sh\nprintf '%s\\n' \"$0 $*\" >> \"$INCAN_INSPECTION_TOOL_MARKER\"\nexit 91\n",
+    )?;
+    fs::set_permissions(&trap, fs::Permissions::from_mode(0o755))?;
+    let bin = guard.path().join("bin");
+    fs::create_dir(&bin)?;
+    for tool in ["cargo", "rustc", "rustup"] {
+        fs::hard_link(&trap, bin.join(tool))?;
+    }
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "loader::tests::selected_json_sysroot_supplies_consumer_language_semantics",
+            "--nocapture",
+        ])
+        .env("INCAN_INSPECTION_TOOL_MARKER", &marker)
+        .env("CARGO", &trap)
+        .env("RUSTC", &trap)
+        .env("CARGO_HOME", &bin)
+        .env("RUSTUP_HOME", &bin)
+        .env("PATH", &bin)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "isolated selected-sysroot loader failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+        "isolated harness did not execute exactly one passing selected-sysroot probe"
+    );
+    if marker.exists() {
+        return Err(format!(
+            "selected-sysroot loader invoked an ambient tool: {}",
+            fs::read_to_string(&marker)?
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Selected sysroot bytes, graph shape and physical root all fail closed before loading.
+#[test]
+fn selected_json_sysroot_rejects_unbound_convenience_and_empty_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = InspectionFixture::new("pub struct Consumer;\n")?;
+    let sysroot = attach_json_sysroot(&mut fixture)?;
+
+    let mut wrong_digest = fixture.inputs.clone();
+    wrong_digest
+        .sysroot
+        .as_mut()
+        .ok_or("selected sysroot input absent")?
+        .project_digest = byte_digest(b"different sysroot projection");
+    assert!(matches!(
+        ValidatedInspectionProject::validate(wrong_digest),
+        Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+
+    let mut convenience = fixture.inputs.clone();
+    let selected = convenience.sysroot.as_mut().ok_or("selected sysroot input absent")?;
+    let mut project: serde_json::Value = serde_json::from_slice(&selected.project_json)?;
+    project["sysroot_src"] = serde_json::json!(sysroot.path().canonicalize()?);
+    selected.project_json = serde_json::to_vec(&project)?;
+    selected.project_digest = byte_digest(&selected.project_json);
+    assert!(matches!(
+        ValidatedInspectionProject::validate(convenience),
+        Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+
+    let mut outside = fixture.inputs.clone();
+    outside
+        .sysroot
+        .as_mut()
+        .ok_or("selected sysroot input absent")?
+        .source_root = fixture.output.path().canonicalize()?;
+    assert!(matches!(
+        ValidatedInspectionProject::validate(outside),
+        Err(RustMetadataError::InvalidSelectedInput { .. })
+    ));
+
+    let mut empty = fixture.inputs.clone();
+    let selected = empty.sysroot.as_mut().ok_or("selected sysroot input absent")?;
+    selected.project_json = serde_json::to_vec(&serde_json::json!({"crates": []}))?;
+    selected.project_digest = byte_digest(&selected.project_json);
+    assert!(matches!(
+        ValidatedInspectionProject::validate(empty),
+        Err(RustMetadataError::SelectedInputUnavailable { .. })
     ));
     assert_eq!(fs::read_dir(fixture.output.path())?.count(), 0);
     Ok(())

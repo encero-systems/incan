@@ -1116,6 +1116,11 @@ pub enum OvenCommand {
         #[command(subcommand)]
         command: OvenPlanCommand,
     },
+    /// Publish an explicit provider-sealed runtime foundation into a new installed asset root
+    RuntimeFoundation {
+        #[command(subcommand)]
+        command: OvenRuntimeFoundationCommand,
+    },
     /// Inspect or prune bounded Oven artifact storage
     Store {
         #[command(subcommand)]
@@ -1278,6 +1283,29 @@ pub enum OvenPlanCommand {
         domain: String,
         #[command(flatten)]
         store: OvenStoreCliFlags,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+}
+
+/// Explicit runtime-foundation publication commands.
+#[derive(Subcommand, Debug)]
+pub enum OvenRuntimeFoundationCommand {
+    /// Validate and publish one complete provider-sealed runtime foundation without discovering inputs
+    Publish {
+        /// JSON runtime-foundation descriptor supplied by the release provider
+        #[arg(long, value_name = "PATH")]
+        asset: PathBuf,
+        /// Root containing the descriptor's complete declared foundation source and artifact members
+        #[arg(long = "source-foundation-root", value_name = "PATH")]
+        source_foundation_root: PathBuf,
+        /// Separately held toolchain root named by the descriptor's selected owner table
+        #[arg(long = "toolchain-root", value_name = "PATH")]
+        toolchain_root: PathBuf,
+        /// New installed foundation directory; an existing destination is refused
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
@@ -1751,6 +1779,21 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     artifact_root,
                     domain,
                     store: store.into(),
+                    format,
+                }),
+            },
+            OvenCommand::RuntimeFoundation { command } => match command {
+                OvenRuntimeFoundationCommand::Publish {
+                    asset,
+                    source_foundation_root,
+                    toolchain_root,
+                    output,
+                    format,
+                } => commands::oven_publish_runtime_foundation(commands::OvenRuntimeFoundationPublishCommandOptions {
+                    asset,
+                    source_foundation_root,
+                    toolchain_root,
+                    output,
                     format,
                 }),
             },
@@ -3034,6 +3077,55 @@ mod tests {
 
         assert!(parse_cli(["incan", "oven", "import"]).is_err());
         assert!(parse_cli(["incan", "oven", "legacy-cargo", "prepare"]).is_err());
+
+        let runtime_foundation = parse_cli([
+            "incan",
+            "oven",
+            "runtime-foundation",
+            "publish",
+            "--asset",
+            "foundation.json",
+            "--source-foundation-root",
+            "foundation-root",
+            "--toolchain-root",
+            "toolchain-root",
+            "--output",
+            "installed-foundation",
+            "--format",
+            "json",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::RuntimeFoundation {
+                    command:
+                        OvenRuntimeFoundationCommand::Publish {
+                            asset,
+                            source_foundation_root,
+                            toolchain_root,
+                            output,
+                            format,
+                        },
+                },
+        }) = runtime_foundation.command
+        else {
+            return Err(expected_command("oven runtime-foundation publish"));
+        };
+        assert_eq!(asset, PathBuf::from("foundation.json"));
+        assert_eq!(source_foundation_root, PathBuf::from("foundation-root"));
+        assert_eq!(toolchain_root, PathBuf::from("toolchain-root"));
+        assert_eq!(output, PathBuf::from("installed-foundation"));
+        assert_eq!(format, OvenOutputFormat::Json);
+        assert!(
+            parse_cli([
+                "incan",
+                "oven",
+                "runtime-foundation",
+                "publish",
+                "--asset",
+                "foundation.json",
+            ])
+            .is_err()
+        );
 
         let test = parse_cli([
             "incan",

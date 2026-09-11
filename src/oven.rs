@@ -128,6 +128,23 @@ pub struct OvenGeneratedProjectRequest {
     build_unit_inputs: BTreeMap<String, String>,
 }
 
+/// Compiler-owned request for the receipt that authorizes Rust inspection before Incan typechecking.
+///
+/// This is intentionally separate from [`OvenGeneratedProjectRequest`]. At this point in the command the
+/// caller has selected authored Incan source and a direct Rust toolchain, but has not typechecked or emitted
+/// generated Rust. Calling those authored files "generated" would invert the authority order that the receipt
+/// records. The source authority contributes to the full provenance identity only: compiler and inspection
+/// closures remain reusable across byte-distinct project versions with the same Rust build intent.
+#[derive(Debug, Clone)]
+pub(crate) struct OvenInspectionBootstrapRequest {
+    project: OvenProjectIdentity,
+    target: String,
+    toolchain: String,
+    profile: String,
+    features: Vec<String>,
+    authored_source_authority: String,
+}
+
 /// Verified generated-source closure that may be shared by profile-specific receipts in one command.
 ///
 /// The source closure is independent of the direct-Rustc profile. Keeping this proof separate lets a normal
@@ -214,6 +231,32 @@ impl OvenGeneratedProjectRequest {
     #[must_use]
     pub fn project_root(&self) -> &Path {
         &self.project_root
+    }
+}
+
+impl OvenInspectionBootstrapRequest {
+    /// Construct a receipt request from already-selected authored source authority and native build intent.
+    #[must_use]
+    pub(crate) fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        target: impl Into<String>,
+        toolchain: impl Into<String>,
+        profile: impl Into<String>,
+        features: Vec<String>,
+        authored_source_authority: impl Into<String>,
+    ) -> Self {
+        Self {
+            project: OvenProjectIdentity {
+                name: name.into(),
+                version: version.into(),
+            },
+            target: target.into(),
+            toolchain: toolchain.into(),
+            profile: profile.into(),
+            features,
+            authored_source_authority: authored_source_authority.into(),
+        }
     }
 }
 
@@ -310,6 +353,8 @@ pub const OVEN_COMPILER_TEST_PROFILE: &str = "oven-test";
 pub enum OvenCompatibilityKind {
     /// Generated Rust from one checked Incan project, selected without a Cargo consumer process or target directory.
     GeneratedIncanProject,
+    /// Authored-source provenance used only to select Rust inspection before Incan typechecking emits generated Rust.
+    InspectionBootstrap,
     /// The repository compiler's source-backed Rust libtest suite, executed by a receipt-bound direct-rustc runner.
     NativeCompilerTestSuite,
 }
@@ -388,6 +433,9 @@ pub enum OvenError {
     /// Supplemental source evidence cannot identify a portable build unit.
     #[error("Oven import requires a non-empty supplemental source {field}")]
     EmptySupplementalSource { field: &'static str },
+    /// Authored source provenance for an inspection bootstrap is not a portable SHA-256 identity.
+    #[error("Oven inspection bootstrap requires a SHA-256 authored source authority")]
+    InvalidInspectionSourceAuthority,
     /// Native execution was requested without a compatible already-selected dependency plan.
     ///
     /// This is a terminal input refusal. The physical executor cannot discover a graph or prepare dependencies;
@@ -452,6 +500,43 @@ impl OvenReceipt {
 pub fn receipt_generated_project(request: &OvenGeneratedProjectRequest) -> Result<OvenReceipt, OvenError> {
     let source_evidence = generated_project_source_evidence(request)?;
     receipt_generated_project_with_source_evidence(request, &source_evidence)
+}
+
+/// Receipt selected authored source and native intent before typechecking emits generated Rust.
+///
+/// The resulting value authorizes only inspection-owner acquisition. It is not a generated-project receipt and
+/// must never authorize direct Rust compilation, package execution, or a published output. The source authority is
+/// deliberately supplemental evidence rather than a build-unit input, so changing a caller's source does not make
+/// an identical admitted compiler or `rust-src` closure ineligible for reuse.
+pub(crate) fn receipt_inspection_bootstrap(request: &OvenInspectionBootstrapRequest) -> Result<OvenReceipt, OvenError> {
+    let project = OvenProjectIdentity {
+        name: normalized_value(&request.project.name, "project name")?,
+        version: normalized_value(&request.project.version, "project version")?,
+    };
+    let authored_source_authority = normalized_sha256_identity(&request.authored_source_authority)?;
+    let sources = OvenSourceEvidence {
+        cargo_manifest_digest: None,
+        cargo_lock_digest: None,
+        incan_manifest_digest: None,
+        supplemental_digests: BTreeMap::from([("authored-source-authority".to_string(), authored_source_authority)]),
+        build_unit_inputs: BTreeMap::new(),
+    };
+    let intent = normalized_build_intent(&request.target, &request.toolchain, &request.profile, &request.features)?;
+    let compatibility = OvenCompatibility {
+        kind: OvenCompatibilityKind::InspectionBootstrap,
+        cargo_input_only: false,
+    };
+    let identity = receipt_identity(&project, &sources, &intent, &compatibility)?;
+    let build_unit_identity = build_unit_identity(&intent, &compatibility, &sources.build_unit_inputs)?;
+    Ok(OvenReceipt {
+        schema_version: OVEN_RECEIPT_SCHEMA_VERSION,
+        identity,
+        build_unit_identity,
+        project,
+        sources,
+        intent,
+        compatibility,
+    })
 }
 
 /// Derive one reusable generated-source proof for profile-specific receipts in the current command.
@@ -1138,6 +1223,22 @@ fn normalized_value(value: &str, field: &'static str) -> Result<String, OvenErro
     Ok(normalized.to_string())
 }
 
+/// Normalize the content identity that makes authored source provenance portable without preserving a local path.
+fn normalized_sha256_identity(value: &str) -> Result<String, OvenError> {
+    let value = value.trim();
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return Err(OvenError::InvalidInspectionSourceAuthority);
+    };
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(OvenError::InvalidInspectionSourceAuthority);
+    }
+    Ok(value.to_string())
+}
+
 /// Hash the portable receipt input while excluding checkout and cache paths.
 fn receipt_identity(
     project: &OvenProjectIdentity,
@@ -1247,9 +1348,10 @@ mod tests {
     use crate::manifest::{DependencySource, DependencySpec};
 
     use super::{
-        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenReceipt, default_receipt_path, digest_bytes,
-        generated_project_source_evidence, receipt_generated_project, receipt_generated_project_with_source_evidence,
-        receipt_native_compiler_suite, receipt_with_build_unit_input, receipt_without_build_unit_input, write_receipt,
+        OvenCompatibilityKind, OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenInspectionBootstrapRequest,
+        OvenReceipt, default_receipt_path, digest_bytes, generated_project_source_evidence, receipt_generated_project,
+        receipt_generated_project_with_source_evidence, receipt_inspection_bootstrap, receipt_native_compiler_suite,
+        receipt_with_build_unit_input, receipt_without_build_unit_input, write_receipt,
     };
 
     #[test]
@@ -1293,6 +1395,60 @@ mod tests {
         assert_ne!(first.identity, second.identity);
         assert_ne!(first.sources.supplemental_digests, second.sources.supplemental_digests);
         assert!(!serde_json::to_string(&second)?.contains(&project.path().display().to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn inspection_bootstrap_receipt_keeps_source_provenance_out_of_compiler_reuse()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first_authority = digest_bytes(b"first authored source");
+        let second_authority = digest_bytes(b"second authored source");
+        let first = receipt_inspection_bootstrap(&OvenInspectionBootstrapRequest::new(
+            "jackhammer-fixture",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.99.0",
+            "debug",
+            vec!["selected".to_string()],
+            &first_authority,
+        ))?;
+        let second = receipt_inspection_bootstrap(&OvenInspectionBootstrapRequest::new(
+            "jackhammer-fixture",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.99.0",
+            "debug",
+            vec!["selected".to_string()],
+            &second_authority,
+        ))?;
+
+        first.verify_identity()?;
+        second.verify_identity()?;
+        assert_ne!(first.identity, second.identity);
+        assert_eq!(first.build_unit_identity, second.build_unit_identity);
+        assert_eq!(first.compatibility.kind, OvenCompatibilityKind::InspectionBootstrap);
+        assert!(!first.compatibility.cargo_input_only);
+        assert_eq!(
+            first.sources.supplemental_digests.get("authored-source-authority"),
+            Some(&first_authority)
+        );
+        assert!(!serde_json::to_string(&first)?.contains("/Users/"));
+        Ok(())
+    }
+
+    #[test]
+    fn inspection_bootstrap_receipt_refuses_non_digest_source_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let error = receipt_inspection_bootstrap(&OvenInspectionBootstrapRequest::new(
+            "jackhammer-fixture",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.99.0",
+            "debug",
+            Vec::new(),
+            "/Users/danny/project",
+        ))
+        .expect_err("machine-local source path cannot become inspection authority");
+        assert!(matches!(error, super::OvenError::InvalidInspectionSourceAuthority));
         Ok(())
     }
 

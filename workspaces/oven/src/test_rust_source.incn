@@ -1,15 +1,132 @@
 """Constrained Rust declarations retain all slots before any source or feature selection."""
 
 from rust_source import (
+    bind_build_script_source,
     read_dependency_catalog,
+    RustBuildScriptBinding,
+    RustDependencyCatalog,
     RustDependencyRole,
     RustDependencySource,
+    RustBuildScriptDeclaration,
+    RustBuildScriptSourceMember,
     RustGitReference,
     RustRegistryRequest,
 )
 from manifest_errors import IntakeErrorKind
 from std.fs import Path
 from std.testing import fail
+
+
+def require_catalog(source: str) -> RustDependencyCatalog:
+    """Turn a fixture declaration refusal into the test's ordinary failure path."""
+    match read_dependency_catalog(source, "Cargo.toml"):
+        Ok(catalog) => return catalog
+        Err(error) => fail(error.message())
+
+
+pub def test_package_build_script_declaration_is_retained_without_execution() -> None:
+    """Default, disabled and explicit package declarations remain source facts; none executes a build script."""
+    match read_dependency_catalog("[package]\nname='fixture'\nversion='1.0.0'\n", "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert catalog.build_script == Some(RustBuildScriptDeclaration.Default)
+    match read_dependency_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild=false\n", "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert catalog.build_script == Some(RustBuildScriptDeclaration.Disabled)
+    match read_dependency_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild='scripts/build.rs'\n", "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert catalog.build_script == Some(RustBuildScriptDeclaration.Explicit("scripts/build.rs"))
+    for source in ["[package]\nname='fixture'\nversion='1.0.0'\nbuild=true\n", "[package]\nname='fixture'\nversion='1.0.0'\nbuild=''\n", "[package]\nname='fixture'\nversion='1.0.0'\nbuild=3\n"]:
+        match read_dependency_catalog(source, "Cargo.toml"):
+            Ok(_) => fail("invalid build declaration was accepted")
+            Err(error) =>
+                assert error.field == ["package", "build"]
+
+
+pub def test_build_script_binding_requires_an_exact_selected_source_member() -> None:
+    """The source reader supplies the policy; the supplied inventory supplies the only executable member."""
+    default_catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\n")
+    members = [RustBuildScriptSourceMember(path="src/lib.rs", digest="sha256:library"), RustBuildScriptSourceMember(
+        path="build.rs",
+        digest="sha256:default-build",
+    )]
+    assert bind_build_script_source(default_catalog, members, "Cargo.toml") == Ok(
+        RustBuildScriptBinding.BuildScript(RustBuildScriptSourceMember(path="build.rs", digest="sha256:default-build")),
+    )
+    no_default_member = [RustBuildScriptSourceMember(path="src/lib.rs", digest="sha256:library")]
+    assert bind_build_script_source(default_catalog, no_default_member, "Cargo.toml") == Ok(
+        RustBuildScriptBinding.NoBuildScript,
+    )
+    explicit_catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild='scripts/build.rs'\n")
+    assert bind_build_script_source(
+        explicit_catalog,
+        [RustBuildScriptSourceMember(path="scripts/build.rs", digest="sha256:explicit-build")],
+        "Cargo.toml",
+    ) == Ok(
+        RustBuildScriptBinding.BuildScript(
+            RustBuildScriptSourceMember(path="scripts/build.rs", digest="sha256:explicit-build"),
+        ),
+    )
+    normalized_catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild='./scripts//build.rs'\n")
+    assert bind_build_script_source(
+        normalized_catalog,
+        [RustBuildScriptSourceMember(path="scripts/build.rs", digest="sha256:normalized-build")],
+        "Cargo.toml",
+    ) == Ok(
+        RustBuildScriptBinding.BuildScript(
+            RustBuildScriptSourceMember(path="scripts/build.rs", digest="sha256:normalized-build"),
+        ),
+    )
+    disabled_catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild=false\n")
+    assert bind_build_script_source(disabled_catalog, members, "Cargo.toml") == Ok(RustBuildScriptBinding.NoBuildScript)
+    document_catalog = require_catalog("[dependencies]\nfixture='1'\n")
+    assert bind_build_script_source(document_catalog, members, "Cargo.toml") == Ok(RustBuildScriptBinding.NoBuildScript)
+
+
+pub def test_build_script_binding_refuses_unbound_or_nonportable_members() -> None:
+    """An explicit path never becomes a discovered file, and source-inventory spelling cannot escape its owner."""
+    catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild='scripts/build.rs'\n")
+    match bind_build_script_source(catalog, [], "Cargo.toml"):
+        Ok(_) => fail("an absent explicit build script was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Missing
+            assert error.field == ["package", "build"]
+    for path in ["../build.rs", "/build.rs", "build\\script.rs", "scripts/../build.rs"]:
+        malformed = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild='" + path + "'\n")
+        match bind_build_script_source(
+            malformed,
+            [RustBuildScriptSourceMember(path="scripts/build.rs", digest="sha256:build")],
+            "Cargo.toml",
+        ):
+            Ok(_) => fail("nonportable build script spelling was accepted")
+            Err(error) =>
+                assert error.kind == IntakeErrorKind.Invalid
+                assert error.field == ["package", "build"]
+    canonical_catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\n")
+    match bind_build_script_source(
+        canonical_catalog,
+        [RustBuildScriptSourceMember(path="build.rs", digest="sha256:first"), RustBuildScriptSourceMember(
+            path="build.rs",
+            digest="sha256:second",
+        )],
+        "Cargo.toml",
+    ):
+        Ok(_) => fail("duplicate source members were accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+            assert error.field == ["selected-source", "member"]
+    default_catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\n")
+    match bind_build_script_source(
+        default_catalog,
+        [RustBuildScriptSourceMember(path="./build.rs", digest="sha256:not-canonical")],
+        "Cargo.toml",
+    ):
+        Ok(_) => fail("noncanonical selected member spelling was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+            assert error.field == ["selected-source", "member"]
 
 
 pub def test_normalized_regex_catalog_retains_inactive_declarations() -> None:

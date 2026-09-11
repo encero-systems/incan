@@ -34,7 +34,9 @@ pub use loader::{
     oven_inspection_registry_source_roots, write_oven_inspection_source_authority,
     write_sealed_oven_inspection_source_authority,
 };
-pub use selection::{InspectionSourceInput, SelectedInspectionInputs, ValidatedInspectionProject};
+pub use selection::{
+    InspectionSourceInput, SelectedInspectionInputs, SelectedInspectionSysrootInput, ValidatedInspectionProject,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// How faithfully the returned metadata matches the query path.

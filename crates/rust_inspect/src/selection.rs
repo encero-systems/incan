@@ -26,20 +26,31 @@ pub struct InspectionSourceInput {
 
 /// Inputs for the bounded physical inspection operation.
 ///
-/// Expected digests must come from the admitted selection, not from untrusted candidate payloads. Every sysroot,
-/// generated source and dependency unit must already be in `project_json`. Query aliases identify explicit root
-/// modules; no package-name lookup or registry discovery is performed. Distinct units sharing a root module are
-/// currently refused because this ingress does not yet carry an exact rust-analyzer unit handle (#991, #1037).
+/// Expected digests must come from the admitted selection, not from untrusted candidate payloads. Generated source
+/// and dependency units occur in `project_json`; an explicitly selected compiler graph may be supplied separately as
+/// a JSON-backed sysroot. Query aliases identify explicit root modules; no package-name lookup or registry discovery
+/// is performed. Distinct units sharing a root module are currently refused because this ingress does not yet carry
+/// an exact rust-analyzer unit handle (#991, #1037).
 #[derive(Debug, Clone)]
 pub struct SelectedInspectionInputs {
     pub project_json: Vec<u8>,
     pub project_digest: String,
+    pub sysroot: Option<SelectedInspectionSysrootInput>,
     pub sources: Vec<InspectionSourceInput>,
     /// Selected rustc target-spec JSON, including `data-layout` and `arch`.
     pub target_spec_json: Vec<u8>,
     pub target_spec_digest: String,
     pub toolchain_version: String,
     pub query_roots: BTreeMap<String, PathBuf>,
+}
+
+/// One compiler-selected source graph that rust-analyzer must treat as its language sysroot.
+#[derive(Debug, Clone)]
+pub struct SelectedInspectionSysrootInput {
+    pub project_json: Vec<u8>,
+    pub project_digest: String,
+    /// Canonical source root used only to anchor the already selected JSON graph.
+    pub source_root: PathBuf,
 }
 
 /// A structurally valid projection whose declared physical inputs matched their expected bytes.
@@ -99,20 +110,20 @@ fn path_field(value: &Value, field: &str, roots: &[InspectionSourceInput]) -> Re
 /// Reject cyclic supplied indices before rust-analyzer can silently discard one of their edges.
 ///
 /// This checks the declared projection only; it never chooses or repairs dependency edges.
-fn validate_edge_cycles(crates: &[Value]) -> Result<(), RustMetadataError> {
+fn validate_edge_cycles(crates: &[Value], label: &str) -> Result<(), RustMetadataError> {
     let mut incoming = vec![0usize; crates.len()];
     let mut dependents = vec![Vec::new(); crates.len()];
     for (index, unit) in crates.iter().enumerate() {
         let dependencies = unit["deps"]
             .as_array()
-            .ok_or_else(|| invalid(Path::new("rust-project.json"), "dependency array absent"))?;
+            .ok_or_else(|| invalid(Path::new(label), "dependency array absent"))?;
         incoming[index] = dependencies.len();
         for dependency in dependencies {
             let selected = dependency["crate"]
                 .as_u64()
                 .and_then(|index| usize::try_from(index).ok())
                 .filter(|index| *index < crates.len())
-                .ok_or_else(|| invalid(Path::new("rust-project.json"), "invalid dependency index"))?;
+                .ok_or_else(|| invalid(Path::new(label), "invalid dependency index"))?;
             dependents[selected].push(index);
         }
     }
@@ -133,11 +144,155 @@ fn validate_edge_cycles(crates: &[Value]) -> Result<(), RustMetadataError> {
     }
     if visited != crates.len() {
         return Err(invalid(
-            Path::new("rust-project.json"),
+            Path::new(label),
             "selected projection contains a dependency cycle",
         ));
     }
     Ok(())
+}
+
+/// Validate one caller-selected JSON crate array without discovering or repairing graph facts.
+fn validate_project_units(
+    bytes: &[u8],
+    label: &str,
+    sources: &[InspectionSourceInput],
+    roots: &mut BTreeSet<PathBuf>,
+    allow_empty: bool,
+) -> Result<usize, RustMetadataError> {
+    let _: ProjectJsonData =
+        serde_json::from_slice(bytes).map_err(|error| invalid(Path::new(label), error.to_string()))?;
+    let document: Value =
+        serde_json::from_slice(bytes).map_err(|error| invalid(Path::new(label), error.to_string()))?;
+    let object = document
+        .as_object()
+        .ok_or_else(|| invalid(Path::new(label), "expected an object"))?;
+    // Convenience sysroot, runnable and command fields would reopen rust-analyzer discovery or execution. The caller
+    // supplies the sysroot as a separate admitted input and every executable unit as an explicit crate record.
+    for (key, value) in object {
+        if key != "crates" && !value.is_null() {
+            return Err(invalid(
+                Path::new(label),
+                format!("unsupported selected projection field `{key}`"),
+            ));
+        }
+    }
+    let crates = document["crates"]
+        .as_array()
+        .ok_or_else(|| invalid(Path::new(label), "selected units are absent"))?;
+    if crates.is_empty() && !allow_empty {
+        return Err(RustMetadataError::SelectedInputUnavailable {
+            path: PathBuf::from(label),
+        });
+    }
+    for unit in crates {
+        let root = path_field(unit, "root_module", sources)?;
+        if !root.is_file() {
+            return Err(invalid(&root, "root module is not a regular file"));
+        }
+        if !roots.insert(root.clone()) {
+            return Err(RustMetadataError::UnsupportedSelectedOperation {
+                operation: "multiple inspection units sharing a source root module (#991, #1037)",
+            });
+        }
+        if unit.get("is_proc_macro").and_then(Value::as_bool).unwrap_or(false)
+            || unit.get("proc_macro_dylib_path").is_some_and(|value| !value.is_null())
+        {
+            return Err(RustMetadataError::UnsupportedSelectedOperation {
+                operation: "selected proc-macro execution (#991, #1037)",
+            });
+        }
+        if unit.get("target").is_some_and(|value| !value.is_null()) {
+            return Err(RustMetadataError::UnsupportedSelectedOperation {
+                operation: "per-unit target discovery; supply resolved cfg and target facts (#991, #1037)",
+            });
+        }
+        if unit.get("is_workspace_member").and_then(Value::as_bool) != Some(false) {
+            return Err(invalid(
+                &root,
+                "is_workspace_member must be false; cfg must come only from selected inputs",
+            ));
+        }
+        if unit.get("cfg").and_then(Value::as_array).is_none() {
+            return Err(invalid(&root, "explicit resolved cfg is required"));
+        }
+        let unit_object = unit
+            .as_object()
+            .ok_or_else(|| invalid(&root, "unit must be an object"))?;
+        for (key, value) in unit_object {
+            if !matches!(
+                key.as_str(),
+                "display_name"
+                    | "root_module"
+                    | "edition"
+                    | "version"
+                    | "deps"
+                    | "cfg"
+                    | "target"
+                    | "env"
+                    | "is_workspace_member"
+                    | "source"
+                    | "is_proc_macro"
+                    | "proc_macro_dylib_path"
+            ) && !value.is_null()
+            {
+                return Err(invalid(&root, format!("unsupported selected unit field `{key}`")));
+            }
+        }
+        let source = unit
+            .get("source")
+            .ok_or_else(|| invalid(&root, "explicit source include/exclude directories are required"))?;
+        for field in ["include_dirs", "exclude_dirs"] {
+            let paths = source
+                .get(field)
+                .and_then(Value::as_array)
+                .ok_or_else(|| invalid(&root, format!("source.{field} is required")))?;
+            if field == "include_dirs" && paths.is_empty() {
+                return Err(invalid(&root, "selected source include directories are empty"));
+            }
+            for path in paths {
+                let path = path
+                    .as_str()
+                    .ok_or_else(|| invalid(&root, "source directory must be a string"))?;
+                if !selected_path(Path::new(path), sources)?.is_dir() {
+                    return Err(invalid(
+                        Path::new(path),
+                        "selected source include/exclude path is not a directory",
+                    ));
+                }
+            }
+        }
+        let deps = unit
+            .get("deps")
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid(&root, "explicit dependency edges are required"))?;
+        let mut aliases = BTreeSet::new();
+        for dependency in deps {
+            let index = dependency
+                .get("crate")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| invalid(&root, "dependency unit index is absent"))?;
+            if usize::try_from(index).ok().is_none_or(|index| index >= crates.len()) {
+                return Err(invalid(&root, "dependency references an absent selected unit"));
+            }
+            let alias = dependency
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid(&root, "dependency alias is absent"))?;
+            if !aliases.insert(alias) {
+                return Err(invalid(&root, "duplicate dependency alias"));
+            }
+        }
+        if let Some(out_dir) = unit.get("env").and_then(|env| env.get("OUT_DIR")) {
+            let path = out_dir
+                .as_str()
+                .ok_or_else(|| invalid(&root, "OUT_DIR must be a string"))?;
+            if !selected_path(Path::new(path), sources)?.is_dir() {
+                return Err(invalid(Path::new(path), "selected OUT_DIR is not a directory"));
+            }
+        }
+    }
+    validate_edge_cycles(crates, label)?;
+    Ok(crates.len())
 }
 
 impl ValidatedInspectionProject {
@@ -146,9 +301,14 @@ impl ValidatedInspectionProject {
     /// This verifies declarations already selected by the caller; it never repairs a missing edge, source or target.
     pub fn validate(mut inputs: SelectedInspectionInputs) -> Result<Self, RustMetadataError> {
         verify_digest(&inputs.project_json, &inputs.project_digest, "rust-project.json")?;
+        if let Some(sysroot) = &inputs.sysroot {
+            verify_digest(
+                &sysroot.project_json,
+                &sysroot.project_digest,
+                "rust-sysroot-project.json",
+            )?;
+        }
         verify_digest(&inputs.target_spec_json, &inputs.target_spec_digest, "target-spec.json")?;
-        let _: ProjectJsonData = serde_json::from_slice(&inputs.project_json)
-            .map_err(|error| invalid(Path::new("rust-project.json"), error.to_string()))?;
         let _: TargetSpec = serde_json::from_slice(&inputs.target_spec_json)
             .map_err(|error| invalid(Path::new("target-spec.json"), error.to_string()))?;
         semver::Version::parse(&inputs.toolchain_version)
@@ -173,138 +333,34 @@ impl ValidatedInspectionProject {
                 return Err(invalid(&input.root, "duplicate or overlapping selected source roots"));
             }
         }
-        let document: Value = serde_json::from_slice(&inputs.project_json)
-            .map_err(|error| invalid(Path::new("rust-project.json"), error.to_string()))?;
-        let object = document
-            .as_object()
-            .ok_or_else(|| invalid(Path::new("rust-project.json"), "expected an object"))?;
-        // Sysroot crates are ordinary explicit units here. Accepting the convenience sysroot fields would reopen
-        // rust-analyzer's discovery path; runnables and proc-macro execution need separate granted host operations.
-        for (key, value) in object {
-            if key != "crates" && !value.is_null() {
-                return Err(invalid(
-                    Path::new("rust-project.json"),
-                    format!("unsupported selected projection field `{key}`"),
-                ));
+        let mut roots = BTreeSet::new();
+        let project_units = validate_project_units(
+            &inputs.project_json,
+            "rust-project.json",
+            &inputs.sources,
+            &mut roots,
+            inputs.sysroot.is_some(),
+        )?;
+        let sysroot_units = if let Some(sysroot) = &inputs.sysroot {
+            let source_root = selected_path(&sysroot.source_root, &inputs.sources)?;
+            if !source_root.is_dir() {
+                return Err(invalid(&source_root, "selected sysroot source root is not a directory"));
             }
-        }
-        let crates = document["crates"]
-            .as_array()
-            .ok_or_else(|| invalid(Path::new("rust-project.json"), "selected units are absent"))?;
-        if crates.is_empty() {
+            validate_project_units(
+                &sysroot.project_json,
+                "rust-sysroot-project.json",
+                &inputs.sources,
+                &mut roots,
+                false,
+            )?
+        } else {
+            0
+        };
+        if project_units + sysroot_units == 0 {
             return Err(RustMetadataError::SelectedInputUnavailable {
                 path: PathBuf::from("rust-project.json"),
             });
         }
-        let mut roots = BTreeSet::new();
-        for unit in crates {
-            let root = path_field(unit, "root_module", &inputs.sources)?;
-            if !root.is_file() {
-                return Err(invalid(&root, "root module is not a regular file"));
-            }
-            if !roots.insert(root.clone()) {
-                return Err(RustMetadataError::UnsupportedSelectedOperation {
-                    operation: "multiple inspection units sharing a source root module (#991, #1037)",
-                });
-            }
-            if unit.get("is_proc_macro").and_then(Value::as_bool).unwrap_or(false)
-                || unit.get("proc_macro_dylib_path").is_some_and(|value| !value.is_null())
-            {
-                return Err(RustMetadataError::UnsupportedSelectedOperation {
-                    operation: "selected proc-macro execution (#991, #1037)",
-                });
-            }
-            if unit.get("target").is_some_and(|value| !value.is_null()) {
-                return Err(RustMetadataError::UnsupportedSelectedOperation {
-                    operation: "per-unit target discovery; supply resolved cfg and target facts (#991, #1037)",
-                });
-            }
-            if unit.get("is_workspace_member").and_then(Value::as_bool) != Some(false) {
-                return Err(invalid(
-                    &root,
-                    "is_workspace_member must be false; cfg must come only from selected inputs",
-                ));
-            }
-            if unit.get("cfg").and_then(Value::as_array).is_none() {
-                return Err(invalid(&root, "explicit resolved cfg is required"));
-            }
-            let unit_object = unit
-                .as_object()
-                .ok_or_else(|| invalid(&root, "unit must be an object"))?;
-            for (key, value) in unit_object {
-                if !matches!(
-                    key.as_str(),
-                    "display_name"
-                        | "root_module"
-                        | "edition"
-                        | "version"
-                        | "deps"
-                        | "cfg"
-                        | "target"
-                        | "env"
-                        | "is_workspace_member"
-                        | "source"
-                        | "is_proc_macro"
-                        | "proc_macro_dylib_path"
-                ) && !value.is_null()
-                {
-                    return Err(invalid(&root, format!("unsupported selected unit field `{key}`")));
-                }
-            }
-            let source = unit
-                .get("source")
-                .ok_or_else(|| invalid(&root, "explicit source include/exclude directories are required"))?;
-            for field in ["include_dirs", "exclude_dirs"] {
-                let paths = source
-                    .get(field)
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| invalid(&root, format!("source.{field} is required")))?;
-                if field == "include_dirs" && paths.is_empty() {
-                    return Err(invalid(&root, "selected source include directories are empty"));
-                }
-                for path in paths {
-                    let path = path
-                        .as_str()
-                        .ok_or_else(|| invalid(&root, "source directory must be a string"))?;
-                    if !selected_path(Path::new(path), &inputs.sources)?.is_dir() {
-                        return Err(invalid(
-                            Path::new(path),
-                            "selected source include/exclude path is not a directory",
-                        ));
-                    }
-                }
-            }
-            let deps = unit
-                .get("deps")
-                .and_then(Value::as_array)
-                .ok_or_else(|| invalid(&root, "explicit dependency edges are required"))?;
-            let mut aliases = BTreeSet::new();
-            for dependency in deps {
-                let index = dependency
-                    .get("crate")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| invalid(&root, "dependency unit index is absent"))?;
-                if usize::try_from(index).ok().is_none_or(|index| index >= crates.len()) {
-                    return Err(invalid(&root, "dependency references an absent selected unit"));
-                }
-                let alias = dependency
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| invalid(&root, "dependency alias is absent"))?;
-                if !aliases.insert(alias) {
-                    return Err(invalid(&root, "duplicate dependency alias"));
-                }
-            }
-            if let Some(out_dir) = unit.get("env").and_then(|env| env.get("OUT_DIR")) {
-                let path = out_dir
-                    .as_str()
-                    .ok_or_else(|| invalid(&root, "OUT_DIR must be a string"))?;
-                if !selected_path(Path::new(path), &inputs.sources)?.is_dir() {
-                    return Err(invalid(Path::new(path), "selected OUT_DIR is not a directory"));
-                }
-            }
-        }
-        validate_edge_cycles(crates)?;
         for (alias, root) in &inputs.query_roots {
             if alias.is_empty() || alias.contains("::") || !roots.contains(root) {
                 return Err(invalid(
@@ -317,6 +373,10 @@ impl ValidatedInspectionProject {
         // Length-delimited serialization prevents concatenation ambiguity and retains exact exposure/target bindings.
         let binding = (
             &inputs.project_digest,
+            inputs
+                .sysroot
+                .as_ref()
+                .map(|sysroot| (&sysroot.project_digest, &sysroot.source_root)),
             &inputs.target_spec_digest,
             &inputs.toolchain_version,
             &inputs.query_roots,
@@ -375,6 +435,18 @@ impl ValidatedInspectionProject {
     pub(crate) fn project_data(&self) -> Result<ProjectJsonData, RustMetadataError> {
         serde_json::from_slice(&self.inputs.project_json)
             .map_err(|error| invalid(Path::new("rust-project.json"), error.to_string()))
+    }
+    /// Decode the admitted JSON-backed sysroot without discovering a compiler or Cargo workspace.
+    pub(crate) fn sysroot_data(&self) -> Result<Option<(ProjectJsonData, &Path)>, RustMetadataError> {
+        self.inputs
+            .sysroot
+            .as_ref()
+            .map(|sysroot| {
+                serde_json::from_slice(&sysroot.project_json)
+                    .map(|project| (project, sysroot.source_root.as_path()))
+                    .map_err(|error| invalid(Path::new("rust-sysroot-project.json"), error.to_string()))
+            })
+            .transpose()
     }
     /// Return selected target facts without invoking rustc or discovering a toolchain.
     pub(crate) fn target_data(&self) -> Result<TargetData, RustMetadataError> {

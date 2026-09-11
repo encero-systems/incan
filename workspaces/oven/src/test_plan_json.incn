@@ -4,6 +4,7 @@ from std.json import JsonValue
 from std.testing import fail, fail_t
 from plan_json import decode_request, evaluate
 from plan import SelectionErrorKind, NativeCandidateEvidence
+from provider_intake import REQUEST_SCHEMA as PROVIDER_INTAKE_SCHEMA, evaluate as evaluate_provider_intake
 
 
 pub def test_selection_binding_and_rank() -> None:
@@ -99,6 +100,23 @@ pub def test_malformed_json_and_schema_refuse() -> None:
     require_invalid(JsonValue.null(), [])
     require_invalid(put(envelope(), "schema", JsonValue.string("incan.oven.selection/3")), ["schema"])
     require_invalid(put(envelope(), "schema", JsonValue.int(1)), ["schema"])
+
+
+pub def test_provider_intake_dispatch_requires_the_exact_schema() -> None:
+    """The shared Engine entrypoint delegates only the exact `/2` intake protocol."""
+    intake = provider_intake_envelope()
+    assert evaluate(render(intake.clone())).equals(evaluate_provider_intake(render(intake)))
+    for schema in [
+        "incan.oven.runtime-foundation-provider-intake-request/1",
+        "incan.oven.runtime-foundation-provider-intake-request/3",
+    ]:
+        response = evaluate(render(put(intake.clone(), "schema", JsonValue.string(schema))))
+        assert text(response, "schema") == "incan.oven.selection/1"
+        assert text(response, "status") == "refused"
+        assert text(get(response, "error"), "kind") == "invalid_input"
+        assert get(get(response, "error"), "fields").equals(JsonValue.array([JsonValue.string("schema")]))
+        for forbidden in ["selected_identity", "declaration"]:
+            assert not response.contains_key(forbidden)
 
 
 pub def test_semantic_refusal_keeps_binding() -> None:
@@ -213,6 +231,21 @@ def request() -> JsonValue:
 def envelope() -> JsonValue:
     """Wrap one request with the exact protocol version."""
     return JsonValue.object({"schema": JsonValue.string("incan.oven.selection/1"), "request": request()})
+
+
+def provider_intake_envelope() -> JsonValue:
+    """Supply one literal provider declaration snapshot without any host root, graph or execution effect."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(PROVIDER_INTAKE_SCHEMA), "request": JsonValue.object(
+            {"selected_identity": JsonValue.string("sha256:selected"), "manifest": JsonValue.object({
+                "path": JsonValue.string("Cargo.toml"), "digest": JsonValue.string("sha256:manifest"),
+            }), "manifest_source": JsonValue.string(
+                "[package]\nname='fixture'\nversion='1.0.0'\nbuild='build.rs'\n",
+            ), "package_members": JsonValue.array(
+                [JsonValue.object({"path": JsonValue.string("build.rs"), "digest": JsonValue.string("sha256:entrypoint")})],
+            ), "host_dependencies": JsonValue.array([])},
+        )},
+    )
 
 
 def component(owner: str) -> JsonValue:

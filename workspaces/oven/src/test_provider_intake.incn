@@ -1,0 +1,296 @@
+"""Assertions for the source-authored runtime-foundation provider-intake boundary."""
+
+from std.json import JsonValue
+from std.testing import fail, fail_t
+from manifest_errors import IntakeErrorKind
+from provider_intake import (
+    bind_provider_source,
+    evaluate,
+    ProviderIntakeHostDependency,
+    ProviderSourceBinding,
+    ProviderSourceHostDependency,
+)
+from rust_source import read_dependency_catalog, RustBuildScriptSourceMember, RustDependencyCatalog
+
+
+def require_catalog(source: str) -> RustDependencyCatalog:
+    """Turn a source declaration refusal into the ordinary focused-test failure path."""
+    match read_dependency_catalog(source, "Cargo.toml"):
+        Ok(catalog) => return catalog
+        Err(error) => return fail_t[RustDependencyCatalog](error.message())
+
+
+pub def test_provider_binding_retains_the_complete_package_inventory() -> None:
+    """The entrypoint is one package member while the full inventory remains available for later rerun checks."""
+    catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild='scripts/build.rs'\n")
+    entrypoint = RustBuildScriptSourceMember(path="scripts/build.rs", digest="sha256:entrypoint")
+    helper = RustBuildScriptSourceMember(path="scripts/schema.rs", digest="sha256:helper")
+    match bind_provider_source(catalog, [entrypoint, helper], [], "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(binding) =>
+            match binding:
+                ProviderSourceBinding.BuildScript(actual, members, dependencies) =>
+                    assert actual == entrypoint
+                    assert members == [entrypoint, helper]
+                    assert dependencies == []
+                ProviderSourceBinding.NoBuildScript => fail("explicit build script became no-build-script")
+
+
+pub def test_no_build_script_retains_package_evidence_but_refuses_host_grants() -> None:
+    """Package evidence is not execution authority, while a host edge still requires an executable script."""
+    package_members = [RustBuildScriptSourceMember(path="src/lib.rs", digest="sha256:library"), RustBuildScriptSourceMember(
+        path="build.rs",
+        digest="sha256:script",
+    )]
+    host_dependency = ProviderIntakeHostDependency(declaration_index=0, alias="host_helper", unit="sha256:host-helper")
+    for source in ["[package]\nname='fixture'\nversion='1.0.0'\nbuild=false\n", "[dependencies]\nfixture='1'\n"]:
+        mut catalog = require_catalog(source)
+        match bind_provider_source(catalog, package_members.clone(), [], "Cargo.toml"):
+            Ok(ProviderSourceBinding.NoBuildScript) => pass
+            Ok(ProviderSourceBinding.BuildScript(_, _, _)) => fail("no-build-script declaration produced a provider")
+            Err(error) => fail(error.message())
+        catalog = require_catalog(source)
+        match bind_provider_source(catalog, package_members, [host_dependency], "Cargo.toml"):
+            Ok(_) => fail("no-build-script declaration accepted a host execution grant")
+            Err(error) =>
+                assert error.kind == IntakeErrorKind.Invalid
+                assert error.field == ["provider-source", "host-dependency"]
+
+
+pub def test_package_inventory_excludes_the_typed_manifest() -> None:
+    """`Cargo.toml` has one typed request field and cannot be duplicated among ordinary package members."""
+    catalog = require_catalog("[package]\nname='fixture'\nversion='1.0.0'\nbuild=false\n")
+    manifest = RustBuildScriptSourceMember(path="Cargo.toml", digest="sha256:manifest")
+    match bind_provider_source(catalog, [manifest], [], "Cargo.toml"):
+        Ok(_) => fail("typed manifest became an ordinary package member")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+            assert error.field == ["package-members", "0"]
+
+
+pub def test_provider_host_dependencies_remain_bound_to_original_build_slots() -> None:
+    """A host unit can only enter through a literal build-dependency slot and returns without that transient index."""
+    mut catalog = require_catalog(
+        "[package]\nname='fixture'\nversion='1.0.0'\nbuild='build.rs'\n[build-dependencies]\nhost_helper='1'\n",
+    )
+    entrypoint = RustBuildScriptSourceMember(path="build.rs", digest="sha256:entrypoint")
+    binding = ProviderIntakeHostDependency(declaration_index=0, alias="host_helper", unit="sha256:host-helper")
+    match bind_provider_source(catalog, [entrypoint], [binding], "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(ProviderSourceBinding.NoBuildScript) => fail("build script became no-build-script")
+        Ok(ProviderSourceBinding.BuildScript(_, _, dependencies)) =>
+            assert dependencies == [ProviderSourceHostDependency(alias="host_helper", unit="sha256:host-helper")]
+    catalog = require_catalog(
+        "[package]\nname='fixture'\nversion='1.0.0'\nbuild='build.rs'\n[dependencies]\nhost_helper='1'\n",
+    )
+    match bind_provider_source(catalog, [entrypoint], [binding], "Cargo.toml"):
+        Ok(_) => fail("normal dependency became a build-script host dependency")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+            assert error.field == ["provider-source", "host-dependency", "0"]
+
+
+pub def test_wire_retains_declared_host_dependencies() -> None:
+    """The wire retains a source-validated host edge without leaking its transient manifest declaration index."""
+    response = evaluate(
+        render(
+            request_with_host_dependencies(
+                "[package]\nname='fixture'\nversion='1.0.0'\nbuild='build.rs'\n[build-dependencies]\nhost_helper='1'\n",
+                [fixture_member("build.rs", "sha256:entrypoint")],
+                [JsonValue.object(
+                    {"declaration_index": JsonValue.int(0), "alias": JsonValue.string("host_helper"), "unit": JsonValue.string(
+                        "sha256:host-helper",
+                    )},
+                )],
+            ),
+        ),
+    )
+    assert text(response, "status") == "build_script"
+    declaration = get(response, "declaration")
+    match get(declaration, "host_dependencies").as_array():
+        None => fail("host dependencies are not an array")
+        Some(dependencies) =>
+            assert len(dependencies) == 1
+            assert text(dependencies[0], "alias") == "host_helper"
+            assert text(dependencies[0], "unit") == "sha256:host-helper"
+            assert not dependencies[0].contains_key("declaration_index")
+
+
+pub def test_wire_projects_only_the_source_binding() -> None:
+    """The response carries no host root, edition, dependency graph or provider execution effects."""
+    response = evaluate(render(build_request()))
+    assert text(response, "schema") == "incan.oven.runtime-foundation-provider-intake/2"
+    assert text(response, "selected_identity") == "sha256:selected"
+    assert text(response, "status") == "build_script"
+    assert not response.contains_key("error")
+    declaration = get(response, "declaration")
+    assert text(get(declaration, "entrypoint"), "path") == "scripts/build.rs"
+    match get(declaration, "package_members").as_array():
+        None => fail("package inventory is not an array")
+        Some(members) =>
+            assert len(members) == 3
+            assert text(members[0], "path") == "scripts/build.rs"
+            assert text(members[1], "path") == "scripts/schema.rs"
+            assert text(members[2], "path") == "src/lib.rs"
+    match get(declaration, "host_dependencies").as_array():
+        None => fail("host dependencies are not an array")
+        Some(dependencies) =>
+            assert len(dependencies) == 0
+    for forbidden in ["source_root", "edition", "effects", "provider_receipt_identity"]:
+        assert not declaration.contains_key(forbidden)
+
+
+pub def test_wire_default_disabled_and_missing_declarations_refuse_or_bind_explicitly() -> None:
+    """Default and disabled declarations retain package evidence; explicit absence remains source-local."""
+    default = request("[package]\nname='fixture'\nversion='1.0.0'\n", [fixture_member("src/lib.rs", "sha256:library")])
+    mut response = evaluate(render(default))
+    assert text(response, "status") == "no_build_script"
+    disabled = request(
+        "[package]\nname='fixture'\nversion='1.0.0'\nbuild=false\n",
+        [fixture_member("src/lib.rs", "sha256:library")],
+    )
+    response = evaluate(render(disabled))
+    assert text(response, "status") == "no_build_script"
+    missing = request("[package]\nname='fixture'\nversion='1.0.0'\nbuild='scripts/build.rs'\n", [])
+    response = evaluate(render(missing))
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == "sha256:selected"
+    assert text(get(response, "error"), "kind") == "missing"
+    assert fields(get(response, "error")) == ["package", "build"]
+
+
+pub def test_wire_refuses_malformed_or_unbound_transport() -> None:
+    """A malformed envelope never echoes a selected identity as though the host had authenticated it."""
+    mut response = evaluate("{")
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == ""
+    assert text(get(response, "error"), "kind") == "invalid_input"
+    malformed = put(
+        build_request(),
+        "schema",
+        JsonValue.string("incan.oven.runtime-foundation-provider-intake-request/1"),
+    )
+    response = evaluate(render(malformed))
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == ""
+    assert fields(get(response, "error")) == ["schema"]
+    legacy_members = put(get(build_request(), "request"), "provider_source_members", JsonValue.array([]))
+    response = evaluate(render(put(build_request(), "request", legacy_members)))
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == ""
+    assert fields(get(response, "error")) == ["request", "provider_source_members"]
+    unknown = put(get(build_request(), "request"), "source_root", JsonValue.string("/host/path"))
+    response = evaluate(render(put(build_request(), "request", unknown)))
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == ""
+    assert fields(get(response, "error")) == ["request", "source_root"]
+    wrong_manifest = put(get(build_request(), "request"), "manifest", fixture_member("manifest.toml", "sha256:manifest"))
+    response = evaluate(render(put(build_request(), "request", wrong_manifest)))
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == ""
+    assert fields(get(response, "error")) == ["request", "manifest", "path"]
+    duplicated_manifest = request(
+        "[package]\nname='fixture'\nversion='1.0.0'\nbuild=false\n",
+        [fixture_member("Cargo.toml", "sha256:manifest")],
+    )
+    response = evaluate(render(duplicated_manifest))
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == "sha256:selected"
+    assert text(get(response, "error"), "kind") == "invalid"
+    assert fields(get(response, "error")) == ["package-members", "0"]
+    malformed_host = put(
+        get(build_request(), "request"),
+        "host_dependencies",
+        JsonValue.array(
+            [JsonValue.object(
+                {"declaration_index": JsonValue.string("zero"), "alias": JsonValue.string("host_helper"), "unit": JsonValue.string(
+                    "sha256:host-helper",
+                )},
+            )],
+        ),
+    )
+    response = evaluate(render(put(build_request(), "request", malformed_host)))
+    assert text(response, "status") == "refused"
+    assert text(response, "selected_identity") == ""
+    assert fields(get(response, "error")) == ["request", "host_dependencies", "0", "declaration_index"]
+
+
+def request(manifest: str, package_members: list[JsonValue]) -> JsonValue:
+    """Build one complete source-only request; manifest bytes stay bound separately from package evidence."""
+    return request_with_host_dependencies(manifest, package_members, [])
+
+
+def request_with_host_dependencies(
+    manifest: str,
+    package_members: list[JsonValue],
+    host_dependency_rows: list[JsonValue],
+) -> JsonValue:
+    """Supply host-unit references only when their source declaration slots are carried explicitly for validation."""
+    return JsonValue.object(
+        {"schema": JsonValue.string("incan.oven.runtime-foundation-provider-intake-request/2"), "request": JsonValue.object(
+            {"selected_identity": JsonValue.string("sha256:selected"), "manifest": fixture_member(
+                "Cargo.toml",
+                "sha256:manifest",
+            ), "manifest_source": JsonValue.string(manifest), "package_members": JsonValue.array(package_members), "host_dependencies": JsonValue.array(
+                host_dependency_rows,
+            )},
+        )},
+    )
+
+
+def build_request() -> JsonValue:
+    """Use a script, helper and compiler source to prove full package-inventory preservation through the wire."""
+    return request(
+        "[package]\nname='fixture'\nversion='1.0.0'\nbuild='scripts/build.rs'\n",
+        [fixture_member("scripts/build.rs", "sha256:entrypoint"), fixture_member("scripts/schema.rs", "sha256:helper"), fixture_member(
+            "src/lib.rs",
+            "sha256:library",
+        )],
+    )
+
+
+def fixture_member(path: str, digest: str) -> JsonValue:
+    """Render an opaque source producer digest; the selected Rust graph authenticates its syntax and bytes later."""
+    return JsonValue.object({"path": JsonValue.string(path), "digest": JsonValue.string(digest)})
+
+
+def render(value: JsonValue) -> str:
+    """Use the production JSON encoder for every source transport fixture."""
+    match value.to_json():
+        Ok(source) => return source
+        Err(error) => return fail_t[str](error.message())
+
+
+def put(value: JsonValue, key: str, item: JsonValue) -> JsonValue:
+    """Return a changed fixture while leaving the complete original request intact for the next assertion."""
+    mut changed = value.clone()
+    match changed.set(key, item):
+        Ok(_) => return changed
+        Err(error) => return fail_t[JsonValue](error.message())
+
+
+def get(value: JsonValue, key: str) -> JsonValue:
+    """Require an expected JSON member rather than hiding a malformed response in a null coercion."""
+    match value.get(key):
+        Some(item) => return item
+        None => return fail_t[JsonValue]("missing JSON field: " + key)
+
+
+def text(value: JsonValue, key: str) -> str:
+    """Require response text with no JSON coercion."""
+    match get(value, key).as_str():
+        Some(item) => return item
+        None => return fail_t[str]("JSON field is not text: " + key)
+
+
+def fields(error: JsonValue) -> list[str]:
+    """Decode the closed refusal path shape for concise mutation assertions."""
+    match get(error, "fields").as_array():
+        None => return fail_t[list[str]]("refusal fields are not an array")
+        Some(values) =>
+            mut result: list[str] = []
+            for value in values:
+                match value.as_str():
+                    Some(field) => result.append(field)
+                    None => return fail_t[list[str]]("refusal field is not text")
+            return result

@@ -447,6 +447,11 @@ use crate::oven::rustc::{
     trusted_artifact_plan_for_source_evidence, validate_project_extension_payload_against_base,
     validate_project_inspection_authority_payload, validate_selected_sealed_registry_leaf,
 };
+#[cfg(feature = "rust_inspect")]
+use crate::oven::rustc::{
+    OvenDirectRustcCompilerRetention, bind_fixed_std_inspection, retain_direct_rustc_compiler,
+    retain_rust_inspection_toolchain,
+};
 use crate::oven::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLease,
     PublishedOvenStore,
@@ -456,6 +461,8 @@ use crate::oven::{
     digest_project_source_tree, generated_source_evidence_for_inputs, receipt_generated_project,
     receipt_generated_project_with_source_evidence, write_receipt,
 };
+#[cfg(feature = "rust_inspect")]
+use crate::oven::{OvenInspectionBootstrapRequest, receipt_inspection_bootstrap};
 use crate::oven_interop::locked_oven_interop_targets;
 use crate::provider::{
     FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderIdentity, ProviderPlan, PublicProviderArtifact,
@@ -487,7 +494,10 @@ use super::common::{
 };
 use super::lock::{LockResolutionRequest, PublishedOvenProjectLock, publish_oven_project_lock, resolve_lock_context};
 #[cfg(feature = "rust_inspect")]
-use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
+use super::lock::{
+    RustInspectWorkspaceRequest, SelectedRustInspectBinding, SelectedRustInspectWorkspace,
+    prepare_rust_inspect_workspace,
+};
 use super::oven::open_default_oven_store;
 use super::vocab_extraction::{
     PendingDesugarerArtifact, collect_library_vocab_metadata, oven_vocab_direct_rustc_context_from_plan,
@@ -6354,11 +6364,23 @@ fn prepare_oven_project(
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let metadata_query_paths = loaf_rust_inspect_query_paths(&modules, &compilation_session)?;
+        let rust_derive_probe_paths = collect_rust_inspect_derive_probe_paths(&modules);
+        let selected = select_fixed_std_rust_inspection_workspace(
+            &project_root,
+            &project_name,
+            &project_version,
+            profile,
+            &rustc_target,
+            &rustc_toolchain,
+            &rustc,
+            &oven_store,
+            &metadata_query_paths,
+        )?;
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             rust_inspect_query_paths: &metadata_query_paths,
-            rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-            selected: None,
+            rust_derive_probe_paths: &rust_derive_probe_paths,
+            selected,
         })?;
         if let Some(manifest_dir) = rust_inspect_manifest_dir.as_ref() {
             codegen.set_rust_inspect_manifest_dir(manifest_dir.manifest_dir().to_path_buf());
@@ -6628,6 +6650,93 @@ fn loaf_rust_inspect_query_paths(
         query_paths.extend(collect_rust_inspect_query_paths_from_programs([&program]));
     }
     Ok(query_paths.into_iter().collect())
+}
+
+/// Select the fixed compiler `std` facet needed by an Oven typecheck before Incan emits generated Rust.
+///
+/// This is deliberately a narrow first production consumer of the selected Rust graph. It proves the necessary
+/// authority order — authored source receipt, retained compiler, retained inspection closure, lease-safe selected
+/// workspace, then typechecking — without rediscovering a Cargo project. Registry, Git, path-package, build-script
+/// and proc-macro facets remain the general RFC 119 producer's work and fail visibly here instead of borrowing an
+/// ambient workspace.
+#[cfg(feature = "rust_inspect")]
+fn select_fixed_std_rust_inspection_workspace(
+    project_root: &Path,
+    project_name: &str,
+    project_version: &str,
+    profile: &str,
+    target: &str,
+    toolchain: &str,
+    rustc: &Path,
+    store: &OvenStore,
+    query_paths: &[String],
+) -> CliResult<Option<SelectedRustInspectWorkspace>> {
+    if query_paths.is_empty() {
+        return Ok(None);
+    }
+    if let Some(path) = query_paths.iter().find(|path| !path.starts_with("std::")) {
+        return Err(CliError::failure(format!(
+            "Oven selected Rust inspection has no admitted facet for `{path}`: the current bootstrap selects only the compiler `std` graph; an RFC 119 dependency facet must be produced before typechecking this import"
+        )));
+    }
+
+    // This is authored-source evidence, deliberately distinct from the generated-Rust receipt produced after
+    // typechecking. It permits a new source snapshot to reuse byte-identical compiler and rust-src owners while
+    // retaining a truthful source provenance record for the selection that used them.
+    let authored_source_authority =
+        digest_project_source_tree(project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let receipt = receipt_inspection_bootstrap(&OvenInspectionBootstrapRequest::new(
+        project_name,
+        project_version,
+        target,
+        toolchain,
+        profile,
+        Vec::new(),
+        authored_source_authority,
+    ))
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    let compiler = match retain_direct_rustc_compiler(store, &receipt, rustc, target).map_err(oven_rustc_error)? {
+        OvenDirectRustcCompilerRetention::Retained(compiler) => Arc::new(compiler),
+        OvenDirectRustcCompilerRetention::Unavailable { reason } => {
+            return Err(CliError::failure(format!(
+                "Oven selected Rust inspection could not retain the requested compiler closure: {reason}"
+            )));
+        }
+    };
+    let inspection_root = project_root.join(".incan/oven/rust-inspection");
+    let cache_root = inspection_root.join("cache");
+    let temporary_root = inspection_root.join("temporary");
+    // `RustWorkspace::load_selected` canonicalizes both caller-owned roots before it writes its ephemeral
+    // rust-project descriptor. The selected Store owner is immutable, so allocate these project-local directories
+    // explicitly rather than making the loader infer or create an unselected input path.
+    fs::create_dir_all(&cache_root).map_err(|error| {
+        CliError::failure(format!(
+            "failed to create selected Rust inspection cache root {}: {error}",
+            cache_root.display()
+        ))
+    })?;
+    fs::create_dir_all(&temporary_root).map_err(|error| {
+        CliError::failure(format!(
+            "failed to create selected Rust inspection temporary root {}: {error}",
+            temporary_root.display()
+        ))
+    })?;
+    let inspection_owner = retain_rust_inspection_toolchain(
+        store,
+        &receipt,
+        compiler.as_ref(),
+        rustc,
+        &inspection_root.join("staging"),
+    )
+    .map_err(oven_rustc_error)?;
+    let fixed_std = bind_fixed_std_inspection(Arc::new(inspection_owner), &receipt.intent).map_err(oven_rustc_error)?;
+    Ok(Some(SelectedRustInspectWorkspace {
+        context: cache_root,
+        temporary_root,
+        binding: SelectedRustInspectBinding::FixedStd(fixed_std),
+        source_loaf: None,
+        project_source_authorities: None,
+    }))
 }
 
 /// Make a compiler-owned Loaf internally consistent with its retained provider source.
