@@ -1933,6 +1933,26 @@ impl<'a> IrEmitter<'a> {
         self.native_nominal_origins = origins;
     }
 
+    /// Bind one provider manifest's native carriers, nominal origins and type routes before its exports are read.
+    ///
+    /// Every path that reads a manifest's exported types has to do this first, because an unprojected native union
+    /// carries no physical projection and lowering has no error channel to complain through — it returns `Unknown`,
+    /// which the emitter then resolves to something unrelated or drops. The dependency path did it and the SDK
+    /// seeding path did not, which is the disagreement `ir_type_from_projected_manifest`'s debug assertion exists
+    /// to catch. Both call this now, so there is one order and one place to change it.
+    fn projected_provider_manifest(
+        &self,
+        manifest: &LibraryManifest,
+        library: &str,
+        plan: Option<&crate::provider::ProviderPlan>,
+        routes: Option<&HashMap<String, String>>,
+    ) -> Result<LibraryManifest, EmitError> {
+        let projected = crate::library_manifest::with_checked_native_unions(manifest.clone(), library, plan, routes)
+            .map_err(EmitError::InternalInvariant)?;
+        let projected = crate::library_manifest::with_native_nominal_origins(projected, &self.native_nominal_origins);
+        Ok(crate::library_manifest::with_checked_type_routes(projected, routes))
+    }
+
     /// Seed public dependency nominal metadata from `.incnlib` manifests.
     ///
     /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
@@ -1961,18 +1981,9 @@ impl<'a> IrEmitter<'a> {
             let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
                 continue;
             };
-            let projected = crate::library_manifest::with_checked_native_unions(
-                manifest.as_ref().clone(),
-                &library,
-                plan,
-                routes.get(&library),
-            )
-            .map_err(EmitError::InternalInvariant)?;
-            let projected =
-                crate::library_manifest::with_native_nominal_origins(projected, &self.native_nominal_origins);
             manifests.insert(
                 library.clone(),
-                crate::library_manifest::with_checked_type_routes(projected, routes.get(&library)),
+                self.projected_provider_manifest(manifest.as_ref(), &library, plan, routes.get(&library))?,
             );
         }
         let mut counts = HashMap::<String, usize>::new();
@@ -2435,8 +2446,29 @@ impl<'a> IrEmitter<'a> {
     /// Built-in stdlib consumers intentionally do not materialize provider source modules. The artifact manifest is
     /// therefore the sole metadata source for whether a receiver uses Incan call semantics and whether a member is an
     /// enum variant rather than a Rust field access.
-    pub(crate) fn seed_sdk_provider_manifest_metadata(&mut self, manifest: &LibraryManifest) {
+    ///
+    /// The manifest is projected before a single export is read. It was not, and that made this the seeding path
+    /// `ir_type_from_projected_manifest` names when it refuses: a native union arrived with no physical projection
+    /// and lowered to `Unknown`. The failure needed a component whose surface actually carries one to appear at all,
+    /// which is why it surfaced as an SDK preparation panic in `stdlib-codecs` rather than in any unit test.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmitError::InternalInvariant`] when the manifest names a native union owned by some *other*
+    /// artifact that no admitted provider plan binds. That is a refusal rather than a fallback: emitting the union
+    /// unbound produces a type the generated Rust resolves to something else, with no diagnostic anywhere.
+    pub(crate) fn seed_sdk_provider_manifest_metadata(
+        &mut self,
+        manifest: &LibraryManifest,
+        plan: Option<&crate::provider::ProviderPlan>,
+        routes: Option<&HashMap<String, String>>,
+    ) -> Result<(), EmitError> {
         let provider_crate = manifest.name.replace('-', "_");
+        // A provider owns the unions its own surface publishes, and the admitted public-artifact graph is built
+        // from project dependencies, so it has no entry to look this provider up by. Bind those first; whatever is
+        // left names another artifact, which is the question the plan does answer.
+        let manifest = &crate::library_manifest::with_self_owned_native_unions(manifest.clone(), &provider_crate);
+        let manifest = &self.projected_provider_manifest(manifest, &manifest.name, plan, routes)?;
         for entry in &manifest.contract_metadata.identity_graph.exports {
             if entry.kind != ExportIdentityKind::Function || entry.public_path.first() != Some(&manifest.name) {
                 continue;
@@ -2478,7 +2510,7 @@ impl<'a> IrEmitter<'a> {
         // the public declarations of every `std.*` provider module. Consumers must use that artifact-owned API
         // instead of reopening the provider source modules.
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
-            return;
+            return Ok(());
         };
         self.compiled_sdk_module_paths
             .extend(api.modules.iter().map(|module| module.module_path.clone()));
@@ -2514,6 +2546,7 @@ impl<'a> IrEmitter<'a> {
         }
         self.seed_compiled_provider_export_metadata(&provider_crate, &models, &classes, &enums, &newtypes);
         self.seed_compiled_provider_factory_metadata(&functions, &models, &classes);
+        Ok(())
     }
 
     /// Set provider module paths when a caller already derived them from the artifact entrypoint or manifest.
@@ -3649,7 +3682,7 @@ mod tests {
     }
 
     #[test]
-    fn compiled_sdk_manifest_seeds_exact_stdlib_function_identity() {
+    fn compiled_sdk_manifest_seeds_exact_stdlib_function_identity() -> Result<(), Box<dyn std::error::Error>> {
         let registry = FunctionRegistry::new();
         let identity = CanonicalSymbolId {
             namespace: SymbolNamespace::OrdinaryLexical,
@@ -3690,9 +3723,120 @@ mod tests {
         let mut emitter = IrEmitter::new(&registry);
         emitter.set_canonical_function_registry(canonical_registry);
 
-        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
 
         assert_eq!(emitter.canonical_stdlib_function_identity(&std_path), Some(&identity));
+        Ok(())
+    }
+
+    /// Build one SDK provider manifest whose exported enum variant carries a native union.
+    ///
+    /// `stdlib-system` publishes exactly this shape, and it is what made SDK preparation fail: the seeding path
+    /// read the union straight out of the manifest, where `checked_projection` is `#[serde(skip)]` and therefore
+    /// always absent on arrival.
+    fn manifest_exporting_a_native_union(
+        library: &str,
+        owner: crate::library_manifest::NativeUnionOwnerExport,
+    ) -> LibraryManifest {
+        let mut manifest = LibraryManifest::new(library, "0.6.0");
+        manifest.exports.enums.push(crate::library_manifest::EnumExport {
+            name: "Carrier".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            value_type: None,
+            ordinal_type_identity: None,
+            variants: vec![crate::library_manifest::EnumVariantExport {
+                name: "Carried".to_string(),
+                canonical: None,
+                fields: vec![crate::library_manifest::TypeRef::NativeUnion(
+                    crate::library_manifest::NativeUnionExport {
+                        owner,
+                        rust_name: "__IncanUnionProbe".to_string(),
+                        members: vec![crate::library_manifest::TypeRef::Named {
+                            name: "int".to_string(),
+                            origin: None,
+                        }],
+                        local_nominals: Default::default(),
+                        checked_projection: None,
+                    },
+                )],
+                value: None,
+            }],
+            variant_aliases: Vec::new(),
+            methods: Vec::new(),
+            derives: Vec::new(),
+        });
+        manifest
+    }
+
+    /// A union an SDK provider owns itself binds to that provider's crate, with no admitted artifact graph.
+    ///
+    /// This is the defect that stopped SDK preparation at `stdlib-codecs`. The seeding path never projected, so
+    /// `ir_type_from_projected_manifest` saw a union with no physical projection and returned `Unknown` — silently
+    /// in release, and through a debug assertion in the prewarm. `Unknown` is the observable: the emitter resolves
+    /// it to something unrelated or drops it, with no diagnostic anywhere.
+    ///
+    /// The plan-based projection cannot answer this one. Its owner lookup goes through the admitted public-artifact
+    /// graph, which is built from project-dependency records and has no entry for an SDK provider, so it refuses
+    /// with "union import container is unavailable". A provider that owns its own union does not need to be looked
+    /// up: it is the owner.
+    #[test]
+    fn an_sdk_provider_binds_the_native_unions_it_owns() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let manifest = manifest_exporting_a_native_union(
+            "incan_stdlib_codecs",
+            crate::library_manifest::NativeUnionOwnerExport::ContainingArtifact,
+        );
+
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
+
+        let key = ("Carrier".to_string(), "Carried".to_string());
+        let Some(super::VariantFields::Tuple(fields)) = emitter.enum_variant_fields.get(&key) else {
+            panic!(
+                "the variant should be recorded as a tuple, got {:?}",
+                emitter.enum_variant_fields.get(&key)
+            );
+        };
+        let [IrType::ExternalUnion { library, .. }] = fields.as_slice() else {
+            panic!("the variant field must lower to the carried union, got {fields:?}");
+        };
+        assert_eq!(
+            library, "::incan_stdlib_codecs",
+            "a provider owns the unions its own surface publishes, so its crate is the physical route"
+        );
+        Ok(())
+    }
+
+    /// A union owned by another artifact is still refused when nothing admits that artifact.
+    ///
+    /// The self-owned binding deliberately does not answer this case. `SelectedArtifact` names some other owner,
+    /// and which artifact that is, and whether its published representation agrees, is exactly what the admitted
+    /// graph exists to decide. Guessing would put the union in the wrong crate.
+    #[test]
+    fn sdk_provider_seeding_refuses_a_union_owned_by_an_unadmitted_artifact() {
+        let registry = FunctionRegistry::new();
+        let manifest = manifest_exporting_a_native_union(
+            "incan_stdlib_codecs",
+            crate::library_manifest::NativeUnionOwnerExport::SelectedArtifact(crate::provider::ProviderIdentity {
+                name: "incan_stdlib_system".to_string(),
+                version: "0.6.0".to_string(),
+                digest: "sha256:probe".to_string(),
+                feature_projection: Default::default(),
+            }),
+        );
+
+        let mut emitter = IrEmitter::new(&registry);
+        let seeded = emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None);
+
+        let Err(super::EmitError::InternalInvariant(message)) = seeded else {
+            panic!("seeding must refuse a union it cannot place, got {seeded:?}");
+        };
+        assert!(
+            message.contains("__IncanUnionProbe"),
+            "the refusal must name the union it could not bind, got {message}"
+        );
     }
 
     #[test]
