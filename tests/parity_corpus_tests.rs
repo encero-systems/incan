@@ -3052,8 +3052,10 @@ fn verify_release_artifact() -> Result<ReleaseArtifactAssertions, String> {
 // Seed corpus
 // ============================================================================
 
-/// The stable #987 corpus, including RFC 120's executable checked-identity and artifact-projection rows.
-/// Package/import execution remains a named #989 boundary rather than an inferred success.
+/// The stable #987 corpus, including RFC 120's executable checked-identity and artifact-projection rows, and
+/// #1339's package-execution rows. Package/import execution is now a proven row rather than a named #989
+/// boundary: one case executes a published package through its executable representation and one proves the
+/// refusal, both still asserted explicitly rather than inferred from a passing build.
 fn seed_corpus() -> Vec<ParityCase> {
     vec![
         ParityCase {

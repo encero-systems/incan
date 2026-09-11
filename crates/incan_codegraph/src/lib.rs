@@ -564,7 +564,7 @@ pub struct CodegraphReferenceRecord {
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
     /// Closest checked declaring owner, independent of optional export-local navigation linkage.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonical_owner: Option<CodegraphCanonicalSymbolId>,
     /// The same declaration's edit-stable identity, for a consumer keying across compilations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -602,7 +602,7 @@ pub struct CodegraphCallRecord {
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
     /// Closest checked declaring owner, independent of optional export-local navigation linkage.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonical_owner: Option<CodegraphCanonicalSymbolId>,
     /// The same declaration's edit-stable identity, for a consumer keying across compilations.
     #[serde(default, skip_serializing_if = "Option::is_none")]

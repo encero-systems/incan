@@ -2,8 +2,12 @@
 //!
 //! Consumer dependency aliases identify graph edges. Canonical origins identify declaring packages. Public facades
 //! therefore resolve to their original provider, including a transitive provider, without synthesizing source bodies.
-//! Artifact authenticity belongs to the package boundary. Local admission verifies the manifest-selected content
-//! digest, then checks versions, public membership and coverage. Only required fragments are decoded.
+//! Artifact authenticity belongs to the package boundary. Local admission checks the representation version, the
+//! manifest descriptor's version, the index bounds, and public membership and coverage, then streams the
+//! manifest-selected content digest last. That order is deliberate and the opposite of what a trust boundary
+//! usually suggests: the cheap structural refusals run before the whole file is read, and nothing parsed ahead of
+//! the digest is acted on, because the digest must verify before any declaration executes. Only required fragments
+//! are decoded.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;

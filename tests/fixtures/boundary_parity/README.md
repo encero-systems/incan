@@ -14,7 +14,7 @@ When adding boundary coverage, extend these fixture families before adding anoth
 
 ## Public-boundary evidence and remaining fixture work
 
-The executable corpus now uses the `PackageImportBoundary` and `RustInteropBehavior` lanes for their registered checked-boundary cases. The package rows below also exercise a materialized dependency after its source and authored manifest have been removed. Both share one probe in `tests/support/package_boundary_probe.rs`; the native package suite uses the same project-command helpers.
+The executable corpus registers its checked-boundary cases in the `PackageImportBoundary` evidence lane. `RustInteropBehavior` is a behavior category rather than a lane, and still has no registered case: #987's own plan seeds a source-only corpus before Rust-interop rows. The package rows below also exercise a materialized dependency after its source and authored manifest have been removed. Both share one probe in `tests/support/package_boundary_probe.rs`; the native package suite uses the same project-command helpers.
 
 | Stable corpus case | Executed behavior |
 | --- | --- |

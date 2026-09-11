@@ -637,6 +637,56 @@ fn missing_and_future_representations_are_package_refusals() -> Result<(), Box<d
     Ok(())
 }
 
+/// A manifest that names a version the surface bytes do not carry is refused on the descriptor alone.
+///
+/// This is the other half of the version contract, and the surface-bytes test above does not reach it: corrupting
+/// the file trips `require_supported_version` on the payload, a different guard. Here the bytes stay valid and
+/// only the manifest descriptor disagrees, which is the shape a stale or tampered manifest actually takes.
+/// `executable_surface_path` selects the file by digest and ignores the version, so the file is still found and
+/// its content still verifies -- the descriptor check is the only thing standing between that manifest and an
+/// execution under the wrong representation. Without this test, deleting that check passes the whole suite.
+#[test]
+fn a_manifest_descriptor_naming_another_version_is_refused() -> Result<(), Box<dyn Error>> {
+    let temporary = tempfile::tempdir()?;
+    let mut manifest = artifact(
+        temporary.path(),
+        "descriptor_version",
+        "pub def restated() -> int:\n    return 42\n",
+    )?;
+    let identity = manifest
+        .contract_metadata
+        .identity_graph
+        .canonical_for_public_name("restated")
+        .ok_or("restated missing")?;
+    let descriptor = manifest
+        .contract_metadata
+        .executable_representation
+        .as_mut()
+        .ok_or("descriptor missing")?;
+    let published = descriptor.representation_version;
+    descriptor.representation_version = published + 1;
+
+    let refused = resolve_executable_requirements(
+        &index(temporary.path(), "renamed", &manifest),
+        &BTreeSet::from([identity]),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(ExecutableResolutionError::UnusableRepresentation {
+                source:
+                    incan_semantics_core::executable_representation::ExecutableRepresentationError::UnsupportedVersion {
+                        found,
+                        ..
+                    },
+                ..
+            }) if found == published + 1
+        ),
+        "a descriptor naming another version must refuse before execution, got {refused:?}"
+    );
+    Ok(())
+}
+
 /// Content verification streams the file once; only three selected payloads are decoded.
 #[test]
 fn a_file_reader_loads_three_of_four_hundred_declarations() -> Result<(), Box<dyn Error>> {

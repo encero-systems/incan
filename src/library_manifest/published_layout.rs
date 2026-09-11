@@ -31,7 +31,13 @@ pub fn executable_surface_path(manifest_path: &Path, manifest: &LibraryManifest)
     )
 }
 
-/// Canonical membership of the manifest's public surface, including public fields, variants and methods.
+/// Canonical membership of the manifest's public surface: the exported types themselves, plus the public fields,
+/// variants, methods and properties of models, classes, enums and traits.
+///
+/// Newtypes are deliberately not walked for members. `NewtypeExport` and `ApiNewtype` both carry `methods`, but
+/// RFC 123 does not say whether a newtype's methods belong to the executable surface, so admitting them here would
+/// widen it on an assumption. The consequence of leaving them out is a refusal rather than wrong output, which is
+/// the direction RFC 123 asks for. See #1339.
 ///
 /// Top-level and facade targets come from the finalized identity graph. Member visibility comes from the published
 /// export records, rather than declaration spans or names in producer source.
@@ -214,9 +220,24 @@ mod tests {
             executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).ok_or("path missing")?,
             Path::new("/pkg/semantic").join(format!("{}.incnsem", "a".repeat(64)))
         );
+        // A short value is rejected by the length check before the charset guard ever runs, so it proves only
+        // half the contract. Both halves need a case: a wrong-length digest, and a right-length one whose bytes
+        // are not hex -- including a separator, which is the shape that would actually escape the root.
         manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
             representation_version: 2,
             content_digest: "../escape".into(),
+        });
+        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
+        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
+            representation_version: 2,
+            content_digest: "g".repeat(64),
+        });
+        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
+        let mut traversal = "a".repeat(61);
+        traversal.push_str("/..");
+        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
+            representation_version: 2,
+            content_digest: traversal,
         });
         assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
         Ok(())

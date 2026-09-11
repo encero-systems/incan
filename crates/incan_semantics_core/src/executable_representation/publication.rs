@@ -12,7 +12,10 @@ use crate::{CanonicalSymbolId, CompilerNodeId, IncanType, SymbolOrigin};
 use super::CoverageReason;
 use crate::canonical_module_identity;
 
-/// Executable dependencies retained without exposing private or unresolved source declarations.
+/// One projected body together with the public identities its execution requires.
+///
+/// The body is the executable projection; the requirements are the dependencies retained for it, recorded without
+/// exposing private or unresolved source declarations.
 pub(super) struct PublicBody {
     pub body: Body,
     pub requirements: BTreeSet<CanonicalSymbolId>,

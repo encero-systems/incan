@@ -153,7 +153,6 @@ You selected a public API, built its checked library artifact, locked the worksp
 
 </section>
 
-
 ## Continue
 
 - [Execute a published package without native linking](../how-to/execute_published_package.md)

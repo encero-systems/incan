@@ -232,9 +232,12 @@ struct AdmittedDeclaration {
 /// `public` comes from the finalized manifest, including public members. `unrepresentable` records the current
 /// execution profile's refusals in addition to this layer's portable-reference checks.
 ///
-/// The work is a pipeline, and the order is load-bearing: coverage starts pessimistic and is only ever improved by
-/// a later phase, so a declaration that no phase reaches stays uncovered rather than silently defaulting to
-/// covered. Each phase is separated out below; this function is the order they run in.
+/// The work is a pipeline and the order is load-bearing, in a way worth stating exactly. Coverage starts
+/// pessimistic, and `Covered` is written once, in the final phase, from whatever is still admitted by then. The
+/// admitted set itself both grows and shrinks: projection fills it, and `retain_only_satisfiable` removes from it.
+/// Publishing coverage last is what makes that safe, because a declaration dropped late can never already have been
+/// reported covered. A declaration no phase reaches keeps the pessimistic answer it started with. Each phase is
+/// separated out below; this function is the order they run in.
 pub fn build_surface(
     modules: &[BodyIrModule],
     library: &str,
@@ -251,9 +254,10 @@ pub fn build_surface(
 
 /// Start every public identity this package declares at uncovered.
 ///
-/// Coverage is only ever improved from here, so an identity no later phase reaches keeps this answer. That is the
-/// safe direction: a consumer refuses a declaration this package could not publish, rather than attempting one
-/// whose payload was never written.
+/// An identity no later phase reaches keeps this answer, which is the safe direction: a consumer refuses a
+/// declaration this package could not publish, rather than attempting one whose payload was never written. Later
+/// phases may replace this reason with a more specific one, or supersede it entirely once the declaration is
+/// encoded, but nothing reaches `Covered` without surviving every phase in between.
 fn uncovered_owned_declarations(
     library: &str,
     public: &BTreeSet<CanonicalSymbolId>,
@@ -906,6 +910,13 @@ mod tests {
         let bytes = publish(&module, &public)?;
         let reader = SurfaceReader::open(&bytes)?;
         assert_eq!(reader.covered_identities().count(), 0);
+        // The reason has to be asserted, not just the absence of coverage. `UnsupportedConstruct` is the one
+        // reason whose whole purpose is to reach a consumer distinctly, and without this a mutant mapping it to
+        // `UnresolvedReference` or `PrivateDependency` passes the test named after it.
+        assert!(matches!(
+            reader.index().coverage(&identity("unsupported", 4))?,
+            DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
+        ));
         assert!(matches!(
             reader.index().coverage(&identity("caller", 1))?,
             DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency)

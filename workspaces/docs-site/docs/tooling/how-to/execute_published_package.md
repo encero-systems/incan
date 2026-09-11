@@ -18,7 +18,7 @@ Keep each built library artifact together when moving it. Copying only its `.inc
 
 ## Record an execution report
 
-Supply a separate report path so JSON does not replace program output:
+`--report-output` is required here, not merely advisable. Replacement execution keeps stdout and stderr for the program, so the report needs a path of its own; omitting it is an error rather than merged output:
 
 ```bash
 incan build src/main.incn --backend replacement --report json --report-output execution.json
@@ -34,10 +34,10 @@ incan inspect backend-selection --receipt .incan/backend/receipt.json
 
 Use the diagnostic's package, version and requirement to identify the dependency that needs attention. If its executable content is absent or incompatible, rebuild that dependency with a compatible compiler and make the complete resulting artifact available to the consumer. If the declaration is uncovered, its implementation or the replacement execution profile must support the required operations before this route can use it.
 
-To execute through an already prepared native route, select it explicitly:
+To execute through the native route instead, run the program without selecting the replacement profile:
 
 ```bash
-incan run src/main.incn --locked
+incan run src/main.incn
 ```
 
-The compiler does not make that choice automatically. The [representation reference](../reference/package_executable_representation.md#refusals) defines the coverage and refusal conditions.
+`incan run` always uses the native route; the replacement profile is reached only by asking for it with `incan build --backend replacement`. A package whose executable content is absent or uncovered still links natively, so the native route remains available whenever the representation cannot serve a requirement. The [representation reference](../reference/package_executable_representation.md#refusals) defines the coverage and refusal conditions.

@@ -120,8 +120,9 @@ pub(crate) enum EvidenceLane {
     DirectReplacementBodyIr,
     /// Package consumer fixtures, facade/reexport tests, checked API metadata tests.
     ///
-    /// RFC 120 conformance now uses this lane for a checked import/alias/re-export graph. Cross-package replacement
-    /// execution remains explicitly unavailable under #989.
+    /// RFC 120 conformance uses this lane for a checked import/alias/re-export graph. Cross-package replacement
+    /// execution is no longer unavailable: #1339 registers two rows here that execute a published package through
+    /// its executable representation, one proving the call and one proving the refusal.
     PackageImportBoundary,
     /// Vocab desugarer tests, formatter/test-runner activation paths.
     ///
