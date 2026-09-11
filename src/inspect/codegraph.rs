@@ -2948,7 +2948,7 @@ fn import_record(
     let (kind, path, items) = import_shape(import);
     CodegraphImportRecord {
         id: import_id.to_string(),
-        language: CodegraphLanguage::Incan,
+        language: import_language(import),
         module_id: module_id.to_string(),
         kind,
         path,
@@ -3223,6 +3223,24 @@ fn format_type_params(type_params: &[TypeParam]) -> String {
 }
 
 /// Return the import kind, path, and item list for one parsed import declaration.
+/// Return the language of the items an import brings into scope.
+///
+/// The import statement is Incan source either way; what this names is the language of what it imports, which is
+/// the axis RFC 106 defined `language` for. One graph spans both languages and `language` is an attribute of the
+/// fact rather than a partition of the schema -- that is why the reserved `rust_item` node kind and
+/// `uses_rust_item` edge kind were retired rather than added. Filling the field with a constant left the graph
+/// unable to answer which Rust items a module reaches, which is the question build invalidation has to ask.
+fn import_language(import: &ImportDecl) -> CodegraphLanguage {
+    match &import.kind {
+        ImportKind::RustCrate { .. } | ImportKind::RustFrom { .. } => CodegraphLanguage::Rust,
+        ImportKind::Module(_)
+        | ImportKind::From { .. }
+        | ImportKind::PubLibrary { .. }
+        | ImportKind::PubFrom { .. }
+        | ImportKind::Python(_) => CodegraphLanguage::Incan,
+    }
+}
+
 fn import_shape(import: &ImportDecl) -> (String, String, Vec<String>) {
     match &import.kind {
         ImportKind::Module(path) => ("module".to_string(), import_path_display(path), Vec::new()),
@@ -4035,6 +4053,70 @@ pub def pick(value: int, fallback: int) -> int:
             })
             .count();
         assert_eq!(edges, 3, "every module is contained by exactly one namespace");
+        Ok(())
+    }
+    /// An import of a Rust item is recorded as a Rust-language fact, not an Incan one.
+    ///
+    /// RFC 106 settled this deliberately: one graph spans both languages and `language` is an attribute of the
+    /// fact rather than a partition of the schema, which is why the reserved `rust_item` node kind and
+    /// `uses_rust_item` edge kind were retired. The field existed and was filled with the constant `Incan`, so
+    /// every `from rust::… import …` claimed to be Incan and the graph could not answer which Rust items a module
+    /// reaches — the question invalidation needs.
+    ///
+    /// Exercised at the record builder rather than through `collect_codegraph_records`, which is a
+    /// compiler-backed utility requiring a prepared SDK provider store. The language decision is made here, so
+    /// this is where it can be pinned without that.
+    #[test]
+    fn a_rust_import_is_recorded_as_a_rust_language_fact() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "from rust::std::option import Option as RustOption\nfrom std.collections import Deque\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module = ParsedModule {
+            name: "probe".to_string(),
+            path_segments: vec!["probe".to_string()],
+            file_path: PathBuf::from("probe.incn"),
+            source: source.to_string(),
+            ast: program.clone(),
+        };
+
+        let mut languages = Vec::new();
+        for declaration in &program.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let record = import_record(
+                &module,
+                "m",
+                "i",
+                import,
+                declaration.span,
+                Vec::new(),
+                CodegraphProvenance::Syntax,
+                false,
+            );
+            languages.push((record.path.clone(), record.language));
+        }
+
+        let rust = languages
+            .iter()
+            .find(|(path, _)| path.starts_with("rust::"))
+            .ok_or("the rust:: import should produce a record")?;
+        assert_eq!(
+            rust.1,
+            CodegraphLanguage::Rust,
+            "an import of a Rust item is a Rust-language fact; recording it as Incan leaves the graph unable to \
+             say which Rust items a module reaches"
+        );
+
+        let incan = languages
+            .iter()
+            .find(|(path, _)| !path.starts_with("rust::"))
+            .ok_or("the std import should produce a record")?;
+        assert_eq!(
+            incan.1,
+            CodegraphLanguage::Incan,
+            "an ordinary Incan import must not be relabelled by this change"
+        );
         Ok(())
     }
 }
