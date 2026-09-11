@@ -295,6 +295,12 @@ A declaration identity must be stable across edits. It must not include a source
 - **Removing the span alone is not sufficient, because of overloads.** Two module-level declarations sharing namespace, origin, name, and kind become indistinguishable once the span is gone. A declaration identity must therefore include the declaration's signature. Measured over the declarations one standard library actually declares — 1,252 of them, since imports, aliases, and re-exports share their target's identity by design and so cannot collide — overloads are the only collision class that arises, and it arises twice. A corpus is what establishes this: the class was found by measuring, not by predicting it.
 - **A traversal counter is a span by another name.** A scope discriminant assigned as an index into a module-wide table is positional: inserting or moving any declaration renumbers every declaration traversed after it, so an untouched sibling appears to change. Only the *presence* of a discriminant may enter an identity, never its value. Where a value is needed to separate sibling scopes, it must be renumbered densely within its own declaration.
 
+Two consequences follow from that, and both are visible to a consumer.
+
+**Changing a signature replaces an identity rather than moving a digest.** Because the signature is an identity input, an edit to it produces a declaration that did not exist before and removes one that did. For an invalidation consumer that is exactly right — both are "changed" — but a consumer tracing one declaration across versions sees it disappear, and must treat a removal paired with an addition at the same origin, name and kind as a possible signature change rather than as a deletion. This is the price of separating overloads, and it is the right trade: overloads are the only collision class a corpus produces, while a signature edit is at least a contract change.
+
+**Two declarations sharing a digest is not a collision.** Identity is the key and the digest is the value: a consumer looks a declaration up by identity, then compares digests. A shared digest says only that two declarations mean the same thing, which happens legitimately — the same constant declared in several modules, for instance. A digest must therefore not be treated as an identity, and an implementation must not report shared digests as a defect. (What they *are* useful for is duplicate detection, which is a consumer of the graph rather than a property of it.)
+
 Physical file movement must not destroy identity for declarations that retain the same package, module, and stable anchor. The layering rule below is what makes that achievable rather than aspirational.
 
 ### Checked and tolerant export
@@ -502,6 +508,14 @@ The digest must be language-neutral. An Incan declaration and a Rust declaration
 
 Where an implementation cannot compute a declaration's semantic digest, it must report the declaration as changed. Erring toward changed costs redundant work; erring the other way yields a wrong build.
 
+### The exported identity does not satisfy this yet
+
+The identity rules above govern what a consumer may key on. The exported schema does not meet them today: the identity carried on declaration, reference, call, import-binding and export records mirrors the compiler's own, span and scope discriminant included. That is correct as *provenance* — it names where a declaration sat in the compilation that produced the record — and wrong as a key.
+
+Closing the gap needs a second, span-free identity exported alongside it rather than a change to the existing one, since both jobs are real. It also needs a signature, which a compiler identity does not carry and which comes from the declaration's lowered body; an exported identity without one cannot separate overloads, and publishing it would push the collision this section exists to prevent out to every consumer at once.
+
+Until that lands, a consumer must treat the exported identity as provenance and must not cache against it across compilations.
+
 ### The documentation digest
 
 Documentation is output for some consumers and invisible to others. A declaration must therefore carry a separate `doc_digest` covering its documentation, excluded from the semantic digest.
@@ -516,7 +530,7 @@ A declaration's own digest answers a narrow question. Consumers ask a wider one:
 
 Ordering by identity rather than by traversal makes the fold order-free, which is required: a fold sensitive to traversal order reintroduces exactly the positional dependency the identity rules remove. A cycle folds over its strongly connected component as a unit.
 
-Dependencies are the graph's outgoing `references`, `calls`, `imports`, `contains`, and `resolves_to` edges. Unresolved edges are covered by the reachability rules above: an edge the graph could not resolve is not an edge that does not exist, so a closure containing one must be reported as changed.
+Dependencies are the graph's outgoing `references`, `calls`, `imports`, `contains`, and `resolves_to` edges. Those edges are the graph's own and must come from it: an implementation must not derive them from a lowered body, which records the callee spelling a call site used and defers resolving which declaration it binds. Resolution is what makes an edge foldable, and it is the graph that holds it. Unresolved edges are covered by the reachability rules above: an edge the graph could not resolve is not an edge that does not exist, so a closure containing one must be reported as changed.
 
 ### External identity and the resilience boundary
 
