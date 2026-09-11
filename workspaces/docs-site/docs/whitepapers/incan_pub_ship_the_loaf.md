@@ -11,7 +11,7 @@ audience:
 scope: "Product positioning for incan.pub as a compiled, attested distribution tier for Oven-built projects, and the measured cost of Rust's source-only model that motivates it."
 normative: false
 related_rfc:
-  - "RFC 034"
+  - "RFC 034 (superseded by RFC 125)"
   - "RFC 079"
   - "RFC 117"
   - "RFC 118"
@@ -193,7 +193,7 @@ Rust is not short of attempts. Each one works, and each one stops at the same pl
 
 **[cargo-binstall](https://github.com/cargo-bins/cargo-binstall)** and cargo-quickinstall distribute finished binaries and are widely used. They serve end-user tools, not dependencies. A binary has no consumer-chosen configuration to match — nobody links against `ripgrep` with different features — so the identity problem never arises, which is precisely why they could ship and a dependency tier could not.
 
-**[crABI](https://github.com/rust-lang/rust/pull/105586)** and the [rlib-stabilisation pre-RFC](https://internals.rust-lang.org/t/pre-rfc-stabilize-a-version-of-the-rlib-format/17558)** attack the problem from the other end, by making artifacts compatible across more compilations. That reduces how often identities differ; it does not remove the need to know when they do.
+**[crABI](https://github.com/rust-lang/rust/pull/105586)** and the [rlib-stabilisation pre-RFC](https://internals.rust-lang.org/t/pre-rfc-stabilize-a-version-of-the-rlib-format/17558) attack the problem from the other end, by making artifacts compatible across more compilations. That reduces how often identities differ; it does not remove the need to know when they do.
 
 Reading them against the requirements below makes the pattern exact:
 
@@ -267,9 +267,9 @@ Keeping them apart matters because collapsing the first two would make reproduci
 
 The whole architecture follows from that separation, and it compresses to five sentences. Unit identity determines applicability. Payload digest determines integrity. Provenance determines trust. Source transparency preserves auditability. Fallback preserves sovereignty.
 
-What the matching rule prevents is not a slow build but a wrong one. Two ABI-incompatible instances of one library reaching a single link can yield a link error, a type incompatibility, duplicated global state, or a binary whose failure appears only at runtime — and the last of those is the one that makes "close enough" unusable as a policy.
+What the matching rule prevents is not a slow build but a wrong one; requirement 2 above lists the failures, and the runtime-only one is why "close enough" is unusable as a policy.
 
-Because the identities of dependencies are themselves inputs, an identity is a Merkle root over the whole closure: nothing can change beneath a unit without changing the unit.
+Because the identities of dependencies are themselves inputs, an identity is a Merkle root over the whole closure: nothing a unit can observe changes beneath it without changing the unit.
 
 The source input is a semantic digest rather than a hash of file bytes, so where equivalence can be established, changes that the compilation cannot observe — a comment, a docstring, a relocation under path remapping — need not invalidate a unit or anything downstream of it. The boundary is what compilation can observe, and it is deliberately conservative: anything a macro, a build script, an `include!`, an environment lookup, or a source-location-sensitive expansion can see remains an identity input. Establishing that boundary for a given language surface is work, not a property that falls out of hashing; RFC 124 and RFC 106 define where it currently holds.
 
