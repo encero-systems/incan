@@ -8,9 +8,14 @@
 # every target needing the compiler binary fails claiming the project's dependencies were never baked.
 TARGET_DIR := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(CURDIR)/target)
 
-# Nested generated-project and named-publisher work is deliberately constrained so one local test command does not
-# consume every core. Override the cap for a specific machine with `make test INCAN_TEST_CARGO_BUILD_JOBS=<n>`.
-INCAN_TEST_CARGO_BUILD_JOBS ?= 2
+# Nested generated-project and named-publisher work is constrained so one local test command does not consume every
+# core. The cap used to be a flat 2 regardless of the machine, which meant the SDK prewarm compiled its ten
+# components serially on two cores -- about an eighth of an 18-core host, and the dominant share of the roughly 17
+# minutes that preparation takes. Scale with the machine instead, leaving a quarter of the cores as headroom rather
+# than taking all of them, with a floor of 2 so a small or unknown host behaves exactly as before. Override for a
+# specific machine with `make test INCAN_TEST_CARGO_BUILD_JOBS=<n>`.
+INCAN_HOST_CPUS := $(shell sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+INCAN_TEST_CARGO_BUILD_JOBS ?= $(shell n=$$(( $(INCAN_HOST_CPUS) * 3 / 4 )); if [ "$$n" -lt 2 ]; then n=2; fi; echo "$$n")
 INCAN_TEST_GENERATED_CARGO_TARGET_DIR ?= $(TARGET_DIR)/incan_generated_shared_target
 INCAN_TEST_SDK_PROVIDER_STORE ?= $(TARGET_DIR)/incan_test_sdk_provider_store
 INCAN_TEST_SDK_PROVIDER_PATH_FILE ?= $(TARGET_DIR)/incan_test_sdk_provider_path
