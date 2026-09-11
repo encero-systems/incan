@@ -23,6 +23,7 @@ pub mod hir;
 pub mod library_exports;
 pub mod library_manifest_index;
 pub mod module;
+pub mod parsed_module;
 pub(crate) mod partial_projection;
 pub mod registry_metadata;
 pub(crate) mod resolved_type_subst;

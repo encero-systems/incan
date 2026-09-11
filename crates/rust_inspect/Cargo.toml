@@ -24,12 +24,20 @@ toml = "0.9"
 semver = "1.0"
 tracing = "0.1"
 ra_ap_hir = "0.0.325"
+ra_ap_hir_def = "0.0.325"
+ra_ap_hir_expand = "0.0.325"
+ra_ap_hir_ty = "0.0.325"
 ra_ap_ide_db = "0.0.325"
 ra_ap_load-cargo = "0.0.325"
 ra_ap_paths = "0.0.325"
 ra_ap_project_model = "0.0.325"
 ra_ap_syntax = "0.0.325"
 ra_ap_vfs = "0.0.325"
+# Token-level Rust parsing for the declaration digest, pinned to the versions the compiler crate already builds so
+# the digest sees the same token model the Rust code generator emits against.
+syn = { version = "2.0", features = ["full", "parsing", "printing"] }
+proc-macro2 = "1.0"
+quote = "1.0"
 
 [dev-dependencies]
 tempfile = "3"
