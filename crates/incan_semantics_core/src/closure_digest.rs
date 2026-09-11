@@ -355,4 +355,74 @@ mod tests {
             "the identity/digest boundary must be encoded, not implied"
         );
     }
+
+    // ---- Encoding soundness ----
+    //
+    // The tests above prove the fold *propagates* correctly. These prove it *encodes* correctly, which is a
+    // different property and the one that fails silently: a propagation bug shows up as a rebuild that did not
+    // happen, while an encoding bug shows up as two different graphs sharing one digest, which is a reused
+    // artifact that should not have been. Each test below was written against a specific mutation of the fold
+    // that the propagation tests did not notice.
+
+    /// Two declarations with the same digest are not the same declaration.
+    ///
+    /// Dropping the member identity from the component hash leaves only the digests, so a graph containing `alpha`
+    /// and a graph containing `beta` with the same body fold identically. Their dependents would then share a
+    /// closure digest across a rename.
+    #[test]
+    fn the_member_identity_is_part_of_its_own_closure_digest() {
+        let alpha = closure_digests(&graph(&[("alpha", "d1", &[])]));
+        let beta = closure_digests(&graph(&[("beta", "d1", &[])]));
+        assert_ne!(alpha.get("alpha"), beta.get("beta"));
+    }
+
+    /// A dependency is named, not merely counted.
+    ///
+    /// Note this passes for a reason narrower than it looks: removing the dependency identity from the fold does
+    /// *not* fail, because what gets folded is the dependency's closure digest, which already carries that
+    /// identity. The field is redundant given the member run, and is kept as one hash update rather than removed.
+    ///
+    /// Folding only a dependency's digest and not its identity makes two different dependencies interchangeable
+    /// whenever their bodies agree, so a declaration that switched which of two identical helpers it calls would
+    /// keep its closure digest.
+    #[test]
+    fn a_dependency_identity_is_part_of_the_digest_that_folds_it() {
+        let calls_left = closure_digests(&graph(&[("caller", "c", &["left"]), ("left", "same", &[])]));
+        let calls_right = closure_digests(&graph(&[("caller", "c", &["right"]), ("right", "same", &[])]));
+        assert_ne!(calls_left.get("caller"), calls_right.get("caller"));
+    }
+
+    /// A declaration's digest must not depend on where its component landed in the walk.
+    ///
+    /// `the_fold_is_order_free` pins insertion order and does not move a node between component indices. Adding an
+    /// unrelated declaration that sorts earlier does exactly that, so folding the component index — the most
+    /// natural way to accidentally reintroduce traversal dependence — survives that test and fails this one.
+    #[test]
+    fn an_unrelated_declaration_does_not_move_a_digest_by_shifting_component_indices() {
+        let alone = closure_digests(&graph(&[("target", "d", &[])]));
+        let with_earlier_neighbour = closure_digests(&graph(&[("0_sorts_first", "other", &[]), ("target", "d", &[])]));
+        assert_eq!(alone.get("target"), with_earlier_neighbour.get("target"));
+    }
+
+    /// A digest must not be able to forge a second member out of its own text.
+    ///
+    /// Each member writes a `\x01member\0` tag, its length-delimited identity, and its length-delimited digest.
+    /// Drop the digest's length and a single member whose digest happens to spell the tag, an eight-byte little-
+    /// endian length, and another identity and digest produces byte-for-byte the same hash input as two genuine
+    /// members. The fixture below is that forgery, built against the real encoding rather than against a plausible
+    /// one — an earlier attempt used a digest containing only the tag, which cannot collide because the identity
+    /// that follows is still delimited, and so passed while the delimiter was removed.
+    #[test]
+    fn a_digest_cannot_forge_a_second_member_out_of_its_own_text() {
+        // `\x01member\0` + little-endian u64 `1` + identity "b" + digest "y".
+        let forged_tail = "\u{1}member\u{0}\u{1}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}by";
+        let forged = closure_digests(&graph(&[("a", forged_tail, &[])]));
+        // Two members of one component: a cycle, so neither edge leaves the component and no dependency is written.
+        let genuine = closure_digests(&graph(&[("a", "", &["b"]), ("b", "y", &["a"])]));
+        assert_ne!(
+            forged.get("a"),
+            genuine.get("a"),
+            "a digest spelling the member encoding must not hash the same as two real members"
+        );
+    }
 }
