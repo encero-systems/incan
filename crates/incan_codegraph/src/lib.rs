@@ -996,6 +996,27 @@ pub struct CodegraphRegistryReexportProjection {
     pub span: CodegraphSourceSpan,
 }
 
+/// Reachable namespace node, grouping the modules beneath it.
+///
+/// RFC 106 makes the namespace the graph's top-level unit of reachable surface, distinct from the module that
+/// declares a thing. One record is emitted per namespace an export contains, and `contains` edges relate it to its
+/// modules — including itself, when the namespace is also a module a consumer can import.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphNamespaceRecord {
+    /// Stable id unique within the export.
+    pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
+    /// Namespace path segments, as a consumer would name them.
+    pub namespace_path: Vec<String>,
+    /// Human-readable namespace name: the last path segment, or the crate root when the path is empty.
+    pub name: String,
+    /// Fact provenance.
+    pub provenance: CodegraphProvenance,
+    /// Whether this namespace is partial because a module beneath it is.
+    pub degraded: bool,
+}
+
 /// One newline-delimited codegraph record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
@@ -1004,6 +1025,8 @@ pub enum CodegraphRecord {
     Header(CodegraphHeaderRecord),
     /// Source file node.
     File(CodegraphFileRecord),
+    /// Reachable namespace node grouping the modules beneath it.
+    Namespace(CodegraphNamespaceRecord),
     /// Incan module node.
     Module(CodegraphModuleRecord),
     /// Top-level declaration node.
@@ -1096,8 +1119,8 @@ mod tests {
     use super::{
         CODEGRAPH_SCHEMA_VERSION, CodegraphCanonicalSymbolId, CodegraphDiagnosticRecord,
         CodegraphDiagnosticRelatedDeclaration, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphIdentitySpan,
-        CodegraphLanguage, CodegraphMode, CodegraphProvenance, CodegraphRecord, CodegraphReferenceRecord,
-        CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
+        CodegraphLanguage, CodegraphMode, CodegraphNamespaceRecord, CodegraphProvenance, CodegraphRecord,
+        CodegraphReferenceRecord, CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
     };
 
     #[test]
@@ -1224,6 +1247,28 @@ mod tests {
             diagnostic.related_declarations[0].identity.declaration_name,
             "expected_value"
         );
+        Ok(())
+    }
+
+    /// The namespace record round-trips under its own `record` tag.
+    ///
+    /// The JSONL export is a published contract, so a new variant has to be checked at the wire rather than only
+    /// through the producer that builds it: the tag is what a consumer matches on, and nothing else in the schema
+    /// would fail if it were wrong.
+    #[test]
+    fn namespace_records_round_trip_under_their_own_tag() -> Result<(), Box<dyn std::error::Error>> {
+        let record = CodegraphRecord::Namespace(CodegraphNamespaceRecord {
+            id: "namespace:std.encoding".to_string(),
+            language: CodegraphLanguage::Incan,
+            namespace_path: vec!["std".to_string(), "encoding".to_string()],
+            name: "encoding".to_string(),
+            provenance: CodegraphProvenance::Syntax,
+            degraded: false,
+        });
+        let encoded = serde_json::to_value(&record)?;
+        assert_eq!(encoded["record"], "namespace");
+        assert_eq!(encoded["namespace_path"][1], "encoding");
+        assert_eq!(serde_json::from_value::<CodegraphRecord>(encoded)?, record);
         Ok(())
     }
 }
