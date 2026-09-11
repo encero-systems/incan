@@ -209,6 +209,7 @@ Oven can consume a crate from crates.io because Rust libraries are part of the w
 2. Cross compilation selects a build host and target separately. The plan must report both, the toolchain/sysroot/linker identities, selected capability providers, and any provider node that executes for the host.
 3. Target artifacts are assigned to an explicit carrier. A Rust library, executable, `cdylib`, Rust-host caller projection, JNI library, Python carrier, or C ABI carrier can be selected only when the target and provider contracts permit it.
 4. The receipt distinguishes compile, link, package, test, and deployment facts so a successful host test cannot be mistaken for a target bake or device proof.
+5. An **isolation boundary** is a declared carrier edge across which no Rust type, trait object, or runtime state passes: a separate process, or a C ABI or other foreign-function carrier under RFC 116. It is the only permitted way for two distinct compiled instances of one package to coexist in one deliverable (RFC 124 refuses them within a single link closure). The boundary, and the fact that a second instance lives behind it, must be declared in the plan and visible in the receipt; an undeclared second instance is a plan error, not a warning.
 
 ### Rust test, documentation, and IDE projections
 

@@ -7,7 +7,7 @@
     - RFC 005 (Rust interop)
     - RFC 013 (Rust crate dependencies)
     - RFC 031 (Incan library system phase 1)
-    - RFC 034 (`incan.pub` package registry)
+    - RFC 034 (`incan.pub` package registry; superseded by RFC 125)
     - RFC 041 (first-class Rust interop authoring)
     - RFC 043 (Rust trait implementation from Incan)
     - RFC 079 (`incan.pub` artifact graph)
@@ -16,12 +16,16 @@
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 121 (unified Incan/Rust type substrate)
+    - RFC 123 (package executable representation)
+    - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
+    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
     - #652 (v0.6 replacement-backend cutover)
     - #656 (Rust-facing ABI and Incan package compatibility direction)
     - #975 (Oven: Cargo-free Incan/Rust toolchain)
 - **Issue:** https://github.com/encero-systems/incan/issues/569
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
+- **Target scope:** v0.6, slice 4 (Oven fast, real, and performant, #1141), beside RFC 119 and RFC 123; brought into scope 2026-09-10.
 - **Shipped in:** —
 
 ## Summary
@@ -266,7 +270,7 @@ The caller facet is derived, not authored. Plain Incan `pub` exports remain the 
 
 Library-scoping still leaves a real gap for the *first* caller of a library, or any caller wanting to browse what's available before writing a reference: nothing has been used yet, so the compiled caller module may not contain it. This RFC resolves that by separating two different concerns rather than picking one artifact to serve both. What actually gets **compiled** stays usage-scoped and lean, for exactly the reasons "Alternatives considered" rejects eager generation: no wasted representability-checking or generated code for exports nobody calls. What a developer can **discover** does not depend on the compiled artifact at all — Oven already determines, for every `pub` export, whether it is representable independent of whether anything currently references it (see "Reference-level explanation"), and that eligibility fact is exactly what LSP completion and an inspection command (`incan inspect caller <library>`, exact spelling not normative) should surface: the full eligible surface, not just the realized one. A developer writing new Rust-authored code gets full IDE-backed discovery of what it *could* call; the compiled artifact only ever contains what it actually does.
 
-This must be answered by the same session-owned, incrementally-maintained semantic-facts service RFC 106 defines for LSP reference queries — the same machinery that already needs to answer "find references" at interactive latency for editor tooling answers both "which `pub` exports does any Rust-authored unit in this project reference" for the compiled union and "which `pub` exports are representable" for discovery. The usage query must be gated by the same source-digest staleness check that governs Oven build-unit reuse (RFC 119): it must run only for units whose source, or transitive dependency closure, changed since the last successful bake receipt, not as a full-project re-scan on every bake. Usage detection that does not meet this bar is not an acceptable implementation of this section.
+This must be answered by the same session-owned, incrementally-maintained semantic-facts service RFC 106 defines for LSP reference queries — the same machinery that already needs to answer "find references" at interactive latency for editor tooling answers both "which `pub` exports does any Rust-authored unit in this project reference" for the compiled union and "which `pub` exports are representable" for discovery. The usage query must be gated by the same source-digest staleness check that governs Oven build-unit reuse (RFC 119): it must run only for units whose source, or transitive dependency closure, changed since the last successful bake receipt, not as a full-project re-scan on every bake. Usage detection that does not meet this bar is not an acceptable implementation of this section. Under RFC 124 that check is the unit identity: a caller artifact is a compiled unit whose identity includes the callee library unit it was built against, so a stale pairing is a different identity, not a warning.
 
 A separate, explicitly-authored declaration remains relevant only for non-default policy — an alias, a non-default type projection, a forced blocking wrapper around an async export — layered onto the `pub def` (or equivalent) itself. Its exact shape is unresolved (see Unresolved questions); it is override metadata for the exception case, not a required gate for the default case.
 
@@ -319,7 +323,7 @@ Public caller diagnostics must bind to the compiler-owned backend-selection and 
 
 Caller ABI version and manifest schema version follow independent, explicit compatibility rules. Within Oven's own build graph, an incompatible compiler, runtime, target, or profile combination must produce an explicit, diagnosable bake failure — Oven refuses to materialize the caller artifact rather than silently linking a mismatched pair — never a silent partial success discovered later at runtime.
 
-Internal, prewarmed SDK providers may consume private implementation metadata ahead of this RFC's full caller contract while it is still maturing. Publication to `incan.pub` (RFC 034, RFC 079) — Incan's own registry, not Cargo or crates.io — must wait for this identity, type/linkage, and diagnostics contract to be in place; it must not publish against an unversioned or provisional shape.
+Internal, prewarmed SDK providers may consume private implementation metadata ahead of this RFC's full caller contract while it is still maturing. Publication to `incan.pub` (RFC 125, RFC 079) — Incan's own registry, not Cargo or crates.io — must wait for this identity, type/linkage, and diagnostics contract to be in place; it must not publish against an unversioned or provisional shape.
 
 ### Compatibility and migration
 

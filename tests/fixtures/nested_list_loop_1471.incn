@@ -1,0 +1,17 @@
+"""The first empty list must not erase the later string element type."""
+
+def size(values: list[str]) -> int:
+    """Validate nonempty content and return the element count."""
+    if len(values) > 0:
+        assert values[0] == "x"
+    return len(values)
+
+pub def main() -> None:
+    """Check both iterations and their total content without a caller annotation."""
+    mut count = 0
+    mut total = 0
+    for values in [[], ["x"]]:
+        count += 1
+        total += size(values)
+    assert count == 2
+    assert total == 1

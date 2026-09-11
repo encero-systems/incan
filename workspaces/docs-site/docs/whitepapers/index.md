@@ -10,3 +10,4 @@ Whitepapers are more point-in-time than RFCs. Each whitepaper should carry front
 
 - [Incan ecosystem north star](incan_ecosystem_north_star.md)
 - [A Cargo-free toolchain for Incan and Rust](incan_oven_positioning.md)
+- [Ship the loaf, not the recipe: why Incan and Rust need incan.pub](incan_pub_ship_the_loaf.md)

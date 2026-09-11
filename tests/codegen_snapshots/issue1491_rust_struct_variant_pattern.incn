@@ -1,0 +1,12 @@
+"""Issue #1491: a Rust enum struct variant must be matchable by named fields."""
+from rust::cfg_expr import Predicate
+
+pub def key_value_of(predicate: &Predicate) -> Option[str]:
+  match predicate:
+    Predicate.KeyValue(key=key, val=value) =>
+      return Some(str(key) + "=" + str(value))
+    _ =>
+      return None
+
+def main() -> None:
+  pass
