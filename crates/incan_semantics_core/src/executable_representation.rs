@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 mod publication;
 
 use crate::CanonicalSymbolId;
+use crate::CompilerNodeId;
 use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclaration, ValueEnumDeclaration};
 
 /// Version of the encoded representation, independent of the manifest that ships beside it.
@@ -215,11 +216,25 @@ pub struct SurfaceIndex {
     pub declarations: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
 }
 
+/// One declaration that survived projection, with the public identities its execution needs.
+///
+/// Kept as a named pair rather than a tuple because both halves are read in three later phases, and
+/// `(declaration, requirements)` does not say which set the identities belong to at the point of use.
+struct AdmittedDeclaration {
+    /// The projected declaration, in the form a consumer executes.
+    declaration: ExecutableDeclaration,
+    /// Public identities this declaration's execution depends on.
+    requirements: BTreeSet<CanonicalSymbolId>,
+}
+
 /// Build one package's deterministic public representation from its single declaring compilation.
 ///
 /// `public` comes from the finalized manifest, including public members. `unrepresentable` records the current
-/// execution profile's refusals in addition to this layer's portable-reference checks. Repeatedly removing callers
-/// of uncovered owned declarations computes a fixed point, so mutual public recursion is independent of order.
+/// execution profile's refusals in addition to this layer's portable-reference checks.
+///
+/// The work is a pipeline, and the order is load-bearing: coverage starts pessimistic and is only ever improved by
+/// a later phase, so a declaration that no phase reaches stays uncovered rather than silently defaulting to
+/// covered. Each phase is separated out below; this function is the order they run in.
 pub fn build_surface(
     modules: &[BodyIrModule],
     library: &str,
@@ -227,12 +242,54 @@ pub fn build_surface(
     public: &BTreeSet<CanonicalSymbolId>,
     unrepresentable: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    let mut declarations = public.iter().filter(|identity| matches!(&identity.origin, crate::SymbolOrigin::Package { library: owner, .. } if owner == library))
-        .map(|identity| (identity.clone(), DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration)))
-        .collect::<BTreeMap<_, _>>();
-    let mut admitted: BTreeMap<CanonicalSymbolId, (ExecutableDeclaration, BTreeSet<CanonicalSymbolId>)> =
-        BTreeMap::new();
+    let mut declarations = uncovered_owned_declarations(library, public);
+    let mut admitted = project_declarations(modules, library, public, unrepresentable, &mut declarations)?;
+    retain_only_satisfiable(library, &mut admitted, &mut declarations);
+    record_type_context_members(&admitted, &mut declarations);
+    encode_surface(library, package_version, admitted, declarations)
+}
+
+/// Start every public identity this package declares at uncovered.
+///
+/// Coverage is only ever improved from here, so an identity no later phase reaches keeps this answer. That is the
+/// safe direction: a consumer refuses a declaration this package could not publish, rather than attempting one
+/// whose payload was never written.
+fn uncovered_owned_declarations(
+    library: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+) -> BTreeMap<CanonicalSymbolId, DeclarationCoverage> {
+    public
+        .iter()
+        .filter(|identity| owned_by(identity, library))
+        .map(|identity| {
+            (
+                identity.clone(),
+                DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration),
+            )
+        })
+        .collect()
+}
+
+/// Return whether a canonical identity is declared by this package rather than reached through a dependency.
+fn owned_by(identity: &CanonicalSymbolId, library: &str) -> bool {
+    matches!(&identity.origin, crate::SymbolOrigin::Package { library: owner, .. } if owner == library)
+}
+
+/// Project every declaration this package owns, admitting what survives and recording why the rest did not.
+///
+/// Each declaration kind reaches the same two outcomes through its own projection: admitted with its requirements,
+/// or uncovered with the reason a consumer is told. Nothing here decides whether a requirement can actually be met
+/// — that is a whole-package question, answered next.
+fn project_declarations(
+    modules: &[BodyIrModule],
+    library: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+    unrepresentable: &BTreeSet<CanonicalSymbolId>,
+    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+) -> Result<BTreeMap<CanonicalSymbolId, AdmittedDeclaration>, ExecutableRepresentationError> {
+    let mut admitted = BTreeMap::new();
     for module in modules {
+        // ---- Bodies: the executable declarations a consumer calls ----
         for body in &module.bodies {
             let Some(identity) = body.canonical.as_ref() else {
                 continue;
@@ -240,6 +297,8 @@ pub fn build_surface(
             if !declarations.contains_key(identity) {
                 continue;
             }
+            // A profile-level refusal is recorded exactly like a projection failure, so the two reach a consumer
+            // through one vocabulary rather than two.
             let projected = if unrepresentable.contains(identity) {
                 Err(CoverageReason::UnsupportedConstruct)
             } else {
@@ -249,7 +308,10 @@ pub fn build_surface(
                 Ok(projected) => {
                     admitted.insert(
                         identity.clone(),
-                        (ExecutableDeclaration::Body(projected.body), projected.requirements),
+                        AdmittedDeclaration {
+                            declaration: ExecutableDeclaration::Body(projected.body),
+                            requirements: projected.requirements,
+                        },
                     );
                 }
                 Err(reason) => {
@@ -257,6 +319,8 @@ pub fn build_surface(
                 }
             }
         }
+
+        // ---- Nominals: models and classes, whose members are addressed through them ----
         for nominal in &module.nominal_declarations {
             if !declarations.contains_key(&nominal.canonical) {
                 continue;
@@ -265,7 +329,10 @@ pub fn build_surface(
                 Ok((nominal, requirements)) => {
                     admitted.insert(
                         nominal.canonical.clone(),
-                        (ExecutableDeclaration::Nominal(nominal), requirements),
+                        AdmittedDeclaration {
+                            declaration: ExecutableDeclaration::Nominal(nominal),
+                            requirements,
+                        },
                     );
                 }
                 Err(reason) => {
@@ -273,6 +340,11 @@ pub fn build_surface(
                 }
             }
         }
+
+        // ---- Enums: both kinds publish only when every variant is public ----
+        //
+        // A partially public enum has no executable form, because a consumer matching on it could not name the
+        // variants it cannot see. Neither kind carries requirements: a variant has no payload to depend on.
         for value in &module.fieldless_enum_declarations {
             if !declarations.contains_key(&value.canonical)
                 || !value.variants.iter().all(|variant| public.contains(&variant.canonical))
@@ -280,17 +352,19 @@ pub fn build_surface(
                 continue;
             }
             let mut value = value.clone();
-            value.direct_declaration_id =
-                publication::declaration_id(&value.canonical).map_err(|_| malformed("enum has no canonical owner"))?;
+            stamp_declaration_id(&mut value.direct_declaration_id, &value.canonical, "enum")?;
             for variant in &mut value.variants {
-                variant.direct_declaration_id = publication::declaration_id(&variant.canonical)
-                    .map_err(|_| malformed("variant has no canonical owner"))?;
+                stamp_declaration_id(&mut variant.direct_declaration_id, &variant.canonical, "variant")?;
             }
             admitted.insert(
                 value.canonical.clone(),
-                (ExecutableDeclaration::FieldlessEnum(value), BTreeSet::new()),
+                AdmittedDeclaration {
+                    declaration: ExecutableDeclaration::FieldlessEnum(value),
+                    requirements: BTreeSet::new(),
+                },
             );
         }
+
         for value in &module.value_enum_declarations {
             if !declarations.contains_key(&value.canonical)
                 || !value.variants.iter().all(|variant| public.contains(&variant.canonical))
@@ -298,26 +372,53 @@ pub fn build_surface(
                 continue;
             }
             let mut value = value.clone();
-            value.direct_declaration_id = publication::declaration_id(&value.canonical)
-                .map_err(|_| malformed("value enum has no canonical owner"))?;
+            stamp_declaration_id(&mut value.direct_declaration_id, &value.canonical, "value enum")?;
             for variant in &mut value.variants {
-                variant.direct_declaration_id = publication::declaration_id(&variant.canonical)
-                    .map_err(|_| malformed("variant has no canonical owner"))?;
+                stamp_declaration_id(&mut variant.direct_declaration_id, &variant.canonical, "variant")?;
             }
             admitted.insert(
                 value.canonical.clone(),
-                (ExecutableDeclaration::ValueEnum(value), BTreeSet::new()),
+                AdmittedDeclaration {
+                    declaration: ExecutableDeclaration::ValueEnum(value),
+                    requirements: BTreeSet::new(),
+                },
             );
         }
     }
+    Ok(admitted)
+}
+
+/// Replace a declaration's source-local address with the package-scoped projection of its canonical identity.
+///
+/// `what` names the thing in the refusal, so an enum and its variants are distinguishable in a diagnostic that
+/// otherwise reports the same failure twice.
+fn stamp_declaration_id(
+    slot: &mut CompilerNodeId,
+    canonical: &CanonicalSymbolId,
+    what: &str,
+) -> Result<(), ExecutableRepresentationError> {
+    *slot = publication::declaration_id(canonical).map_err(|_| malformed(format!("{what} has no canonical owner")))?;
+    Ok(())
+}
+
+/// Drop admitted declarations whose own-package requirements are not themselves admitted, to a fixed point.
+///
+/// One pass is not enough: dropping a declaration can strand a second that required it. Repeating until nothing
+/// more is rejected makes the result independent of iteration order, which is what lets mutual public recursion
+/// resolve the same way every build.
+fn retain_only_satisfiable(
+    library: &str,
+    admitted: &mut BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
+    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+) {
     loop {
         let rejected = admitted
             .iter()
-            .filter(|(_, (_, requirements))| {
-                requirements.iter().any(|required| {
-                    matches!(&required.origin, crate::SymbolOrigin::Package { library: owner, .. } if owner == library)
-                        && !admitted.contains_key(required)
-                })
+            .filter(|(_, entry)| {
+                entry
+                    .requirements
+                    .iter()
+                    .any(|required| owned_by(required, library) && !admitted.contains_key(required))
             })
             .map(|(identity, _)| identity.clone())
             .collect::<Vec<_>>();
@@ -332,15 +433,26 @@ pub fn build_surface(
             );
         }
     }
-    for (identity, (declaration, _)) in &admitted {
-        let members = match declaration {
-            ExecutableDeclaration::Nominal(value) => value.field_identities.iter().collect::<Vec<_>>(),
+}
+
+/// Point each admitted type's members at their owner.
+///
+/// A field or variant is not separately addressable: it is reached through the declaration that owns it. Recording
+/// the owner lets a consumer resolve a member identity without the package publishing a fragment per member.
+fn record_type_context_members(
+    admitted: &BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
+    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+) {
+    for (identity, entry) in admitted {
+        let members: Vec<&CanonicalSymbolId> = match &entry.declaration {
+            ExecutableDeclaration::Nominal(value) => value.field_identities.iter().collect(),
             ExecutableDeclaration::FieldlessEnum(value) => {
                 value.variants.iter().map(|variant| &variant.canonical).collect()
             }
             ExecutableDeclaration::ValueEnum(value) => {
                 value.variants.iter().map(|variant| &variant.canonical).collect()
             }
+            // A body owns no members; it is addressed directly.
             ExecutableDeclaration::Body(_) => Vec::new(),
         };
         for member in members {
@@ -352,19 +464,32 @@ pub fn build_surface(
             );
         }
     }
+}
+
+/// Encode the admitted fragments and the index that addresses them into the framed wire form.
+///
+/// The frame is version, then index length, then index, then payload. A consumer reads the version before anything
+/// else, so it can refuse an interpretation it does not support without having to parse the rest.
+fn encode_surface(
+    library: &str,
+    package_version: &str,
+    admitted: BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
+    mut declarations: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
+) -> Result<Vec<u8>, ExecutableRepresentationError> {
     let mut payload = Vec::new();
-    for (identity, (declaration, requirements)) in admitted {
-        let encoded = postcard::to_allocvec(&declaration).map_err(|error| malformed(error.to_string()))?;
+    for (identity, entry) in admitted {
+        let encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
         declarations.insert(
             identity,
             DeclarationCoverage::Covered {
                 offset: u64::try_from(payload.len()).map_err(|_| malformed("payload offset exceeds wire range"))?,
                 length: u64::try_from(encoded.len()).map_err(|_| malformed("fragment length exceeds wire range"))?,
-                requirements: requirements.into_iter().collect(),
+                requirements: entry.requirements.into_iter().collect(),
             },
         );
         payload.extend(encoded);
     }
+
     let index = SurfaceIndex {
         library: library.to_owned(),
         package_version: package_version.to_owned(),
