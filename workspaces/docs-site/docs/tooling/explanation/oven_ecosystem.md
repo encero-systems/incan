@@ -213,7 +213,7 @@ This page is a map, not a specification. Each box names the RFC that owns it, an
       <text class="sub" x="696" y="702">one sealed *.loaf unit</text>
       <text class="sub" x="696" y="718">payload · plan</text>
       <text class="sub" x="696" y="734">identity · receipt</text>
-      <text class="rfc-a" x="696" y="756">RFC 117 · 124 · 123</text>
+      <text class="rfc-a" x="696" y="756">RFC 117 · 124 · 125</text>
       <rect class="mask" x="888" y="652" width="328" height="124" rx="6"/>
       <rect class="box draft pr" x="888" y="652" width="328" height="124" rx="6"/>
       <text class="nm-a" x="904" y="680">Store</text>
@@ -291,13 +291,13 @@ This page is a map, not a specification. Each box names the RFC that owns it, an
 
 ## Inside a Loaf
 
-A Loaf is not a cache guess. Its identity binds the semantic digest of its source, the dependency lock, the compiler and SDK, the target, the profile, and the resolved features, and its payload carries the compiled Rust library, the checked public surface, and an executable representation of its exports. A consumer either matches the sealed identity and reuses the result without Cargo, or receives a refusal that names the fact that differs and bakes only what is missing.
+A Loaf is not a cache guess. Its identity binds the semantic digest of its source, the dependency lock, the compiler and SDK, the target, the profile, and the resolved features, and its payload carries the compiled Rust library and the checked public surface; the executable representation of its exports (RFC 123) travels with the published source Loaf. A consumer either matches the sealed identity and reuses the result without Cargo, or receives a refusal that names the fact that differs and bakes only what is missing.
 
 <figure class="inc-oven-map">
 <div class="inc-oven-map__scroll">
 <svg class="inc-oven-map__svg inc-oven-map__svg--anatomy" viewBox="0 0 1320 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="oven-loaf-title oven-loaf-desc">
   <title id="oven-loaf-title">Inside a Loaf</title>
-  <desc id="oven-loaf-desc">A Loaf cut open into four layers: an identity over the effective compilation inputs, a payload holding the compiled Rust library, checked metadata and the executable representation of exports, the direct rustc plan that produced it, and the receipt that explains it; when published it also carries publisher and registry attestations. Beside it, a consumer's requested environment is compared with the sealed identity: a match reuses the Loaf without Cargo, a miss is a precise refusal that bakes only the missing units.</desc>
+  <desc id="oven-loaf-desc">A Loaf cut open into four layers: an identity over the effective compilation inputs, a payload holding the compiled Rust library and checked metadata, the direct rustc plan that produced it, and the receipt that explains it; when published it also carries publisher and registry attestations. Beside it, a consumer's requested environment is compared with the sealed identity: a match reuses the Loaf without Cargo, a miss is a precise refusal that bakes only the missing units.</desc>
   <defs>
     <marker id="oven-loaf-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
     <marker id="oven-loaf-arrow-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ffc15a"/></marker>
@@ -317,7 +317,7 @@ A Loaf is not a cache guess. Its identity binds the semantic digest of its sourc
   <text class="rfc" x="76" y="218">WHAT IT IS</text>
   <text class="sub" x="250" y="196">compiled Rust library: rlib and rmeta</text>
   <text class="sub" x="250" y="212">checked .incnlib metadata: the public surface by canonical identity</text>
-  <text class="sub" x="250" y="228">executable representation of exports, so non-Rust routes can run them (RFC 123)</text>
+  <text class="sub" x="250" y="228">the RFC 123 executable representation travels in the source Loaf, not in the baked unit</text>
   <text class="sub-x" x="250" y="254">provider sidecars when the unit is a build script or a proc-macro host</text>
   <rect class="layer" x="60" y="280" width="680" height="60" rx="5"/>
   <text class="nm" x="76" y="304">Plan</text>
@@ -372,7 +372,7 @@ A Loaf is not a cache guess. Its identity binds the semantic digest of its sourc
   <text class="sub-x" x="1080" y="440">is reused</text>
 </svg>
 </div>
-<figcaption><strong>Four things in one file.</strong> Identity says what made it, the payload is what it is, the plan says how to replay it, and the receipt says why it exists. RFC 117 defines the asset, RFC 124 the identity, RFC 123 the executable representation, and RFC 125 the attestations a published Loaf gains.</figcaption>
+<figcaption><strong>Four things in one file.</strong> Identity says what made it, the payload is what it is, the plan says how to replay it, and the receipt says why it exists. RFC 117 defines the asset, RFC 124 the identity, and RFC 125 the attestations a published Loaf gains; RFC 123's executable representation is carried by the source Loaf.</figcaption>
 </figure>
 
 ## Where each box is specified
