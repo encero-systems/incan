@@ -624,7 +624,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: Vec::<Output>::new(),
+            current: Vec::<U>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -1071,7 +1071,7 @@ impl<
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: Vec::<Output>::new(),
+            current: Vec::<U>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -1572,7 +1572,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: Vec::<Output>::new(),
+            current: Vec::<U>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -1976,7 +1976,7 @@ for TakeFallibleIterator<T, E, Source> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: Vec::<Output>::new(),
+            current: Vec::<U>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -2385,7 +2385,7 @@ impl<
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: Vec::<Output>::new(),
+            current: Vec::<U>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -2844,7 +2844,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: Vec::<Output>::new(),
+            current: Vec::<U>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
@@ -3296,7 +3296,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         return FlatMapFallibleIterator {
             source: self.clone(),
             f: f,
-            current: Vec::<Output>::new(),
+            current: Vec::<U>::new(),
             index: 0,
             input_marker: None::<_>,
             error_marker: None::<_>,
