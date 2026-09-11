@@ -54,6 +54,20 @@ impl std::error::Error for EmittedSymbolDecodeError {}
 
 /// Encode a complete canonical identity as one Rust-safe `incan-v1` item identifier.
 ///
+/// RFC 120 requires this projection to carry the *complete* canonical identity, and the complete identity includes
+/// both the declaring [`SymbolOrigin`] and the declaration span. Two consequences follow that are easier to meet
+/// here, where they are created, than to rediscover downstream. Both are pinned by tests below.
+///
+/// Splitting a module into submodules renames every symbol that moves, even when the public API is unchanged and
+/// every moved item is re-exported under its original path.
+///
+/// More sharply: because the span is a byte offset, a declaration's symbol moves whenever *text above it* moves.
+/// Adding a comment near the top of a file renames the symbols below it. That does not by itself cost a rebuild — a
+/// unit whose semantic digest is unchanged is never rebuilt, so its symbols are never recomputed — but it does mean
+/// that once a unit is rebuilt for any reason, every symbol below the edit is renamed, so every dependent of every
+/// declaration in that file is invalidated rather than only the dependents of what actually changed. A resilience
+/// boundary computed over declarations cannot hold while its projection is anchored to file positions.
+///
 /// The carrier is intentionally self-contained. It is not a hash or a key into compiler state: an artifact observer
 /// can reconstruct the complete identity from this identifier alone.
 pub fn encode_incan_symbol_identity(identity: &CanonicalSymbolId) -> String {
@@ -432,6 +446,61 @@ mod tests {
             assert!(emitted.chars().all(|ch| ch == '_' || ch.is_ascii_alphanumeric()));
             assert_eq!(decode_incan_symbol_identity(&emitted)?, Some(identity));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn inserting_a_line_above_a_declaration_changes_its_emitted_symbol() -> Result<(), Box<dyn std::error::Error>> {
+        let unchanged = |span| {
+            CanonicalSymbolId::module_declaration(
+                vec!["shapes".to_string()],
+                "area",
+                SemanticSourceTargetKind::Function,
+                span,
+            )
+        };
+        let before = unchanged(crate::HirSourceSpan::new(100, 160));
+        let after = unchanged(crate::HirSourceSpan::new(101, 161));
+
+        // The two identities differ in nothing but where the declaration sits in its file, which is what adding a
+        // comment or a blank line above it does. RFC 120 requires the projection to carry the complete canonical
+        // identity, and the complete identity includes the provenance anchor, so the symbol moves with the text.
+        assert_ne!(
+            encode_incan_symbol_identity(&before),
+            encode_incan_symbol_identity(&after),
+            "a declaration's emitted symbol currently moves when text above it moves"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn moving_a_declaration_into_a_submodule_changes_its_emitted_symbol() -> Result<(), Box<dyn std::error::Error>> {
+        let span = crate::HirSourceSpan::new(0, 1);
+        let before = CanonicalSymbolId::module_declaration(
+            vec!["shapes".to_string()],
+            "area",
+            SemanticSourceTargetKind::Function,
+            span,
+        );
+        let after = CanonicalSymbolId::module_declaration(
+            vec!["shapes".to_string(), "detail".to_string()],
+            "area",
+            SemanticSourceTargetKind::Function,
+            span,
+        );
+
+        assert_ne!(
+            encode_incan_symbol_identity(&before),
+            encode_incan_symbol_identity(&after),
+            "a declaration's emitted symbol must name the module that declares it"
+        );
+        let decoded = decode_incan_symbol_identity(&encode_incan_symbol_identity(&after))?
+            .ok_or("an identity this crate encoded must decode as an Incan symbol")?;
+        assert_eq!(
+            decoded.module_path(),
+            Some(["shapes".to_string(), "detail".to_string()].as_slice()),
+            "and the moved declaration must decode back to the module it moved into"
+        );
         Ok(())
     }
 
