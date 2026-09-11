@@ -2384,21 +2384,23 @@ mod tests {
                 IR_UNION_TYPE_NAME.into(),
                 vec![member.clone(), IrType::Int],
             )),
-            native: Some(Box::new(NativeUnionExport {
-                owner: NativeUnionOwnerExport::SelectedArtifact(origin.provider.clone()),
-                rust_name: "__IncanUnion_selected".into(),
-                members: Vec::new(),
-                local_nominals: Default::default(),
-                checked_projection: Some(Box::new(crate::library_manifest::NativeUnionProjection {
-                    dependency_root: "bridge".into(),
-                    rust_owner: "::bridge::pricing".into(),
+            native: Some(crate::backend::ir::types::CarriedNativeUnion(Box::new(
+                NativeUnionExport {
+                    owner: NativeUnionOwnerExport::SelectedArtifact(origin.provider.clone()),
+                    rust_name: "__IncanUnion_selected".into(),
                     members: Vec::new(),
-                    nominal_origins: std::collections::BTreeMap::from([
-                        ("Charge".into(), origin.clone()),
-                        ("bridge::pricing::Surcharge".into(), origin.clone()),
-                    ]),
-                })),
-            })),
+                    local_nominals: Default::default(),
+                    checked_projection: Some(Box::new(crate::library_manifest::NativeUnionProjection {
+                        dependency_root: "bridge".into(),
+                        rust_owner: "::bridge::pricing".into(),
+                        members: Vec::new(),
+                        nominal_origins: std::collections::BTreeMap::from([
+                            ("Charge".into(), origin.clone()),
+                            ("bridge::pricing::Surcharge".into(), origin.clone()),
+                        ]),
+                    })),
+                },
+            ))),
         };
         let argument = TypedExpr::new(
             IrExprKind::Struct {

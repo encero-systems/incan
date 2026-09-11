@@ -47,6 +47,43 @@ pub enum Mutability {
     OwnedMutable,
 }
 
+/// The admitted producer representation of an external union, carried for emission but excluded from type identity.
+///
+/// `NativeUnionExport` is a manifest wire record. It reaches down to the selected artifact's `ProviderIdentity`,
+/// digest included, and it also holds `checked_projection`, a consumer-only physical routing that is attached
+/// partway through lowering. Both derive `Eq`. Left in `IrType`'s derived equality, that made two IR types for the
+/// same union compare unequal whenever the dependency had been rebuilt under a new digest, or whenever one copy
+/// had been projected and the other had not -- and roughly forty call sites ask whether two IR types are the same.
+///
+/// What makes an external union one type is its owning library and its union shape, which `IrType::ExternalUnion`
+/// already compares through `library` and `union`. Which artifact carried the description, and whether a physical
+/// route has been attached yet, are facts about provenance and pipeline position, not about the type. So this
+/// wrapper compares equal to any other: the payload rides along for emission and takes no part in identity.
+#[derive(Debug, Clone)]
+pub struct CarriedNativeUnion(pub Box<crate::library_manifest::NativeUnionExport>);
+
+impl PartialEq for CarriedNativeUnion {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for CarriedNativeUnion {}
+
+impl std::ops::Deref for CarriedNativeUnion {
+    type Target = crate::library_manifest::NativeUnionExport;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CarriedNativeUnion {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// IR type representation
 ///
 /// This is a resolved type that maps directly to Rust types.
@@ -117,7 +154,7 @@ pub enum IrType {
         library: String,
         union: Box<IrType>,
         /// Exact admitted producer representation, absent only for legacy structural metadata.
-        native: Option<Box<crate::library_manifest::NativeUnionExport>>,
+        native: Option<CarriedNativeUnion>,
     },
 
     /// Opaque trait return type emitted as Rust `impl Trait`, RFC 042.
@@ -649,7 +686,7 @@ pub(crate) fn ir_type_from_projected_manifest(
                     IR_UNION_TYPE_NAME.to_string(),
                     projection.members.iter().map(child).collect(),
                 )),
-                native: Some(Box::new(descriptor)),
+                native: Some(CarriedNativeUnion(Box::new(descriptor))),
             }
         }
         TypeRef::Applied { args, .. } => {
@@ -1077,5 +1114,66 @@ mod tests {
         };
 
         assert_eq!(foreign_union.provider_localized("widgets"), foreign_union);
+    }
+    /// A dependency rebuilt under a new digest is still the same external union type.
+    ///
+    /// `NativeUnionExport` reaches the selected artifact's `ProviderIdentity`, digest included, and also carries
+    /// the consumer-only `checked_projection` attached partway through lowering. Both derive `Eq`, so while the
+    /// record sat directly in `IrType` the derived equality compared them, and roughly forty call sites that ask
+    /// whether two IR types are the same silently answered no after an unrelated rebuild.
+    #[test]
+    fn an_external_union_keeps_its_identity_across_artifact_digests() {
+        fn union_of(digest: &str, projected: bool) -> IrType {
+            let mut descriptor = crate::library_manifest::NativeUnionExport {
+                owner: crate::library_manifest::NativeUnionOwnerExport::SelectedArtifact(
+                    crate::provider::ProviderIdentity {
+                        name: "pricing".into(),
+                        version: "1.0.0".into(),
+                        digest: digest.into(),
+                        feature_projection: Default::default(),
+                    },
+                ),
+                rust_name: "__IncanUnion_pricing".into(),
+                members: Vec::new(),
+                local_nominals: Default::default(),
+                checked_projection: None,
+            };
+            if projected {
+                descriptor.checked_projection = Some(Box::new(crate::library_manifest::NativeUnionProjection {
+                    dependency_root: "pricing".into(),
+                    rust_owner: "::pricing".into(),
+                    members: Vec::new(),
+                    nominal_origins: Default::default(),
+                }));
+            }
+            IrType::ExternalUnion {
+                library: "pricing".into(),
+                union: Box::new(IrType::NamedGeneric("__IncanUnion_pricing".into(), vec![IrType::Int])),
+                native: Some(CarriedNativeUnion(Box::new(descriptor))),
+            }
+        }
+
+        assert_eq!(
+            union_of("sha256:aaa", false),
+            union_of("sha256:bbb", false),
+            "a rebuild under a new artifact digest must not change what type this is"
+        );
+        assert_eq!(
+            union_of("sha256:aaa", false),
+            union_of("sha256:aaa", true),
+            "attaching the consumer-only physical projection must not change what type this is"
+        );
+
+        // Identity still comes from the library and the union shape, so a genuinely different union differs.
+        let other = IrType::ExternalUnion {
+            library: "billing".into(),
+            union: Box::new(IrType::NamedGeneric("__IncanUnion_pricing".into(), vec![IrType::Int])),
+            native: None,
+        };
+        assert_ne!(
+            union_of("sha256:aaa", false),
+            other,
+            "a different owning library is a different type"
+        );
     }
 }

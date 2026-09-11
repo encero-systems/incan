@@ -402,7 +402,7 @@ impl IrEmitter<'_> {
             native: Some(native), ..
         } = &lowered
         {
-            return Ok(TypeRef::NativeUnion(native.as_ref().clone()));
+            return Ok(TypeRef::NativeUnion((**native).clone()));
         }
         if lowered.is_union() && !matches!(lowered, IrType::ExternalUnion { .. }) {
             let Some((name, emitted)) = definitions.iter().find(|(_, emitted)| **emitted == lowered) else {
