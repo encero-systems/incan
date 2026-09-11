@@ -135,6 +135,12 @@ install:
 	@cargo install --path .
 	@echo "\033[32m✓ Installed to ~/.cargo/bin/incan\033[0m"
 
+.PHONY: install-hooks  ## build - Point git at the repository's commit hooks
+install-hooks:
+	@git config core.hooksPath "$(CURDIR)/.githooks"
+	@chmod +x "$(CURDIR)/.githooks/"* 2>/dev/null || true
+	@echo "\033[32m✓ core.hooksPath -> $(CURDIR)/.githooks\033[0m"
+
 # =============================================================================
 # Code Quality
 # =============================================================================
