@@ -456,3 +456,166 @@ fn empty_literal_keeps_a_concrete_declared_field_type_issue1507() -> Result<(), 
     }
     Ok(())
 }
+
+/// A generic enum's variant payload must be emitted with the enum's supplied type argument, not its own parameter.
+///
+/// This is the enum half of #1507's defect, filed as #1516. The model half could fall back to the supplied
+/// argument's own checked type because the typechecker inferred it at the construction site. A variant payload has
+/// no such inference to fall back on: `Holder.Items([])` inside a function returning `Holder[Picked]` checks the
+/// literal as `Unknown`, and the element type is determined only by the enclosing return type. The payload's
+/// declared type must therefore be substituted with the enum's resolved type arguments.
+#[test]
+fn enum_variant_payload_uses_the_enum_type_argument_not_the_declared_name_issue1516()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "@derive(Clone)\n",
+        "enum Holder[Elem with Clone]:\n",
+        "    Items(list[Elem])\n",
+        "    Empty\n",
+        "\n",
+        "@derive(Clone)\n",
+        "model Maker[T with Clone]:\n",
+        "    seed: T\n",
+        "\n",
+        "    def build[Picked with Clone](self) -> Holder[Picked]:\n",
+        "        return Holder.Items([])\n",
+        "\n",
+        "def main() -> None:\n",
+        "    m = Maker[int](seed=1)\n",
+        "    h: Holder[str] = m.build[str]()\n",
+        "    match h:\n",
+        "        case Holder.Items(values):\n",
+        "            println(f\"{len(values)}\")\n",
+        "        case Holder.Empty:\n",
+        "            println(\"empty\")\n",
+    );
+    let (program, _, _) = checked_source(source)?;
+    let generated = IrCodegen::new()
+        .try_generate(&program)
+        .map_err(|error| std::io::Error::other(format!("generic enum variant generation failed: {error}")))?;
+
+    if generated.contains("Vec::<Elem>::new()") {
+        return Err(format!(
+            "the variant payload kept the enum's own type-parameter name, which is bound nowhere at the \
+             construction site:\n{generated}"
+        )
+        .into());
+    }
+    if !generated.contains("Vec::<Picked>::new()") {
+        return Err(format!(
+            "expected the variant payload to carry the enum's supplied type argument, got:\n{generated}"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// The matching-name case must keep working, since it is the only enum case that worked before.
+#[test]
+fn enum_variant_payload_still_emits_a_matching_type_parameter_name_issue1516() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = concat!(
+        "@derive(Clone)\n",
+        "enum Holder[U with Clone]:\n",
+        "    Items(list[U])\n",
+        "    Empty\n",
+        "\n",
+        "def build[U with Clone]() -> Holder[U]:\n",
+        "    return Holder.Items([])\n",
+        "\n",
+        "def main() -> None:\n",
+        "    h: Holder[str] = build[str]()\n",
+        "    match h:\n",
+        "        case Holder.Items(values):\n",
+        "            println(f\"{len(values)}\")\n",
+        "        case Holder.Empty:\n",
+        "            println(\"empty\")\n",
+    );
+    let (program, _, _) = checked_source(source)?;
+    let generated = IrCodegen::new()
+        .try_generate(&program)
+        .map_err(|error| std::io::Error::other(format!("matching-name enum generation failed: {error}")))?;
+    if !generated.contains("Vec::<U>::new()") {
+        return Err(format!("expected the shared name to survive, got:\n{generated}").into());
+    }
+    Ok(())
+}
+
+/// A concrete declared payload must still win: the substitution applies only to the enum's own parameters.
+#[test]
+fn enum_variant_payload_keeps_a_concrete_declared_payload_type_issue1516() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "@derive(Clone)\n",
+        "enum Holder[Elem with Clone]:\n",
+        "    Names(list[str])\n",
+        "    Items(list[Elem])\n",
+        "    Empty\n",
+        "\n",
+        "def build[Picked with Clone]() -> Holder[Picked]:\n",
+        "    return Holder.Names([])\n",
+        "\n",
+        "def main() -> None:\n",
+        "    h: Holder[int] = build[int]()\n",
+        "    match h:\n",
+        "        case Holder.Names(names):\n",
+        "            println(f\"{len(names)}\")\n",
+        "        case _:\n",
+        "            println(\"other\")\n",
+    );
+    let (program, _, _) = checked_source(source)?;
+    let generated = IrCodegen::new()
+        .try_generate(&program)
+        .map_err(|error| std::io::Error::other(format!("concrete payload enum generation failed: {error}")))?;
+    if !generated.contains("Vec::<String>::new()") {
+        return Err(format!("a concrete declared payload type must still drive emission, got:\n{generated}").into());
+    }
+    Ok(())
+}
+
+/// The instantiation comes from the destination the value is being built for, not the enclosing function's return.
+///
+/// This is what keeps the substitution sound. A function returning `Holder[Picked]` may legitimately build a
+/// `Holder[str]` for a local along the way; reading the enclosing return type directly would emit `Picked` there and
+/// produce Rust that compiles into the wrong type. The local's own annotation is the destination, so `str` wins.
+#[test]
+fn enum_variant_payload_follows_the_destination_not_the_enclosing_return_issue1516()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "@derive(Clone)\n",
+        "enum Holder[Elem with Clone]:\n",
+        "    Items(list[Elem])\n",
+        "    Empty\n",
+        "\n",
+        "def build[Picked with Clone]() -> Holder[Picked]:\n",
+        "    aside: Holder[str] = Holder.Items([])\n",
+        "    match aside:\n",
+        "        case Holder.Items(values):\n",
+        "            println(f\"{len(values)}\")\n",
+        "        case Holder.Empty:\n",
+        "            println(\"empty\")\n",
+        "    return Holder.Empty\n",
+        "\n",
+        "def main() -> None:\n",
+        "    h: Holder[int] = build[int]()\n",
+        "    match h:\n",
+        "        case Holder.Items(values):\n",
+        "            println(f\"{len(values)}\")\n",
+        "        case Holder.Empty:\n",
+        "            println(\"empty\")\n",
+    );
+    let (program, _, _) = checked_source(source)?;
+    let generated = IrCodegen::new()
+        .try_generate(&program)
+        .map_err(|error| std::io::Error::other(format!("destination-typed enum generation failed: {error}")))?;
+    if generated.contains("Vec::<Picked>::new()") {
+        return Err(format!(
+            "the local's own annotation is the destination; taking the enclosing return type instead emits the \
+             wrong element type:\n{generated}"
+        )
+        .into());
+    }
+    if !generated.contains("Vec::<String>::new()") {
+        return Err(format!("expected the local annotation to drive the payload type, got:\n{generated}").into());
+    }
+    Ok(())
+}

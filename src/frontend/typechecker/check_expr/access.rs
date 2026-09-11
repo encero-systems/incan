@@ -51,6 +51,19 @@ use super::TypeChecker;
 /// before a following inspected inherent call can be resolved.
 const RUST_DEFAULT_ASSOCIATED_METHOD: &str = "default";
 
+/// One `Enum.Variant(...)` construction resolved against the destination type it is being built for.
+///
+/// Both halves are kept together because they are needed at different points of the same method-call pass: the
+/// substituted payload types must exist before the arguments are checked, since that is the only time they are
+/// checked, while the enum's own arguments are what the construction's result type reports afterwards.
+#[derive(Debug, Clone)]
+struct EnumVariantInstantiation {
+    /// The enum's type arguments, taken from the destination type.
+    arguments: Vec<ResolvedType>,
+    /// The variant's declared payload types, substituted through those arguments.
+    payloads: Vec<ResolvedType>,
+}
+
 #[derive(Debug, Clone)]
 struct MethodCandidate {
     info: MethodInfo,
@@ -4346,6 +4359,83 @@ impl TypeChecker {
     }
 
     /// Type-check a method call with an optional expected result type for overload disambiguation.
+    /// Resolve one `Enum.Variant(...)` construction against the destination type it is being built for.
+    ///
+    /// A variant payload is declared in the enum's own vocabulary — `Items(list[Elem])` — and that vocabulary is bound
+    /// nowhere at a construction site. A model constructor can recover from this by falling back to the supplied
+    /// value's own checked type, because the site inferred one. A variant payload has nothing to fall back to:
+    /// `Holder.Items([])` checks the literal as `Unknown`, and only the destination says what `Elem` is here. So the
+    /// declared payload must be substituted through the enum's arguments instead.
+    ///
+    /// The destination is the *immediate* expected type, never the enclosing function's return type read directly.
+    /// That distinction is what keeps this sound: a function returning `Holder[Picked]` may legitimately build a
+    /// `Holder[str]` for a local, and there the local's own annotation is the expectation. Only a same-name,
+    /// arity-matching instantiation is usable — anything else would substitute one declaration's parameters with
+    /// another's arguments — so every other shape yields `None` and leaves the unsubstituted behavior in place.
+    ///
+    /// See #1516, and #1507 for the model half of the same defect.
+    fn enum_variant_construction_instantiation(
+        &self,
+        base_ty: &ResolvedType,
+        method: &str,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<EnumVariantInstantiation> {
+        let ResolvedType::Named(enum_name) = base_ty else {
+            return None;
+        };
+        let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
+            return None;
+        };
+        if !enum_info.variants.iter().any(|variant| variant == method)
+            && !enum_info.variant_aliases.contains_key(method)
+        {
+            return None;
+        }
+        if enum_info.type_params.is_empty() {
+            return None;
+        }
+        let ResolvedType::Generic(expected_name, arguments) = expected_return_ty? else {
+            return None;
+        };
+        if expected_name != enum_name || arguments.len() != enum_info.type_params.len() {
+            return None;
+        }
+        // An alias shares its target's payload, and `variant_fields` is keyed by the canonical name only.
+        let canonical_variant = enum_info
+            .variant_aliases
+            .get(method)
+            .map(String::as_str)
+            .unwrap_or(method);
+        let substitutions = type_param_subst_map(&enum_info.type_params, arguments);
+        let payloads = enum_info
+            .variant_fields
+            .get(canonical_variant)
+            .map(|declared| {
+                declared
+                    .iter()
+                    .map(|payload| substitute_resolved_type(payload, &substitutions))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(EnumVariantInstantiation {
+            arguments: arguments.clone(),
+            payloads,
+        })
+    }
+
+    /// Type-check `receiver.method(...)` once the receiver, method name, explicit type arguments, and value arguments
+    /// have been identified, against an optional type for the destination the result is being produced for.
+    ///
+    /// This is the shared arrival point for far more than ordinary user methods: C ABI constructors, `Result` and
+    /// `Option` combinators, string and collection surfaces, iterator protocol methods, Rust-receiver calls resolved
+    /// through inspected metadata, and `Enum.Variant(...)` construction all resolve here. Two consequences shape the
+    /// body. The receiver type is established first, because nearly every later decision keys off it; and the
+    /// arguments are checked exactly once, part-way through, so any contextual expectation an argument needs — a
+    /// closure's parameter types, an enum variant's substituted payload — must be resolved before that point rather
+    /// than corrected afterwards.
+    ///
+    /// `expected_return_ty` is the destination type, not the enclosing function's return type. Passing the immediate
+    /// destination is what lets a construction be checked against the instantiation it is actually built for.
     pub(in crate::frontend::typechecker::check_expr) fn check_method_call_with_expected(
         &mut self,
         base: &Spanned<Expr>,
@@ -4677,10 +4767,16 @@ impl TypeChecker {
         let rust_receiver_path = self.rust_canonical_path_for_receiver_type(&base_ty);
         let defer_rust_closures = rust_receiver_path.is_some();
 
+        // `Enum.Variant(payload)` reaches this shared method-call path, and this is the only place its arguments are
+        // checked, so the payload expectation has to be resolved before the loop below rather than corrected after it.
+        let enum_variant_construction =
+            self.enum_variant_construction_instantiation(&base_ty, method, expected_return_ty);
+
         // Collect arg types for method-specific validation.
         let arg_types: Vec<ResolvedType> = args
             .iter()
-            .map(|arg| {
+            .enumerate()
+            .map(|(index, arg)| {
                 let arg_expr = match arg {
                     CallArg::Positional(expr)
                     | CallArg::Named(_, expr)
@@ -4688,6 +4784,10 @@ impl TypeChecker {
                     | CallArg::KeywordUnpack(expr) => expr,
                 };
                 let is_closure = matches!(arg_expr.node, Expr::Closure(_, _));
+                let variant_payload_ty = enum_variant_construction
+                    .as_ref()
+                    .and_then(|construction| construction.payloads.get(index))
+                    .filter(|payload| !matches!(payload, ResolvedType::Unknown));
                 if defer_rust_closures && contextual_rust_callable.is_none() && is_closure {
                     ResolvedType::Unknown
                 } else if let Some(input_ty) = result_callback_input.as_ref()
@@ -4698,6 +4798,8 @@ impl TypeChecker {
                         Box::new(ResolvedType::Unknown),
                     );
                     self.check_expr_with_expected(arg_expr, Some(&expected))
+                } else if let Some(payload_ty) = variant_payload_ty {
+                    self.check_expr_with_expected(arg_expr, Some(payload_ty))
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }
@@ -4807,7 +4909,13 @@ impl TypeChecker {
             if let Some(identity) = variant_identity {
                 self.type_info.record_resolved_identity(span, identity);
             }
-            return ResolvedType::Named(enum_name.clone());
+            // Report the instantiation the destination supplied rather than the bare enum name. The bare name erases
+            // the arguments this construction was checked against, and every later stage then has to guess them. See
+            // #1516.
+            return match enum_variant_construction {
+                Some(construction) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
+                None => ResolvedType::Named(enum_name.clone()),
+            };
         }
 
         // External/runtime-provided concurrency primitives: be permissive for surface types that have no local Incan
